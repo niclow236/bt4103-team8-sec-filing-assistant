@@ -52,6 +52,8 @@ Python is the primary language. The project uses LLM APIs and open-source LLMs, 
 
 ## Repository structure
 
+This is the planned layout. Not every folder exists on day one; they are added as the work reaches each part.
+
 ```
 bt4103-team8-sec-filing-assistant/
 ├── README.md
