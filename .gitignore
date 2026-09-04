@@ -216,3 +216,32 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# =====================================================================
+# Project-specific rules for the SEC Filing Assistant
+# =====================================================================
+
+# Data: keep large raw filings out of the repo.
+# Commit only a small sample under data/sample/.
+data/raw/
+data/interim/
+data/processed/
+*.zip
+*.gz
+
+# Secrets: ignore all .env variants but keep the committed template.
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Vector stores and model artifacts
+*.faiss
+*.index
+chroma/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
