@@ -63,9 +63,13 @@ bt4103-team8-sec-filing-assistant/
 ├── requirements.txt
 ├── .gitignore
 ├── .env.example             # template for API keys (copy to .env)
+├── config/
+│   └── companies.txt        # tickers the pipeline downloads
 ├── data/
 │   ├── sample/              # small committed sample
-│   └── raw/                 # full filings (git-ignored)
+│   ├── raw/                 # full filings (git-ignored)
+│   ├── interim/             # parsed sections (git-ignored)
+│   └── processed/           # chunks ready for indexing (git-ignored)
 ├── src/
 │   ├── pipeline/            # EDGAR download, parse, chunk
 │   ├── retrieval/           # BM25, dense, hybrid
@@ -115,6 +119,18 @@ Set up environment variables, then add your API keys to the new `.env` file:
 ```bash
 cp .env.example .env      # Windows: copy .env.example .env
 ```
+
+Download filings from EDGAR. Edit `config/companies.txt` first if you want a
+different set of companies:
+
+```bash
+python -m src.pipeline.download --limit 1        # quick test: newest 10-K each
+python -m src.pipeline.download --years 2021 2025 # the full corpus
+```
+
+Filings land in `data/raw/<TICKER>/`, and every one is recorded in
+`data/raw/manifest.jsonl`. The download is resumable, so re-running it skips
+whatever is already on disk.
 
 Run the app once it is built:
 

@@ -1,0 +1,9 @@
+# Core dependencies for the SEC filing assistant.
+# Install with:  pip install -r requirements.txt
+# Versions are pinned so everyone on the team runs the same code.
+
+# SEC EDGAR access: company lookup, filing download, and 10-K/10-Q section parsing.
+edgartools==5.56.0
+
+# Reads the local .env file so API keys and the EDGAR identity stay out of the repo.
+python-dotenv==1.2.3
