@@ -16,7 +16,7 @@ General-purpose LLMs can summarise filings, but their answers are not always tra
 
 ## Objectives
 
-1. Data pipeline. Collect and preprocess a selected set of 10-K and 10-Q filings from SEC EDGAR.
+1. Data pipeline. Collect and preprocess a selected set of 10-K filings from SEC EDGAR, with 10-Q as a later extension.
 2. Retrieval system. Implement and compare keyword search, BM25, dense embedding retrieval, and hybrid retrieval.
 3. Generative QA with citations. A RAG system that generates answers grounded only in retrieved passages, with explicit source attribution.
 4. Answer reliability. Improve responses with reranking, query decomposition, hallucination detection, and answer verification.
@@ -26,9 +26,11 @@ General-purpose LLMs can summarise filings, but their answers are not always tra
 
 All data comes from public SEC EDGAR filings, so no proprietary or subscription databases are needed.
 
-- Companies: 10 to 30 US public firms across one or two industries.
-- History: 3 to 5 years of filings per firm.
-- Documents: Form 10-K (primary focus), Form 10-Q (optional).
+- Industry: technology sector only. A single industry is a deliberate choice, since tech peers share unusually similar risk-factor and MD&A language, which makes the near-duplicate retrieval problem harder and makes cross-company questions genuinely comparable.
+- Companies: 10 to 20 US-listed tech firms. Final list locked in Week 5.
+- History: 5 years of filings per firm.
+- Documents: Form 10-K for the core system and all evaluation. Form 10-Q is a future extension, layered in once the 10-K pipeline is validated, and is not part of the benchmark or the comparative results.
+- Corpus size: roughly 50 to 100 filings, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
 - Key sections: Item 1 (Business), Item 1A (Risk Factors), Item 7 (MD&A), Item 8 (Financial Statements and notes), and other relevant sections.
 
 Raw filings stay out of version control (see `.gitignore`). Only a small sample is committed, and the pipeline fetches the rest.
@@ -39,7 +41,7 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Deliverables
 
-- Data and preprocessing pipeline, a reproducible Python pipeline for scraping, parsing, and chunking 10-K and 10-Q filings.
+- Data and preprocessing pipeline, a reproducible Python pipeline for scraping, parsing, and chunking SEC filings.
 - Indexed search repository, a vector or hybrid database storing processed chunks with their metadata.
 - AI filing assistant engine, a RAG QA system that returns evidence-grounded answers with citations.
 - Benchmarking dataset, manually verified ground-truth Q&A pairs with source passages.
