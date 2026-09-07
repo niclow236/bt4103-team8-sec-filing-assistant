@@ -1,0 +1,18 @@
+# Companies to download filings for, one ticker per line.
+# Blank lines and lines starting with # are ignored.
+#
+# The README targets 10 to 30 US public firms across one or two industries.
+# The list below is a starting point only. Replace it with the final selection
+# once the team agrees on the industries.
+
+# --- Big-cap technology (placeholder selection) ---
+AAPL    # Apple
+MSFT    # Microsoft
+NVDA    # NVIDIA
+GOOGL   # Alphabet
+META    # Meta Platforms
+AMZN    # Amazon
+ORCL    # Oracle
+CRM     # Salesforce
+ADBE    # Adobe
+INTC    # Intel
