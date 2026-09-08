@@ -1,11 +1,17 @@
-# Companies to download filings for, one ticker per line.
+# Companies the pipeline downloads filings for, one ticker per line.
 # Blank lines and lines starting with # are ignored.
 #
-# The README targets 10 to 30 US public firms across one or two industries.
-# The list below is a starting point only. Replace it with the final selection
-# once the team agrees on the industries.
+# Scope: 10 US large-cap technology firms, Form 10-K, filing years 2021-2025.
+# That is 5 filings per company and 50 filings in total, which sits inside the
+# 10 to 30 firms and 3 to 5 years the project brief asks for.
+#
+# Fetch the whole corpus with:
+#     python -m src.pipeline.download
+#
+# The forms and the year range are not settings in this file. They are the
+# DEFAULT_FORMS and DEFAULT_YEARS constants in src/pipeline/download.py, so
+# change the scope there and keep the note above in step with it.
 
-# --- Big-cap technology (placeholder selection) ---
 AAPL    # Apple
 MSFT    # Microsoft
 NVDA    # NVIDIA

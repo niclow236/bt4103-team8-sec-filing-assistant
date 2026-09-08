@@ -122,13 +122,33 @@ Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
 
 ```bash
-python -m src.pipeline.download --limit 1        # quick test: newest 10-K each
-python -m src.pipeline.download --years 2021 2025 # the full corpus
+python -m src.pipeline.download --limit 1   # quick test: newest 10-K each
+python -m src.pipeline.download            # the full corpus
 ```
 
 Filings land in `data/raw/<TICKER>/`, and every one is recorded in
 `data/raw/manifest.jsonl`. The download is resumable, so re-running it skips
 whatever is already on disk.
+
+Split the downloaded filings into their numbered Items:
+
+```bash
+python -m src.pipeline.parse                 # every filing in the manifest
+python -m src.pipeline.parse --tickers AAPL  # just one company
+python -m src.pipeline.parse --force         # re-parse filings already done
+```
+
+This writes one JSON file per filing to `data/interim/<TICKER>/`, holding the
+filing's metadata and one record per Item, with the text, table count, and how
+confident the parser was about the Item's boundaries. It works from the files
+already on disk and never calls EDGAR again, so it is cheap to re-run whenever
+the preprocessing changes.
+
+The run ends with a list of key Items that need a look. Some filers answer
+Item 8 with a single sentence pointing at the financial statements printed
+elsewhere in the document, so the Item is real but nearly empty. Those sections
+are marked `is_stub` and reported rather than dropped, because an empty Item 8
+would otherwise surface much later as an unexplained retrieval failure.
 
 Run the app once it is built:
 
