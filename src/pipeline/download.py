@@ -8,8 +8,8 @@ Run it from the project root:
 
 With no arguments this downloads the project's agreed corpus: Form 10-K for
 filing years 2021 to 2025, for every ticker in config/companies.txt. The
-defaults live in DEFAULT_FORMS and DEFAULT_YEARS below, so the scope is set in
-one place rather than being retyped on the command line each run.
+defaults live in DEFAULT_FORMS and DEFAULT_YEARS in src/pipeline/constants.py,
+so the scope is set in one place rather than retyped on the command line.
 
 Each filing is saved as its original HTML document, and one line describing it
 is appended to ``data/raw/manifest.jsonl``. The download is resumable: a filing
@@ -22,42 +22,24 @@ SEC's published limit, so this module does not add its own delays.
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
 from edgar import Company
 
-from .config import (
+from ..config import (
     MANIFEST_FILE,
     RAW_DIR,
     configure_edgar,
     ensure_data_dirs,
     read_tickers,
 )
+from .cli import build_download_parser
+from .records import FilingRecord
 
 logger = logging.getLogger(__name__)
-
-# The project corpus, as recorded in config/companies.txt: annual reports only,
-# over the five filing years the brief asks for. Both are overridable per run.
-DEFAULT_FORMS = ["10-K"]
-DEFAULT_YEARS = (2021, 2025)  # inclusive range of filing years
-
-
-@dataclass(frozen=True)
-class FilingRecord:
-    """One downloaded filing, as written to the manifest."""
-
-    ticker: str
-    cik: int
-    company: str
-    form: str
-    filing_date: str
-    accession_no: str
-    url: str
-    path: str  # relative to the project root, so the manifest stays portable
 
 
 def _safe_name(value: str) -> str:
@@ -187,33 +169,10 @@ def download_all(
     return all_new
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--tickers", nargs="+",
-        help="Tickers to download. Defaults to every entry in config/companies.txt.",
-    )
-    parser.add_argument(
-        "--forms", nargs="+", default=DEFAULT_FORMS,
-        help=f"Filing forms to fetch (default: {' '.join(DEFAULT_FORMS)}).",
-    )
-    parser.add_argument(
-        "--years", nargs=2, type=int, metavar=("START", "END"),
-        default=list(DEFAULT_YEARS),
-        help="Inclusive range of filing years "
-             f"(default: {DEFAULT_YEARS[0]} {DEFAULT_YEARS[1]}). "
-             "Pass 0 0 to fetch every year on record.",
-    )
-    parser.add_argument(
-        "--limit", type=int,
-        help="Keep only the N most recent filings per company. Useful for a quick test.",
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
-    args = _parse_args(argv)
+    parser = build_download_parser(__doc__.splitlines()[0] if __doc__ else "")
+    args = parser.parse_args(argv)
 
     identity = configure_edgar()
     logger.info("Identifying to SEC EDGAR as: %s", identity)

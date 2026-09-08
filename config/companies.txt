@@ -9,7 +9,7 @@
 #     python -m src.pipeline.download
 #
 # The forms and the year range are not settings in this file. They are the
-# DEFAULT_FORMS and DEFAULT_YEARS constants in src/pipeline/download.py, so
+# DEFAULT_FORMS and DEFAULT_YEARS constants in src/pipeline/constants.py, so
 # change the scope there and keep the note above in step with it.
 
 AAPL    # Apple
