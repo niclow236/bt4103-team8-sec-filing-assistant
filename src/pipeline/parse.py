@@ -16,12 +16,17 @@ rather than from the raw HTML.
 The parsing runs entirely from the files already on disk, with no further calls
 to EDGAR, so it can be re-run as often as the chunking strategy changes.
 
-Not every Item holds the text it names. Some filings satisfy Item 8 with a
-sentence pointing at the financial statements elsewhere in the document, so the
+Not every Item holds the text it names. Many filers satisfy Item 8 with a
+sentence pointing at the financial statements printed under Item 15, so the
 Item parses cleanly but is nearly empty. Sections like that are marked
-``is_stub`` and reported in the run summary rather than being dropped quietly,
-because a silently empty Item 8 would otherwise look like a retrieval failure
-much later on.
+``is_stub``, and where the filing does hold the text under another Item, the
+stub records a ``resolved_from`` pointer to it. The text is not copied across,
+so the corpus keeps one copy of every passage and the chunking stage follows
+the pointer instead.
+
+Whatever cannot be resolved that way is reported in the run summary, along with
+any key Item missing from the filing altogether, because a silently absent
+Item 7 would otherwise look like a retrieval failure much later on.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from edgar.company_reports import TenK, TenQ
@@ -46,6 +51,13 @@ logger = logging.getLogger(__name__)
 KEY_ITEMS: dict[str, set[str]] = {
     "10-K": {"1", "1A", "7", "7A", "8"},
     "10-Q": {"1", "2", "3"},
+}
+
+# Where an Item commonly carries a cross-reference instead of the disclosure
+# itself, and which Item actually holds the text. Oracle and NVIDIA both answer
+# Item 8 by pointing at the financial statements filed under Item 15.
+INCORPORATION_FALLBACKS: dict[str, dict[str, str]] = {
+    "10-K": {"8": "15"},
 }
 
 # Item headings that carry a cross-reference instead of the disclosure itself
@@ -73,6 +85,9 @@ class SectionRecord:
     n_tables: int
     is_key_section: bool
     is_stub: bool
+    # For a stub whose text lives under a different Item, the section_id that
+    # actually holds it. Chunking reads the text from there.
+    resolved_from: str | None
     # What the parser thought of its own work, kept so that a bad answer can be
     # traced back to a badly detected section boundary.
     confidence: float | None
@@ -143,12 +158,15 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
                 n_tables=len(section.tables()),
                 is_key_section=item in key_items,
                 is_stub=len(text) < STUB_CHAR_LIMIT,
+                resolved_from=None,  # filled in by _resolve_stubs below
                 confidence=getattr(section, "confidence", None),
                 detection_method=getattr(section, "detection_method", None),
                 validated=bool(getattr(section, "validated", False)),
                 warnings=list(getattr(section, "warnings", []) or []),
             )
         )
+
+    sections = _resolve_stubs(sections, record.form)
 
     return ParsedFiling(
         ticker=record.ticker,
@@ -161,6 +179,28 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
         source_path=record.path,
         sections=sections,
     )
+
+
+def _resolve_stubs(sections: list[SectionRecord], form: str) -> list[SectionRecord]:
+    """Point each cross-referencing Item at the Item that holds its text.
+
+    Only a stub is redirected, and only when the target Item is substantial, so
+    a filing that genuinely prints its statements under Item 8 is left alone.
+    """
+    fallbacks = INCORPORATION_FALLBACKS.get(form, {})
+    if not fallbacks:
+        return sections
+
+    by_item = {section.item: section for section in sections if section.item}
+
+    resolved: list[SectionRecord] = []
+    for section in sections:
+        target_item = fallbacks.get(section.item or "")
+        target = by_item.get(target_item) if target_item else None
+        if section.is_stub and target is not None and not target.is_stub:
+            section = replace(section, resolved_from=target.section_id)
+        resolved.append(section)
+    return resolved
 
 
 def write_parsed(parsed: ParsedFiling, destination: Path) -> None:
@@ -216,25 +256,42 @@ def _report(parsed_filings: list[ParsedFiling]) -> None:
 
     print(f"\nParsed {len(parsed_filings)} filings into {INTERIM_DIR}")
 
-    suspect = [
+    resolved = [
         (filing, section)
         for filing in parsed_filings
         for section in filing.sections
-        if section.is_key_section and (section.is_stub or section.warnings)
+        if section.resolved_from
     ]
-    if not suspect:
+    if resolved:
+        print(f"\n{len(resolved)} cross-referencing Items were resolved to the Item holding their text:")
+        for filing, section in resolved:
+            print(f"  {filing.ticker} {filing.filing_date}  Item {section.item} -> {section.resolved_from}")
+
+    # A key Item that is absent, still empty, or badly detected will look like a
+    # retrieval failure much later, so it is named here while it is still cheap
+    # to do something about it. A missing Item has no section to inspect, so it
+    # has to be found by comparing against the Items the form should have.
+    problems: list[tuple[ParsedFiling, str, str]] = []
+    for filing in parsed_filings:
+        present = {section.item for section in filing.sections if section.item}
+        for item in sorted(KEY_ITEMS.get(filing.form, set()) - present):
+            problems.append((filing, f"Item {item}", "missing from the filing"))
+        for section in filing.sections:
+            if not section.is_key_section or section.resolved_from:
+                continue
+            if section.is_stub:
+                problems.append((filing, f"Item {section.item}",
+                                 f"{section.n_chars} chars, nothing to fall back on"))
+            elif section.warnings:
+                problems.append((filing, f"Item {section.item}", section.warnings[0]))
+
+    if not problems:
         print("Every key Item came through with content.")
         return
 
-    # These are the sections that will look like a retrieval failure later if
-    # nobody knows now that the text simply is not in the filing.
-    print(f"\n{len(suspect)} key sections need a look:")
-    for filing, section in suspect:
-        reason = "stub" if section.is_stub else "warning"
-        print(f"  {filing.ticker} {filing.filing_date}  Item {section.item:<3} "
-              f"{section.n_chars:>6} chars  [{reason}]")
-        for warning in section.warnings:
-            print(f"      {warning}")
+    print(f"\n{len(problems)} key Items need a look:")
+    for filing, item, reason in problems:
+        print(f"  {filing.ticker} {filing.filing_date}  {item:<8} {reason}")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

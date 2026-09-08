@@ -144,11 +144,19 @@ confident the parser was about the Item's boundaries. It works from the files
 already on disk and never calls EDGAR again, so it is cheap to re-run whenever
 the preprocessing changes.
 
-The run ends with a list of key Items that need a look. Some filers answer
-Item 8 with a single sentence pointing at the financial statements printed
-elsewhere in the document, so the Item is real but nearly empty. Those sections
-are marked `is_stub` and reported rather than dropped, because an empty Item 8
-would otherwise surface much later as an unexplained retrieval failure.
+Some filers answer Item 8 with a single sentence pointing at the financial
+statements printed under Item 15, so the Item is real but nearly empty. Oracle
+does this in every year of the corpus. Those sections are marked `is_stub` and
+carry a `resolved_from` pointer to the Item that holds the text, which chunking
+follows, so the passage is stored once rather than copied into both Items.
+
+The run ends with anything left over: a key Item that is missing from the
+filing, still empty with nothing to fall back on, or flagged by the parser.
+This matters when choosing companies. Intel was dropped from the ticker list
+because it files a narratively organised 10-K with a cross-reference index
+instead of Item headings, so its MD&A cannot be located by Item boundaries at
+all, and an absent Item 7 would otherwise surface much later as an unexplained
+retrieval failure.
 
 Run the app once it is built:
 

@@ -21,4 +21,4 @@ AMZN    # Amazon
 ORCL    # Oracle
 CRM     # Salesforce
 ADBE    # Adobe
-INTC    # Intel
+CSCO    # Cisco Systems
