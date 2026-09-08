@@ -246,7 +246,8 @@ a `sections` list, one entry per Item:
 | `part`, `item` | `"II"` and `"7"` |
 | `title` | the official Item title, used in citations |
 | `text` | the Item's text |
-| `n_chars`, `n_tables` | how big the Item is and how many tables it holds |
+| `n_chars`, `n_tables` | how big the Item is, and how many `<table>` elements it holds |
+| `n_data_tables` | how many of those hold a grid of data rather than being a layout wrapper around a bullet point |
 | `is_key_section` | whether this is one of the Items the project targets |
 | `is_stub` | the Item is empty, or answers with a cross-reference rather than the disclosure |
 | `resolved_from` | for a stub, the `section_id` that actually holds the text |
@@ -283,8 +284,17 @@ column labels stripped off, which leaves a figure like 245,122 with nothing to
 say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
-About 69% of tables rebuild cleanly; where one cannot, its flattened copy is
-left in the prose, so no figure is ever lost, it is just harder to read. Where a
+99% of the tables that hold data rebuild cleanly, 3,648 of 3,686; where one
+cannot, its flattened copy is left in the prose, so no figure is ever lost, it
+is just harder to read.
+
+That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
+bullet points in a one-cell `<table>` to indent them, and Item 1A is written
+almost entirely that way, so 1,597 of the 5,283 `<table>` elements in the corpus
+are page formatting rather than data. Their text is already in the Item, so
+skipping them loses nothing, and counting them as failed rebuilds would put the
+figure around 69% and read as though a third of the financial statements were
+broken. Where a
 table arrives with no header row of its own, the first row is promoted to the
 header if it reads as labels rather than figures, so that every slice of a long
 table still says what its columns are. 185 passages, under 2% of the corpus,

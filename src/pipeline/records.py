@@ -69,7 +69,15 @@ class SectionRecord:
     title: str            # e.g. "Risk Factors"
     text: str
     n_chars: int
+    # Every <table> element the extractor found in this Item. Most filers wrap
+    # bullet points in a one-cell table to indent them, so this counts layout
+    # markup as well as data.
     n_tables: int
+    # Those of them that actually hold a grid of data. The difference is the
+    # layout wrappers, whose text is already in ``text``, so skipping them
+    # loses nothing. Rebuilding is measured against this, not against
+    # ``n_tables``, which would score formatting as a failure.
+    n_data_tables: int
     is_key_section: bool
     is_stub: bool
     # For a stub whose text lives under a different Item, the section_id that

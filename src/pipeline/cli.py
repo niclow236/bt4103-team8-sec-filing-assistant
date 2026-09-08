@@ -67,6 +67,13 @@ def build_parse_parser(description: str = "") -> argparse.ArgumentParser:
         "--force", action="store_true",
         help="Re-parse filings that already have output in data/interim/.",
     )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Show the extractor's own commentary on how it located each Item. "
+             "It is quiet by default because it narrates every strategy it "
+             "tries, including the ones it abandons, which reads like a run of "
+             "errors when the parse has in fact succeeded.",
+    )
     return parser
 
 

@@ -144,7 +144,7 @@ def _promote_header_row(rendered):
     return promoted
 
 
-def _extract_tables(section) -> list[TableRecord]:
+def _extract_tables(section) -> tuple[list[TableRecord], int]:
     """Lift each table out of an Item as a table, not as flattened prose.
 
     The extractor's plain text runs a balance sheet together into a column of
@@ -154,8 +154,15 @@ def _extract_tables(section) -> list[TableRecord]:
 
     A table that cannot be rebuilt is skipped rather than guessed at: the
     flattened version is still in the Item's text, so nothing is lost outright.
+
+    Returns the rebuilt tables and, alongside them, how many of the Item's
+    tables held a grid of data at all. Filers wrap bullet points in a one-cell
+    table to indent them, and Item 1A is mostly built that way, so counting
+    those as tables that failed to rebuild would be counting formatting as a
+    fault.
     """
     records: list[TableRecord] = []
+    data_tables = 0
     for index, table in enumerate(section.tables()):
         try:
             frame = table.to_dataframe()
@@ -163,7 +170,10 @@ def _extract_tables(section) -> list[TableRecord]:
             logger.debug("table %d in %s could not be rebuilt", index, section.name)
             continue
         if frame is None or frame.empty or frame.size < TABLE_MIN_CELLS:
+            # A wrapper around a sentence, not a table. Its text is in the Item
+            # already, so it is not a rebuild that failed.
             continue
+        data_tables += 1
 
         # pandas renamed applymap to map in 2.1; support both.
         formatter = getattr(frame, "map", None) or frame.applymap
@@ -207,7 +217,7 @@ def _extract_tables(section) -> list[TableRecord]:
                 markdown=markdown,
             )
         )
-    return records
+    return records, data_tables
 
 
 def interim_path_for(record: FilingRecord, interim_dir: Path = INTERIM_DIR) -> Path:
@@ -236,6 +246,7 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
     for section_id, section in document.sections.items():
         text = section.text()
         item = getattr(section, "item", None)
+        tables, n_data_tables = _extract_tables(section)
         sections.append(
             SectionRecord(
                 section_id=section_id,
@@ -245,6 +256,7 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
                 text=text,
                 n_chars=len(text),
                 n_tables=len(section.tables()),
+                n_data_tables=n_data_tables,
                 is_key_section=item in key_items,
                 is_stub=_is_stub_text(text),
                 resolved_from=None,  # filled in by _resolve_stubs below
@@ -252,7 +264,7 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
                 detection_method=getattr(section, "detection_method", None),
                 validated=bool(getattr(section, "validated", False)),
                 warnings=list(getattr(section, "warnings", []) or []),
-                tables=_extract_tables(section),
+                tables=tables,
             )
         )
 
@@ -350,11 +362,21 @@ def _report(parsed_filings: list[ParsedFiling]) -> None:
     # Tables are rebuilt so their figures keep their row and column labels. One
     # the rebuilder cannot handle is not lost, since the flattened copy stays in
     # the Item's text, but it is worth knowing how many there were.
-    found = sum(section.n_tables for filing in parsed_filings for section in filing.sections)
-    rebuilt = sum(len(section.tables) for filing in parsed_filings for section in filing.sections)
-    if found:
-        print(f"  {rebuilt} of {found} tables rebuilt with their labels intact "
-              f"({rebuilt / found:.0%})")
+    #
+    # The rate is measured against the tables that hold data, not against every
+    # <table> element. Filers wrap bullet points in a one-cell table to indent
+    # them, and Item 1A is written almost entirely that way, so measuring
+    # against the raw count would report page formatting as a failure and put
+    # the figure roughly twenty points below the truth.
+    sections = [section for filing in parsed_filings for section in filing.sections]
+    found = sum(section.n_tables for section in sections)
+    data_tables = sum(section.n_data_tables for section in sections)
+    rebuilt = sum(len(section.tables) for section in sections)
+    if data_tables:
+        print(f"  {rebuilt} of {data_tables} data tables rebuilt with their labels intact "
+              f"({rebuilt / data_tables:.0%})")
+        print(f"  {found - data_tables} more were layout wrappers holding prose, not data, "
+              "and were left in the Item's text")
 
     resolved = [
         (filing, section)
@@ -398,6 +420,15 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     parser = build_parse_parser(__doc__.splitlines()[0] if __doc__ else "")
     args = parser.parse_args(argv)
+
+    # edgartools narrates its section detection at INFO: which candidates it
+    # considered, which strategies it abandoned, which fallback it settled on.
+    # Lines like "Could not find actual section for mda" are a note that its
+    # first strategy missed and its second one worked, not a failure, but a
+    # screen of them reads like one. Keep its warnings, drop the commentary,
+    # and leave --verbose for when a parse actually needs diagnosing.
+    if not args.verbose:
+        logging.getLogger("edgar").setLevel(logging.WARNING)
 
     records = load_manifest()
     if not records:
