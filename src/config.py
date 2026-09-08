@@ -32,6 +32,11 @@ DIAGNOSTICS_DIR = DATA_DIR / "diagnostics"
 CONFIG_DIR = PROJECT_ROOT / "config"
 COMPANIES_FILE = CONFIG_DIR / "companies.txt"
 
+# Terminal output from a run, kept so a number quoted in a report can be traced
+# back to the run that produced it. Git-ignored: these are records of what
+# happened on one machine, not shared source.
+LOGS_DIR = PROJECT_ROOT / "logs"
+
 # One JSON record per downloaded filing, so later stages know what exists on
 # disk without having to walk the directory tree or re-query EDGAR.
 MANIFEST_FILE = RAW_DIR / "manifest.jsonl"
