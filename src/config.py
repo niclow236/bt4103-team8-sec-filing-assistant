@@ -23,6 +23,11 @@ RAW_DIR = DATA_DIR / "raw"            # full downloaded filings (git-ignored)
 INTERIM_DIR = DATA_DIR / "interim"    # parsed sections (git-ignored)
 PROCESSED_DIR = DATA_DIR / "processed"  # chunks ready for indexing (git-ignored)
 SAMPLE_DIR = DATA_DIR / "sample"      # small committed sample
+# Output written to explain a run rather than to feed the next stage, such
+# as the HTML of a table the parser could not rebuild. Git-ignored, and
+# created on demand rather than by ensure_data_dirs, since most runs write
+# nothing here.
+DIAGNOSTICS_DIR = DATA_DIR / "diagnostics"
 
 CONFIG_DIR = PROJECT_ROOT / "config"
 COMPANIES_FILE = CONFIG_DIR / "companies.txt"

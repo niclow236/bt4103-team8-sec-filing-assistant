@@ -74,6 +74,14 @@ def build_parse_parser(description: str = "") -> argparse.ArgumentParser:
         help="Re-parse filings that already have output in data/interim/.",
     )
     parser.add_argument(
+        "--table-debug", action="store_true",
+        help="Write the HTML of every table that could not be rebuilt to "
+             "data/diagnostics/table_failures/, with an index naming the reason "
+             "for each. Use it to work out why a particular table will not "
+             "convert: a merged cell and a spacer row look the same from the "
+             "outside, and only the markup tells them apart.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Show the extractor's own commentary on how it located each Item. "
              "It is quiet by default because it narrates every strategy it "
