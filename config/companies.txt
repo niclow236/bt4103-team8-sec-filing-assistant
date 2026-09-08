@@ -14,7 +14,7 @@
 
 AAPL    # Apple
 MSFT    # Microsoft
-NVDA    # NVIDIA
+AVGO    # Broadcom
 GOOGL   # Alphabet
 META    # Meta Platforms
 AMZN    # Amazon
