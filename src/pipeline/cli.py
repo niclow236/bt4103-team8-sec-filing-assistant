@@ -49,6 +49,12 @@ def build_download_parser(description: str = "") -> argparse.ArgumentParser:
         "--limit", type=int,
         help="Keep only the N most recent filings per company. Useful for a quick test.",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="List what would be downloaded and stop, without fetching any "
+             "document or writing to the manifest. Use it to check the scope "
+             "before spending a long download on the wrong one.",
+    )
     return parser
 
 
