@@ -32,6 +32,12 @@ DEFAULT_FISCAL_YEARS = (2021, 2025)  # inclusive, and the scope of the corpus
 # read, which is what keeps the corpus rectangular. Overridable with --years.
 DEFAULT_FILING_YEARS = (DEFAULT_FISCAL_YEARS[0], DEFAULT_FISCAL_YEARS[1] + 1)
 
+# How much of a table's HTML to keep when a rebuild fails and the fragment is
+# written out for diagnosis. A financial table runs to tens of kilobytes of
+# markup, and the shape of the problem -- a merged cell, a spacer row, a header
+# split across two rows -- shows up near the top of it.
+TABLE_FRAGMENT_CHARS = 20_000
+
 # --- parsing --------------------------------------------------------------
 # The Items the project brief calls out, per form. Everything else in the
 # filing is still parsed and stored; this only marks which sections the

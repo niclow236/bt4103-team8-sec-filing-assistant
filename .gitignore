@@ -226,6 +226,7 @@ __marimo__/
 data/raw/
 data/interim/
 data/processed/
+data/diagnostics/
 *.zip
 *.gz
 

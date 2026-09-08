@@ -5,6 +5,7 @@ Run it from the project root:
     python -m src.pipeline.download                            # the whole project corpus
     python -m src.pipeline.download --fiscal-years 2019 2020   # a different year range
     python -m src.pipeline.download --tickers AAPL MSFT --limit 2
+    python -m src.pipeline.download --dry-run                   # preview only
 
 With no arguments this downloads the project's agreed corpus: Form 10-K for
 fiscal years 2021 to 2025, for every ticker in config/companies.txt. The
@@ -22,6 +23,13 @@ Each filing is saved as its original HTML document, and one line describing it
 is appended to ``data/raw/manifest.jsonl``. The download is resumable: a filing
 already listed in the manifest is skipped, so re-running after an interruption
 picks up where it left off rather than starting again.
+
+``--dry-run`` answers "what would this fetch?" without fetching it. Deciding
+that still means asking EDGAR which filings exist, so the run makes one index
+request per company, but it downloads no documents and writes nothing to disk
+or to the manifest. That is where a scope mistake is cheap to notice: a wrong
+year range or a mistyped ticker shows up as a preview, rather than as a long
+download you have to unpick from the manifest afterwards.
 
 Rate limiting is handled inside edgartools, which keeps requests under the
 SEC's published limit, so this module does not add its own delays.
@@ -92,6 +100,7 @@ def download_company(
     already_downloaded: set[str] | None = None,
     raw_dir: Path = RAW_DIR,
     fiscal_years: range | list[int] | None = None,
+    dry_run: bool = False,
 ) -> list[FilingRecord]:
     """Download one company's filings and return a record for each new one.
 
@@ -99,6 +108,10 @@ def download_company(
     resume behaviour works. ``fiscal_years`` narrows the result to the years the
     filings report on, as opposed to ``years``, which narrows the EDGAR search
     to the years they were filed in.
+
+    Under ``dry_run`` the same filings are selected and returned, but no
+    document is fetched and nothing is written, so the caller can show what a
+    real run would do.
     """
     already_downloaded = already_downloaded or set()
     wanted_fiscal = set(fiscal_years) if fiscal_years else None
@@ -118,7 +131,8 @@ def download_company(
         filings = filings.head(limit)
 
     company_dir = raw_dir / ticker
-    company_dir.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        company_dir.mkdir(parents=True, exist_ok=True)
 
     new_records: list[FilingRecord] = []
     for filing in filings:
@@ -135,6 +149,33 @@ def download_company(
                 "%s: skipping %s, filed %s but reports fiscal %s, outside the scope",
                 ticker, filing.accession_no, filing.filing_date, fiscal_year,
             )
+            continue
+
+        if dry_run:
+            # Everything above this point is decided from the filing index, so
+            # a preview can be built without fetching the document. The name is
+            # written with the .html suffix a real run would almost always use;
+            # the plain-text fallback below is rare enough that guessing it here
+            # would be more misleading than assuming HTML.
+            planned = company_dir / (
+                f"{_safe_name(filing.form)}_{filing.filing_date}"
+                f"_{_safe_name(filing.accession_no)}.html"
+            )
+            new_records.append(
+                FilingRecord(
+                    ticker=ticker,
+                    cik=filing.cik,
+                    company=filing.company,
+                    form=filing.form,
+                    filing_date=str(filing.filing_date),
+                    accession_no=filing.accession_no,
+                    url=filing.filing_url,
+                    path=planned.relative_to(raw_dir.parents[1]).as_posix(),
+                    period_of_report=str(getattr(filing, "period_of_report", "") or ""),
+                )
+            )
+            already_downloaded.add(filing.accession_no)
+            logger.info("%s: would download %s %s", ticker, filing.form, filing.filing_date)
             continue
 
         # A handful of older filings have no HTML document, so fall back to the
@@ -182,9 +223,11 @@ def download_all(
     years: range | list[int] | None = None,
     limit: int | None = None,
     fiscal_years: range | list[int] | None = None,
+    dry_run: bool = False,
 ) -> list[FilingRecord]:
     """Download filings for every ticker, carrying on if one company fails."""
-    ensure_data_dirs()
+    if not dry_run:
+        ensure_data_dirs()
     already_downloaded = {record.accession_no for record in load_manifest()}
     logger.info("Manifest already holds %d filings", len(already_downloaded))
 
@@ -195,6 +238,7 @@ def download_all(
                 ticker, forms, years=years, limit=limit,
                 already_downloaded=already_downloaded,
                 fiscal_years=fiscal_years,
+                dry_run=dry_run,
             )
         except Exception:
             # One bad ticker should not end a download that may take a while,
@@ -216,14 +260,21 @@ def fiscal_year_coverage(records: list[FilingRecord] | None = None) -> dict[int,
     return coverage
 
 
-def report_coverage(expected: set[str], scope: range | list[int] | None = None) -> None:
+def report_coverage(
+    expected: set[str],
+    scope: range | list[int] | None = None,
+    records: list[FilingRecord] | None = None,
+) -> None:
     """Print the fiscal years the corpus covers, and say which are incomplete.
 
     A question that pins one year across companies can only be answered where
     that year holds every company. Reporting it here means a gap is seen when
     the corpus is built, rather than inferred later from a thin answer.
+
+    Pass ``records`` to describe a corpus other than the one on disk, which is
+    how a dry run shows the coverage its download would end up with.
     """
-    coverage = fiscal_year_coverage()
+    coverage = fiscal_year_coverage(records)
     if not coverage:
         return
 
@@ -247,6 +298,41 @@ def report_coverage(expected: set[str], scope: range | list[int] | None = None) 
         )
     else:
         print(f"  No fiscal year yet holds all {len(expected)} companies.")
+
+
+def _report_plan(planned: list[FilingRecord], expected: set[str],
+                 scope: range | list[int] | None, tickers: list[str]) -> None:
+    """Say what a real run would download, and change nothing."""
+    if not planned:
+        # An empty plan has two very different causes, and saying the wrong one
+        # sends someone hunting for a bug in the wrong place. Nothing left to
+        # fetch is the happy case; nothing found at all usually means the
+        # tickers or the year range are wrong, which is what a preview is for.
+        held = [record for record in load_manifest() if record.ticker in set(tickers)]
+        if held:
+            print(f"\nNothing new to download. The manifest already holds "
+                  f"{len(held)} filings for these companies.")
+        else:
+            print("\nNo filings matched this scope, and the manifest holds none "
+                  "for these companies either. Check the tickers and the year range.")
+    else:
+        print(f"\nWould download {len(planned)} filings into {RAW_DIR}:")
+        by_ticker: dict[str, list[FilingRecord]] = {}
+        for record in planned:
+            by_ticker.setdefault(record.ticker, []).append(record)
+        for ticker in sorted(by_ticker):
+            records = sorted(by_ticker[ticker], key=lambda record: record.filing_date)
+            years = " ".join(
+                f"FY{record.fiscal_year}" if record.fiscal_year else record.filing_date
+                for record in records
+            )
+            print(f"  {ticker:6} {len(records)} filings   {years}")
+
+    # The coverage a real run would leave behind, which is the point of the
+    # preview: it shows a year range that comes out short before the download
+    # is spent finding that out.
+    report_coverage(expected, scope=scope, records=load_manifest() + planned)
+    print("\nDry run: nothing was downloaded and the manifest is unchanged.")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -282,7 +368,12 @@ def main(argv: list[str] | None = None) -> None:
 
     new_records = download_all(
         tickers, args.forms, years=years, limit=args.limit, fiscal_years=fiscal_years,
+        dry_run=args.dry_run,
     )
+
+    if args.dry_run:
+        _report_plan(new_records, set(read_tickers()), fiscal_years, tickers)
+        return
 
     print(f"\nDownloaded {len(new_records)} new filings into {RAW_DIR}")
     print(f"Manifest: {MANIFEST_FILE}")

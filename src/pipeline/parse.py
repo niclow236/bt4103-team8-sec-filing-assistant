@@ -34,12 +34,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from edgar.documents import HTMLParser, ParserConfig
 
-from ..config import INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
+from ..config import DIAGNOSTICS_DIR, INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
 from .cli import build_parse_parser
 from .constants import (
     EMPTY_ITEM_CHAR_LIMIT,
@@ -49,6 +49,7 @@ from .constants import (
     INCORPORATION_PHRASES,
     KEY_ITEMS,
     STUB_CHAR_LIMIT,
+    TABLE_FRAGMENT_CHARS,
     TABLE_MIN_CELLS,
 )
 from .download import load_manifest
@@ -144,7 +145,44 @@ def _promote_header_row(rendered):
     return promoted
 
 
-def _extract_tables(section) -> tuple[list[TableRecord], int]:
+@dataclass(frozen=True)
+class TableFailure:
+    """One table the rebuilder could not turn into a labelled grid.
+
+    Kept only to explain a run, never written into the interim files, because
+    the HTML fragment it carries is far larger than the record it failed to
+    produce. ``--table-debug`` writes these out for inspection.
+    """
+
+    section_id: str
+    table_index: int      # position among every table in the Item, not among the rebuilt ones
+    # A short, stable name for what went wrong, so a run can be summarised by
+    # cause. ``reason`` carries the detail, including the numbers involved,
+    # which is what makes it useless as a grouping key.
+    kind: str
+    reason: str
+    n_rows: int
+    n_cols: int
+    html: str
+    ticker: str = ""      # filled in by parse_filing, which knows the filing
+    accession_no: str = ""
+
+
+def _fragment(table) -> str:
+    """The table's own HTML, trimmed to the part that shows the problem.
+
+    ``html`` is a method on the extractor's table node rather than a property,
+    so it has to be called; reading it as an attribute yields the repr of a
+    bound method, which looks like markup at a glance and is useless.
+    """
+    source = getattr(table, "html", None)
+    html = str(source() if callable(source) else source or "")
+    if len(html) <= TABLE_FRAGMENT_CHARS:
+        return html
+    return html[:TABLE_FRAGMENT_CHARS] + f"\n<!-- truncated at {TABLE_FRAGMENT_CHARS} chars -->"
+
+
+def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]]:
     """Lift each table out of an Item as a table, not as flattened prose.
 
     The extractor's plain text runs a balance sheet together into a column of
@@ -155,19 +193,35 @@ def _extract_tables(section) -> tuple[list[TableRecord], int]:
     A table that cannot be rebuilt is skipped rather than guessed at: the
     flattened version is still in the Item's text, so nothing is lost outright.
 
-    Returns the rebuilt tables and, alongside them, how many of the Item's
-    tables held a grid of data at all. Filers wrap bullet points in a one-cell
-    table to indent them, and Item 1A is mostly built that way, so counting
-    those as tables that failed to rebuild would be counting formatting as a
-    fault.
+    Returns the rebuilt tables, how many of the Item's tables held a grid of
+    data at all, and a record of each one that could not be rebuilt. Filers wrap
+    bullet points in a one-cell table to indent them, and Item 1A is mostly
+    built that way, so counting those as tables that failed to rebuild would be
+    counting formatting as a fault.
+
+    Each failure carries the table's own HTML, which is what makes the cause
+    diagnosable: a merged cell, a spacer row, or a header split over two rows
+    all look identical from the outside, and only the markup tells them apart.
     """
     records: list[TableRecord] = []
+    failures: list[TableFailure] = []
     data_tables = 0
     for index, table in enumerate(section.tables()):
         try:
             frame = table.to_dataframe()
-        except Exception:
+        except Exception as error:
+            # This one raised before its shape was known, so it cannot be told
+            # apart from a layout wrapper here. It is recorded, but the summary
+            # counts it separately from the tables known to hold data.
             logger.debug("table %d in %s could not be rebuilt", index, section.name)
+            failures.append(TableFailure(
+                section_id=section.name, table_index=index,
+                kind="to_dataframe raised",
+                reason=f"to_dataframe raised {type(error).__name__}: {error}",
+                n_rows=int(getattr(table, "row_count", 0) or 0),
+                n_cols=int(getattr(table, "col_count", 0) or 0),
+                html=_fragment(table),
+            ))
             continue
         if frame is None or frame.empty or frame.size < TABLE_MIN_CELLS:
             # A wrapper around a sentence, not a table. Its text is in the Item
@@ -179,8 +233,15 @@ def _extract_tables(section) -> tuple[list[TableRecord], int]:
         formatter = getattr(frame, "map", None) or frame.applymap
         try:
             rendered = formatter(_format_cell)
-        except Exception:
+        except Exception as error:
             logger.debug("table %d in %s could not be rendered", index, section.name)
+            failures.append(TableFailure(
+                section_id=section.name, table_index=index,
+                kind="cell formatting raised",
+                reason=f"cell formatting raised {type(error).__name__}: {error}",
+                n_rows=int(frame.shape[0]), n_cols=int(frame.shape[1]),
+                html=_fragment(table),
+            ))
             continue
 
         # Filers lay out financial tables with spacer columns holding the
@@ -193,12 +254,30 @@ def _extract_tables(section) -> tuple[list[TableRecord], int]:
             rendered = rendered.iloc[:, keep]
         rendered = _promote_header_row(rendered)
         if rendered.empty or rendered.size < TABLE_MIN_CELLS:
+            # It held data on arrival but not after the empty spacer columns
+            # were dropped, so the grid was mostly layout. Worth seeing, since
+            # it is the case most likely to be a fault in the cleanup rather
+            # than in the filing.
+            failures.append(TableFailure(
+                section_id=section.name, table_index=index,
+                kind="too few cells after dropping empty columns",
+                reason=f"only {rendered.size} cells left after dropping empty columns",
+                n_rows=int(rendered.shape[0]), n_cols=int(rendered.shape[1]),
+                html=_fragment(table),
+            ))
             continue
 
         try:
             markdown = rendered.to_markdown()
-        except Exception:
+        except Exception as error:
             logger.debug("table %d in %s could not be rendered", index, section.name)
+            failures.append(TableFailure(
+                section_id=section.name, table_index=index,
+                kind="to_markdown raised",
+                reason=f"to_markdown raised {type(error).__name__}: {error}",
+                n_rows=int(rendered.shape[0]), n_cols=int(rendered.shape[1]),
+                html=_fragment(table),
+            ))
             continue
 
         caption = str(getattr(table, "caption", "") or frame.index.name or "").strip()
@@ -217,7 +296,7 @@ def _extract_tables(section) -> tuple[list[TableRecord], int]:
                 markdown=markdown,
             )
         )
-    return records, data_tables
+    return records, data_tables, failures
 
 
 def interim_path_for(record: FilingRecord, interim_dir: Path = INTERIM_DIR) -> Path:
@@ -229,8 +308,17 @@ def interim_path_for(record: FilingRecord, interim_dir: Path = INTERIM_DIR) -> P
     return interim_dir / record.ticker / (Path(record.path).stem + ".json")
 
 
-def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> ParsedFiling:
-    """Split one downloaded filing into its Items."""
+def parse_filing(
+    record: FilingRecord,
+    project_root: Path = PROJECT_ROOT,
+    failures: list[TableFailure] | None = None,
+) -> ParsedFiling:
+    """Split one downloaded filing into its Items.
+
+    Pass ``failures`` to collect the tables that could not be rebuilt. They are
+    kept out of the returned record because their HTML is bulky and belongs to
+    diagnosing a run, not to the corpus.
+    """
     source = project_root / record.path
     if source.suffix != ".html":
         # The download stage falls back to plain text for the rare filing with
@@ -246,7 +334,12 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
     for section_id, section in document.sections.items():
         text = section.text()
         item = getattr(section, "item", None)
-        tables, n_data_tables = _extract_tables(section)
+        tables, n_data_tables, section_failures = _extract_tables(section)
+        if failures is not None:
+            failures.extend(
+                replace(failure, ticker=record.ticker, accession_no=record.accession_no)
+                for failure in section_failures
+            )
         sections.append(
             SectionRecord(
                 section_id=section_id,
@@ -315,10 +408,45 @@ def write_parsed(parsed: ParsedFiling, destination: Path) -> None:
     )
 
 
+def write_table_failures(
+    failures: list[TableFailure],
+    diagnostics_dir: Path = DIAGNOSTICS_DIR,
+) -> Path | None:
+    """Write each failed table's HTML out, one file per table.
+
+    The files sit next to an index listing the reason for each, so a run can be
+    read either by scanning the reasons or by opening the markup of one table.
+    """
+    if not failures:
+        return None
+
+    destination = diagnostics_dir / "table_failures"
+    destination.mkdir(parents=True, exist_ok=True)
+
+    index_lines = []
+    for failure in failures:
+        name = (f"{failure.ticker}_{failure.accession_no}"
+                f"_{failure.section_id}_{failure.table_index}.html")
+        (destination / name).write_text(
+            f"<!-- {failure.ticker} {failure.accession_no} {failure.section_id} "
+            f"table {failure.table_index}\n     {failure.reason}\n     "
+            f"{failure.n_rows} rows x {failure.n_cols} cols -->\n{failure.html}",
+            encoding="utf-8",
+        )
+        index_lines.append(json.dumps({
+            "file": name,
+            **{key: value for key, value in asdict(failure).items() if key != "html"},
+        }))
+
+    (destination / "index.jsonl").write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+    return destination
+
+
 def parse_all(
     records: list[FilingRecord],
     force: bool = False,
     interim_dir: Path = INTERIM_DIR,
+    failures: list[TableFailure] | None = None,
 ) -> list[ParsedFiling]:
     """Parse every filing given, carrying on if one of them fails."""
     ensure_data_dirs()
@@ -331,7 +459,7 @@ def parse_all(
             continue
 
         try:
-            parsed = parse_filing(record)
+            parsed = parse_filing(record, failures=failures)
         except Exception:
             # A single unparseable filing should not cost us the rest of the
             # corpus; the summary at the end reports how many landed.
@@ -351,7 +479,9 @@ def parse_all(
     return parsed_filings
 
 
-def _report(parsed_filings: list[ParsedFiling]) -> None:
+def _report(parsed_filings: list[ParsedFiling],
+            failures: list[TableFailure] | None = None,
+            written_to: Path | None = None) -> None:
     """Print what was parsed and, more usefully, what looks wrong with it."""
     if not parsed_filings:
         print("\nNothing new was parsed. Use --force to re-parse filings already done.")
@@ -377,6 +507,22 @@ def _report(parsed_filings: list[ParsedFiling]) -> None:
               f"({rebuilt / data_tables:.0%})")
         print(f"  {found - data_tables} more were layout wrappers holding prose, not data, "
               "and were left in the Item's text")
+
+    # Say why the rebuilds that failed did so. Without this the rate above is a
+    # bare number: it says how many tables were lost but nothing about whether
+    # the cause is one fixable pattern or twenty different ones.
+    if failures:
+        kinds: dict[str, int] = {}
+        for failure in failures:
+            kinds[failure.kind] = kinds.get(failure.kind, 0) + 1
+        plural = "table" if len(failures) == 1 else "tables"
+        print(f"  {len(failures)} {plural} could not be rebuilt:")
+        for kind, count in sorted(kinds.items(), key=lambda pair: -pair[1]):
+            print(f"    {count:>4}  {kind}")
+        if written_to:
+            print(f"  Their HTML is in {written_to}")
+        else:
+            print("  Re-run with --table-debug to write their HTML out for diagnosis")
 
     resolved = [
         (filing, section)
@@ -451,7 +597,12 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     logger.info("Parsing %d filings from the manifest", len(records))
-    _report(parse_all(records, force=args.force))
+    # Always collected, so the summary can say why rebuilds failed; only written
+    # to disk when asked, since the fragments are bulky.
+    failures: list[TableFailure] = []
+    parsed_filings = parse_all(records, force=args.force, failures=failures)
+    written_to = write_table_failures(failures) if args.table_debug else None
+    _report(parsed_filings, failures, written_to)
 
 
 if __name__ == "__main__":

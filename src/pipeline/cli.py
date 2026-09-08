@@ -49,6 +49,12 @@ def build_download_parser(description: str = "") -> argparse.ArgumentParser:
         "--limit", type=int,
         help="Keep only the N most recent filings per company. Useful for a quick test.",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="List what would be downloaded and stop, without fetching any "
+             "document or writing to the manifest. Use it to check the scope "
+             "before spending a long download on the wrong one.",
+    )
     return parser
 
 
@@ -66,6 +72,14 @@ def build_parse_parser(description: str = "") -> argparse.ArgumentParser:
     parser.add_argument(
         "--force", action="store_true",
         help="Re-parse filings that already have output in data/interim/.",
+    )
+    parser.add_argument(
+        "--table-debug", action="store_true",
+        help="Write the HTML of every table that could not be rebuilt to "
+             "data/diagnostics/table_failures/, with an index naming the reason "
+             "for each. Use it to work out why a particular table will not "
+             "convert: a merged cell and a spacer row look the same from the "
+             "outside, and only the markup tells them apart.",
     )
     parser.add_argument(
         "--verbose", action="store_true",
@@ -105,5 +119,51 @@ def build_chunk_parser(description: str = "") -> argparse.ArgumentParser:
     parser.add_argument(
         "--force", action="store_true",
         help="Re-chunk filings that already have output in data/processed/.",
+    )
+    return parser
+
+
+def build_passages_parser(description: str = "") -> argparse.ArgumentParser:
+    """Arguments for ``python -m src.pipeline passages``."""
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "--tickers", nargs="+",
+        help="Only passages from these companies.",
+    )
+    parser.add_argument(
+        "--item", nargs="+",
+        help="Only passages from these Items, for example --item 8 or --item 1A 7.",
+    )
+    parser.add_argument(
+        "--forms", nargs="+",
+        help="Only passages from these forms, for example --forms 10-K.",
+    )
+    parser.add_argument(
+        "--fiscal-years", nargs=2, type=int, metavar=("START", "END"),
+        help="Only passages from filings reporting on these fiscal years.",
+    )
+    parser.add_argument(
+        "--content-type", choices=("prose", "table"),
+        help="Only prose passages, or only rebuilt tables.",
+    )
+    parser.add_argument(
+        "--contains", metavar="TEXT",
+        help="Only passages whose text contains this, matched without regard to case.",
+    )
+    parser.add_argument(
+        "--key-items-only", action="store_true",
+        help="Only passages from the Items the project targets.",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=10, metavar="N",
+        help="Show at most N passages (default: 10). Pass 0 for all of them.",
+    )
+    parser.add_argument(
+        "--full", action="store_true",
+        help="Print each passage in full rather than its opening lines.",
+    )
+    parser.add_argument(
+        "--json", action="store_true",
+        help="Write matching passages as JSON lines, for piping into another tool.",
     )
     return parser
