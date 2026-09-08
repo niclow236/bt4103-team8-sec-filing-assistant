@@ -31,89 +31,30 @@ Item 7 would otherwise look like a retrieval failure much later on.
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
-from edgar.company_reports import TenK, TenQ
 from edgar.documents import HTMLParser, ParserConfig
 
-from .config import INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
-from .download import FilingRecord, load_manifest
+from ..config import INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
+from .cli import build_parse_parser
+from .constants import (
+    FORM_STRUCTURES,
+    INCORPORATION_FALLBACKS,
+    KEY_ITEMS,
+    STUB_CHAR_LIMIT,
+)
+from .download import load_manifest
+from .records import FilingRecord, ParsedFiling, SectionRecord
 
 logger = logging.getLogger(__name__)
-
-# The Items the project brief calls out, per form. Everything else in the
-# filing is still parsed and stored; this only marks which sections the
-# retrieval work is expected to lean on, so the summary can report on them.
-KEY_ITEMS: dict[str, set[str]] = {
-    "10-K": {"1", "1A", "7", "7A", "8"},
-    "10-Q": {"1", "2", "3"},
-}
-
-# Where an Item commonly carries a cross-reference instead of the disclosure
-# itself, and which Item actually holds the text. Oracle and NVIDIA both answer
-# Item 8 by pointing at the financial statements filed under Item 15.
-INCORPORATION_FALLBACKS: dict[str, dict[str, str]] = {
-    "10-K": {"8": "15"},
-}
-
-# Item headings that carry a cross-reference instead of the disclosure itself
-# run to a couple of sentences, while a real Item runs to thousands of
-# characters. The gap between the two is wide enough that a flat threshold
-# separates them reliably.
-STUB_CHAR_LIMIT = 500
-
-# The structures edgartools ships already name every Item, so the human-readable
-# titles used in citations come from there rather than a second list of our own
-# that could drift out of step with it.
-_STRUCTURES = {"10-K": TenK.structure, "10-Q": TenQ.structure}
-
-
-@dataclass(frozen=True)
-class SectionRecord:
-    """One Item of one filing."""
-
-    section_id: str       # e.g. "part_ii_item_7", as the parser names it
-    part: str | None      # "I", "II", ...
-    item: str | None      # "1", "1A", "7A", ...
-    title: str            # e.g. "Risk Factors"
-    text: str
-    n_chars: int
-    n_tables: int
-    is_key_section: bool
-    is_stub: bool
-    # For a stub whose text lives under a different Item, the section_id that
-    # actually holds it. Chunking reads the text from there.
-    resolved_from: str | None
-    # What the parser thought of its own work, kept so that a bad answer can be
-    # traced back to a badly detected section boundary.
-    confidence: float | None
-    detection_method: str | None
-    validated: bool
-    warnings: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class ParsedFiling:
-    """One filing, split into Items, as written to data/interim/."""
-
-    ticker: str
-    cik: int
-    company: str
-    form: str
-    filing_date: str
-    accession_no: str
-    url: str
-    source_path: str      # the raw file this was parsed from
-    sections: list[SectionRecord]
 
 
 def item_title(form: str, part: str | None, item: str | None) -> str:
     """Look up the official title of an Item, for use in citations."""
-    structure = _STRUCTURES.get(form)
+    structure = FORM_STRUCTURES.get(form)
     if structure is None or not item:
         return ""
 
@@ -294,26 +235,10 @@ def _report(parsed_filings: list[ParsedFiling]) -> None:
         print(f"  {filing.ticker} {filing.filing_date}  {item:<8} {reason}")
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--tickers", nargs="+",
-        help="Only parse these companies. Defaults to every filing in the manifest.",
-    )
-    parser.add_argument(
-        "--forms", nargs="+",
-        help="Only parse these forms, for example --forms 10-K.",
-    )
-    parser.add_argument(
-        "--force", action="store_true",
-        help="Re-parse filings that already have output in data/interim/.",
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
-    args = _parse_args(argv)
+    parser = build_parse_parser(__doc__.splitlines()[0] if __doc__ else "")
+    args = parser.parse_args(argv)
 
     records = load_manifest()
     if not records:

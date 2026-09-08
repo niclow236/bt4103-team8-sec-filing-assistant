@@ -1,8 +1,9 @@
-"""Shared paths and environment setup for the data pipeline.
+"""Project-wide paths and environment setup.
 
-Every pipeline module imports its paths from here so that no other file has to
-guess where the project root is, and so the folder layout is changed in one
-place if it ever moves.
+Every package under ``src`` imports its paths from here so that no other file
+has to guess where the project root is, and so the folder layout is changed in
+one place if it ever moves. Stage-specific values live in that stage's own
+module, for example ``src/pipeline/constants.py``.
 """
 
 from __future__ import annotations
@@ -13,9 +14,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from edgar import set_identity
 
-# config.py lives at <project root>/src/pipeline/config.py, so the root is two
-# directories up from the package that contains this file.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# config.py lives at <project root>/src/config.py, so the root is the parent of
+# the src package that contains this file.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"            # full downloaded filings (git-ignored)

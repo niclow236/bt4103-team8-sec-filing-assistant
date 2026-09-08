@@ -27,13 +27,15 @@ General-purpose LLMs can summarise filings, but their answers are not always tra
 All data comes from public SEC EDGAR filings, so no proprietary or subscription databases are needed.
 
 - Industry: technology sector only. A single industry is a deliberate choice, since tech peers share unusually similar risk-factor and MD&A language, which makes the near-duplicate retrieval problem harder and makes cross-company questions genuinely comparable.
-- Companies: 10 to 20 US-listed tech firms. Final list locked in Week 5.
-- History: 5 years of filings per firm.
+- Companies: 10 US-listed tech firms, listed in `config/companies.txt`: Apple, Microsoft, Broadcom, Alphabet, Meta, Amazon, Oracle, Salesforce, Adobe, Cisco.
+- History: filing years 2021 to 2025, so 5 filings per firm.
 - Documents: Form 10-K for the core system and all evaluation. Form 10-Q is a future extension, layered in once the 10-K pipeline is validated, and is not part of the benchmark or the comparative results.
-- Corpus size: roughly 50 to 100 filings, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
+- Corpus size: 50 filings, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
 - Key sections: Item 1 (Business), Item 1A (Risk Factors), Item 7 (MD&A), Item 8 (Financial Statements and notes), and other relevant sections.
 
-Raw filings stay out of version control (see `.gitignore`). Only a small sample is committed, and the pipeline fetches the rest.
+The year range filters on filing date rather than fiscal year. Firms that file in January or February (Alphabet, Meta, Amazon, Adobe) therefore contribute fiscal years 2020 to 2024, while the mid-year and late-year filers contribute roughly 2021 to 2025. Year-on-year questions within one company are unaffected, but a cross-company question that pins a specific fiscal year should read `filing_date` from the manifest rather than assume the years line up.
+
+Filings stay out of version control (see `.gitignore`), so each person runs the pipeline once to build their own local copy.
 
 ## Approach
 
@@ -71,7 +73,13 @@ bt4103-team8-sec-filing-assistant/
 │   ├── interim/             # parsed sections (git-ignored)
 │   └── processed/           # chunks ready for indexing (git-ignored)
 ├── src/
+│   ├── config.py            # project-wide paths, .env loading, EDGAR identity
 │   ├── pipeline/            # EDGAR download, parse, chunk
+│   │   ├── constants.py     #   corpus scope and parser thresholds
+│   │   ├── records.py       #   dataclasses passed between stages
+│   │   ├── cli.py           #   argument parsers for the pipeline commands
+│   │   ├── download.py
+│   │   └── parse.py
 │   ├── retrieval/           # BM25, dense, hybrid
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
@@ -83,7 +91,7 @@ bt4103-team8-sec-filing-assistant/
 
 ## Getting started
 
-Prerequisites are Python 3.11 or newer and Git. See `GIT_WORKFLOW.md` for Git setup and the branching workflow.
+Prerequisites are Python 3.10 or newer and Git, since both pinned dependencies require 3.10. See `GIT_WORKFLOW.md` for Git setup and the branching workflow.
 
 Clone and enter the project:
 
@@ -114,11 +122,17 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Set up environment variables, then add your API keys to the new `.env` file:
+Set up environment variables:
 
 ```bash
 cp .env.example .env      # Windows: copy .env.example .env
 ```
+
+Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
+`EDGAR_IDENTITY=Jane Tan jane@example.com`. The SEC requires every automated
+request to carry a contact string and blocks traffic without one, so the
+download stops immediately with a `MissingIdentityError` if this is blank. The
+LLM API keys further down the file are not needed until the RAG work starts.
 
 Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
@@ -165,6 +179,50 @@ Run the app once it is built:
 ```bash
 streamlit run src/app/app.py
 ```
+
+## What the pipeline produces
+
+Two of the three stages are built. Each one writes to its own folder under
+`data/`, and nothing downstream writes back into an earlier stage's folder.
+
+| Stage | Command | Reads | Writes |
+|---|---|---|---|
+| Download | `python -m src.pipeline.download` | `config/companies.txt` | `data/raw/<TICKER>/*.html`, `data/raw/manifest.jsonl` |
+| Parse | `python -m src.pipeline.parse` | the manifest and the raw HTML | `data/interim/<TICKER>/*.json` |
+| Chunk | not built yet | the interim JSON | `data/processed/` |
+
+`data/raw/manifest.jsonl` holds one JSON object per filing. It is what makes the
+download resumable, and it lets later stages see what is on disk without walking
+the folder tree or calling EDGAR again:
+
+```json
+{"ticker": "AAPL", "cik": 320193, "company": "Apple Inc.", "form": "10-K",
+ "filing_date": "2025-10-31", "accession_no": "0000320193-25-000079",
+ "url": "https://www.sec.gov/Archives/edgar/data/320193/...",
+ "path": "data/raw/AAPL/10-K_2025-10-31_0000320193-25-000079.html"}
+```
+
+`path` is written with the host's own separator, so a manifest built on Windows
+carries backslashes. Join it onto `PROJECT_ROOT` rather than splitting on `/`.
+
+Each `data/interim/<TICKER>/<filing>.json` carries the same filing metadata plus
+a `sections` list, one entry per Item:
+
+| Field | Meaning |
+|---|---|
+| `section_id` | the parser's name for the section, for example `part_ii_item_7` |
+| `part`, `item` | `"II"` and `"7"` |
+| `title` | the official Item title, used in citations |
+| `text` | the Item's text |
+| `n_chars`, `n_tables` | how big the Item is and how many tables it holds |
+| `is_key_section` | whether this is one of the Items the project targets |
+| `is_stub` | the Item parsed cleanly but holds almost no text |
+| `resolved_from` | for a stub, the `section_id` that actually holds the text |
+| `confidence`, `detection_method`, `validated`, `warnings` | what the parser thought of its own boundary detection, kept so a bad answer can be traced back to a bad split |
+
+The dataclasses behind both files live in `src/pipeline/records.py`, so a later
+stage can read a manifest line or an interim file by importing the shape alone,
+without pulling in the download or parse logic.
 
 ## Team and course
 
