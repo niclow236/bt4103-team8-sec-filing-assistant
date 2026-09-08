@@ -2,9 +2,14 @@
 
 Run it from the project root:
 
-    python -m src.pipeline.download                          # every ticker in config/companies.txt
-    python -m src.pipeline.download --forms 10-K --years 2021 2025
+    python -m src.pipeline.download                       # the whole project corpus
+    python -m src.pipeline.download --years 2019 2020     # a different year range
     python -m src.pipeline.download --tickers AAPL MSFT --limit 2
+
+With no arguments this downloads the project's agreed corpus: Form 10-K for
+filing years 2021 to 2025, for every ticker in config/companies.txt. The
+defaults live in DEFAULT_FORMS and DEFAULT_YEARS below, so the scope is set in
+one place rather than being retyped on the command line each run.
 
 Each filing is saved as its original HTML document, and one line describing it
 is appended to ``data/raw/manifest.jsonl``. The download is resumable: a filing
@@ -35,7 +40,10 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
+# The project corpus, as recorded in config/companies.txt: annual reports only,
+# over the five filing years the brief asks for. Both are overridable per run.
 DEFAULT_FORMS = ["10-K"]
+DEFAULT_YEARS = (2021, 2025)  # inclusive range of filing years
 
 
 @dataclass(frozen=True)
@@ -191,7 +199,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--years", nargs=2, type=int, metavar=("START", "END"),
-        help="Inclusive range of filing years, for example --years 2021 2025.",
+        default=list(DEFAULT_YEARS),
+        help="Inclusive range of filing years "
+             f"(default: {DEFAULT_YEARS[0]} {DEFAULT_YEARS[1]}). "
+             "Pass 0 0 to fetch every year on record.",
     )
     parser.add_argument(
         "--limit", type=int,
@@ -208,7 +219,15 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Identifying to SEC EDGAR as: %s", identity)
 
     tickers = args.tickers or read_tickers()
-    years = range(args.years[0], args.years[1] + 1) if args.years else None
+    # "--years 0 0" is the escape hatch for an unfiltered download; anything
+    # else, including the default, narrows the request to that range.
+    years = range(args.years[0], args.years[1] + 1) if any(args.years) else None
+    logger.info(
+        "Scope: forms %s, years %s, %d companies",
+        " ".join(args.forms),
+        f"{args.years[0]}-{args.years[1]}" if years else "all",
+        len(tickers),
+    )
 
     new_records = download_all(tickers, args.forms, years=years, limit=args.limit)
 
