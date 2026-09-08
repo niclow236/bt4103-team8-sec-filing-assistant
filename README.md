@@ -28,12 +28,16 @@ All data comes from public SEC EDGAR filings, so no proprietary or subscription 
 
 - Industry: technology sector only. A single industry is a deliberate choice, since tech peers share unusually similar risk-factor and MD&A language, which makes the near-duplicate retrieval problem harder and makes cross-company questions genuinely comparable.
 - Companies: 10 US-listed tech firms, listed in `config/companies.txt`: Apple, Microsoft, Broadcom, Alphabet, Meta, Amazon, Oracle, Salesforce, Adobe, Cisco.
-- History: filing years 2021 to 2025, so 5 filings per firm.
+- History: fiscal years 2021 to 2025, so 5 filings per firm.
 - Documents: Form 10-K for the core system and all evaluation. Form 10-Q is a future extension, layered in once the 10-K pipeline is validated, and is not part of the benchmark or the comparative results.
-- Corpus size: 50 filings, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
+- Corpus size: 50 filings in scope, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
 - Key sections: Item 1 (Business), Item 1A (Risk Factors), Item 7 (MD&A), Item 8 (Financial Statements and notes), and other relevant sections.
 
-The year range filters on filing date rather than fiscal year. Firms that file in January or February (Alphabet, Meta, Amazon, Adobe) therefore contribute fiscal years 2020 to 2024, while the mid-year and late-year filers contribute roughly 2021 to 2025. Year-on-year questions within one company are unaffected, but a cross-company question that pins a specific fiscal year should read `filing_date` from the manifest rather than assume the years line up.
+The scope is set in fiscal years, not filing years, because that is the axis questions are asked on. The two differ: Alphabet, Meta, Amazon and Adobe close their books in November or December and file the following January or February, so their fiscal 2025 report is a 2026 filing while Apple's is a 2025 filing. Selecting on filing date would give those four a different set of years from the other six, producing a corpus that looks complete at 5 filings per firm but cannot answer a single question across all ten.
+
+The download therefore searches EDGAR over filing years, which is how EDGAR indexes, then narrows the result to the fiscal years in scope by reading each filing's `period_of_report`. `DEFAULT_FISCAL_YEARS` sets the scope and `DEFAULT_FILING_YEARS` sets the search window, which runs one year longer to reach the December filers. Every download prints a fiscal-year coverage table naming any year that is missing a company, so a gap is seen when the corpus is built rather than inferred later from a thin answer.
+
+The corpus is rectangular: fiscal years 2021 to 2025, all 10 companies in each, 50 filings with no gaps and nothing outside the scope. `FilingRecord.fiscal_year` gives the year directly, and `iter_chunks(fiscal_years=...)` filters on it.
 
 Filings stay out of version control (see `.gitignore`), so each person runs the pipeline once to build their own local copy.
 
@@ -75,11 +79,12 @@ bt4103-team8-sec-filing-assistant/
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
 │   ├── pipeline/            # EDGAR download, parse, chunk
-│   │   ├── constants.py     #   corpus scope and parser thresholds
+│   │   ├── constants.py     #   corpus scope, parser and chunker thresholds
 │   │   ├── records.py       #   dataclasses passed between stages
 │   │   ├── cli.py           #   argument parsers for the pipeline commands
 │   │   ├── download.py
-│   │   └── parse.py
+│   │   ├── parse.py
+│   │   └── chunk.py
 │   ├── retrieval/           # BM25, dense, hybrid
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
@@ -174,6 +179,27 @@ instead of Item headings, so its MD&A cannot be located by Item boundaries at
 all, and an absent Item 7 would otherwise surface much later as an unexplained
 retrieval failure.
 
+Cut the parsed Items into the passages retrieval will search:
+
+```bash
+python -m src.pipeline.chunk                  # every filing in data/interim/
+python -m src.pipeline.chunk --tickers AAPL   # just one company
+python -m src.pipeline.chunk --budget 1500    # try a different passage size
+python -m src.pipeline.chunk --force          # re-chunk filings already done
+```
+
+This writes one JSON file per filing to `data/processed/<TICKER>/`, holding
+passages of roughly 4,000 characters. A passage never spans two Items, since a
+citation has to name the Item it came from. Paragraphs are packed whole rather
+than sliced at a character count, so passages land on sentence boundaries, and
+each one carries the nearest heading above it so a passage taken from the middle
+of Item 1A still knows which risk it sits under. Like parsing, this works only
+from files already on disk, so it is cheap to re-run as the strategy changes.
+
+`--budget` and `--overlap` are the two knobs the retrieval comparison will
+sweep, and `--key-items-only` builds a narrow index from the targeted Items
+alone, for comparison against the full one.
+
 Run the app once it is built:
 
 ```bash
@@ -182,14 +208,14 @@ streamlit run src/app/app.py
 
 ## What the pipeline produces
 
-Two of the three stages are built. Each one writes to its own folder under
-`data/`, and nothing downstream writes back into an earlier stage's folder.
+All three stages are built. Each one writes to its own folder under `data/`,
+and nothing downstream writes back into an earlier stage's folder.
 
 | Stage | Command | Reads | Writes |
 |---|---|---|---|
 | Download | `python -m src.pipeline.download` | `config/companies.txt` | `data/raw/<TICKER>/*.html`, `data/raw/manifest.jsonl` |
 | Parse | `python -m src.pipeline.parse` | the manifest and the raw HTML | `data/interim/<TICKER>/*.json` |
-| Chunk | not built yet | the interim JSON | `data/processed/` |
+| Chunk | `python -m src.pipeline.chunk` | `data/interim/<TICKER>/*.json` | `data/processed/<TICKER>/*.json` |
 
 `data/raw/manifest.jsonl` holds one JSON object per filing. It is what makes the
 download resumable, and it lets later stages see what is on disk without walking
@@ -199,11 +225,17 @@ the folder tree or calling EDGAR again:
 {"ticker": "AAPL", "cik": 320193, "company": "Apple Inc.", "form": "10-K",
  "filing_date": "2025-10-31", "accession_no": "0000320193-25-000079",
  "url": "https://www.sec.gov/Archives/edgar/data/320193/...",
- "path": "data/raw/AAPL/10-K_2025-10-31_0000320193-25-000079.html"}
+ "path": "data/raw/AAPL/10-K_2025-10-31_0000320193-25-000079.html",
+ "period_of_report": "2025-09-27"}
 ```
 
-`path` is written with the host's own separator, so a manifest built on Windows
-carries backslashes. Join it onto `PROJECT_ROOT` rather than splitting on `/`.
+`filing_date` is when the filing was lodged; `period_of_report` is the fiscal
+year it reports on. They differ by up to a year, so anything comparing companies
+by fiscal year uses the second.
+
+`path` is relative to the project root and always uses forward slashes, so a
+manifest built on Windows still resolves on a teammate's Mac. Join it onto
+`PROJECT_ROOT` to open the file.
 
 Each `data/interim/<TICKER>/<filing>.json` carries the same filing metadata plus
 a `sections` list, one entry per Item:
@@ -214,15 +246,96 @@ a `sections` list, one entry per Item:
 | `part`, `item` | `"II"` and `"7"` |
 | `title` | the official Item title, used in citations |
 | `text` | the Item's text |
-| `n_chars`, `n_tables` | how big the Item is and how many tables it holds |
+| `n_chars`, `n_tables` | how big the Item is, and how many `<table>` elements it holds |
+| `n_data_tables` | how many of those hold a grid of data rather than being a layout wrapper around a bullet point |
 | `is_key_section` | whether this is one of the Items the project targets |
-| `is_stub` | the Item parsed cleanly but holds almost no text |
+| `is_stub` | the Item is empty, or answers with a cross-reference rather than the disclosure |
 | `resolved_from` | for a stub, the `section_id` that actually holds the text |
+| `tables` | the Item's tables, rebuilt as markdown grids with their row and column labels intact |
 | `confidence`, `detection_method`, `validated`, `warnings` | what the parser thought of its own boundary detection, kept so a bad answer can be traced back to a bad split |
 
-The dataclasses behind both files live in `src/pipeline/records.py`, so a later
-stage can read a manifest line or an interim file by importing the shape alone,
-without pulling in the download or parse logic.
+Each `data/processed/<TICKER>/<filing>.json` carries the filing metadata again
+plus a `chunks` list, one entry per passage:
+
+| Field | Meaning |
+|---|---|
+| `chunk_id` | `<accession_no>_<section_id>_<index>`, unique across the corpus |
+| `section_id`, `part`, `item`, `title` | which Item the passage was cut from, for the citation |
+| `heading` | the nearest heading above the passage inside that Item |
+| `text`, `n_chars` | the passage and its size |
+| `chunk_index` | position within the Item, counting from 0 |
+| `is_key_section` | whether the Item is one the project targets, so a narrow index can be built by filtering |
+| `incorporated_into` | Items that answer with a cross-reference to this one |
+| `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
+| `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
+
+The corpus currently chunks to 10,371 passages over 50 filings: 5,231 of prose
+and 5,140 of tables, at a median of 3,507 characters. 78% carry a heading.
+
+Four things about that output are worth knowing before you build on it.
+
+An Item that answers with a cross-reference produces no passages of its own, so
+Oracle's Item 8 is empty and its Item 15 passages carry `incorporated_into:
+["8"]` instead: the text is stored once and cited from either Item.
+
+Financial tables are indexed as tables, not as prose. The extractor's plain text
+runs a balance sheet together into a column of bare numbers with the row and
+column labels stripped off, which leaves a figure like 245,122 with nothing to
+say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
+each table as a grid, and those grids are chunked separately and marked
+`content_type: "table"`, with the header repeated on every slice of a long one.
+99% of the tables that hold data rebuild cleanly, 3,648 of 3,686; where one
+cannot, its flattened copy is left in the prose, so no figure is ever lost, it
+is just harder to read.
+
+That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
+bullet points in a one-cell `<table>` to indent them, and Item 1A is written
+almost entirely that way, so 1,597 of the 5,283 `<table>` elements in the corpus
+are page formatting rather than data. Their text is already in the Item, so
+skipping them loses nothing, and counting them as failed rebuilds would put the
+figure around 69% and read as though a third of the financial statements were
+broken. Where a
+table arrives with no header row of its own, the first row is promoted to the
+header if it reads as labels rather than figures, so that every slice of a long
+table still says what its columns are. 185 passages, under 2% of the corpus,
+still show numbered columns because their source table had no header to find.
+
+An Item that is merely short is not the same as an Item that is empty. Apple
+answers Item 2 Properties in 488 characters of real fact, while Item 12 uses 303
+characters to point at the proxy statement. Only the second is skipped, and the
+test is whether the Item reads as a cross-reference rather than how long it is.
+
+The 4,000-character budget is a target rather than a hard ceiling, because a
+paragraph is never cut in half. 825 prose passages run over it, by a median of
+53 characters and at most 1,379. Table passages are capped by rows and by width
+instead, so a very wide table can reach about 9,900 characters where a single
+row plus its header already exceeds the budget.
+
+The dataclasses behind all three files live in `src/pipeline/records.py`, so a
+later stage can read a manifest line, an interim file, or a chunk by importing
+the shape alone, without pulling in the download, parse, or chunk logic.
+
+### Reading the corpus from the retrieval stage
+
+A passage is stored knowing which Item it came from, but not which company or
+year: that is held once per filing rather than repeated on all two hundred of
+its passages. Indexing needs both on one record, so `iter_chunks` does the join:
+
+```python
+from src.pipeline.chunk import iter_chunks
+
+for passage in iter_chunks(fiscal_years=range(2021, 2026)):
+    passage["text"]          # what to embed
+    passage["fiscal_year"]   # 2024, from period_of_report, not the filing date
+    passage["ticker"]        # plus company, cik, form, filing_date, url,
+    passage["item"]          # accession_no, part, title, heading, content_type
+```
+
+Every field needed to build a citation is on the record, so nothing has to go
+back to the manifest at query time. Passing `fiscal_years` is what stops a
+question like "compare these companies in FY2024" from quietly answering across
+a mix of years; `tickers` and `key_items_only` narrow it the same way, the
+latter matching the `--key-items-only` flag on the chunk command.
 
 ## Team and course
 

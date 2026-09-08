@@ -1,16 +1,23 @@
 # Companies the pipeline downloads filings for, one ticker per line.
 # Blank lines and lines starting with # are ignored.
 #
-# Scope: 10 US large-cap technology firms, Form 10-K, filing years 2021-2025.
+# Scope: 10 US large-cap technology firms, Form 10-K, FISCAL years 2021-2025.
 # That is 5 filings per company and 50 filings in total, which sits inside the
 # 10 to 30 firms and 3 to 5 years the project brief asks for.
+#
+# Fiscal years, not filing years. Adobe, Amazon, Alphabet and Meta close their
+# books in November or December and file the following January or February, so
+# selecting on the filing date would give those four a different set of years
+# from the other six. Every fiscal year here holds all ten companies, which is
+# what makes a question like "compare R&D spend in FY2024" answerable.
 #
 # Fetch the whole corpus with:
 #     python -m src.pipeline.download
 #
 # The forms and the year range are not settings in this file. They are the
-# DEFAULT_FORMS and DEFAULT_YEARS constants in src/pipeline/constants.py, so
-# change the scope there and keep the note above in step with it.
+# DEFAULT_FORMS, DEFAULT_FISCAL_YEARS and DEFAULT_FILING_YEARS constants in
+# src/pipeline/constants.py, so change the scope there and keep this note in
+# step with it.
 
 AAPL    # Apple
 MSFT    # Microsoft

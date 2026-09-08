@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -41,25 +42,182 @@ from edgar.documents import HTMLParser, ParserConfig
 from ..config import INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
 from .cli import build_parse_parser
 from .constants import (
+    EMPTY_ITEM_CHAR_LIMIT,
+    EXTRA_ITEM_TITLES,
     FORM_STRUCTURES,
     INCORPORATION_FALLBACKS,
+    INCORPORATION_PHRASES,
     KEY_ITEMS,
     STUB_CHAR_LIMIT,
+    TABLE_MIN_CELLS,
 )
 from .download import load_manifest
-from .records import FilingRecord, ParsedFiling, SectionRecord
+from .records import FilingRecord, ParsedFiling, SectionRecord, TableRecord
 
 logger = logging.getLogger(__name__)
+
+_INCORPORATION = re.compile("|".join(INCORPORATION_PHRASES), re.IGNORECASE)
 
 
 def item_title(form: str, part: str | None, item: str | None) -> str:
     """Look up the official title of an Item, for use in citations."""
-    structure = FORM_STRUCTURES.get(form)
-    if structure is None or not item:
+    if not item:
         return ""
 
-    entry = structure.get_item(f"ITEM {item}", f"PART {part}" if part else None)
-    return entry.get("Title", "") if entry else ""
+    structure = FORM_STRUCTURES.get(form)
+    if structure is not None:
+        entry = structure.get_item(f"ITEM {item}", f"PART {part}" if part else None)
+        if entry and entry.get("Title"):
+            return entry["Title"]
+
+    # Some filers use Items the standard structure does not list, such as the
+    # Item 4A several of them use for their executive officer list. Without this
+    # the Item parses fine but cites with no title at all.
+    return EXTRA_ITEM_TITLES.get(form, {}).get(item, "")
+
+
+def _is_stub_text(text: str) -> bool:
+    """Whether an Item holds nothing worth retrieving.
+
+    Two different things look alike at a glance. An Item can be genuinely empty
+    ("None.", "Not applicable."), or it can be a cross-reference that sends the
+    reader to the proxy statement or to another Item. Both should be skipped.
+
+    What must NOT be skipped is an Item that is simply short. Apple answers Item
+    2 Properties in 488 characters of real fact about Cupertino, which a length
+    threshold alone would throw away alongside the 303-character Item 12 that
+    only points at the proxy statement. So length decides only the very shortest
+    cases, and everything in between has to actually read as a cross-reference.
+    """
+    stripped = text.strip()
+    if len(stripped) < EMPTY_ITEM_CHAR_LIMIT:
+        return True
+    return len(stripped) < STUB_CHAR_LIMIT and bool(_INCORPORATION.search(stripped))
+
+
+def _format_cell(value: object) -> str:
+    """Render one table cell the way the filing writes it."""
+    if value is None:
+        return ""
+    # A whole number arrives from pandas as 245122.0; the filing prints 245,122.
+    if isinstance(value, float):
+        if value != value:          # NaN
+            return ""
+        if value == int(value):
+            return f"{int(value):,}"
+        return f"{value:,}"
+    return str(value)
+
+
+_YEAR_CELL = re.compile(r"^(19|20)\d{2}$")
+
+
+def _looks_like_label(value: str) -> bool:
+    """Is this cell a column label rather than a figure?
+
+    A year counts as a label, because "2024" heading a column of figures is
+    exactly what a financial table's header row looks like. Any other bare
+    number does not, which is what keeps a row of figures from being mistaken
+    for a header.
+    """
+    return bool(re.search(r"[A-Za-z]{3,}", value)) or bool(_YEAR_CELL.match(value))
+
+
+def _promote_header_row(rendered):
+    """Use the first row as the header where the table arrived without one.
+
+    pandas numbers the columns 0, 1, 2 when it finds no header row in the HTML.
+    A passage headed ``| 0 | 1 |`` says nothing about its figures, and a long
+    table is split across passages with its header repeated on each one, so
+    every slice after the first would otherwise carry no labels at all. Where
+    the first row is plainly the header, promoting it fixes all of them.
+    """
+    if not all(str(column).strip().isdigit() for column in rendered.columns):
+        return rendered
+    first = [str(value).strip() for value in rendered.iloc[0]]
+    filled = [value for value in first if value]
+    if len(filled) < 2 or not all(_looks_like_label(value) for value in filled):
+        return rendered
+
+    promoted = rendered.iloc[1:]
+    promoted.columns = first
+    return promoted
+
+
+def _extract_tables(section) -> tuple[list[TableRecord], int]:
+    """Lift each table out of an Item as a table, not as flattened prose.
+
+    The extractor's plain text runs a balance sheet together into a column of
+    bare numbers with the row and column labels stripped away, so "245,122"
+    arrives with nothing to say it is total revenue for 2024. Rebuilding each
+    table from its own grid keeps those labels attached.
+
+    A table that cannot be rebuilt is skipped rather than guessed at: the
+    flattened version is still in the Item's text, so nothing is lost outright.
+
+    Returns the rebuilt tables and, alongside them, how many of the Item's
+    tables held a grid of data at all. Filers wrap bullet points in a one-cell
+    table to indent them, and Item 1A is mostly built that way, so counting
+    those as tables that failed to rebuild would be counting formatting as a
+    fault.
+    """
+    records: list[TableRecord] = []
+    data_tables = 0
+    for index, table in enumerate(section.tables()):
+        try:
+            frame = table.to_dataframe()
+        except Exception:
+            logger.debug("table %d in %s could not be rebuilt", index, section.name)
+            continue
+        if frame is None or frame.empty or frame.size < TABLE_MIN_CELLS:
+            # A wrapper around a sentence, not a table. Its text is in the Item
+            # already, so it is not a rebuild that failed.
+            continue
+        data_tables += 1
+
+        # pandas renamed applymap to map in 2.1; support both.
+        formatter = getattr(frame, "map", None) or frame.applymap
+        try:
+            rendered = formatter(_format_cell)
+        except Exception:
+            logger.debug("table %d in %s could not be rendered", index, section.name)
+            continue
+
+        # Filers lay out financial tables with spacer columns holding the
+        # currency symbol or nothing at all, which arrive as empty columns that
+        # push the year headers away from their figures. Dropping the columns
+        # that hold no value anywhere puts each figure back under its own year.
+        keep = [position for position in range(rendered.shape[1])
+                if rendered.iloc[:, position].astype(str).str.strip().any()]
+        if keep:
+            rendered = rendered.iloc[:, keep]
+        rendered = _promote_header_row(rendered)
+        if rendered.empty or rendered.size < TABLE_MIN_CELLS:
+            continue
+
+        try:
+            markdown = rendered.to_markdown()
+        except Exception:
+            logger.debug("table %d in %s could not be rendered", index, section.name)
+            continue
+
+        caption = str(getattr(table, "caption", "") or frame.index.name or "").strip()
+        records.append(
+            TableRecord(
+                # Number the tables we actually kept, not their position among
+                # every table found. A table that fails to rebuild is skipped
+                # above, so counting `index` here would leave a record whose
+                # number does not address it in this list: section.tables[n]
+                # would return the wrong table, or raise.
+                table_index=len(records),
+                caption=caption,
+                headers=[str(column) for column in rendered.columns],
+                n_rows=int(rendered.shape[0]),
+                n_cols=int(rendered.shape[1]),
+                markdown=markdown,
+            )
+        )
+    return records, data_tables
 
 
 def interim_path_for(record: FilingRecord, interim_dir: Path = INTERIM_DIR) -> Path:
@@ -88,6 +246,7 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
     for section_id, section in document.sections.items():
         text = section.text()
         item = getattr(section, "item", None)
+        tables, n_data_tables = _extract_tables(section)
         sections.append(
             SectionRecord(
                 section_id=section_id,
@@ -97,13 +256,15 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
                 text=text,
                 n_chars=len(text),
                 n_tables=len(section.tables()),
+                n_data_tables=n_data_tables,
                 is_key_section=item in key_items,
-                is_stub=len(text) < STUB_CHAR_LIMIT,
+                is_stub=_is_stub_text(text),
                 resolved_from=None,  # filled in by _resolve_stubs below
                 confidence=getattr(section, "confidence", None),
                 detection_method=getattr(section, "detection_method", None),
                 validated=bool(getattr(section, "validated", False)),
                 warnings=list(getattr(section, "warnings", []) or []),
+                tables=tables,
             )
         )
 
@@ -119,6 +280,7 @@ def parse_filing(record: FilingRecord, project_root: Path = PROJECT_ROOT) -> Par
         url=record.url,
         source_path=record.path,
         sections=sections,
+        period_of_report=record.period_of_report,
     )
 
 
@@ -197,6 +359,25 @@ def _report(parsed_filings: list[ParsedFiling]) -> None:
 
     print(f"\nParsed {len(parsed_filings)} filings into {INTERIM_DIR}")
 
+    # Tables are rebuilt so their figures keep their row and column labels. One
+    # the rebuilder cannot handle is not lost, since the flattened copy stays in
+    # the Item's text, but it is worth knowing how many there were.
+    #
+    # The rate is measured against the tables that hold data, not against every
+    # <table> element. Filers wrap bullet points in a one-cell table to indent
+    # them, and Item 1A is written almost entirely that way, so measuring
+    # against the raw count would report page formatting as a failure and put
+    # the figure roughly twenty points below the truth.
+    sections = [section for filing in parsed_filings for section in filing.sections]
+    found = sum(section.n_tables for section in sections)
+    data_tables = sum(section.n_data_tables for section in sections)
+    rebuilt = sum(len(section.tables) for section in sections)
+    if data_tables:
+        print(f"  {rebuilt} of {data_tables} data tables rebuilt with their labels intact "
+              f"({rebuilt / data_tables:.0%})")
+        print(f"  {found - data_tables} more were layout wrappers holding prose, not data, "
+              "and were left in the Item's text")
+
     resolved = [
         (filing, section)
         for filing in parsed_filings
@@ -240,6 +421,15 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parse_parser(__doc__.splitlines()[0] if __doc__ else "")
     args = parser.parse_args(argv)
 
+    # edgartools narrates its section detection at INFO: which candidates it
+    # considered, which strategies it abandoned, which fallback it settled on.
+    # Lines like "Could not find actual section for mda" are a note that its
+    # first strategy missed and its second one worked, not a failure, but a
+    # screen of them reads like one. Keep its warnings, drop the commentary,
+    # and leave --verbose for when a parse actually needs diagnosing.
+    if not args.verbose:
+        logging.getLogger("edgar").setLevel(logging.WARNING)
+
     records = load_manifest()
     if not records:
         print("The manifest is empty. Run python -m src.pipeline.download first.")
@@ -251,6 +441,14 @@ def main(argv: list[str] | None = None) -> None:
     if args.forms:
         wanted_forms = set(args.forms)
         records = [record for record in records if record.form in wanted_forms]
+    if not records:
+        # Same reasoning as in chunk.main: say that the filter matched nothing,
+        # rather than letting the report suggest --force.
+        print(
+            "No downloaded filing matches those filters. "
+            "Run python -m src.pipeline.download for them first."
+        )
+        return
 
     logger.info("Parsing %d filings from the manifest", len(records))
     _report(parse_all(records, force=args.force))
