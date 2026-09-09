@@ -75,16 +75,19 @@ bt4103-team8-sec-filing-assistant/
 │   ├── sample/              # small committed sample
 │   ├── raw/                 # full filings (git-ignored)
 │   ├── interim/             # parsed sections (git-ignored)
-│   └── processed/           # chunks ready for indexing (git-ignored)
+│   ├── processed/           # chunks ready for indexing (git-ignored)
+│   └── diagnostics/         # why a run did what it did (git-ignored, on demand)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
 │   ├── pipeline/            # EDGAR download, parse, chunk
+│   │   ├── __main__.py      #   one entry point listing every command
 │   │   ├── constants.py     #   corpus scope, parser and chunker thresholds
 │   │   ├── records.py       #   dataclasses passed between stages
 │   │   ├── cli.py           #   argument parsers for the pipeline commands
 │   │   ├── download.py
 │   │   ├── parse.py
-│   │   └── chunk.py
+│   │   ├── chunk.py
+│   │   └── passages.py      #   read passages back, for spot-checking
 │   ├── retrieval/           # BM25, dense, hybrid
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
@@ -143,13 +146,20 @@ Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
 
 ```bash
+python -m src.pipeline.download --dry-run   # what would this fetch?
 python -m src.pipeline.download --limit 1   # quick test: newest 10-K each
-python -m src.pipeline.download            # the full corpus
+python -m src.pipeline.download             # the full corpus
 ```
 
 Filings land in `data/raw/<TICKER>/`, and every one is recorded in
 `data/raw/manifest.jsonl`. The download is resumable, so re-running it skips
 whatever is already on disk.
+
+`--dry-run` answers "what would this fetch?" without fetching it. It still asks
+EDGAR which filings exist, one index request per company, but downloads no
+document and writes nothing, so a mistyped ticker or a wrong year range shows up
+as a preview rather than as a long download you have to unpick from the manifest
+afterwards.
 
 Split the downloaded filings into their numbered Items:
 
@@ -208,6 +218,31 @@ from files already on disk, so it is cheap to re-run as the strategy changes.
 sweep, and `--key-items-only` builds a narrow index from the targeted Items
 alone, for comparison against the full one.
 
+Read the passages back, to see what retrieval will actually be searching:
+
+```bash
+python -m src.pipeline passages --tickers AAPL --item 7      # one company's MD&A
+python -m src.pipeline passages --contains "supply chain"    # find a phrase
+python -m src.pipeline passages --content-type table --full  # rebuilt tables in full
+python -m src.pipeline passages --item 1A --limit 0 --json   # all of them, for piping
+```
+
+This reads `data/processed/` and writes nothing. It exists because a chunking
+decision is hard to judge from the summary counts alone: whether a passage
+begins mid-sentence, whether a table kept its column labels, whether a heading
+was picked up, are all questions you have to read a passage to answer. The same
+`--tickers`, `--item`, `--fiscal-years` and `--key-items-only` filters that
+narrow an index narrow this too, so what you read is what a given index would
+hold.
+
+Every command above is also reachable through one entry point, which is the
+quickest way to see what the pipeline can do:
+
+```bash
+python -m src.pipeline              # list the commands
+python -m src.pipeline parse --help # options for one of them
+```
+
 Run the app once it is built:
 
 ```bash
@@ -224,6 +259,17 @@ and nothing downstream writes back into an earlier stage's folder.
 | Download | `python -m src.pipeline.download` | `config/companies.txt` | `data/raw/<TICKER>/*.html`, `data/raw/manifest.jsonl` |
 | Parse | `python -m src.pipeline.parse` | the manifest and the raw HTML | `data/interim/<TICKER>/*.json` |
 | Chunk | `python -m src.pipeline.chunk` | `data/interim/<TICKER>/*.json` | `data/processed/<TICKER>/*.json` |
+
+`python -m src.pipeline passages` sits outside that table on purpose: it reads
+`data/processed/` and writes nothing, so it is an inspection command rather than
+a stage.
+
+A fourth folder, `data/diagnostics/`, holds output written to explain a run
+rather than to feed the next stage, and is created only when something asks for
+it. `python -m src.pipeline.parse --table-debug` writes the HTML of every table
+that could not be rebuilt to `data/diagnostics/table_failures/`, with an index
+naming the reason for each, which is the only way to tell a merged cell from a
+spacer row.
 
 `data/raw/manifest.jsonl` holds one JSON object per filing. It is what makes the
 download resumable, and it lets later stages see what is on disk without walking
