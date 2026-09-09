@@ -2,7 +2,7 @@
 
 Run it from the project root:
 
-    python -m src.pipeline passages --item 8 --ticker AAPL
+    python -m src.pipeline passages --item 8 --tickers AAPL
     python -m src.pipeline passages --contains "going concern" --limit 3 --full
     python -m src.pipeline passages --content-type table --item 8 --json > tables.jsonl
 
@@ -21,9 +21,7 @@ from __future__ import annotations
 import json
 import textwrap
 
-from ..config import PROCESSED_DIR
 from .chunk import iter_chunks
-from .cli import build_passages_parser
 
 # How much of a passage to show when it is not printed in full. Enough to tell
 # whether the cut landed sensibly and whether the heading matches the text,
@@ -31,27 +29,36 @@ from .cli import build_passages_parser
 PREVIEW_CHARS = 400
 
 
-def select(args) -> list[dict]:
-    """Every passage matching the filters, in corpus order."""
-    fiscal_years = (
-        range(args.fiscal_years[0], args.fiscal_years[1] + 1)
-        if args.fiscal_years else None
-    )
-    wanted_items = {item.upper() for item in args.item} if args.item else None
-    wanted_forms = set(args.forms) if args.forms else None
-    needle = args.contains.lower() if args.contains else None
+def select(
+    tickers: list[str] | None = None,
+    items: list[str] | None = None,
+    forms: list[str] | None = None,
+    fiscal_years: range | list[int] | None = None,
+    content_type: str | None = None,
+    contains: str | None = None,
+    key_items_only: bool = False,
+) -> list[dict]:
+    """Every passage matching the filters, in corpus order.
+
+    The filters are named parameters rather than a parsed argument namespace, so
+    this is as usable from a notebook or the retrieval stage as from the command
+    line, which is where the filters happen to come from today.
+    """
+    wanted_items = {item.upper() for item in items} if items else None
+    wanted_forms = set(forms) if forms else None
+    needle = contains.lower() if contains else None
 
     matched = []
     for chunk in iter_chunks(
         fiscal_years=fiscal_years,
-        tickers=args.tickers,
-        key_items_only=args.key_items_only,
+        tickers=tickers,
+        key_items_only=key_items_only,
     ):
         if wanted_items and (chunk["item"] or "").upper() not in wanted_items:
             continue
         if wanted_forms and chunk["form"] not in wanted_forms:
             continue
-        if args.content_type and chunk["content_type"] != args.content_type:
+        if content_type and chunk["content_type"] != content_type:
             continue
         if needle and needle not in chunk["text"].lower():
             continue
@@ -88,27 +95,23 @@ def _show(chunk: dict, full: bool) -> None:
         print(f"... {len(text) - len(head)} more characters, use --full to see them")
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = build_passages_parser(__doc__.splitlines()[0] if __doc__ else "").parse_args(argv)
+def report(
+    matched: list[dict], limit: int = 10, full: bool = False, as_json: bool = False,
+) -> None:
+    """Print the selected passages, or write them as JSON lines.
 
-    if not any(PROCESSED_DIR.glob("*/*.json")):
-        print("data/processed/ is empty. Run python -m src.pipeline.chunk first.")
-        return
+    ``limit`` of 0 means all of them. The JSON form is one object per line and
+    carries no summary, so it can be piped into another tool unchanged.
+    """
+    shown = matched if limit == 0 else matched[:limit]
 
-    matched = select(args)
-    if not matched:
-        print("No passage matches those filters.")
-        return
-
-    shown = matched if args.limit == 0 else matched[:args.limit]
-
-    if args.json:
+    if as_json:
         for chunk in shown:
             print(json.dumps(chunk))
         return
 
     for chunk in shown:
-        _show(chunk, args.full)
+        _show(chunk, full)
 
     filings = {chunk["accession_no"] for chunk in matched}
     print(f"\n{'─' * 78}")
@@ -117,7 +120,3 @@ def main(argv: list[str] | None = None) -> None:
     print(textwrap.fill(summary, 78))
     if len(shown) < len(matched):
         print(f"Showing the first {len(shown)}. Use --limit to see more, or --limit 0 for all.")
-
-
-if __name__ == "__main__":
-    main()

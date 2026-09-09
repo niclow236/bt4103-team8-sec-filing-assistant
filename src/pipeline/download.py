@@ -2,10 +2,10 @@
 
 Run it from the project root:
 
-    python -m src.pipeline.download                            # the whole project corpus
-    python -m src.pipeline.download --fiscal-years 2019 2020   # a different year range
-    python -m src.pipeline.download --tickers AAPL MSFT --limit 2
-    python -m src.pipeline.download --dry-run                   # preview only
+    python -m src.pipeline download                            # the whole project corpus
+    python -m src.pipeline download --fiscal-years 2019 2020   # a different year range
+    python -m src.pipeline download --tickers AAPL MSFT --limit 2
+    python -m src.pipeline download --dry-run                   # preview only
 
 With no arguments this downloads the project's agreed corpus: Form 10-K for
 fiscal years 2021 to 2025, for every ticker in config/companies.txt. The
@@ -44,16 +44,7 @@ from pathlib import Path
 
 from edgar import Company
 
-from ..config import (
-    MANIFEST_FILE,
-    RAW_DIR,
-    MissingIdentityError,
-    configure_edgar,
-    ensure_data_dirs,
-    read_tickers,
-)
-from ..utils import start_run_log
-from .cli import build_download_parser
+from ..config import MANIFEST_FILE, RAW_DIR, ensure_data_dirs
 from .records import FilingRecord
 
 logger = logging.getLogger(__name__)
@@ -301,7 +292,7 @@ def report_coverage(
         print(f"  No fiscal year yet holds all {len(expected)} companies.")
 
 
-def _report_plan(planned: list[FilingRecord], expected: set[str],
+def report_plan(planned: list[FilingRecord], expected: set[str],
                  scope: range | list[int] | None, tickers: list[str]) -> None:
     """Say what a real run would download, and change nothing."""
     if not planned:
@@ -334,55 +325,3 @@ def _report_plan(planned: list[FilingRecord], expected: set[str],
     # is spent finding that out.
     report_coverage(expected, scope=scope, records=load_manifest() + planned)
     print("\nDry run: nothing was downloaded and the manifest is unchanged.")
-
-
-def main(argv: list[str] | None = None) -> None:
-    # Before basicConfig, so the log file captures log lines and not only prints.
-    log_path = start_run_log("download")
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
-    parser = build_download_parser(__doc__.splitlines()[0] if __doc__ else "")
-    args = parser.parse_args(argv)
-
-    try:
-        identity = configure_edgar()
-    except MissingIdentityError as error:
-        # An unset contact string is a setup step someone has not done yet, not
-        # a fault in the code, so print what to do about it and stop. A stack
-        # trace here would bury the one line that actually helps.
-        raise SystemExit(f"\n{error}\n") from None
-    logger.info("Identifying to SEC EDGAR as: %s", identity)
-
-    tickers = args.tickers or read_tickers()
-    # "--years 0 0" is the escape hatch for an unfiltered download; anything
-    # else, including the default, narrows the request to that range.
-    years = range(args.years[0], args.years[1] + 1) if any(args.years) else None
-    # Likewise "--fiscal-years 0 0" keeps every year a filing reports on.
-    fiscal_years = (
-        range(args.fiscal_years[0], args.fiscal_years[1] + 1)
-        if any(args.fiscal_years) else None
-    )
-    logger.info(
-        "Scope: forms %s, fiscal years %s, searched over filing years %s, %d companies",
-        " ".join(args.forms),
-        f"{args.fiscal_years[0]}-{args.fiscal_years[1]}" if fiscal_years else "all",
-        f"{args.years[0]}-{args.years[1]}" if years else "all",
-        len(tickers),
-    )
-
-    new_records = download_all(
-        tickers, args.forms, years=years, limit=args.limit, fiscal_years=fiscal_years,
-        dry_run=args.dry_run,
-    )
-
-    if args.dry_run:
-        _report_plan(new_records, set(read_tickers()), fiscal_years, tickers)
-        return
-
-    print(f"\nDownloaded {len(new_records)} new filings into {RAW_DIR}")
-    print(f"Manifest: {MANIFEST_FILE}")
-    print(f"Run log: {log_path}")
-    report_coverage(set(read_tickers()), scope=fiscal_years)
-
-
-if __name__ == "__main__":
-    main()

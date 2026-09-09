@@ -2,9 +2,9 @@
 
 Run it from the project root, after ``src.pipeline.download``:
 
-    python -m src.pipeline.parse                      # every filing in the manifest
-    python -m src.pipeline.parse --tickers AAPL MSFT  # just these companies
-    python -m src.pipeline.parse --force              # re-parse filings already done
+    python -m src.pipeline parse                      # every filing in the manifest
+    python -m src.pipeline parse --tickers AAPL MSFT  # just these companies
+    python -m src.pipeline parse --force              # re-parse filings already done
 
 A 10-K is one long HTML document, but a question is nearly always about one
 part of it: Item 1A for risks, Item 7 for management's discussion, and so on.
@@ -40,8 +40,6 @@ from pathlib import Path
 from edgar.documents import HTMLParser, ParserConfig
 
 from ..config import DIAGNOSTICS_DIR, INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
-from ..utils import start_run_log
-from .cli import build_parse_parser
 from .constants import (
     EMPTY_ITEM_CHAR_LIMIT,
     EXTRA_ITEM_TITLES,
@@ -53,7 +51,6 @@ from .constants import (
     TABLE_FRAGMENT_CHARS,
     TABLE_MIN_CELLS,
 )
-from .download import load_manifest
 from .records import FilingRecord, ParsedFiling, SectionRecord, TableRecord
 
 logger = logging.getLogger(__name__)
@@ -538,7 +535,7 @@ def parse_all(
     return parsed_filings
 
 
-def _report(parsed_filings: list[ParsedFiling],
+def report(parsed_filings: list[ParsedFiling],
             failures: list[TableFailure] | None = None,
             written_to: Path | None = None) -> None:
     """Print what was parsed and, more usefully, what looks wrong with it."""
@@ -619,53 +616,3 @@ def _report(parsed_filings: list[ParsedFiling],
     print(f"\n{len(problems)} key Items need a look:")
     for filing, item, reason in problems:
         print(f"  {filing.ticker} {filing.filing_date}  {item:<8} {reason}")
-
-
-def main(argv: list[str] | None = None) -> None:
-    # Before basicConfig, so the log file captures log lines and not only prints.
-    log_path = start_run_log("parse")
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
-    parser = build_parse_parser(__doc__.splitlines()[0] if __doc__ else "")
-    args = parser.parse_args(argv)
-
-    # edgartools narrates its section detection at INFO: which candidates it
-    # considered, which strategies it abandoned, which fallback it settled on.
-    # Lines like "Could not find actual section for mda" are a note that its
-    # first strategy missed and its second one worked, not a failure, but a
-    # screen of them reads like one. Keep its warnings, drop the commentary,
-    # and leave --verbose for when a parse actually needs diagnosing.
-    if not args.verbose:
-        logging.getLogger("edgar").setLevel(logging.WARNING)
-
-    records = load_manifest()
-    if not records:
-        print("The manifest is empty. Run python -m src.pipeline.download first.")
-        return
-
-    if args.tickers:
-        wanted = {ticker.upper() for ticker in args.tickers}
-        records = [record for record in records if record.ticker in wanted]
-    if args.forms:
-        wanted_forms = set(args.forms)
-        records = [record for record in records if record.form in wanted_forms]
-    if not records:
-        # Same reasoning as in chunk.main: say that the filter matched nothing,
-        # rather than letting the report suggest --force.
-        print(
-            "No downloaded filing matches those filters. "
-            "Run python -m src.pipeline.download for them first."
-        )
-        return
-
-    logger.info("Parsing %d filings from the manifest", len(records))
-    # Always collected, so the summary can say why rebuilds failed; only written
-    # to disk when asked, since the fragments are bulky.
-    failures: list[TableFailure] = []
-    parsed_filings = parse_all(records, force=args.force, failures=failures)
-    written_to = write_table_failures(failures) if args.table_debug else None
-    _report(parsed_filings, failures, written_to)
-    print(f"Run log: {log_path}")
-
-
-if __name__ == "__main__":
-    main()

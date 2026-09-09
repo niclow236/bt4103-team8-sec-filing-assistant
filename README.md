@@ -81,14 +81,15 @@ bt4103-team8-sec-filing-assistant/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
 │   ├── utils.py             # run logging, shared across packages
 │   ├── pipeline/            # EDGAR download, parse, chunk
-│   │   ├── __main__.py      #   one entry point listing every command
+│   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
+│   │   ├── cli.py           #   THE command line: every command and what it runs
 │   │   ├── constants.py     #   corpus scope, parser and chunker thresholds
 │   │   ├── records.py       #   dataclasses passed between stages
-│   │   ├── cli.py           #   argument parsers for the pipeline commands
-│   │   ├── download.py
-│   │   ├── parse.py
-│   │   ├── chunk.py
-│   │   └── passages.py      #   read passages back, for spot-checking
+│   │   ├── download.py      #   stage 1
+│   │   ├── parse.py         #   stage 2
+│   │   ├── chunk.py         #   stage 3
+│   │   ├── passages.py      #   read passages back, for spot-checking
+│   │   └── verify.py        #   gate: is the corpus fit to index?
 │   ├── retrieval/           # BM25, dense, hybrid
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
@@ -98,6 +99,65 @@ bt4103-team8-sec-filing-assistant/
 ├── benchmark/               # ground-truth Q&A dataset
 └── docs/                    # reports, minutes, references
 ```
+
+### How the pipeline is put together
+
+One rule decides where code goes: **`cli.py` owns the command line, and nothing
+else in `pipeline/` knows argparse exists.**
+
+```
+  python -m src.pipeline <command>
+            │
+            ▼
+  __main__.py          the module Python requires to make a package runnable,
+            │          and nothing more: it calls cli.main()
+            ▼
+  cli.py               every command, every option, and the orchestration each
+            │          one needs. Reads argv, then calls plain functions.
+            ▼
+  download.py  parse.py  chunk.py  passages.py  verify.py
+                         the work. No argparse, no argv, no main().
+            │
+            ▼
+  constants.py  records.py
+                         the values that tune the pipeline, and the dataclasses
+                         the stages pass between each other.
+```
+
+The stages expose ordinary functions with named arguments, so the same code runs
+from a notebook, from the retrieval stage, or from a test without anyone having
+to fake an argument namespace. `cli.py` is where a string typed at a shell turns
+into those arguments, and it is the only place that conversion happens.
+
+That is stricter than it was. The command line used to be spread across three
+places: a table of command descriptions in `__main__.py`, a parser builder per
+command in `cli.py`, and a `main()` in each stage that glued them together. The
+descriptions existed twice and all six had drifted from the modules they
+described, which is what a second source of truth does given time. Now a
+command's help text is read from the module docstring of whatever runs it, so
+there is nothing to keep in step.
+
+`rebuild` lives in `cli.py` rather than in a module of its own, because it is
+nothing but the other commands run in order: composition of the command line, not
+a stage of the pipeline.
+
+Each file has one job, and no two have the same one:
+
+| File | Purpose |
+|---|---|
+| `__main__.py` | the entry point Python requires, 14 lines, defers to `cli.py` |
+| `cli.py` | the command line: arguments, dispatch, and `rebuild`'s orchestration |
+| `constants.py` | corpus scope and the thresholds that tune parsing and chunking |
+| `records.py` | the frozen dataclasses each stage writes and the next one reads |
+| `download.py` | EDGAR to `data/raw/` |
+| `parse.py` | raw HTML to Items in `data/interim/` |
+| `chunk.py` | Items to passages in `data/processed/`, plus `iter_chunks` for readers |
+| `passages.py` | read passages back and print them, for spot-checking |
+| `verify.py` | the checks that decide whether the corpus is fit to index |
+
+Nothing imports in a circle. `cli` depends on the stages, `verify` and `passages`
+depend on the stages whose output they read, and the stages depend only on
+`constants` and `records`.
 
 ## Getting started
 
@@ -148,9 +208,9 @@ Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
 
 ```bash
-python -m src.pipeline.download --dry-run   # what would this fetch?
-python -m src.pipeline.download --limit 1   # quick test: newest 10-K each
-python -m src.pipeline.download             # the full corpus
+python -m src.pipeline download --dry-run   # what would this fetch?
+python -m src.pipeline download --limit 1   # quick test: newest 10-K each
+python -m src.pipeline download             # the full corpus
 ```
 
 Filings land in `data/raw/<TICKER>/`, and every one is recorded in
@@ -166,9 +226,9 @@ afterwards.
 Split the downloaded filings into their numbered Items:
 
 ```bash
-python -m src.pipeline.parse                 # every filing in the manifest
-python -m src.pipeline.parse --tickers AAPL  # just one company
-python -m src.pipeline.parse --force         # re-parse filings already done
+python -m src.pipeline parse                 # every filing in the manifest
+python -m src.pipeline parse --tickers AAPL  # just one company
+python -m src.pipeline parse --force         # re-parse filings already done
 ```
 
 This writes one JSON file per filing to `data/interim/<TICKER>/`, holding the
@@ -202,10 +262,10 @@ stage's closing summary.
 Cut the parsed Items into the passages retrieval will search:
 
 ```bash
-python -m src.pipeline.chunk                  # every filing in data/interim/
-python -m src.pipeline.chunk --tickers AAPL   # just one company
-python -m src.pipeline.chunk --budget 1500    # try a different passage size
-python -m src.pipeline.chunk --force          # re-chunk filings already done
+python -m src.pipeline chunk                  # every filing in data/interim/
+python -m src.pipeline chunk --tickers AAPL   # just one company
+python -m src.pipeline chunk --budget 1500    # try a different passage size
+python -m src.pipeline chunk --force          # re-chunk filings already done
 ```
 
 This writes one JSON file per filing to `data/processed/<TICKER>/`, holding
@@ -245,6 +305,85 @@ python -m src.pipeline              # list the commands
 python -m src.pipeline parse --help # options for one of them
 ```
 
+### Building the whole corpus in one command
+
+The three stages above are the right thing when you are working on one of them.
+For everything else, including proving the corpus can be rebuilt from nothing,
+there is one command that runs all of them and then checks the result:
+
+```bash
+python -m src.pipeline rebuild            # download, parse, chunk, then verify
+python -m src.pipeline rebuild --clean    # delete data/ first, so it starts from empty
+```
+
+It exits non-zero if the corpus does not pass, so a rebuild cannot finish quietly
+with a broken corpus. `--clean` removes `data/raw`, `data/interim` and
+`data/processed` before starting; `data/sample` and `data/diagnostics` are left
+alone. Without it the stages resume, which is faster but does not prove an empty
+folder can be filled.
+
+Measured on the fifteen-company corpus, 75 filings, over a home connection, with
+`--clean` so nothing was resumed:
+
+| Stage | Time | Notes |
+|---|---|---|
+| download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
+| parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
+| chunk | 15s | pure text processing over the parsed Items |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then eight checks over 24,000 passages |
+| **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
+
+Parse is quoted as a range because it is CPU-bound and single-threaded: the same
+75 filings took 7.9 minutes on an idle machine and 20.2 minutes on one that was
+also running other work. Plan for the upper figure. Everything else is stable.
+
+Parse dominates either way, and neither it nor chunk touches the network, so
+re-running them after a preprocessing change costs no EDGAR traffic.
+
+### Checking the corpus is fit to index
+
+```bash
+python -m src.pipeline verify
+```
+
+The stages report what they did. This asks whether the result can be trusted,
+and exits non-zero when it cannot. It is the last thing to run before handing the
+corpus to retrieval, and it takes no options: a gate you can narrow is one that
+gets narrowed until it passes.
+
+Eight checks, cheapest first:
+
+| Check | What would fail it |
+|---|---|
+| coverage | a company missing from one fiscal year, a filing counted twice, or one outside the scope |
+| stage parity | a filing that reached parse but not chunk, or a stray file no manifest line accounts for |
+| key Items | Items 1, 1A, 7, 7A or 8 absent, or a stub with nothing to resolve to |
+| chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
+| no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage |
+| passage sizes | more than 0.5% of passages past the 2,048 characters a 512-token model reads; the current settings produce 0.16% |
+| matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
+| XBRL figures findable | a figure the filing reported to EDGAR that appears in no indexed passage |
+
+The last one is the check that speaks to what the corpus is for. EDGAR publishes
+the figures each filing reported, so they serve as an answer key: a number in
+that key which appears in no passage is one no retrieval system built on this
+corpus could ever cite, however good the retriever.
+
+Because two of the checks query EDGAR, `verify` needs a network connection and
+`EDGAR_IDENTITY` even though it downloads nothing. That is deliberate. The
+strongest thing that can be said about a corpus is that it still agrees with its
+source, and a filing can be amended after you fetch it.
+
+A check that finds the corpus incomplete skips the per-file checks below it,
+since each would report the same missing filing once per filing. Those are listed
+as `SKIP` rather than left out, so a run that checked four things cannot be
+mistaken for a clean bill of health on eight.
+
+What verify does **not** fail on is imperfection the pipeline already handles: 86
+of 5,428 tables cannot be rebuilt into grids, and their flattened copy stays in
+the prose, so nothing is lost and there is nothing to fix. Those are reported as
+counts by the parse stage. A gate that fired on them would cry wolf on every run.
+
 Run the app once it is built:
 
 ```bash
@@ -258,9 +397,9 @@ and nothing downstream writes back into an earlier stage's folder.
 
 | Stage | Command | Reads | Writes |
 |---|---|---|---|
-| Download | `python -m src.pipeline.download` | `config/companies.txt` | `data/raw/<TICKER>/*.html`, `data/raw/manifest.jsonl` |
-| Parse | `python -m src.pipeline.parse` | the manifest and the raw HTML | `data/interim/<TICKER>/*.json` |
-| Chunk | `python -m src.pipeline.chunk` | `data/interim/<TICKER>/*.json` | `data/processed/<TICKER>/*.json` |
+| Download | `python -m src.pipeline download` | `config/companies.txt` | `data/raw/<TICKER>/*.html`, `data/raw/manifest.jsonl` |
+| Parse | `python -m src.pipeline parse` | the manifest and the raw HTML | `data/interim/<TICKER>/*.json` |
+| Chunk | `python -m src.pipeline chunk` | `data/interim/<TICKER>/*.json` | `data/processed/<TICKER>/*.json` |
 
 `python -m src.pipeline passages` sits outside that table on purpose: it reads
 `data/processed/` and writes nothing, so it is an inspection command rather than
@@ -268,7 +407,7 @@ a stage.
 
 A fourth folder, `data/diagnostics/`, holds output written to explain a run
 rather than to feed the next stage, and is created only when something asks for
-it. `python -m src.pipeline.parse --table-debug` writes the HTML of every table
+it. `python -m src.pipeline parse --table-debug` writes the HTML of every table
 that could not be rebuilt to `data/diagnostics/table_failures/`, with an index
 naming the reason for each, which is the only way to tell a merged cell from a
 spacer row.
