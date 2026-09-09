@@ -27,17 +27,17 @@ General-purpose LLMs can summarise filings, but their answers are not always tra
 All data comes from public SEC EDGAR filings, so no proprietary or subscription databases are needed.
 
 - Industry: technology sector only. A single industry is a deliberate choice, since tech peers share unusually similar risk-factor and MD&A language, which makes the near-duplicate retrieval problem harder and makes cross-company questions genuinely comparable.
-- Companies: 10 US-listed tech firms, listed in `config/companies.txt`: Apple, Microsoft, Broadcom, Alphabet, Meta, Amazon, Oracle, Salesforce, Adobe, Cisco.
+- Companies: 15 US-listed tech firms, listed in `config/companies.txt`: Apple, Microsoft, Broadcom, Alphabet, Meta, Amazon, Oracle, Salesforce, Adobe, Cisco, Texas Instruments, Micron, Intuit, ServiceNow, Palo Alto Networks. The list spans consumer hardware, cloud and enterprise software, semiconductors, networking and cybersecurity, so a cross-company question has something to compare rather than fifteen versions of the same business.
 - History: fiscal years 2021 to 2025, so 5 filings per firm.
 - Documents: Form 10-K for the core system and all evaluation. Form 10-Q is a future extension, layered in once the 10-K pipeline is validated, and is not part of the benchmark or the comparative results.
-- Corpus size: 50 filings in scope, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
+- Corpus size: 75 filings in scope, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
 - Key sections: Item 1 (Business), Item 1A (Risk Factors), Item 7 (MD&A), Item 8 (Financial Statements and notes), and other relevant sections.
 
-The scope is set in fiscal years, not filing years, because that is the axis questions are asked on. The two differ: Alphabet, Meta, Amazon and Adobe close their books in November or December and file the following January or February, so their fiscal 2025 report is a 2026 filing while Apple's is a 2025 filing. Selecting on filing date would give those four a different set of years from the other six, producing a corpus that looks complete at 5 filings per firm but cannot answer a single question across all ten.
+The scope is set in fiscal years, not filing years, because that is the axis questions are asked on. The two differ: Adobe, Alphabet, Amazon, Meta, ServiceNow and Texas Instruments close their books in November or December and file the following January or February, so their fiscal 2025 report is a 2026 filing while Apple's is a 2025 filing. Selecting on filing date would give those six a different set of years from the other nine, producing a corpus that looks complete at 5 filings per firm but cannot answer a single question across all fifteen.
 
 The download therefore searches EDGAR over filing years, which is how EDGAR indexes, then narrows the result to the fiscal years in scope by reading each filing's `period_of_report`. `DEFAULT_FISCAL_YEARS` sets the scope and `DEFAULT_FILING_YEARS` sets the search window, which runs one year longer to reach the December filers. Every download prints a fiscal-year coverage table naming any year that is missing a company, so a gap is seen when the corpus is built rather than inferred later from a thin answer.
 
-The corpus is rectangular: fiscal years 2021 to 2025, all 10 companies in each, 50 filings with no gaps and nothing outside the scope. `FilingRecord.fiscal_year` gives the year directly, and `iter_chunks(fiscal_years=...)` filters on it.
+The corpus is rectangular: fiscal years 2021 to 2025, all 15 companies in each, 75 filings with no gaps and nothing outside the scope. `FilingRecord.fiscal_year` gives the year directly, and `iter_chunks(fiscal_years=...)` filters on it.
 
 Filings stay out of version control (see `.gitignore`), so each person runs the pipeline once to build their own local copy.
 
@@ -75,21 +75,25 @@ bt4103-team8-sec-filing-assistant/
 │   ├── sample/              # small committed sample
 │   ├── raw/                 # full filings (git-ignored)
 │   ├── interim/             # parsed sections (git-ignored)
-│   └── processed/           # chunks ready for indexing (git-ignored)
+│   ├── processed/           # chunks ready for indexing (git-ignored)
+│   └── diagnostics/         # why a run did what it did (git-ignored, on demand)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
 │   ├── utils.py             # run logging, shared across packages
 │   ├── pipeline/            # EDGAR download, parse, chunk
+│   │   ├── __main__.py      #   one entry point listing every command
 │   │   ├── constants.py     #   corpus scope, parser and chunker thresholds
 │   │   ├── records.py       #   dataclasses passed between stages
 │   │   ├── cli.py           #   argument parsers for the pipeline commands
 │   │   ├── download.py
 │   │   ├── parse.py
-│   │   └── chunk.py
+│   │   ├── chunk.py
+│   │   └── passages.py      #   read passages back, for spot-checking
 │   ├── retrieval/           # BM25, dense, hybrid
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
 │   └── app/                 # Streamlit or Gradio UI
+├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
 ├── benchmark/               # ground-truth Q&A dataset
 └── docs/                    # reports, minutes, references
@@ -144,13 +148,20 @@ Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
 
 ```bash
+python -m src.pipeline.download --dry-run   # what would this fetch?
 python -m src.pipeline.download --limit 1   # quick test: newest 10-K each
-python -m src.pipeline.download            # the full corpus
+python -m src.pipeline.download             # the full corpus
 ```
 
 Filings land in `data/raw/<TICKER>/`, and every one is recorded in
 `data/raw/manifest.jsonl`. The download is resumable, so re-running it skips
 whatever is already on disk.
+
+`--dry-run` answers "what would this fetch?" without fetching it. It still asks
+EDGAR which filings exist, one index request per company, but downloads no
+document and writes nothing, so a mistyped ticker or a wrong year range shows up
+as a preview rather than as a long download you have to unpick from the manifest
+afterwards.
 
 Split the downloaded filings into their numbered Items:
 
@@ -174,11 +185,19 @@ follows, so the passage is stored once rather than copied into both Items.
 
 The run ends with anything left over: a key Item that is missing from the
 filing, still empty with nothing to fall back on, or flagged by the parser.
-This matters when choosing companies. Intel was dropped from the ticker list
-because it files a narratively organised 10-K with a cross-reference index
-instead of Item headings, so its MD&A cannot be located by Item boundaries at
-all, and an absent Item 7 would otherwise surface much later as an unexplained
-retrieval failure.
+This matters when choosing companies, and it is what settles the ticker list.
+Intel was dropped because it files a narratively organised 10-K with a
+cross-reference index instead of Item headings, so its MD&A cannot be located by
+Item boundaries at all, and an absent Item 7 would otherwise surface much later
+as an unexplained retrieval failure. IBM was dropped for the same reason when
+the list grew to fifteen: it answers Items 7, 7A and 8 with a pointer to an
+exhibit filed alongside the 10-K, leaving 212 characters where the MD&A should
+be. Applied Materials and Qualcomm fail more quietly, which is worse. Applied
+Materials' Item 8 stops after 8,650 characters, so the financial statements are
+simply absent; Qualcomm's Item 1 runs to 200,000 characters in one year because
+the Item 1A boundary is missed, so its risk factors are indexed under the
+citation for Item 1. Neither shows up as an error at download time, only as this
+stage's closing summary.
 
 Cut the parsed Items into the passages retrieval will search:
 
@@ -201,6 +220,31 @@ from files already on disk, so it is cheap to re-run as the strategy changes.
 sweep, and `--key-items-only` builds a narrow index from the targeted Items
 alone, for comparison against the full one.
 
+Read the passages back, to see what retrieval will actually be searching:
+
+```bash
+python -m src.pipeline passages --tickers AAPL --item 7      # one company's MD&A
+python -m src.pipeline passages --contains "supply chain"    # find a phrase
+python -m src.pipeline passages --content-type table --full  # rebuilt tables in full
+python -m src.pipeline passages --item 1A --limit 0 --json   # all of them, for piping
+```
+
+This reads `data/processed/` and writes nothing. It exists because a chunking
+decision is hard to judge from the summary counts alone: whether a passage
+begins mid-sentence, whether a table kept its column labels, whether a heading
+was picked up, are all questions you have to read a passage to answer. The same
+`--tickers`, `--item`, `--fiscal-years` and `--key-items-only` filters that
+narrow an index narrow this too, so what you read is what a given index would
+hold.
+
+Every command above is also reachable through one entry point, which is the
+quickest way to see what the pipeline can do:
+
+```bash
+python -m src.pipeline              # list the commands
+python -m src.pipeline parse --help # options for one of them
+```
+
 Run the app once it is built:
 
 ```bash
@@ -217,6 +261,17 @@ and nothing downstream writes back into an earlier stage's folder.
 | Download | `python -m src.pipeline.download` | `config/companies.txt` | `data/raw/<TICKER>/*.html`, `data/raw/manifest.jsonl` |
 | Parse | `python -m src.pipeline.parse` | the manifest and the raw HTML | `data/interim/<TICKER>/*.json` |
 | Chunk | `python -m src.pipeline.chunk` | `data/interim/<TICKER>/*.json` | `data/processed/<TICKER>/*.json` |
+
+`python -m src.pipeline passages` sits outside that table on purpose: it reads
+`data/processed/` and writes nothing, so it is an inspection command rather than
+a stage.
+
+A fourth folder, `data/diagnostics/`, holds output written to explain a run
+rather than to feed the next stage, and is created only when something asks for
+it. `python -m src.pipeline.parse --table-debug` writes the HTML of every table
+that could not be rebuilt to `data/diagnostics/table_failures/`, with an index
+naming the reason for each, which is the only way to tell a merged cell from a
+spacer row.
 
 `data/raw/manifest.jsonl` holds one JSON object per filing. It is what makes the
 download resumable, and it lets later stages see what is on disk without walking
@@ -270,8 +325,8 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 16,264 passages over 50 filings: 12,206 of prose
-and 4,058 of tables, at a median of 1,472 characters. 86% carry a heading.
+The corpus currently chunks to 23,958 passages over 75 filings: 17,957 of prose
+and 6,001 of tables, at a median of 1,472 characters. 86% carry a heading.
 
 Four things about that output are worth knowing before you build on it.
 
@@ -285,16 +340,16 @@ column labels stripped off, which leaves a figure like 245,122 with nothing to
 say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
-99% of the tables that hold data rebuild cleanly, 3,648 of 3,686; where one
+98% of the tables that hold data rebuild cleanly, 5,342 of 5,428; where one
 cannot, its flattened copy is left in the prose, so no figure is ever lost, it
 is just harder to read.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
-almost entirely that way, so 1,597 of the 5,283 `<table>` elements in the corpus
+almost entirely that way, so 3,121 of the 8,549 `<table>` elements in the corpus
 are page formatting rather than data. Their text is already in the Item, so
 skipping them loses nothing, and counting them as failed rebuilds would put the
-figure around 69% and read as though a third of the financial statements were
+figure around 62% and read as though a third of the financial statements were
 broken. Where a
 table arrives with no header row of its own, the first row is promoted to the
 header if it reads as labels rather than figures, so that every piece of a split
@@ -329,10 +384,18 @@ limit most sentence-transformer models impose. Four things keep passages there:
 - Cells are rendered without alignment padding. Padding would be the largest
   single item in a wide table and carries no meaning to a model reading it.
 
-The result is that **0.12% of passages exceed 2,048 characters, by at most 42
-characters**, and no table passage exceeds it at all. Before this work the figure
-was 6.6%, and the widest table passage was 9,907 characters, most of which a
-512-token model would have discarded in silence.
+The result is that **0.16% of passages exceed 2,048 characters, 38 of 23,958**.
+Before this work the figure was 6.6% and the widest table passage ran to 9,907
+characters, most of which a 512-token model would have discarded in silence.
+
+Twenty-one of the 38 are prose, over by at most 64 characters, which is the
+paragraph rule doing what it should. The other seventeen are the one case none
+of the four rules above can reach: Intuit's exhibit index, where a single cell
+holds a whole exhibit description and runs past the budget on its own. Splitting
+by rows or by columns cannot make a passage smaller than one cell, so these top
+out at 2,954 characters. They are exhibit listings rather than disclosure, so
+nothing answerable is being truncated, but a table that cannot be split below
+the window is the shape to watch for if the corpus grows.
 
 `CHUNK_CHAR_MINIMUM` sets how far a passage may run past the budget, since a
 passage is closed only once it is over that minimum and one more paragraph can
