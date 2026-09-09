@@ -27,17 +27,17 @@ General-purpose LLMs can summarise filings, but their answers are not always tra
 All data comes from public SEC EDGAR filings, so no proprietary or subscription databases are needed.
 
 - Industry: technology sector only. A single industry is a deliberate choice, since tech peers share unusually similar risk-factor and MD&A language, which makes the near-duplicate retrieval problem harder and makes cross-company questions genuinely comparable.
-- Companies: 10 US-listed tech firms, listed in `config/companies.txt`: Apple, Microsoft, Broadcom, Alphabet, Meta, Amazon, Oracle, Salesforce, Adobe, Cisco.
+- Companies: 15 US-listed tech firms, listed in `config/companies.txt`: Apple, Microsoft, Broadcom, Alphabet, Meta, Amazon, Oracle, Salesforce, Adobe, Cisco, Texas Instruments, Micron, Intuit, ServiceNow, Palo Alto Networks. The list spans consumer hardware, cloud and enterprise software, semiconductors, networking and cybersecurity, so a cross-company question has something to compare rather than fifteen versions of the same business.
 - History: fiscal years 2021 to 2025, so 5 filings per firm.
 - Documents: Form 10-K for the core system and all evaluation. Form 10-Q is a future extension, layered in once the 10-K pipeline is validated, and is not part of the benchmark or the comparative results.
-- Corpus size: 50 filings in scope, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
+- Corpus size: 75 filings in scope, small enough to index on a laptop and large enough for meaningful retrieval evaluation.
 - Key sections: Item 1 (Business), Item 1A (Risk Factors), Item 7 (MD&A), Item 8 (Financial Statements and notes), and other relevant sections.
 
-The scope is set in fiscal years, not filing years, because that is the axis questions are asked on. The two differ: Alphabet, Meta, Amazon and Adobe close their books in November or December and file the following January or February, so their fiscal 2025 report is a 2026 filing while Apple's is a 2025 filing. Selecting on filing date would give those four a different set of years from the other six, producing a corpus that looks complete at 5 filings per firm but cannot answer a single question across all ten.
+The scope is set in fiscal years, not filing years, because that is the axis questions are asked on. The two differ: Adobe, Alphabet, Amazon, Meta, ServiceNow and Texas Instruments close their books in November or December and file the following January or February, so their fiscal 2025 report is a 2026 filing while Apple's is a 2025 filing. Selecting on filing date would give those six a different set of years from the other nine, producing a corpus that looks complete at 5 filings per firm but cannot answer a single question across all fifteen.
 
 The download therefore searches EDGAR over filing years, which is how EDGAR indexes, then narrows the result to the fiscal years in scope by reading each filing's `period_of_report`. `DEFAULT_FISCAL_YEARS` sets the scope and `DEFAULT_FILING_YEARS` sets the search window, which runs one year longer to reach the December filers. Every download prints a fiscal-year coverage table naming any year that is missing a company, so a gap is seen when the corpus is built rather than inferred later from a thin answer.
 
-The corpus is rectangular: fiscal years 2021 to 2025, all 10 companies in each, 50 filings with no gaps and nothing outside the scope. `FilingRecord.fiscal_year` gives the year directly, and `iter_chunks(fiscal_years=...)` filters on it.
+The corpus is rectangular: fiscal years 2021 to 2025, all 15 companies in each, 75 filings with no gaps and nothing outside the scope. `FilingRecord.fiscal_year` gives the year directly, and `iter_chunks(fiscal_years=...)` filters on it.
 
 Filings stay out of version control (see `.gitignore`), so each person runs the pipeline once to build their own local copy.
 
@@ -173,11 +173,19 @@ follows, so the passage is stored once rather than copied into both Items.
 
 The run ends with anything left over: a key Item that is missing from the
 filing, still empty with nothing to fall back on, or flagged by the parser.
-This matters when choosing companies. Intel was dropped from the ticker list
-because it files a narratively organised 10-K with a cross-reference index
-instead of Item headings, so its MD&A cannot be located by Item boundaries at
-all, and an absent Item 7 would otherwise surface much later as an unexplained
-retrieval failure.
+This matters when choosing companies, and it is what settles the ticker list.
+Intel was dropped because it files a narratively organised 10-K with a
+cross-reference index instead of Item headings, so its MD&A cannot be located by
+Item boundaries at all, and an absent Item 7 would otherwise surface much later
+as an unexplained retrieval failure. IBM was dropped for the same reason when
+the list grew to fifteen: it answers Items 7, 7A and 8 with a pointer to an
+exhibit filed alongside the 10-K, leaving 212 characters where the MD&A should
+be. Applied Materials and Qualcomm fail more quietly, which is worse. Applied
+Materials' Item 8 stops after 8,650 characters, so the financial statements are
+simply absent; Qualcomm's Item 1 runs to 200,000 characters in one year because
+the Item 1A boundary is missed, so its risk factors are indexed under the
+citation for Item 1. Neither shows up as an error at download time, only as this
+stage's closing summary.
 
 Cut the parsed Items into the passages retrieval will search:
 
@@ -269,8 +277,8 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 10,371 passages over 50 filings: 5,231 of prose
-and 5,140 of tables, at a median of 3,507 characters. 78% carry a heading.
+The corpus currently chunks to 15,334 passages over 75 filings: 7,719 of prose
+and 7,615 of tables, at a median of 3,508 characters. 78% carry a heading.
 
 Four things about that output are worth knowing before you build on it.
 
@@ -284,21 +292,21 @@ column labels stripped off, which leaves a figure like 245,122 with nothing to
 say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
-99% of the tables that hold data rebuild cleanly, 3,648 of 3,686; where one
+98% of the tables that hold data rebuild cleanly, 5,342 of 5,428; where one
 cannot, its flattened copy is left in the prose, so no figure is ever lost, it
 is just harder to read.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
-almost entirely that way, so 1,597 of the 5,283 `<table>` elements in the corpus
+almost entirely that way, so 3,121 of the 8,549 `<table>` elements in the corpus
 are page formatting rather than data. Their text is already in the Item, so
 skipping them loses nothing, and counting them as failed rebuilds would put the
-figure around 69% and read as though a third of the financial statements were
-broken. Where a
-table arrives with no header row of its own, the first row is promoted to the
-header if it reads as labels rather than figures, so that every slice of a long
-table still says what its columns are. 185 passages, under 2% of the corpus,
-still show numbered columns because their source table had no header to find.
+figure around 62% and read as though a third of the financial statements were
+broken. Where a table arrives with no header row of its own, the first row is
+promoted to the header if it reads as labels rather than figures, so that every
+slice of a long table still says what its columns are. 761 passages, 5% of the
+corpus, still head their columns with a run of positional numbers because their
+source table had no header row to find and no first row that read as labels.
 
 An Item that is merely short is not the same as an Item that is empty. Apple
 answers Item 2 Properties in 488 characters of real fact, while Item 12 uses 303
@@ -306,10 +314,12 @@ characters to point at the proxy statement. Only the second is skipped, and the
 test is whether the Item reads as a cross-reference rather than how long it is.
 
 The 4,000-character budget is a target rather than a hard ceiling, because a
-paragraph is never cut in half. 825 prose passages run over it, by a median of
-53 characters and at most 1,379. Table passages are capped by rows and by width
-instead, so a very wide table can reach about 9,900 characters where a single
-row plus its header already exceeds the budget.
+paragraph is never cut in half. 1,186 prose passages run over it, by a median
+of 53 characters. The longest overshoots by 7,755, and is the one shape that
+does so by more than a paragraph: an exhibit index that could not be rebuilt as
+a table, so it stayed in the prose as one unbreakable block. Table passages are
+capped by rows and by width instead, so a very wide table can reach about 9,900
+characters where a single row plus its header already exceeds the budget.
 
 The dataclasses behind all three files live in `src/pipeline/records.py`, so a
 later stage can read a manifest line, an interim file, or a chunk by importing

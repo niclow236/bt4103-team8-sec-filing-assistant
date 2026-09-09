@@ -16,13 +16,14 @@ from edgar.company_reports import TenK, TenQ
 #
 # The scope is set in FISCAL years rather than filing years, because that is the
 # axis every question is asked on: "revenue in FY2024" has to mean the same year
-# for all ten companies or the answer is not comparable. The two axes do not
-# line up. Adobe, Amazon, Alphabet and Meta close their books in November or
-# December and file the following January or February, so their fiscal 2025
-# report is a 2026 filing, while Apple's fiscal 2025 report is a 2025 filing.
-# Selecting on filing year would mix fiscal 2020 into one end of the corpus and
-# drop fiscal 2025 from the other, leaving a set that looks complete at five
-# filings per company but cannot answer a single question across all ten.
+# for all fifteen companies or the answer is not comparable. The two axes do not
+# line up. Adobe, Alphabet, Amazon, Meta, ServiceNow and Texas Instruments close
+# their books in November or December and file the following January or
+# February, so their fiscal 2025 report is a 2026 filing, while Apple's fiscal
+# 2025 report is a 2025 filing. Selecting on filing year would mix fiscal 2020
+# into one end of the corpus and drop fiscal 2025 from the other, leaving a set
+# that looks complete at five filings per company but cannot answer a single
+# question across all fifteen.
 DEFAULT_FORMS = ["10-K"]
 DEFAULT_FISCAL_YEARS = (2021, 2025)  # inclusive, and the scope of the corpus
 

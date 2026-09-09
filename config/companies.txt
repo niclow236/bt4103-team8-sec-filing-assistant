@@ -1,15 +1,25 @@
 # Companies the pipeline downloads filings for, one ticker per line.
 # Blank lines and lines starting with # are ignored.
 #
-# Scope: 10 US large-cap technology firms, Form 10-K, FISCAL years 2021-2025.
-# That is 5 filings per company and 50 filings in total, which sits inside the
+# Scope: 15 US large-cap technology firms, Form 10-K, FISCAL years 2021-2025.
+# That is 5 filings per company and 75 filings in total, which sits inside the
 # 10 to 30 firms and 3 to 5 years the project brief asks for.
 #
-# Fiscal years, not filing years. Adobe, Amazon, Alphabet and Meta close their
-# books in November or December and file the following January or February, so
-# selecting on the filing date would give those four a different set of years
-# from the other six. Every fiscal year here holds all ten companies, which is
-# what makes a question like "compare R&D spend in FY2024" answerable.
+# Fiscal years, not filing years. Adobe, Alphabet, Amazon, Meta, ServiceNow and
+# Texas Instruments close their books in November or December and file the
+# following January or February, so selecting on the filing date would give
+# those six a different set of years from the other nine. Every fiscal year here
+# holds all fifteen companies, which is what makes a question like "compare R&D
+# spend in FY2024" answerable.
+#
+# A company earns its place by parsing, not by market capitalisation. Four
+# large-cap names were tried and dropped because their filings cannot be split
+# into citable Items: Intel and IBM answer Items 7 and 8 with a cross-reference
+# to a document filed elsewhere, with nothing in the 10-K to fall back on;
+# Applied Materials' Item 8 truncates to 8,650 characters, losing the financial
+# statements; and Qualcomm's Item 1 runs to 200,000 characters in FY2024 because
+# the Item 1A boundary is missed, so its risk factors land under the wrong
+# citation. NVIDIA and AMD were dropped earlier for the same class of reason.
 #
 # Fetch the whole corpus with:
 #     python -m src.pipeline.download
@@ -29,3 +39,8 @@ ORCL    # Oracle
 CRM     # Salesforce
 ADBE    # Adobe
 CSCO    # Cisco Systems
+TXN     # Texas Instruments
+MU      # Micron Technology
+INTU    # Intuit
+NOW     # ServiceNow
+PANW    # Palo Alto Networks
