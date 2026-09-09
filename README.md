@@ -91,6 +91,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
 │   ├── retrieval/           # BM25, dense, hybrid
+│   │   └── records.py       #   what a retriever returns and what an index says of itself
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
 │   └── app/                 # Streamlit or Gradio UI
