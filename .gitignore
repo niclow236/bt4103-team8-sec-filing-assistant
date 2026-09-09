@@ -246,3 +246,6 @@ chroma/
 Thumbs.db
 .vscode/
 .idea/
+# Terminal output saved by src/utils.py run logging. Records of one machine
+# run, not shared source.
+logs/

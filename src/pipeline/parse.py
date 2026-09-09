@@ -40,6 +40,7 @@ from pathlib import Path
 from edgar.documents import HTMLParser, ParserConfig
 
 from ..config import DIAGNOSTICS_DIR, INTERIM_DIR, PROJECT_ROOT, ensure_data_dirs
+from ..utils import start_run_log
 from .cli import build_parse_parser
 from .constants import (
     EMPTY_ITEM_CHAR_LIMIT,
@@ -182,6 +183,54 @@ def _fragment(table) -> str:
     return html[:TABLE_FRAGMENT_CHARS] + f"\n<!-- truncated at {TABLE_FRAGMENT_CHARS} chars -->"
 
 
+_THOUSANDS = re.compile(r"^(\d{1,3}),(\d{3})$")
+
+
+def _uncomma_year_columns(grid: list[list[str]]) -> None:
+    """Undo the thousands separator in a column that is a run of years.
+
+    ``to_dataframe`` hands a year back as the number 2026, indistinguishable from
+    2,026 of anything, and _format_cell then punctuates it as money. Debt and
+    lease maturity schedules therefore list "2,026" where the filing says "2026".
+    That is wrong on its face, and it also stops a search for the year from
+    matching the row it belongs to, which is the part that costs retrieval.
+
+    A column is rewritten only when at least three of its values form a run of
+    consecutive years. Amounts do not climb by exactly one across three rows,
+    so a column of figures cannot be mistaken for one of years.
+    """
+    width = max((len(row) for row in grid), default=0)
+    for column in range(width):
+        positions, years = [], []
+        for index, row in enumerate(grid):
+            if column >= len(row):
+                continue
+            match = _THOUSANDS.match(row[column].strip())
+            if match:
+                positions.append(index)
+                years.append(int(match.group(1) + match.group(2)))
+
+        if len(years) < 3 or not all(1990 <= year <= 2100 for year in years):
+            continue
+        if any(later - earlier != 1 for earlier, later in zip(years, years[1:])):
+            continue
+        for index, year in zip(positions, years):
+            grid[index][column] = str(year)
+
+
+def _clean_cell(value: object) -> str:
+    """Flatten one cell to a single line of text.
+
+    Filers wrap a long column label across lines, and the newline survives into
+    the cell. A grid cell holding a newline breaks the row it belongs to when the
+    table is rendered, splitting one row across two lines and leaving the cells
+    after it under the wrong headers. A pipe does the same, so it is escaped
+    rather than left to close the cell early.
+    """
+    text = "" if value is None else str(value)
+    return " ".join(text.split()).replace("|", r"\|")
+
+
 def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]]:
     """Lift each table out of an Item as a table, not as flattened prose.
 
@@ -267,14 +316,24 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
             ))
             continue
 
+        # The grid, not a rendered table: the row labels sit in the frame's index,
+        # so they are moved into a first column and the header gains a cell above
+        # them. Every row is then the same width as the header and can be indexed
+        # by column, which is what lets the chunker split a table too wide to fit.
         try:
-            markdown = rendered.to_markdown()
+            header = [_clean_cell(rendered.index.name)]
+            header += [_clean_cell(column) for column in rendered.columns]
+            grid = [
+                [_clean_cell(label)] + [_clean_cell(value) for value in row]
+                for label, row in zip(rendered.index, rendered.to_numpy().tolist())
+            ]
+            _uncomma_year_columns(grid)
         except Exception as error:
             logger.debug("table %d in %s could not be rendered", index, section.name)
             failures.append(TableFailure(
                 section_id=section.name, table_index=index,
-                kind="to_markdown raised",
-                reason=f"to_markdown raised {type(error).__name__}: {error}",
+                kind="grid build raised",
+                reason=f"building the grid raised {type(error).__name__}: {error}",
                 n_rows=int(rendered.shape[0]), n_cols=int(rendered.shape[1]),
                 html=_fragment(table),
             ))
@@ -290,10 +349,10 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
                 # would return the wrong table, or raise.
                 table_index=len(records),
                 caption=caption,
-                headers=[str(column) for column in rendered.columns],
-                n_rows=int(rendered.shape[0]),
-                n_cols=int(rendered.shape[1]),
-                markdown=markdown,
+                headers=header,
+                rows=grid,
+                n_rows=len(grid),
+                n_cols=len(header),
             )
         )
     return records, data_tables, failures
@@ -563,6 +622,8 @@ def _report(parsed_filings: list[ParsedFiling],
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Before basicConfig, so the log file captures log lines and not only prints.
+    log_path = start_run_log("parse")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     parser = build_parse_parser(__doc__.splitlines()[0] if __doc__ else "")
     args = parser.parse_args(argv)
@@ -603,6 +664,7 @@ def main(argv: list[str] | None = None) -> None:
     parsed_filings = parse_all(records, force=args.force, failures=failures)
     written_to = write_table_failures(failures) if args.table_debug else None
     _report(parsed_filings, failures, written_to)
+    print(f"Run log: {log_path}")
 
 
 if __name__ == "__main__":

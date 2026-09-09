@@ -52,6 +52,7 @@ from ..config import (
     ensure_data_dirs,
     read_tickers,
 )
+from ..utils import start_run_log
 from .cli import build_download_parser
 from .records import FilingRecord
 
@@ -336,6 +337,8 @@ def _report_plan(planned: list[FilingRecord], expected: set[str],
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Before basicConfig, so the log file captures log lines and not only prints.
+    log_path = start_run_log("download")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     parser = build_download_parser(__doc__.splitlines()[0] if __doc__ else "")
     args = parser.parse_args(argv)
@@ -377,6 +380,7 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"\nDownloaded {len(new_records)} new filings into {RAW_DIR}")
     print(f"Manifest: {MANIFEST_FILE}")
+    print(f"Run log: {log_path}")
     report_coverage(set(read_tickers()), scope=fiscal_years)
 
 

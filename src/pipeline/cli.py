@@ -109,12 +109,16 @@ def build_chunk_parser(description: str = "") -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--budget", type=int, default=CHUNK_CHAR_BUDGET, metavar="CHARS",
-        help=f"Characters per passage (default: {CHUNK_CHAR_BUDGET}).",
+        help="Characters per passage, not tokens "
+             f"(default: {CHUNK_CHAR_BUDGET} characters, about "
+             f"{CHUNK_CHAR_BUDGET // 4} tokens of English prose).",
     )
     parser.add_argument(
         "--overlap", type=int, default=CHUNK_CHAR_OVERLAP, metavar="CHARS",
-        help="Characters carried from one passage into the next "
-             f"(default: {CHUNK_CHAR_OVERLAP}).",
+        help="Characters carried from one passage into the next, not tokens "
+             f"(default: {CHUNK_CHAR_OVERLAP} characters). Whole paragraphs "
+             "are moved, so this is a budget for the carried tail rather than "
+             "an exact overlap.",
     )
     parser.add_argument(
         "--force", action="store_true",

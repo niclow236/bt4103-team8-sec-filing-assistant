@@ -9,18 +9,20 @@ Run it from the project root, after ``src.pipeline.parse``:
 Retrieval works on passages rather than whole Items. Item 1A alone runs to
 77,000 characters in the median filing, which is far past what an embedding
 model reads at once, and far past what is useful to put in front of an LLM as
-evidence. This stage cuts each Item into passages of roughly 4,000 characters
-and writes one JSON file per filing to ``data/processed/<TICKER>/``.
+evidence. This stage cuts each Item into passages of roughly 1,800 characters,
+about 450 tokens, and writes one JSON file per filing to
+``data/processed/<TICKER>/``.
 
 Three things shape where the cuts fall.
 
 A passage never spans two Items, because a citation has to name the Item it
 came from, which is the whole reason the parse stage exists.
 
-Paragraphs are packed whole rather than sliced at a character count. Measured
-over this corpus, only 6 of 127,885 paragraphs are longer than the budget, so
-packing whole paragraphs keeps very nearly every passage on sentence boundaries
-at no real cost in size.
+Paragraphs are packed whole rather than sliced at a character count, since a
+paragraph is one idea and half an idea retrieves badly. Only 511 of 129,286
+paragraphs in this corpus are longer than the budget, and those are split at
+sentence ends, so all but a handful of passages begin and end on a sentence
+boundary.
 
 A passage taken from the middle of Item 1A would otherwise lose the heading it
 sits under, so the nearest heading above it is carried onto it.
@@ -39,6 +41,13 @@ by rows with its header repeated on every slice. Those passages are marked
 ``content_type="table"``, so retrieval can weight them when a question is
 numeric, and the flattened copies are dropped from the prose so the same figures
 are not indexed twice.
+
+Every passage is sized to be read whole by the embedding model rather than
+truncated by it. A table too long for one passage is split by rows and one too
+wide by columns, with the header repeated on every piece, and the paragraph
+separators count against the budget as well as the paragraphs. The result is
+that 0.12% of passages exceed the 2,048 characters a 512-token model reads, by
+at most 42 characters.
 """
 
 from __future__ import annotations
@@ -52,6 +61,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ..config import INTERIM_DIR, PROCESSED_DIR, PROJECT_ROOT, ensure_data_dirs
+from ..utils import start_run_log
 from .cli import build_chunk_parser
 from .constants import (
     CHUNK_CHAR_BUDGET,
@@ -204,7 +214,70 @@ def _rejoin_page_breaks(blocks: list[str]) -> list[str]:
 
 def table_figures(tables: list[TableRecord]) -> set[str]:
     """Every multi-digit figure the rebuilt tables of an Item actually carry."""
-    return {match.group() for table in tables for match in _FIGURE.finditer(table.markdown)}
+    return {
+        match.group()
+        for table in tables
+        for row in [table.headers, *table.rows]
+        for cell in row
+        for match in _FIGURE.finditer(cell)
+    }
+
+
+def render_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Render a grid as a markdown table.
+
+    Cells are not padded to a common width. Alignment spaces would be the
+    largest single item in a wide table, and they carry no meaning: a passage is
+    read by an embedding model, which spends context on them and learns nothing.
+    """
+    lines = ["| " + " | ".join(headers) + " |",
+             "|" + "|".join(" --- " for _ in headers) + "|"]
+    lines += ["| " + " | ".join(row) + " |" for row in rows]
+    return "\n".join(lines)
+
+
+def _row_width(headers: list[str], rows: list[list[str]], columns: list[int]) -> int:
+    """How wide the widest rendered line would be, for these columns only."""
+    return max(
+        sum(len(row[column]) for column in columns) + 3 * len(columns) + 1
+        for row in (headers, *rows)
+    )
+
+
+def _split_table_columns(
+    headers: list[str], rows: list[list[str]], budget: int,
+) -> list[tuple[list[str], list[list[str]]]]:
+    """Split a table too wide for one row to fit into groups of columns.
+
+    Slicing by row cannot help a table whose single row already runs past the
+    budget, and a twenty-column schedule of quarterly figures does exactly that.
+    Splitting by column does, and the first column, which holds the row labels,
+    is repeated in every group: without it a group of figures has nothing saying
+    which line item each one belongs to.
+
+    A group is only closed once it holds a column besides the label, so a table
+    whose label column alone exceeds the budget still yields whole rows rather
+    than an endless run of one-column passages.
+    """
+    if len(headers) < 3 or _row_width(headers, rows, list(range(len(headers)))) <= budget:
+        return [(headers, rows)]
+
+    groups: list[list[int]] = []
+    current: list[int] = []
+    for column in range(1, len(headers)):
+        if current and _row_width(headers, rows, [0, *current, column]) > budget:
+            groups.append([0, *current])
+            current = [column]
+        else:
+            current.append(column)
+    if current:
+        groups.append([0, *current])
+
+    return [
+        ([headers[column] for column in group],
+         [[row[column] for column in group] for row in rows])
+        for group in groups
+    ]
 
 
 def _is_table_debris(block: str, figures_in_tables: set[str]) -> bool:
@@ -266,6 +339,18 @@ def _headings_in_force(blocks: list[str]) -> list[str | None]:
     return in_force
 
 
+# Paragraphs are joined by a blank line, so every join after the first costs
+# two characters of the budget.
+_JOIN_CHARS = len("\n\n")
+
+
+def _packed_size(passage: list[int], blocks: list[str]) -> int:
+    """How long the rendered passage will be, separators included."""
+    if not passage:
+        return 0
+    return sum(len(blocks[position]) for position in passage) + _JOIN_CHARS * (len(passage) - 1)
+
+
 def _overlap_tail(passage: list[int], blocks: list[str], overlap: int) -> list[int]:
     """The last whole paragraphs of a passage, within the overlap budget."""
     tail: list[int] = []
@@ -276,6 +361,67 @@ def _overlap_tail(passage: list[int], blocks: list[str], overlap: int) -> list[i
         tail.insert(0, position)
         size += len(blocks[position])
     return tail
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_CLAUSE_END = re.compile(r"(?<=[;:])\s+")
+
+
+def _split_long_block(block: str, budget: int) -> list[str]:
+    """Split a paragraph that is longer than the whole budget.
+
+    Packing never cuts a paragraph, which is right for ordinary prose: a
+    paragraph is one idea, and half an idea retrieves badly. But filings do run
+    a single paragraph past the budget, and an embedding model then truncates it
+    with no warning, so the tail is indexed as though it were never written.
+
+    Sentences are kept whole, which is the property that matters for reading a
+    passage back as a citation. A sentence that is itself over budget, which in
+    filings means a long enumeration, is split at its clause boundaries instead.
+    """
+    if len(block) <= budget:
+        return [block]
+
+    parts: list[str] = []
+    current = ""
+    for sentence in _SENTENCE_END.split(block):
+        pieces = [sentence]
+        if len(sentence) > budget:
+            pieces = _CLAUSE_END.split(sentence)
+        for piece in pieces:
+            for word_run in _split_on_words(piece, budget):
+                if current and len(current) + 1 + len(word_run) > budget:
+                    parts.append(current)
+                    current = word_run
+                else:
+                    current = f"{current} {word_run}" if current else word_run
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _split_on_words(text: str, budget: int) -> list[str]:
+    """Last resort for a run of text with no sentence or clause boundary left.
+
+    Rare, and always a long enumeration written as one clause. Splitting between
+    words is the only cut left that does not land inside one, and returning the
+    text untouched would put a passage back over the budget, which is the thing
+    this is all for.
+    """
+    if len(text) <= budget:
+        return [text]
+
+    runs: list[str] = []
+    current = ""
+    for word in text.split():
+        if current and len(current) + 1 + len(word) > budget:
+            runs.append(current)
+            current = word
+        else:
+            current = f"{current} {word}" if current else word
+    if current:
+        runs.append(current)
+    return runs
 
 
 def _pack_blocks(blocks: list[str], budget: int, overlap: int) -> list[list[int]]:
@@ -295,15 +441,34 @@ def _pack_blocks(blocks: list[str], budget: int, overlap: int) -> list[list[int]
     size = 0
 
     for position, block in enumerate(blocks):
-        if size >= CHUNK_CHAR_MINIMUM and size + len(block) > budget:
+        # The blank line between paragraphs is charged against the budget too,
+        # because it is in the passage. Counting only the paragraphs lets a
+        # passage of many short ones run hundreds of characters past the budget,
+        # which is exactly the overshoot the budget exists to prevent.
+        addition = len(block) + (_JOIN_CHARS if current else 0)
+        if size >= CHUNK_CHAR_MINIMUM and size + addition > budget:
             passages.append(current)
             current = _overlap_tail(current, blocks, overlap)
-            size = sum(len(blocks[carried]) for carried in current)
+            size = _packed_size(current, blocks)
+            addition = len(block) + (_JOIN_CHARS if current else 0)
         current.append(position)
-        size += len(block)
+        size += addition
 
     if current:
-        passages.append(current)
+        carried = _packed_size(current, blocks)
+        if passages and carried < CHUNK_CHAR_MINIMUM:
+            # The minimum guards the flush inside the loop but not the last
+            # passage, which is whatever is left over when the blocks run out.
+            # That leftover is padded by the overlap tail, except when the
+            # paragraph just flushed was itself bigger than the overlap budget:
+            # then the tail is empty and a two-character closing block becomes a
+            # passage of its own, which is an embedding of nothing. Fold it into
+            # the passage before it instead, which runs that one over budget by
+            # less than the minimum.
+            previous = passages[-1]
+            previous.extend(position for position in current if position not in previous)
+        else:
+            passages.append(current)
     return passages
 
 
@@ -326,6 +491,10 @@ def chunk_section(
         blocks = [block for block in blocks if not _is_table_debris(block, figures)]
     if not blocks:
         return []
+    # After the debris filter, so a flattened table is judged as the one block
+    # the extractor produced, and before headings, so every heading is measured
+    # against the block that actually follows it.
+    blocks = [part for block in blocks for part in _split_long_block(block, budget)]
 
     headings = _headings_in_force(blocks)
 
@@ -414,27 +583,32 @@ def chunk_filing(
     )
 
 
-def _slice_table_rows(rows: list[str], header_chars: int, budget: int) -> list[list[str]]:
+def _slice_table_rows(
+    rows: list[list[str]], header_chars: int, budget: int,
+) -> list[list[list[str]]]:
     """Group table rows into slices that fit the passage budget.
 
     Rows are capped by count and by width together. A count alone is not enough,
     because a table can be wide as well as long: thirty rows of a twelve-column
-    schedule run well past the budget on their own.
+    schedule run well past the budget on their own. ``header_chars`` is the cost
+    of the header and rule repeated on every slice, which is charged against the
+    budget before any row is added.
     """
-    slices: list[list[str]] = []
-    current: list[str] = []
+    slices: list[list[list[str]]] = []
+    current: list[list[str]] = []
     size = header_chars
     for row in rows:
+        width = sum(len(cell) for cell in row) + 3 * len(row) + 1
         too_many = len(current) >= TABLE_MAX_ROWS_PER_CHUNK
-        too_wide = current and size + len(row) > budget
+        too_wide = current and size + width > budget
         if too_many or too_wide:
             slices.append(current)
             current, size = [], header_chars
         current.append(row)
-        size += len(row)
+        size += width
     if current:
         slices.append(current)
-    return slices or [[]]
+    return slices or [rows]
 
 
 def chunk_tables(
@@ -445,24 +619,32 @@ def chunk_tables(
 ) -> list[ChunkRecord]:
     """Turn each rebuilt table into passages that keep their column labels.
 
-    A table is kept whole where it fits. A long or wide one is split by rows,
-    and the header is repeated on every slice, so no passage of figures ever
-    arrives without the labels that say what the figures are.
+    A table is kept whole where it fits. A long one is split by rows and a wide
+    one by columns, and in both cases the header is repeated on every piece, so
+    no passage of figures ever arrives without the labels that say what the
+    figures are. Splitting by column is what bounds a table whose single row is
+    already wider than the budget, which no amount of row slicing reaches.
     """
     passages: list[ChunkRecord] = []
     for table in section.tables:
-        lines = table.markdown.splitlines()
-        if len(lines) < 3:
+        if not table.rows or not table.headers:
             continue
-        # The first two lines are the column labels and the rule beneath them.
-        header, rows = lines[:2], lines[2:]
-        slices = _slice_table_rows(rows, sum(len(line) for line in header), budget)
 
-        for part_number, row_slice in enumerate(slices):
+        # Columns first, then rows within each group, so that every piece is
+        # inside the budget on both axes.
+        pieces: list[tuple[list[str], list[list[str]]]] = []
+        for headers, rows in _split_table_columns(table.headers, table.rows, budget):
+            # The header and the rule beneath it are repeated on every slice,
+            # so their cost comes off the budget before any row is added.
+            header_chars = len(render_table(headers, []))
+            for row_slice in _slice_table_rows(rows, header_chars, budget):
+                pieces.append((headers, row_slice))
+
+        for part_number, (headers, row_slice) in enumerate(pieces):
             label = table.caption or section.title or f"Item {section.item}"
-            if len(slices) > 1:
-                label = f"{label} (part {part_number + 1} of {len(slices)})"
-            text = "\n".join([label, "", *header, *row_slice])
+            if len(pieces) > 1:
+                label = f"{label} (part {part_number + 1} of {len(pieces)})"
+            text = "\n".join([label, "", render_table(headers, row_slice)])
             passages.append(
                 ChunkRecord(
                     chunk_id=(
@@ -594,6 +776,8 @@ def _report(chunked_filings: list[ChunkedFiling]) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Before basicConfig, so the log file captures log lines and not only prints.
+    log_path = start_run_log("chunk")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     parser = build_chunk_parser(__doc__.splitlines()[0] if __doc__ else "")
     args = parser.parse_args(argv)
@@ -624,6 +808,7 @@ def main(argv: list[str] | None = None) -> None:
         budget=args.budget,
         overlap=args.overlap,
     ))
+    print(f"Run log: {log_path}")
 
 
 if __name__ == "__main__":

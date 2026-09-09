@@ -92,19 +92,27 @@ EXTRA_ITEM_TITLES: dict[str, dict[str, str]] = {
 FORM_STRUCTURES = {"10-K": TenK.structure, "10-Q": TenQ.structure}
 
 # --- chunking ---------------------------------------------------------------
-# Chunk size is measured in characters rather than tokens because the embedding
-# model is not chosen yet, and pulling in a tokenizer now would tie the budget
-# to one vendor's idea of a token. English prose runs at roughly four characters
-# per token, so 4,000 characters is about 1,000 tokens, which fits inside every
-# embedding model under consideration. Each chunk records its own n_chars, so a
-# true token count can be added later without re-chunking the corpus.
-CHUNK_CHAR_BUDGET = 4000
+# Both values are in characters. Chunk size is measured in characters rather
+# than tokens because the embedding model is not chosen yet, and pulling in a
+# tokenizer now would tie the budget to one vendor's idea of a token. Each chunk
+# records its own n_chars, so a true token count can be added later without
+# re-chunking the corpus.
+#
+# The budget has to clear the embedding model's context window, not just fit in
+# memory. English prose runs at roughly four characters per token, so 1,800
+# characters is about 450 tokens and sits inside the 512-token limit that
+# sentence-transformer models such as bge-base and e5-base impose. The earlier
+# 4,000 was about 1,000 tokens: nothing errors at that size, the model simply
+# truncates the tail and embeds half the passage, which shows up only as
+# retrieval scores nobody can explain. Raise this only alongside a model whose
+# context window is known to take it.
+CHUNK_CHAR_BUDGET = 1800
 
 # Whole paragraphs are carried from the end of one chunk into the start of the
 # next, so a point made across a paragraph boundary is still retrievable. This
 # is the budget for that carried tail rather than an exact overlap, since only
-# whole paragraphs are moved.
-CHUNK_CHAR_OVERLAP = 600
+# whole paragraphs are moved. Held at a sixth of the budget, as it was before.
+CHUNK_CHAR_OVERLAP = 300
 
 # A passage is only closed once it holds this much, so a paragraph that is
 # bigger than the whole budget joins the passage in front of it rather than
@@ -112,7 +120,13 @@ CHUNK_CHAR_OVERLAP = 600
 # paragraph emits the heading on its own as a passage nothing can retrieve. A
 # section shorter than this in total still yields one short passage, which is
 # correct: that is the entire Item.
-CHUNK_CHAR_MINIMUM = 500
+#
+# It also sets how far a passage can run past the budget, since a passage is
+# closed only once it is over this, and adding one more paragraph can then take
+# it to this plus a whole paragraph. Kept just above HEADING_CHAR_LIMIT, so a
+# heading still cannot be stranded, while CHUNK_CHAR_MINIMUM + CHUNK_CHAR_BUDGET
+# stays inside the 2,048 characters a 512-token model reads.
+CHUNK_CHAR_MINIMUM = 200
 
 # A section the filing does not number is not citable as an Item, so it is not
 # indexed. In practice this is the signature block, which carries no answerable
