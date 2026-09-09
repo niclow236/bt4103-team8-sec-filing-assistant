@@ -43,8 +43,13 @@ class TableRecord:
 
     The extractor's plain-text rendering detaches every figure from its row and
     column labels, so a balance sheet becomes an unattributable run of numbers.
-    Storing the table separately, rendered as markdown, keeps "Total revenue"
-    joined to 245,122 and to the year above it.
+    Storing the table separately keeps "Total revenue" joined to 245,122 and to
+    the year above it.
+
+    The grid is stored rather than a rendered table, because how a table is laid
+    out depends on the passage budget, which is a chunking decision. A table too
+    wide for one row to fit is split by column, and that is only possible from
+    the cells.
     """
 
     # Position in this Item's ``tables`` list, counting from 0, so that
@@ -53,10 +58,14 @@ class TableRecord:
     # rebuilt is not stored, and numbering around it would break that lookup.
     table_index: int
     caption: str          # the table's own caption, or the first column's label
-    headers: list[str]    # column labels, repeated on every chunk of a long table
+    # The full header row, including the leading cell above the row labels, so
+    # that ``headers`` and each entry of ``rows`` are the same width and either
+    # can be indexed by column. Repeated on every passage cut from the table.
+    headers: list[str]
+    # The body, one list per row, first cell holding that row's label.
+    rows: list[list[str]]
     n_rows: int
     n_cols: int
-    markdown: str         # the table as a markdown grid
 
 
 @dataclass(frozen=True)

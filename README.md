@@ -78,6 +78,7 @@ bt4103-team8-sec-filing-assistant/
 │   └── processed/           # chunks ready for indexing (git-ignored)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
+│   ├── utils.py             # run logging, shared across packages
 │   ├── pipeline/            # EDGAR download, parse, chunk
 │   │   ├── constants.py     #   corpus scope, parser and chunker thresholds
 │   │   ├── records.py       #   dataclasses passed between stages
@@ -189,7 +190,7 @@ python -m src.pipeline.chunk --force          # re-chunk filings already done
 ```
 
 This writes one JSON file per filing to `data/processed/<TICKER>/`, holding
-passages of roughly 4,000 characters. A passage never spans two Items, since a
+passages of roughly 1,800 characters. A passage never spans two Items, since a
 citation has to name the Item it came from. Paragraphs are packed whole rather
 than sliced at a character count, so passages land on sentence boundaries, and
 each one carries the nearest heading above it so a passage taken from the middle
@@ -251,7 +252,7 @@ a `sections` list, one entry per Item:
 | `is_key_section` | whether this is one of the Items the project targets |
 | `is_stub` | the Item is empty, or answers with a cross-reference rather than the disclosure |
 | `resolved_from` | for a stub, the `section_id` that actually holds the text |
-| `tables` | the Item's tables, rebuilt as markdown grids with their row and column labels intact |
+| `tables` | the Item's tables, rebuilt as grids of cells with their row and column labels intact. The grid is stored rather than a rendered table, because layout depends on the passage budget, which is a chunking decision |
 | `confidence`, `detection_method`, `validated`, `warnings` | what the parser thought of its own boundary detection, kept so a bad answer can be traced back to a bad split |
 
 Each `data/processed/<TICKER>/<filing>.json` carries the filing metadata again
@@ -269,8 +270,8 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 10,371 passages over 50 filings: 5,231 of prose
-and 5,140 of tables, at a median of 3,507 characters. 78% carry a heading.
+The corpus currently chunks to 16,264 passages over 50 filings: 12,206 of prose
+and 4,058 of tables, at a median of 1,472 characters. 86% carry a heading.
 
 Four things about that output are worth knowing before you build on it.
 
@@ -296,20 +297,73 @@ skipping them loses nothing, and counting them as failed rebuilds would put the
 figure around 69% and read as though a third of the financial statements were
 broken. Where a
 table arrives with no header row of its own, the first row is promoted to the
-header if it reads as labels rather than figures, so that every slice of a long
-table still says what its columns are. 185 passages, under 2% of the corpus,
-still show numbered columns because their source table had no header to find.
+header if it reads as labels rather than figures, so that every piece of a split
+table still says what its columns are.
+
+Figures are punctuated the way the filing writes them, which takes one piece of
+care. The rebuilt table hands back a year as the number 2026, indistinguishable
+from 2,026 of anything, so a debt or lease maturity schedule would read "2,026"
+where the filing says "2026". That is wrong on its face, and it also stops a
+keyword search for the year from matching the row it belongs to. A column is
+therefore stripped of its separators only when at least three of its values form
+a run of consecutive years, which a column of amounts never does.
 
 An Item that is merely short is not the same as an Item that is empty. Apple
 answers Item 2 Properties in 488 characters of real fact, while Item 12 uses 303
 characters to point at the proxy statement. Only the second is skipped, and the
 test is whether the Item reads as a cross-reference rather than how long it is.
 
-The 4,000-character budget is a target rather than a hard ceiling, because a
-paragraph is never cut in half. 825 prose passages run over it, by a median of
-53 characters and at most 1,379. Table passages are capped by rows and by width
-instead, so a very wide table can reach about 9,900 characters where a single
-row plus its header already exceeds the budget.
+Every passage is sized to be read whole by the embedding model rather than
+truncated by it. 1,800 characters is about 450 tokens, inside the 512-token
+limit most sentence-transformer models impose. Four things keep passages there:
+
+- A paragraph longer than the budget is split at sentence ends, and a sentence
+  longer than the budget at its clause boundaries, so a cut never lands inside a
+  sentence unless the sentence alone exceeds the budget.
+- A table too long for one passage is split by rows, and one too wide by columns,
+  with the header repeated on every piece. Column splitting is what bounds a
+  table whose single row is already wider than the budget, which no amount of row
+  slicing reaches.
+- The blank lines between paragraphs count against the budget as well as the
+  paragraphs, since they are in the passage too.
+- Cells are rendered without alignment padding. Padding would be the largest
+  single item in a wide table and carries no meaning to a model reading it.
+
+The result is that **0.12% of passages exceed 2,048 characters, by at most 42
+characters**, and no table passage exceeds it at all. Before this work the figure
+was 6.6%, and the widest table passage was 9,907 characters, most of which a
+512-token model would have discarded in silence.
+
+`CHUNK_CHAR_MINIMUM` sets how far a passage may run past the budget, since a
+passage is closed only once it is over that minimum and one more paragraph can
+then be added. It is held just above `HEADING_CHAR_LIMIT`, high enough that a
+heading is never stranded as a passage of its own and low enough that
+`CHUNK_CHAR_MINIMUM + CHUNK_CHAR_BUDGET` stays inside 2,048. Raise
+`CHUNK_CHAR_BUDGET` only alongside a model whose context window is known to take
+it.
+
+### Keeping a record of a run
+
+Every `download`, `parse` and `chunk` run copies its terminal output to
+`logs/<command>-<timestamp>.log` and prints the path it used. The point is
+traceability: a passage count quoted in a report or on a slide can be traced back
+to the run that produced it, rather than to whatever is in the terminal
+scrollback that day.
+
+`logs/` is git-ignored, since these are records of what happened on one machine
+rather than shared source.
+
+For anything else worth capturing, `src/utils.py` offers the same machinery:
+
+```python
+from src.utils import run_log
+
+with run_log("chunk-sweep") as path:
+    ...        # everything printed in here also lands in logs/
+```
+
+Colour codes are stripped from the file but left on the terminal, so the log
+stays readable in a text editor without the console losing its formatting.
 
 The dataclasses behind all three files live in `src/pipeline/records.py`, so a
 later stage can read a manifest line, an interim file, or a chunk by importing
