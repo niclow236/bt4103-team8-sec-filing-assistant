@@ -45,7 +45,13 @@ class _Tee:
         self._log = log
 
     def write(self, text: str) -> int:
-        self._terminal.write(text)
+        try:
+            self._terminal.write(text)
+        except UnicodeEncodeError:
+            # Belt and braces for a stream that could not be reconfigured. The
+            # log below still receives the real text, so nothing is lost.
+            encoding = getattr(self._terminal, "encoding", "ascii") or "ascii"
+            self._terminal.write(text.encode(encoding, "replace").decode(encoding))
         self._log.write(_ANSI.sub("", text))
         # Flushing on every write costs nothing at this volume and means the log
         # is complete even if the run is interrupted part way through.
@@ -65,6 +71,26 @@ class _Tee:
         return getattr(self._terminal, attribute)
 
 
+def _tolerate_unencodable(stream: IO[str]) -> None:
+    """Stop a character the terminal cannot represent from ending the run.
+
+    On Windows a redirected stream encodes as the ANSI code page rather than
+    UTF-8, and filings are full of characters it has no room for: box drawing in
+    our own output, and curly quotes, bullets and dashes in the text itself. The
+    default is to raise, so ``passages ... > out.txt`` died on a rule character
+    while the passage behind it was perfectly fine.
+
+    Replacing rather than raising loses a glyph on screen and nothing else: the
+    log file is opened as UTF-8, so it still holds exactly what was printed.
+    """
+    try:
+        stream.reconfigure(errors="replace")   # type: ignore[attr-defined]
+    except (AttributeError, OSError, ValueError):
+        # Not a reconfigurable text stream, such as one already wrapped by a
+        # test or a notebook. Writing is still attempted; _Tee guards it.
+        pass
+
+
 def start_run_log(name: str, logs_dir: Path = LOGS_DIR) -> Path:
     """Copy everything this process prints into ``logs/<name>-<timestamp>.log``.
 
@@ -79,6 +105,8 @@ def start_run_log(name: str, logs_dir: Path = LOGS_DIR) -> Path:
     path = _timestamped(name, logs_dir)
     handle = path.open("w", encoding="utf-8")
 
+    _tolerate_unencodable(sys.stdout)
+    _tolerate_unencodable(sys.stderr)
     sys.stdout = _Tee(sys.stdout, handle)
     sys.stderr = _Tee(sys.stderr, handle)
 

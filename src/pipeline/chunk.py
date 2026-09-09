@@ -2,9 +2,9 @@
 
 Run it from the project root, after ``src.pipeline.parse``:
 
-    python -m src.pipeline.chunk                      # every filing in data/interim/
-    python -m src.pipeline.chunk --tickers AAPL MSFT  # just these companies
-    python -m src.pipeline.chunk --force              # re-chunk filings already done
+    python -m src.pipeline chunk                      # every filing in data/interim/
+    python -m src.pipeline chunk --tickers AAPL MSFT  # just these companies
+    python -m src.pipeline chunk --force              # re-chunk filings already done
 
 Retrieval works on passages rather than whole Items. Item 1A alone runs to
 77,000 characters in the median filing, which is far past what an embedding
@@ -61,8 +61,6 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ..config import INTERIM_DIR, PROCESSED_DIR, PROJECT_ROOT, ensure_data_dirs
-from ..utils import start_run_log
-from .cli import build_chunk_parser
 from .constants import (
     CHUNK_CHAR_BUDGET,
     CHUNK_CHAR_MINIMUM,
@@ -728,7 +726,7 @@ def chunk_all(
     return chunked_filings
 
 
-def _report(chunked_filings: list[ChunkedFiling]) -> None:
+def report(chunked_filings: list[ChunkedFiling]) -> None:
     """Print what was cut, and what the passages look like."""
     if not chunked_filings:
         print("\nNothing new was chunked. Use --force to re-chunk filings already done.")
@@ -773,43 +771,3 @@ def _report(chunked_filings: list[ChunkedFiling]) -> None:
         print(f"\n{len(runts)} passages are under 200 characters:")
         for passage in runts[:10]:
             print(f"  {passage.chunk_id}  {passage.n_chars} chars")
-
-
-def main(argv: list[str] | None = None) -> None:
-    # Before basicConfig, so the log file captures log lines and not only prints.
-    log_path = start_run_log("chunk")
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
-    parser = build_chunk_parser(__doc__.splitlines()[0] if __doc__ else "")
-    args = parser.parse_args(argv)
-
-    paths = interim_files()
-    if not paths:
-        print("data/interim/ is empty. Run python -m src.pipeline.parse first.")
-        return
-
-    if args.tickers:
-        wanted = {ticker.upper() for ticker in args.tickers}
-        paths = [path for path in paths if path.parent.name in wanted]
-        if not paths:
-            # Without this the run would fall through to "use --force", which
-            # points at the wrong problem: nothing was skipped, nothing is there.
-            print(
-                f"Nothing parsed yet for {', '.join(sorted(wanted))}. "
-                "Run python -m src.pipeline.parse for those tickers first."
-            )
-            return
-
-    logger.info("Chunking %d filings from %s", len(paths), INTERIM_DIR)
-    _report(chunk_all(
-        paths,
-        force=args.force,
-        forms=args.forms,
-        key_items_only=args.key_items_only,
-        budget=args.budget,
-        overlap=args.overlap,
-    ))
-    print(f"Run log: {log_path}")
-
-
-if __name__ == "__main__":
-    main()
