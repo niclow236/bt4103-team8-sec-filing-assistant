@@ -92,6 +92,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
 │   ├── retrieval/           # BM25, dense, hybrid
+│   │   ├── base.py          #   the Retriever contract every method satisfies
 │   │   ├── constants.py     #   models, k values and fusion constants, in one place
 │   │   └── records.py       #   what a retriever returns and what an index says of itself
 │   ├── rag/                 # RAG engine and citations
