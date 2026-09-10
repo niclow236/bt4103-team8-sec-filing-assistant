@@ -72,6 +72,7 @@ from .constants import (
     REJOIN_PAGE_BREAK_SPLITS,
     SKIP_UNNUMBERED_SECTIONS,
     TABLE_MAX_ROWS_PER_CHUNK,
+    table_budget_for,
 )
 from .records import ChunkedFiling, ChunkRecord, ParsedFiling, SectionRecord, TableRecord
 
@@ -614,6 +615,7 @@ def chunk_tables(
     accession_no: str,
     incorporated_into: list[str] | None = None,
     budget: int = CHUNK_CHAR_BUDGET,
+    table_budget: int | None = None,
 ) -> list[ChunkRecord]:
     """Turn each rebuilt table into passages that keep their column labels.
 
@@ -622,7 +624,15 @@ def chunk_tables(
     no passage of figures ever arrives without the labels that say what the
     figures are. Splitting by column is what bounds a table whose single row is
     already wider than the budget, which no amount of row slicing reaches.
+
+    ``budget`` is the prose budget, and the table budget is derived from it by
+    ``constants.table_budget_for`` unless one is passed. Tables need their own
+    because figures tokenise about twice as densely as prose, so a table cut to
+    the prose budget overruns the embedding model's window and is silently
+    truncated. Passing ``table_budget`` overrides the derivation, which is what
+    a sweep comparing the two rates would do.
     """
+    budget = table_budget if table_budget is not None else table_budget_for(budget)
     passages: list[ChunkRecord] = []
     for table in section.tables:
         if not table.rows or not table.headers:
