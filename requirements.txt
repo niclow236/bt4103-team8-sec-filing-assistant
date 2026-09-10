@@ -10,3 +10,10 @@ python-dotenv==1.2.3
 
 # Sparse keyword retrieval baseline.
 rank-bm25==0.2.2
+
+# Sentence embeddings for the dense retriever, and the store the vectors go in.
+# sentence-transformers pulls in torch, which is most of the install size. The
+# CPU build is enough: indexing this corpus is minutes, not hours, and nobody on
+# the team is training anything.
+sentence-transformers==6.0.1
+chromadb==1.5.9
