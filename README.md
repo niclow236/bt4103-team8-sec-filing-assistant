@@ -76,6 +76,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── raw/                 # full filings (git-ignored)
 │   ├── interim/             # parsed sections (git-ignored)
 │   ├── processed/           # chunks ready for indexing (git-ignored)
+│   ├── index/               # built BM25 and Chroma indexes (git-ignored)
 │   └── diagnostics/         # why a run did what it did (git-ignored, on demand)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
@@ -91,6 +92,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
 │   ├── retrieval/           # BM25, dense, hybrid
+│   │   ├── constants.py     #   models, k values and fusion constants, in one place
 │   │   └── records.py       #   what a retriever returns and what an index says of itself
 │   ├── rag/                 # RAG engine and citations
 │   ├── evaluation/          # benchmark and metrics
