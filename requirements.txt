@@ -7,3 +7,6 @@ edgartools==5.56.0
 
 # Reads the local .env file so API keys and the EDGAR identity stay out of the repo.
 python-dotenv==1.2.3
+
+# Sparse keyword retrieval baseline.
+rank-bm25==0.2.2
