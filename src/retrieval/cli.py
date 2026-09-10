@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+from ..pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
 from ..utils import start_run_log
 from . import embed as embed_stage
 from . import facts as facts_stage
@@ -44,6 +45,23 @@ def _summary(module) -> str:
     """
     first = (module.__doc__ or "").strip().splitlines()[0]
     return first.replace("``", "")
+
+
+def _positive(value: str) -> int:
+    """An argument that has to be at least one, rejected at parse time if not.
+
+    Without this, ``--batch-size 0`` is accepted, the batch never fills, and the
+    whole corpus accumulates in memory before a single encode call, which then
+    dies inside the encoder rather than at the flag that caused it. argparse
+    turns the same typo into one line naming the option.
+    """
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {number}")
+    return number
 
 
 # --- arguments --------------------------------------------------------------
@@ -76,13 +94,13 @@ def _add_embed(subparsers) -> None:
     )
     parser.add_argument(
         "--batch-size",
-        type=int,
+        type=_positive,
         default=EMBED_BATCH_SIZE,
         help=f"Passages per encode call. Default: {EMBED_BATCH_SIZE}.",
     )
     parser.add_argument(
         "--threads",
-        type=int,
+        type=_positive,
         metavar="N",
         help=(
             "Threads for the encoder. Default: every logical processor, which "
@@ -95,7 +113,30 @@ def _add_embed(subparsers) -> None:
         action="store_true",
         help=(
             "Drop the collection and embed everything again. Use after the "
-            "corpus has been re-chunked; without it a run resumes instead."
+            "corpus has been re-chunked; without it a run resumes instead, and "
+            "refuses to resume onto a corpus that has moved."
+        ),
+    )
+    parser.add_argument(
+        "--chunk-budget",
+        type=_positive,
+        default=CHUNK_CHAR_BUDGET,
+        metavar="CHARS",
+        help=(
+            "Recorded in the manifest as the budget the corpus was cut with. "
+            "data/processed/ does not carry it, so pass the value used for "
+            "'python -m src.pipeline chunk --budget' if it was not the "
+            f"default of {CHUNK_CHAR_BUDGET}."
+        ),
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=_positive,
+        default=CHUNK_CHAR_OVERLAP,
+        metavar="CHARS",
+        help=(
+            "As --chunk-budget, for the overlap the corpus was cut with. "
+            f"Default: {CHUNK_CHAR_OVERLAP}."
         ),
     )
 
@@ -140,6 +181,8 @@ def run_embed(args) -> None:
         rebuild=args.rebuild,
         batch_size=args.batch_size,
         threads=args.threads,
+        chunk_budget=args.chunk_budget,
+        chunk_overlap=args.chunk_overlap,
     )
 
 

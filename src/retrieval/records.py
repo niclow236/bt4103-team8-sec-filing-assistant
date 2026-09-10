@@ -26,13 +26,84 @@ what stops Apple's FY2023 risk factors answering a question about FY2024.
 
 Every record is frozen and holds no mutable default, so a passage handed to
 three components cannot be edited by one of them behind the others' backs.
+
+Two functions sit here as well, and for the same reason the records do: they
+compute fields of ``IndexManifest``, so every index that writes one writes it
+the same way. A manifest field defined once in each retriever is a field with no
+definition at all, which is what ``corpus_fingerprint`` was before it moved
+here.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from ..config import PROJECT_ROOT
+
+
+def corpus_fingerprint(
+    rows: Iterable[Mapping[str, Any]],
+    text_of: Callable[[Mapping[str, Any]], str] | None = None,
+) -> str:
+    """A digest identifying the exact set of passages an index was built from.
+
+    Here rather than in a retriever because it populates
+    :attr:`IndexManifest.corpus_fingerprint`, and a field with two definitions
+    has none: written once in ``bm25.py`` and once in ``embed.py``, the two
+    hashed the same corpus to different strings, so the manifests of a
+    bm25/dense pair could never agree no matter how many times either was
+    rebuilt.
+
+    Each passage's ``chunk_id`` is hashed together with its text, those digests
+    are sorted, and the sorted list is hashed. Sorting is what makes it a
+    fingerprint of the corpus rather than of one walk over it: the same passages
+    in a different order, which is all a renamed directory or a changed glob
+    amounts to, give the same answer.
+
+    ``text_of`` is what an index counts as the passage's content, defaulting to
+    the stored text. A retriever that feeds the encoder something other than the
+    stored text passes its own -- the dense index prepends a context header
+    built from metadata, so for that index a changed company name really does
+    move a vector, and the digest has to see it. That makes the digests of two
+    different index types incomparable by construction, which is why
+    :attr:`IndexManifest.corpus_fingerprint` is only ever compared against
+    another manifest of the same ``index_type``.
+
+    It changes when a passage's text changes, when passages are added or
+    removed, and when the chunker cuts the same filing differently, since that
+    renumbers ``chunk_id``.
+    """
+    content = text_of if text_of is not None else lambda row: row["text"]
+    digests = sorted(
+        hashlib.sha256(
+            f"{row['chunk_id']}\x00{content(row)}".encode("utf-8")
+        ).hexdigest()
+        for row in rows
+    )
+    total = hashlib.sha256()
+    for digest in digests:
+        total.update(digest.encode("ascii"))
+    return total.hexdigest()
+
+
+def manifest_path(index_path: Path) -> str:
+    """The index location as a manifest records it: project-relative posix.
+
+    An absolute path is machine-local, so a manifest carrying one says nothing
+    useful to the next person to read it out of a shared index. A directory
+    outside the project root -- pytest's ``tmp_path``, a scratch build on
+    another volume -- has no relative form, so it is recorded absolute rather
+    than raising, since failing here would throw away a whole build's manifest
+    after the build had already finished.
+    """
+    try:
+        return index_path.resolve().relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return index_path.as_posix()
 
 
 @dataclass(frozen=True)
@@ -122,9 +193,14 @@ class IndexManifest:
 
     index_type: str           # "bm25" or "dense"
     path: str                 # relative to the project root, posix-style, so this is portable
-    # A digest over the passages that went in -- their ids and their text. Two
-    # indexes with the same fingerprint were built from the same corpus; a
-    # different one means the chunker has been re-run since.
+    # A digest over the passages that went in, from :func:`corpus_fingerprint`.
+    # Two indexes OF THE SAME TYPE with the same fingerprint were built from the
+    # same corpus; a different one means the chunker has been re-run since.
+    # Across types it is not comparable: each index hashes what it actually
+    # indexed, and the dense index encodes a context header the sparse one never
+    # sees, so a bm25 and a dense manifest of one corpus hold different strings
+    # by design. Compare a manifest against a freshly computed digest using the
+    # same ``text_of``, never against a manifest of the other type.
     corpus_fingerprint: str
     n_passages: int
     n_filings: int
