@@ -272,36 +272,47 @@ def build(
     A run that is interrupted can simply be run again: whatever is already in
     the collection is skipped. ``rebuild`` drops the collection first, which is
     what to use when the corpus has been re-chunked rather than merely extended.
+
+    The corpus is walked twice rather than held in memory. Reading it into a
+    list costs a few hundred megabytes that are still resident when torch loads
+    its weights on top, and on a 16 GB laptop already running an editor and a
+    browser that was the difference between finishing and being killed by the
+    system, twice, at 86% built. Disk is cheap here and memory is not: the
+    second walk costs seconds against an encode measured in hours.
     """
-    rows = list(
-        iter_chunks(
+    def passages():
+        return iter_chunks(
             fiscal_years=fiscal_years,
             tickers=tickers,
             key_items_only=key_items_only,
         )
-    )
-    if not rows:
+
+    # First walk: what the corpus is. Only a digest per passage and the set of
+    # filings is kept, so this is megabytes rather than the whole corpus.
+    fingerprint = corpus_fingerprint(passages())
+    n_rows = 0
+    filings: set[str] = set()
+    for row in passages():
+        n_rows += 1
+        filings.add(row["accession_no"])
+    if not n_rows:
         raise RuntimeError(
             "No passages found in data/processed/. Run the chunk stage first: "
             "python -m src.pipeline rebuild"
         )
-
-    # Over every passage the filters selected, not over the ones still to embed,
-    # so a resumed run records the same corpus as the run it is finishing.
-    fingerprint = corpus_fingerprint(rows)
-    n_filings = len({row["accession_no"] for row in rows})
+    n_filings = len(filings)
     print(
-        f"corpus: {len(rows):,} passages from {n_filings} filings"
+        f"corpus: {n_rows:,} passages from {n_filings} filings"
         f"  fingerprint {fingerprint[:12]}"
     )
 
     collection = _open_collection(chroma_dir, rebuild=rebuild)
     already = _existing_ids(collection)
-    pending = [row for row in rows if row["chunk_id"] not in already]
+    n_pending = sum(1 for row in passages() if row["chunk_id"] not in already)
     if already:
-        print(f"resuming: {len(already):,} already embedded, {len(pending):,} to go")
+        print(f"resuming: {len(already):,} already embedded, {n_pending:,} to go")
 
-    if pending:
+    if n_pending:
         used = _use_threads(threads)
         print(f"loading {EMBED_MODEL} on {used} threads ...")
         model = _load_model()
@@ -314,8 +325,10 @@ def build(
         # and a table passage is where it bites, since figures tokenise about
         # twice as densely as prose and the chunker's budget is in characters.
         oversized: list[tuple[str, int, str]] = []
-        for start in range(0, len(pending), batch_size):
-            batch = pending[start:start + batch_size]
+
+        def flush(batch: list[dict]) -> None:
+            """Encode one batch and add it, holding nothing after it returns."""
+            nonlocal done
             texts = [embed_text(row) for row in batch]
             # Tokenising a batch we are about to encode anyway costs a fraction
             # of the encode, which is what makes measuring this affordable
@@ -342,14 +355,29 @@ def build(
             done += len(batch)
             elapsed = time.perf_counter() - started
             rate = done / elapsed if elapsed else 0.0
-            remaining = (len(pending) - done) / rate if rate else 0.0
+            remaining = (n_pending - done) / rate if rate else 0.0
             print(
-                f"  {done:,}/{len(pending):,} passages"
+                f"  {done:,}/{n_pending:,} passages"
                 f"  {rate:.1f}/s  eta {remaining / 60:.1f} min",
                 flush=True,
             )
+
+        # Second walk: the passages themselves, one batch at a time. Only the
+        # batch in hand is resident, so peak memory no longer grows with the
+        # corpus and the model has room to load beside it.
+        batch: list[dict] = []
+        for row in passages():
+            if row["chunk_id"] in already:
+                continue
+            batch.append(row)
+            if len(batch) == batch_size:
+                flush(batch)
+                batch = []
+        if batch:
+            flush(batch)
+
         if oversized:
-            report_truncation(oversized, len(pending))
+            report_truncation(oversized, n_pending)
     else:
         print("nothing to embed: every passage is already in the index")
 
@@ -357,7 +385,7 @@ def build(
         index_type=DENSE,
         path=chroma_dir.relative_to(PROJECT_ROOT).as_posix(),
         corpus_fingerprint=fingerprint,
-        n_passages=len(rows),
+        n_passages=n_rows,
         n_filings=n_filings,
         built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         model=EMBED_MODEL,
