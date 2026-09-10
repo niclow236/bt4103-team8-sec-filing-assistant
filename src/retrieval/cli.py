@@ -9,12 +9,17 @@ from a test without a fake argument namespace.
     python -m src.retrieval                   # list the commands
     python -m src.retrieval embed --help      # options for one of them
     python -m src.retrieval embed             # build the dense index
+    python -m src.retrieval facts             # build the XBRL facts store
 
 It is a separate command line from the pipeline's rather than more subcommands
-on it, because the two stages are separated by their inputs: the pipeline turns
-EDGAR into ``data/processed/`` and needs an EDGAR identity to do it, while
-retrieval turns ``data/processed/`` into an index and never touches the network.
-Someone rebuilding an index should not need EDGAR credentials configured.
+on it, because the two stages are separated by what they build from: the
+pipeline turns EDGAR into ``data/processed/``, and retrieval turns that into the
+indexes a question is answered against.
+
+``embed`` needs no network and no EDGAR identity, since it reads only what the
+pipeline already wrote. ``facts`` does need both, because the figures it stores
+are published through EDGAR rather than printed in the filing's HTML, so it is
+the one command here that goes back to the source.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import logging
 
 from ..utils import start_run_log
 from . import embed as embed_stage
+from . import facts as facts_stage
 from .constants import EMBED_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
@@ -94,7 +100,35 @@ def _add_embed(subparsers) -> None:
     )
 
 
+def _add_facts(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "facts",
+        help=_summary(facts_stage),
+        description=_summary(facts_stage),
+    )
+    parser.set_defaults(run=run_facts)
+    parser.add_argument(
+        "--tickers",
+        nargs="+",
+        metavar="TICKER",
+        help="Only these companies. Default: every company in the manifest.",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help=(
+            "Pull every company again rather than skipping those already "
+            "stored. Use after the corpus has gained filings."
+        ),
+    )
+
+
 # --- commands ---------------------------------------------------------------
+
+
+def run_facts(args) -> None:
+    """Pull the XBRL facts store for the corpus."""
+    facts_stage.build(tickers=args.tickers, refresh=args.refresh)
 
 
 def run_embed(args) -> None:
@@ -119,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build and search the retrieval indexes.",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
-    for add in (_add_embed,):
+    for add in (_add_embed, _add_facts):
         add(subparsers)
     return parser
 
