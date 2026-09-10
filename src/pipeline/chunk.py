@@ -162,7 +162,64 @@ def iter_chunks(
                 "fiscal_year": fiscal_year,
                 "accession_no": filing.accession_no,
                 "url": filing.url,
+                # Carried for the same reason the filing identity is: an index
+                # records the settings its passages were cut with, and this is
+                # where it can read them rather than assume the constants.
+                "chunk_budget": filing.chunk_budget,
+                "chunk_overlap": filing.chunk_overlap,
+                "key_items_only": filing.key_items_only,
             }
+
+
+def resolve_chunk_settings(
+    seen: set[tuple[int | None, int | None]],
+    budget: int,
+    overlap: int,
+) -> tuple[int | None, int | None, str | None]:
+    """What a corpus was cut with, from what its filings recorded.
+
+    ``seen`` is the distinct ``(chunk_budget, chunk_overlap)`` pairs observed
+    while walking the corpus, and ``budget``/``overlap`` are what the caller
+    would otherwise have assumed. Returns the pair to record and a note to print
+    when the answer is not clean, so both indexes report a mixed or unlabelled
+    corpus the same way instead of each inventing a rule.
+
+    Three cases, and only the first is silent:
+
+    One recorded pair is the answer, and the caller's assumption is discarded in
+    its favour -- the corpus knows better than the constants.
+
+    Nothing recorded means the files predate this, so the caller's values stand.
+    They may well be right; the point is that nobody can tell, so it says so.
+
+    More than one pair means the corpus was cut in more than one way, and a
+    manifest has a single budget field. There is no honest value, so it records
+    none. This includes the half-and-half case -- some filings recorded, some
+    not -- because a file that did not record its settings is not evidence that
+    they matched.
+    """
+    if len(seen) == 1:
+        recorded_budget, recorded_overlap = next(iter(seen))
+        if recorded_budget is None and recorded_overlap is None:
+            return budget, overlap, (
+                f"data/processed/ predates the recording of chunker settings, so "
+                f"the manifest takes the values it was given ({budget}/{overlap}) "
+                f"rather than measured ones. Re-chunk to record them: "
+                f"python -m src.pipeline chunk --force"
+            )
+        return recorded_budget, recorded_overlap, None
+
+    listed = ", ".join(
+        "unrecorded" if pair == (None, None) else f"{pair[0]}/{pair[1]}"
+        for pair in sorted(seen, key=lambda pair: (pair[0] or 0, pair[1] or 0))
+    )
+    return None, None, (
+        f"data/processed/ holds filings cut with different chunker settings "
+        f"({listed}), so the manifest records none: one budget field cannot "
+        f"describe a mixed corpus, and picking one would label every sweep row "
+        f"with a number that is wrong for part of it. Re-chunk the whole corpus: "
+        f"python -m src.pipeline chunk --force"
+    )
 
 
 def processed_path_for(interim_file: Path, processed_dir: Path = PROCESSED_DIR) -> Path:
@@ -579,6 +636,12 @@ def chunk_filing(
         source_path=source_path,
         chunks=passages,
         period_of_report=parsed.period_of_report,
+        # What these passages were cut with, recorded here because this is the
+        # only place that knows. Everything downstream can otherwise do no
+        # better than read the constants and hope they have not moved since.
+        chunk_budget=budget,
+        chunk_overlap=overlap,
+        key_items_only=key_items_only,
     )
 
 

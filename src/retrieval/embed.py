@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import DIAGNOSTICS_DIR
-from ..pipeline.chunk import iter_chunks
+from ..pipeline.chunk import iter_chunks, resolve_chunk_settings
 from ..pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
 from .constants import (
     CHROMA_DIR,
@@ -320,11 +320,14 @@ def build(
     manifest already on disk; a run that would resume onto a corpus that moved
     stops and says to pass ``rebuild``, rather than doing it quietly.
 
-    ``chunk_budget`` and ``chunk_overlap`` are recorded, not measured. The
-    processed files do not carry the settings they were cut with, so these
-    default to the constants in force now, and a caller indexing a corpus cut
-    by ``python -m src.pipeline chunk --budget 1200`` passes 1200 here. Same
-    arrangement as ``BM25Retriever.build``, for the same reason.
+    ``chunk_budget`` and ``chunk_overlap`` are a fallback rather than the
+    answer. The chunk stage records what it cut with, so the settings are read
+    off the corpus and these are used only for filings written before that was
+    recorded. A corpus cut two different ways is reported and recorded as
+    neither, since the manifest has one budget field and labelling every sweep
+    row with a number that is wrong for part of the corpus is worse than
+    labelling none. ``resolve_chunk_settings`` holds that rule, so this index
+    and the BM25 one apply it identically.
 
     Returns the manifest when one was written, and None when the index does not
     hold the whole corpus -- a narrowed run, or one interrupted partway. A
@@ -354,6 +357,7 @@ def build(
     # is kept is strings, so this is megabytes rather than the corpus.
     corpus_ids: set[str] = set()
     filings: set[str] = set()
+    settings: set[tuple[int | None, int | None]] = set()
     n_rows = 0
 
     def observed():
@@ -362,6 +366,7 @@ def build(
             n_rows += 1
             corpus_ids.add(row["chunk_id"])
             filings.add(row["accession_no"])
+            settings.add((row.get("chunk_budget"), row.get("chunk_overlap")))
             yield row
 
     fingerprint = corpus_fingerprint(observed(), text_of=embed_text)
@@ -383,6 +388,15 @@ def build(
         f"corpus: {n_rows:,} passages from {n_filings} filings"
         f"  fingerprint {fingerprint[:12]}"
     )
+
+    # Measured off the corpus where it recorded them, rather than taken from the
+    # constants in force now, which is what the manifest's own docstring says
+    # these fields are for.
+    chunk_budget, chunk_overlap, note = resolve_chunk_settings(
+        settings, chunk_budget, chunk_overlap
+    )
+    if note:
+        print(f"  NOTE  {note}")
 
     # Before a single vector is written, not after: resuming onto a corpus that
     # has moved keeps the stale vector for every id that survived the re-chunk,

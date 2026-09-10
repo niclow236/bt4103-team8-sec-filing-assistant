@@ -33,7 +33,7 @@ from typing import Any
 
 from rank_bm25 import BM25Okapi
 
-from src.pipeline.chunk import iter_chunks
+from src.pipeline.chunk import iter_chunks, resolve_chunk_settings
 from src.pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
 
 from .base import matches, rank, resolve_k
@@ -105,14 +105,24 @@ class BM25Retriever:
     ) -> BM25Retriever:
         """Build an index from ``iter_chunks`` and serialize it to disk.
 
-        The chunker settings are recorded rather than inferred: the processed
-        files do not carry the budget they were cut with, so the manifest takes
-        the values in force now, and a caller rebuilding an older corpus passes
-        the ones it actually used.
+        The chunker settings are measured off the corpus, which records what it
+        was cut with. ``chunk_budget`` and ``chunk_overlap`` are the fallback
+        for filings written before that was recorded, and a corpus cut two
+        different ways is reported and recorded as neither --
+        ``resolve_chunk_settings`` holds that rule so this index and the dense
+        one apply it identically.
         """
         chunks = list(_read_corpus(processed_dir))
         if not chunks:
             raise ValueError("Cannot build a BM25 index: no processed passages were found")
+
+        chunk_budget, chunk_overlap, note = resolve_chunk_settings(
+            {(chunk.get("chunk_budget"), chunk.get("chunk_overlap")) for chunk in chunks},
+            chunk_budget,
+            chunk_overlap,
+        )
+        if note:
+            print(f"  NOTE  {note}")
 
         manifest = IndexManifest(
             index_type=BM25,
