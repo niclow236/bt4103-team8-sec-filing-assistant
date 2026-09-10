@@ -108,6 +108,37 @@ FORM_STRUCTURES = {"10-K": TenK.structure, "10-Q": TenQ.structure}
 # context window is known to take it.
 CHUNK_CHAR_BUDGET = 1800
 
+# The four-characters-per-token rule above holds for prose and fails for tables.
+# Measured over this corpus with the bge tokeniser: prose runs at 5.4 characters
+# per token at the median and 2.07 at its densest, while a table passage runs at
+# 2.71 and 1.58. Figures, pipes, currency symbols and thousands separators all
+# tokenise close to one token each, so a table sitting inside an 1,800-character
+# budget lands near 700 tokens, and the encoder drops everything past 512.
+#
+# The damage was concentrated exactly where it costs most: 20% of table passages
+# against 1.6% of prose, and 1,265 of the 1,489 affected were in Items 8 and 15,
+# the financial statements. Those are the passages a numeric question needs, and
+# a truncated one is not a failed one -- it is indexed, searchable, and missing
+# its tail, which surfaces only as retrieval scores nobody can explain.
+#
+# So tables get their own budget, derived rather than typed, so that the
+# chunk-size sweep in #45 scales both together instead of sweeping prose while
+# tables sit at a fixed size. 1.6 is the measured floor for tables and 4.0 is
+# the figure the prose budget above already assumes, which makes the table
+# budget 40% of the prose one and puts both at roughly the same 450 tokens.
+TABLE_CHARS_PER_TOKEN = 1.6
+PROSE_CHARS_PER_TOKEN = 4.0
+
+
+def table_budget_for(budget: int = CHUNK_CHAR_BUDGET) -> int:
+    """The table budget matching a prose budget, in characters.
+
+    A function rather than a constant so that ``--budget`` reaches tables too:
+    sweeping the prose budget while tables stay fixed would report a chunk-size
+    curve that a quarter of the corpus never moved along.
+    """
+    return round(budget * TABLE_CHARS_PER_TOKEN / PROSE_CHARS_PER_TOKEN)
+
 # Whole paragraphs are carried from the end of one chunk into the start of the
 # next, so a point made across a paragraph boundary is still retrievable. This
 # is the budget for that carried tail rather than an exact overlap, since only

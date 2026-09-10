@@ -228,6 +228,84 @@ def _clean_cell(value: object) -> str:
     return " ".join(text.split()).replace("|", r"\|")
 
 
+def _column_levels(rendered) -> tuple[list[str], list[list[str]]]:
+    """Split a column index into header labels and any data rows caught in it.
+
+    pandas reads a table's leading rows as header rows, and where a filer marks
+    several rows as headers it returns a MultiIndex whose tuples hold one entry
+    per level. Two things then go wrong, and they need opposite treatment.
+
+    A genuine multi-row header, which is most of them: a financial statement
+    writes "Years ended" spanning three date columns, and pandas returns
+    ``("Years ended", "September 25, 2021")``. Rendering that tuple as Python
+    prints its brackets and quotes into the passage, which reads badly in a
+    citation and costs tokens for punctuation. Those levels are joined instead.
+
+    Data caught in the header, which is the damaging one: where the markup marks
+    most of the table as headers, whole rows end up inside the tuples. Item 15's
+    exhibit index arrives with sixteen rows of exhibit numbers and descriptions
+    sitting in a column tuple and two rows left underneath, and the header, being
+    repeated on every slice of a split table, then dwarfs the passage. Those
+    levels are data and are handed back to be put in front of the rows.
+
+    A level is header where every value it holds looks like a label, and data at
+    the first level where they do not: dates and spanning titles pass, while a
+    row mixing "10.05+" with a filing date does not. Level 0 is always header,
+    since a table with no labels at all is a table nothing can cite.
+    """
+    return _level_split([
+        tuple(_clean_cell(part) for part in column)
+        if isinstance(column, tuple) else (_clean_cell(column),)
+        for column in rendered.columns
+    ])
+
+
+def _index_levels(rendered) -> tuple[str, list[str]]:
+    """The row-label header, and any first-column values caught in its name.
+
+    The same fault as :func:`_column_levels` on the other axis. Where pandas
+    takes the first column as the frame's index and reads several rows as
+    headers, that column's values land in the index *name* rather than in the
+    index, so Item 15's exhibit numbers arrive as one 168-character name above
+    two surviving rows. Returned separately because they are the first cell of
+    each row the column levels give back, not a row of their own.
+    """
+    name = rendered.index.name
+    if not isinstance(name, tuple):
+        return _clean_cell(name), []
+    labels, trapped = _level_split([tuple(_clean_cell(part) for part in name)])
+    return labels[0], [row[0] for row in trapped]
+
+
+def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[str]]]:
+    """Split tuples of index levels into header labels and trapped data rows."""
+    if not tuples:
+        return [], []
+    depth = max(len(item) for item in tuples)
+    tuples = [item + ("",) * (depth - len(item)) for item in tuples]
+
+    header_depth = depth
+    for level in range(depth):
+        filled = [item[level] for item in tuples if item[level]]
+        if not filled:
+            # A blank level is spacing above the labels, not a row of data.
+            continue
+        if not all(_looks_like_label(value) for value in filled):
+            header_depth = level
+            break
+    header_depth = max(header_depth, 1)
+
+    labels = [
+        " ".join(part for part in item[:header_depth] if part).strip()
+        for item in tuples
+    ]
+    trapped = [
+        [item[level] for item in tuples]
+        for level in range(header_depth, depth)
+    ]
+    return labels, trapped
+
+
 def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]]:
     """Lift each table out of an Item as a table, not as flattened prose.
 
@@ -318,9 +396,19 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
         # them. Every row is then the same width as the header and can be indexed
         # by column, which is what lets the chunker split a table too wide to fit.
         try:
-            header = [_clean_cell(rendered.index.name)]
-            header += [_clean_cell(column) for column in rendered.columns]
+            labels, trapped = _column_levels(rendered)
+            index_label, index_values = _index_levels(rendered)
+            header = [index_label] + labels
+            # Rows recovered from the column index come first: they sat above
+            # the surviving rows in the filing, and putting them back in order
+            # is what makes the rebuilt table read like the printed one. Their
+            # first cell comes from the index name, which is where that column's
+            # values were caught, and is blank where it holds none.
             grid = [
+                [index_values[position] if position < len(index_values) else ""] + row
+                for position, row in enumerate(trapped)
+            ]
+            grid += [
                 [_clean_cell(label)] + [_clean_cell(value) for value in row]
                 for label, row in zip(rendered.index, rendered.to_numpy().tolist())
             ]

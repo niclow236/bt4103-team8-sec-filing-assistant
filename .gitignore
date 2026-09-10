@@ -227,6 +227,8 @@ data/raw/
 data/interim/
 data/processed/
 data/diagnostics/
+# Built search indexes: rebuilt from data/processed/, and large.
+data/index/
 *.zip
 *.gz
 

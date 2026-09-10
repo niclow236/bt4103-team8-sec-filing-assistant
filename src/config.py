@@ -29,6 +29,16 @@ SAMPLE_DIR = DATA_DIR / "sample"      # small committed sample
 # nothing here.
 DIAGNOSTICS_DIR = DATA_DIR / "diagnostics"
 
+# Built search indexes: the corpus in the form a retriever can search, rather
+# than the form it is stored in. Git-ignored and rebuildable, like every other
+# data directory -- an index is derived from data/processed/ and is not worth
+# versioning, but it IS worth knowing which corpus it came from, which is what
+# the IndexManifest written beside it records. BM25 serialises to one pickle;
+# Chroma wants a directory it manages itself.
+INDEX_DIR = DATA_DIR / "index"
+BM25_INDEX_FILE = INDEX_DIR / "bm25.pkl"
+CHROMA_DIR = INDEX_DIR / "chroma"
+
 CONFIG_DIR = PROJECT_ROOT / "config"
 COMPANIES_FILE = CONFIG_DIR / "companies.txt"
 
@@ -90,5 +100,5 @@ def read_tickers(path: Path = COMPANIES_FILE) -> list[str]:
 
 def ensure_data_dirs() -> None:
     """Create the data folders if they are not there yet."""
-    for directory in (RAW_DIR, INTERIM_DIR, PROCESSED_DIR, SAMPLE_DIR):
+    for directory in (RAW_DIR, INTERIM_DIR, PROCESSED_DIR, SAMPLE_DIR, INDEX_DIR):
         directory.mkdir(parents=True, exist_ok=True)
