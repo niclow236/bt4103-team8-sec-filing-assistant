@@ -1,31 +1,78 @@
-"""BM25 keyword retrieval over the processed filing passages."""
+"""BM25 keyword retrieval over the processed filing passages.
+
+The sparse baseline the dense and hybrid rows are measured against, so what
+matters most here is that its numbers mean the same thing from one query to the
+next. Two decisions follow from that.
+
+The index is fitted once, over the whole corpus, and never refitted per query.
+BM25 scores a passage against the statistics of the collection it sits in -- how
+rare a term is, and how long the average passage runs -- so fitting over the
+rows a filter happened to admit makes those statistics a property of the filter.
+Pin a query to one ticker and that company's own name appears in nearly every
+candidate, which floors its IDF; rank_bm25 then substitutes ``epsilon *
+average_idf`` for the negative value and the term the user actually asked about
+stops discriminating. The scale moves with the filter too, which would leave
+``MIN_BM25_SCORE`` uncalibratable and the ablation's rows incomparable. So the
+filter chooses which scores are returned, never which scores are computed.
+
+The ordering, the floor, the rank numbering and the projection into
+``RetrievedPassage`` all come from ``base.py``, as does the metadata filter.
+This module contributes tokenization, the fit, and the index on disk; anything
+the four retrievers share is imported rather than restated, because a
+comparison whose rows differ in their tie-break is not measuring retrieval.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import pickle
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from rank_bm25 import BM25Okapi
 
-from ..config import DATA_DIR
-from ..pipeline.chunk import iter_chunks
+from src.config import PROJECT_ROOT
+from src.pipeline.chunk import iter_chunks
+from src.pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
+
+from .base import matches, rank, resolve_k
+from .constants import BM25, BM25_B, BM25_INDEX_FILE, BM25_K1, MIN_BM25_SCORE
 from .records import IndexManifest, Query, RetrievedPassage
 
-INDEX_PATH = DATA_DIR / "index" / "bm25.pkl"
 _TOKEN = re.compile(r"[a-z0-9]+")
 
 
 def tokenize(text: str) -> list[str]:
-    """Tokenize text consistently for both indexing and querying."""
+    """Tokenize text consistently for both indexing and querying.
+
+    The same function on both sides is the whole requirement: a query token that
+    was produced by different rules than the index tokens matches nothing, and
+    does so silently.
+    """
     return _TOKEN.findall(text.lower())
 
 
+def _read_corpus(processed_dir: Path | None) -> Iterator[dict]:
+    """Every processed passage, from the default corpus or a given directory.
+
+    ``iter_chunks`` defaults ``processed_dir`` to ``PROCESSED_DIR`` rather than
+    to None, so None has to become "no argument" here instead of being passed
+    straight through.
+    """
+    if processed_dir is None:
+        return iter_chunks()
+    return iter_chunks(processed_dir=processed_dir)
+
+
 def _corpus_fingerprint(chunks: Iterable[Mapping[str, Any]]) -> str:
+    """A digest over the passages that went into an index -- ids and text.
+
+    What ``IndexManifest.corpus_fingerprint`` holds, and the only thing that
+    tells a loaded index from a re-chunked corpus apart.
+    """
     digest = hashlib.sha256()
     for chunk in chunks:
         digest.update(str(chunk["chunk_id"]).encode("utf-8"))
@@ -35,104 +82,156 @@ def _corpus_fingerprint(chunks: Iterable[Mapping[str, Any]]) -> str:
     return digest.hexdigest()
 
 
-def _matches(chunk: Mapping[str, Any], query: Query) -> bool:
-    """Apply all hard filters before a BM25 score is calculated."""
-    if query.tickers and str(chunk["ticker"]).upper() not in {
-        ticker.upper() for ticker in query.tickers
-    }:
-        return False
-    if query.fiscal_years and chunk.get("fiscal_year") not in query.fiscal_years:
-        return False
-    if query.items and str(chunk.get("item") or "").upper() not in {
-        item.upper() for item in query.items
-    }:
-        return False
-    if query.content_type and chunk.get("content_type", "prose") != query.content_type:
-        return False
-    if query.key_items_only and not chunk.get("is_key_section", False):
-        return False
-    return True
+def _manifest_path(index_path: Path) -> str:
+    """The index location as the manifest records it: project-relative posix.
+
+    An absolute path is machine-local, so a manifest carrying one says nothing
+    useful to the next person to read it out of a shared index.
+    """
+    try:
+        return index_path.resolve().relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return index_path.as_posix()
 
 
 class BM25Retriever:
-    """Build, persist, and query a BM25 index of filing passages."""
+    """Build, persist, and query a BM25 index of filing passages.
 
-    def __init__(self, chunks: list[dict[str, Any]]) -> None:
-        self.chunks = chunks
-        self._tokens = [tokenize(chunk["text"]) for chunk in chunks]
-        self._bm25 = BM25Okapi(self._tokens)
+    Satisfies ``base.Retriever`` structurally: a ``name`` and a
+    ``search(query, k=None)``, so the ablation harness and any wrapping
+    retriever hold this the same way they hold the dense one.
+    """
+
+    name = BM25
+
+    def __init__(
+        self,
+        chunks: Iterable[Mapping[str, Any]],
+        manifest: IndexManifest | None = None,
+    ) -> None:
+        self.chunks = [dict(chunk) for chunk in chunks]
+        self.manifest = manifest
+        self._tokens = [tokenize(chunk["text"]) for chunk in self.chunks]
+        # rank_bm25 divides by the corpus size to get the average document
+        # length, so an empty corpus raises rather than building an index that
+        # matches nothing. build() refuses one; a hand-made or truncated index
+        # file can still produce one, and search() answers it with no results.
+        self._bm25 = BM25Okapi(self._tokens, k1=BM25_K1, b=BM25_B) if self._tokens else None
 
     @classmethod
     def build(
         cls,
         processed_dir: Path | None = None,
-        index_path: Path = INDEX_PATH,
+        index_path: Path = BM25_INDEX_FILE,
+        chunk_budget: int = CHUNK_CHAR_BUDGET,
+        chunk_overlap: int = CHUNK_CHAR_OVERLAP,
     ) -> BM25Retriever:
-        """Build an index from ``iter_chunks`` and serialize it to disk."""
-        chunks = list(iter_chunks(processed_dir=processed_dir)) if processed_dir else list(iter_chunks())
+        """Build an index from ``iter_chunks`` and serialize it to disk.
+
+        The chunker settings are recorded rather than inferred: the processed
+        files do not carry the budget they were cut with, so the manifest takes
+        the values in force now, and a caller rebuilding an older corpus passes
+        the ones it actually used.
+        """
+        chunks = list(_read_corpus(processed_dir))
         if not chunks:
             raise ValueError("Cannot build a BM25 index: no processed passages were found")
 
-        retriever = cls(chunks)
         manifest = IndexManifest(
-            index_type="bm25",
-            path=str(index_path),
+            index_type=BM25,
+            path=_manifest_path(index_path),
             corpus_fingerprint=_corpus_fingerprint(chunks),
             n_passages=len(chunks),
             n_filings=len({chunk["accession_no"] for chunk in chunks}),
             built_at=datetime.now(timezone.utc).isoformat(),
+            chunk_budget=chunk_budget,
+            chunk_overlap=chunk_overlap,
         )
         index_path.parent.mkdir(parents=True, exist_ok=True)
         with index_path.open("wb") as file:
             pickle.dump({"chunks": chunks, "manifest": manifest}, file)
-        return retriever
+        return cls(chunks, manifest=manifest)
 
     @classmethod
-    def load(cls, index_path: Path = INDEX_PATH) -> BM25Retriever:
-        """Load a previously serialized BM25 index."""
+    def load(
+        cls,
+        index_path: Path = BM25_INDEX_FILE,
+        processed_dir: Path | None = None,
+        verify: bool = True,
+    ) -> BM25Retriever:
+        """Load a serialized index, refusing one the corpus has moved past.
+
+        The check is the reason ``build`` writes a manifest at all. Re-chunking
+        without re-indexing leaves an index that still answers, from passages
+        whose ids no longer exist -- confidently, and with nothing in the output
+        to say so. Comparing fingerprints turns that into an error naming both
+        sides.
+
+        ``verify=False`` skips reading the corpus, which is what a test with a
+        hand-built index wants; it is not what a run that produces numbers for
+        the report wants.
+        """
         with index_path.open("rb") as file:
             payload = pickle.load(file)
-        return cls(payload["chunks"])
+        manifest = payload.get("manifest")
 
-    def search(self, query: Query) -> list[RetrievedPassage]:
-        """Return the highest-scoring passages matching the query filters."""
-        if query.top_k <= 0:
+        if verify:
+            if manifest is None:
+                raise ValueError(
+                    f"BM25 index at {index_path} carries no manifest, so it cannot be "
+                    "checked against the corpus. Rebuild it with build_index()."
+                )
+            problems = manifest.mismatches(
+                corpus_fingerprint=_corpus_fingerprint(_read_corpus(processed_dir))
+            )
+            if problems:
+                detail = "\n".join(f"  - {problem}" for problem in problems)
+                raise ValueError(
+                    f"BM25 index at {index_path} does not match the corpus on disk:\n"
+                    f"{detail}\nRebuild it with build_index()."
+                )
+
+        return cls(payload["chunks"], manifest=manifest)
+
+    def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
+        """Return the highest-scoring passages matching the query filters.
+
+        The filters are applied before scoring, as #22 requires, but the scores
+        themselves come from the corpus-wide fit -- see the module docstring for
+        why those are two different things.
+        """
+        wanted = resolve_k(query, k)
+        if wanted <= 0 or self._bm25 is None:
             return []
 
         candidates = [
             (position, chunk)
             for position, chunk in enumerate(self.chunks)
-            if _matches(chunk, query)
+            if matches(chunk, query)
         ]
         if not candidates:
             return []
 
-        candidate_tokens = [self._tokens[position] for position, _ in candidates]
-        scores = BM25Okapi(candidate_tokens).get_scores(tokenize(query.text))
-        ranked = sorted(
-            zip(scores, (chunk for _, chunk in candidates)),
-            key=lambda result: result[0],
-            reverse=True,
-        )[:query.top_k]
-        return [
-            RetrievedPassage.from_chunk(
-                chunk,
-                score=float(score),
-                rank=rank,
-                retriever="bm25",
-            )
-            for rank, (score, chunk) in enumerate(ranked, start=1)
-        ]
+        scores = self._bm25.get_scores(tokenize(query.text))
+        return rank(
+            ((chunk, float(scores[position])) for position, chunk in candidates),
+            retriever=self.name,
+            k=wanted,
+            min_score=MIN_BM25_SCORE,
+        )
 
 
 def build_index(
     processed_dir: Path | None = None,
-    index_path: Path = INDEX_PATH,
+    index_path: Path = BM25_INDEX_FILE,
 ) -> BM25Retriever:
     """Convenience wrapper for building the project BM25 index."""
     return BM25Retriever.build(processed_dir=processed_dir, index_path=index_path)
 
 
-def load_index(index_path: Path = INDEX_PATH) -> BM25Retriever:
+def load_index(
+    index_path: Path = BM25_INDEX_FILE,
+    processed_dir: Path | None = None,
+) -> BM25Retriever:
     """Convenience wrapper for loading the project BM25 index."""
-    return BM25Retriever.load(index_path=index_path)
+    return BM25Retriever.load(index_path=index_path, processed_dir=processed_dir)
