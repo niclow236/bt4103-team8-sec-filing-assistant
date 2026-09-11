@@ -24,7 +24,6 @@ comparison whose rows differ in their tie-break is not measuring retrieval.
 
 from __future__ import annotations
 
-import hashlib
 import pickle
 import re
 from collections.abc import Iterable, Iterator, Mapping
@@ -34,13 +33,17 @@ from typing import Any
 
 from rank_bm25 import BM25Okapi
 
-from src.config import PROJECT_ROOT
-from src.pipeline.chunk import iter_chunks
-from src.pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
+from src.pipeline.chunk import iter_chunks, resolve_chunk_settings
 
 from .base import matches, rank, resolve_k
 from .constants import BM25, BM25_B, BM25_INDEX_FILE, BM25_K1, MIN_BM25_SCORE
-from .records import IndexManifest, Query, RetrievedPassage
+from .records import (
+    IndexManifest,
+    Query,
+    RetrievedPassage,
+    corpus_fingerprint,
+    manifest_path,
+)
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
@@ -65,33 +68,6 @@ def _read_corpus(processed_dir: Path | None) -> Iterator[dict]:
     if processed_dir is None:
         return iter_chunks()
     return iter_chunks(processed_dir=processed_dir)
-
-
-def _corpus_fingerprint(chunks: Iterable[Mapping[str, Any]]) -> str:
-    """A digest over the passages that went into an index -- ids and text.
-
-    What ``IndexManifest.corpus_fingerprint`` holds, and the only thing that
-    tells a loaded index from a re-chunked corpus apart.
-    """
-    digest = hashlib.sha256()
-    for chunk in chunks:
-        digest.update(str(chunk["chunk_id"]).encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(chunk["text"]).encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
-
-
-def _manifest_path(index_path: Path) -> str:
-    """The index location as the manifest records it: project-relative posix.
-
-    An absolute path is machine-local, so a manifest carrying one says nothing
-    useful to the next person to read it out of a shared index.
-    """
-    try:
-        return index_path.resolve().relative_to(PROJECT_ROOT).as_posix()
-    except ValueError:
-        return index_path.as_posix()
 
 
 class BM25Retriever:
@@ -123,24 +99,28 @@ class BM25Retriever:
         cls,
         processed_dir: Path | None = None,
         index_path: Path = BM25_INDEX_FILE,
-        chunk_budget: int = CHUNK_CHAR_BUDGET,
-        chunk_overlap: int = CHUNK_CHAR_OVERLAP,
     ) -> BM25Retriever:
         """Build an index from ``iter_chunks`` and serialize it to disk.
 
-        The chunker settings are recorded rather than inferred: the processed
-        files do not carry the budget they were cut with, so the manifest takes
-        the values in force now, and a caller rebuilding an older corpus passes
-        the ones it actually used.
+        The chunker settings the manifest records are measured off the corpus,
+        which stores what it was cut with. ``resolve_chunk_settings`` holds the
+        rule for a corpus that predates that or was cut two different ways, so
+        this index and the dense one report both cases identically.
         """
         chunks = list(_read_corpus(processed_dir))
         if not chunks:
             raise ValueError("Cannot build a BM25 index: no processed passages were found")
 
+        chunk_budget, chunk_overlap, note = resolve_chunk_settings(
+            {(chunk.get("chunk_budget"), chunk.get("chunk_overlap")) for chunk in chunks}
+        )
+        if note:
+            print(f"  NOTE  {note}")
+
         manifest = IndexManifest(
             index_type=BM25,
-            path=_manifest_path(index_path),
-            corpus_fingerprint=_corpus_fingerprint(chunks),
+            path=manifest_path(index_path),
+            corpus_fingerprint=corpus_fingerprint(chunks),
             n_passages=len(chunks),
             n_filings=len({chunk["accession_no"] for chunk in chunks}),
             built_at=datetime.now(timezone.utc).isoformat(),
@@ -179,16 +159,16 @@ class BM25Retriever:
             if manifest is None:
                 raise ValueError(
                     f"BM25 index at {index_path} carries no manifest, so it cannot be "
-                    "checked against the corpus. Rebuild it with build_index()."
+                    "checked against the corpus. Rebuild it: python -m src.retrieval bm25"
                 )
             problems = manifest.mismatches(
-                corpus_fingerprint=_corpus_fingerprint(_read_corpus(processed_dir))
+                corpus_fingerprint=corpus_fingerprint(_read_corpus(processed_dir))
             )
             if problems:
                 detail = "\n".join(f"  - {problem}" for problem in problems)
                 raise ValueError(
                     f"BM25 index at {index_path} does not match the corpus on disk:\n"
-                    f"{detail}\nRebuild it with build_index()."
+                    f"{detail}\nRebuild it: python -m src.retrieval bm25"
                 )
 
         return cls(payload["chunks"], manifest=manifest)

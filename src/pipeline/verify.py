@@ -21,10 +21,10 @@ source. That means this command needs a network connection and EDGAR_IDENTITY,
 even when nothing is being downloaded.
 
 What it does not fail on is imperfection the pipeline already documents and
-handles: 38 tables in this corpus cannot be rebuilt into grids, and their
-flattened copy stays in the prose, so nothing is lost and there is nothing to
-fix. Those are reported as counts, and a check that fired on them would cry wolf
-on every run.
+handles: 6 tables in this corpus cannot be rebuilt into grids -- signature
+blocks and a paragraph laid out as a table -- and their text stays in the prose,
+so nothing is lost. Those are reported as counts, and a check that fired on
+them would cry wolf on every run.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,26 +47,27 @@ from ..config import (
     configure_edgar,
     read_tickers,
 )
-from .constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_MINIMUM, DEFAULT_FISCAL_YEARS, KEY_ITEMS
-from .chunk import iter_chunks, load_parsed, processed_path_for
+from .constants import CHUNK_CHAR_MINIMUM, DEFAULT_FISCAL_YEARS, KEY_ITEMS
+from .chunk import iter_chunks, load_parsed, processed_path_for, prose_blocks
 from .download import load_manifest
 from .parse import interim_path_for
 from .records import FilingRecord
 
 logger = logging.getLogger(__name__)
 
-# The characters a 512-token embedding model reads, at roughly four characters
-# per token. Passages are built to sit inside this; a run of them past it means
-# the budget or the splitting has drifted.
-EMBED_CHAR_LIMIT = 2048
-# Above this share of passages over that limit, the corpus is not fit to embed.
-# A few are expected, since a paragraph is never cut in half and a table row
-# never split down the middle, so the gate is on the share rather than on any one
-# passage. The current settings produce 0.16%, so this leaves room for a wider
-# corpus to drift a little without leaving room for a real regression: raising
-# the budget to 4,000 or breaking the column split would both put the share past
-# 5%, and either would be caught.
-OVERSIZE_TOLERANCE = 0.005
+# The share of passages, per content type, allowed past the embedding model's
+# window before the corpus is not fit to embed. Measured in tokens, with the
+# model's own tokenizer, over exactly what the encoder reads: the context header
+# and the passage. A character limit cannot do this job, because the characters
+# per token differ by a factor of two between prose and figures; the gate this
+# replaces passed a corpus in which 5.38% of passages were being truncated.
+#
+# Tables allow none. They are cut to a budget derived to fit, so a single one
+# over is a regression in the chunker, and reverting that budget fails this.
+# Prose allows a little, since a paragraph is never cut mid-sentence and an
+# unusually dense one can run over; a real regression -- raising the budget to
+# 4,000 characters, say -- puts far more than this past the window.
+OVERRUN_TOLERANCE = {"table": 0.0, "prose": 0.005}
 # Figures pulled from EDGAR's own XBRL data, per company, as an answer key. Each
 # is a concept a question would actually ask about.
 XBRL_CONCEPTS = [
@@ -292,6 +294,7 @@ def check_no_prose_lost(records: list[FilingRecord]) -> Check:
     """
     problems: list[str] = []
     checked = 0
+    as_debris = 0
     for record in records:
         interim = interim_path_for(record)
         parsed = load_parsed(interim)
@@ -302,52 +305,102 @@ def check_no_prose_lost(records: list[FilingRecord]) -> Check:
         for section in parsed.sections:
             if section.section_id not in chunked:
                 continue
+            # What the chunker dropped on purpose: flattened copies of tables it
+            # rebuilt, judged by the chunker's own rule so the two cannot
+            # disagree about what counts as lost.
+            _, dropped = prose_blocks(section)
+            discarded = _squash("".join(dropped))
             for paragraph in section.text.split("\n\n"):
                 squashed = _squash(paragraph)
                 if len(squashed) < 200:
                     continue
                 checked += 1
-                if squashed not in haystack:
-                    problems.append(
-                        f"{record.ticker} {record.filing_date} {section.section_id}: "
-                        f"lost {paragraph.strip()[:60]!r}"
-                    )
+                if squashed in haystack:
+                    continue
+                if squashed in discarded:
+                    as_debris += 1
+                    continue
+                problems.append(
+                    f"{record.ticker} {record.filing_date} {section.section_id}: "
+                    f"lost {paragraph.strip()[:60]!r}"
+                )
     return Check(
         name="no prose lost",
         passed=not problems,
-        detail=f"{checked:,} paragraphs of 200 characters or more all present in a passage",
+        detail=(
+            f"{checked:,} paragraphs of 200 characters or more all accounted for, "
+            f"{as_debris:,} of them as flattened copies of a rebuilt table"
+        ),
         failures=problems,
     )
 
 
-def check_passage_sizes(corpus: list[dict]) -> Check:
-    """Passages are small enough for an embedding model to read whole.
+def bge_token_counter() -> Callable[[list[str]], list[int]]:
+    """Count tokens the way the embedding model will, without loading the model.
+
+    ``tokenizers`` reads the model's own tokenizer file and pulls in no torch, so
+    counting the whole corpus takes seconds. Checked against the counts the
+    encoder recorded on every vector of the index: identical for all 28,544.
+    Truncation and padding are switched off explicitly, since a tokenizer file
+    can carry either, and a counter that stops at 512 can never report a
+    passage over it.
+    """
+    from tokenizers import Tokenizer
+
+    from ..retrieval.constants import EMBED_MODEL
+
+    tokenizer = Tokenizer.from_pretrained(EMBED_MODEL)
+    tokenizer.no_truncation()
+    tokenizer.no_padding()
+    return lambda texts: [len(encoding.ids) for encoding in tokenizer.encode_batch(texts)]
+
+
+def check_passage_sizes(
+    corpus: list[dict],
+    count_tokens: Callable[[list[str]], list[int]] | None = None,
+) -> Check:
+    """Passages are small enough for the embedding model to read whole.
 
     A passage past the model's context window is not an error the pipeline
     reports: the model truncates it and the tail is indexed as though it were
-    never written. A few are expected, since a paragraph is never cut in half and
-    a table row never split down the middle, so this fails on the share rather
-    than on any single passage.
+    never written. So this counts tokens rather than characters, over what the
+    encoder is actually handed -- ``embed_text``, which puts the context header
+    in front of the passage. Counting the passage alone misses about a third of
+    the overruns, since the header alone can be thirty tokens.
+
+    Reported per content type, because prose and tables are cut to different
+    budgets and fail for different reasons, and one share across both would
+    let a regression in either hide inside the other. ``count_tokens`` replaces
+    the tokenizer, for a test that should not need the model's files.
     """
-    sizes = [passage["n_chars"] for passage in corpus]
-    if not sizes:
+    if not corpus:
         return Check("passage sizes", False, "no passages found", ["data/processed/ is empty"])
 
-    oversize = [size for size in sizes if size > EMBED_CHAR_LIMIT]
-    share = len(oversize) / len(sizes)
-    runts = [size for size in sizes if size < CHUNK_CHAR_MINIMUM // 2]
-    problems = []
-    if share > OVERSIZE_TOLERANCE:
-        problems.append(
-            f"{share:.2%} of passages exceed {EMBED_CHAR_LIMIT} characters, "
-            f"above the {OVERSIZE_TOLERANCE:.0%} tolerance: a 512-token model "
-            "would truncate them without warning"
-        )
-    detail = (
-        f"budget {CHUNK_CHAR_BUDGET}, largest {max(sizes):,}, "
-        f"{len(oversize)} of {len(sizes):,} over {EMBED_CHAR_LIMIT} ({share:.2%}), "
-        f"{len(runts)} under {CHUNK_CHAR_MINIMUM // 2}"
-    )
+    from ..retrieval.constants import EMBED_MAX_TOKENS
+    from ..retrieval.embed import embed_text
+
+    counter = count_tokens or bge_token_counter()
+    counts = counter([embed_text(passage) for passage in corpus])
+
+    problems: list[str] = []
+    parts: list[str] = []
+    for content_type in sorted({passage.get("content_type", "prose") for passage in corpus}):
+        mine = [n for passage, n in zip(corpus, counts)
+                if passage.get("content_type", "prose") == content_type]
+        over = sum(1 for n in mine if n > EMBED_MAX_TOKENS)
+        share = over / len(mine)
+        tolerance = OVERRUN_TOLERANCE.get(content_type, 0.0)
+        parts.append(f"{content_type} {over} of {len(mine):,} over ({share:.2%}), "
+                     f"largest {max(mine):,}")
+        if share > tolerance:
+            problems.append(
+                f"{over:,} {content_type} passages ({share:.2%}) exceed the model's "
+                f"{EMBED_MAX_TOKENS} tokens, above the {tolerance:.1%} tolerance: "
+                "the encoder truncates them without warning"
+            )
+
+    runts = sum(1 for passage in corpus if passage["n_chars"] < CHUNK_CHAR_MINIMUM // 2)
+    detail = f"{EMBED_MAX_TOKENS} tokens: " + "; ".join(parts) + f"; {runts} under {CHUNK_CHAR_MINIMUM // 2} chars"
     return Check("passage sizes", not problems, detail, problems)
 
 

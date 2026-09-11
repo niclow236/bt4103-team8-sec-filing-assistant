@@ -196,6 +196,18 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+Run the tests:
+
+```bash
+python -m pytest
+```
+
+They need no network, no EDGAR identity and nothing under `data/`: each builds
+its own small corpus in a temporary directory, and the dense-index tests replace
+the embedding model with a deterministic stand-in, so the suite runs in seconds.
+One test counts tokens with the real bge tokenizer and is skipped if that cannot
+be downloaded.
+
 Set up environment variables:
 
 ```bash
@@ -363,8 +375,8 @@ Eight checks, cheapest first:
 | stage parity | a filing that reached parse but not chunk, or a stray file no manifest line accounts for |
 | key Items | Items 1, 1A, 7, 7A or 8 absent, or a stub with nothing to resolve to |
 | chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
-| no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage |
-| passage sizes | more than 0.5% of passages past the 2,048 characters a 512-token model reads; the current settings produce 0.16% |
+| no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage, unless the chunker dropped it as a flattened copy of a table it rebuilt |
+| passage sizes | any table passage, or more than 0.5% of prose passages, past the 512 tokens bge reads, counted with the model's own tokenizer over the passage and its context header |
 | matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
 | XBRL figures findable | a figure the filing reported to EDGAR that appears in no indexed passage |
 
@@ -383,10 +395,11 @@ since each would report the same missing filing once per filing. Those are liste
 as `SKIP` rather than left out, so a run that checked four things cannot be
 mistaken for a clean bill of health on eight.
 
-What verify does **not** fail on is imperfection the pipeline already handles: 86
-of 5,428 tables cannot be rebuilt into grids, and their flattened copy stays in
-the prose, so nothing is lost and there is nothing to fix. Those are reported as
-counts by the parse stage. A gate that fired on them would cry wolf on every run.
+What verify does **not** fail on is imperfection the pipeline already handles: 6
+of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one
+audit-matter paragraph laid out as a table -- and their text stays in the prose,
+so nothing is lost. Those are reported as counts by the parse stage. A gate that
+fired on them would cry wolf on every run.
 
 Run the app once it is built:
 
@@ -512,33 +525,33 @@ characters to point at the proxy statement. Only the second is skipped, and the
 test is whether the Item reads as a cross-reference rather than how long it is.
 
 Every passage is sized to be read whole by the embedding model rather than
-truncated by it. 1,800 characters is about 450 tokens, inside the 512-token
-limit most sentence-transformer models impose. Four things keep passages there:
+truncated by it. 1,800 characters is about 450 tokens of ordinary prose, inside
+the 512-token limit most sentence-transformer models impose. These rules keep
+passages there:
 
 - A paragraph longer than the budget is split at sentence ends, and a sentence
   longer than the budget at its clause boundaries, so a cut never lands inside a
   sentence unless the sentence alone exceeds the budget.
-- A table too long for one passage is split by rows, and one too wide by columns,
-  with the header repeated on every piece. Column splitting is what bounds a
-  table whose single row is already wider than the budget, which no amount of row
-  slicing reaches.
+- Text dense with figures is charged more of the budget than its length, because
+  it tokenises at up to two and a half times the rate of prose. A paragraph whose
+  visible characters are under 15% non-letters costs its length, as before; above
+  that its cost rises until, at 35%, it is budgeted like a table.
+- Tables get their own budget, derived from the prose one, and are split by rows
+  and by columns with the header repeated on every piece. The caption line counts
+  against that budget too, since it opens every piece.
+- The flattened copy of a table the parser rebuilt is dropped from the prose, so
+  the same figures are not indexed twice, once unreadable. A block is judged a
+  copy when the table's own cells account for it and no figure is left over.
 - The blank lines between paragraphs count against the budget as well as the
   paragraphs, since they are in the passage too.
 - Cells are rendered without alignment padding. Padding would be the largest
   single item in a wide table and carries no meaning to a model reading it.
 
-The result is that **0.16% of passages exceed 2,048 characters, 38 of 23,958**.
-Before this work the figure was 6.6% and the widest table passage ran to 9,907
-characters, most of which a 512-token model would have discarded in silence.
-
-Twenty-one of the 38 are prose, over by at most 64 characters, which is the
-paragraph rule doing what it should. The other seventeen are the one case none
-of the four rules above can reach: Intuit's exhibit index, where a single cell
-holds a whole exhibit description and runs past the budget on its own. Splitting
-by rows or by columns cannot make a passage smaller than one cell, so these top
-out at 2,954 characters. They are exhibit listings rather than disclosure, so
-nothing answerable is being truncated, but a table that cannot be split below
-the window is the shape to watch for if the corpus grows.
+The result, counted in bge's own tokens with the context header the encoder also
+reads: **none of the 29,234 passages exceeds 512 tokens.** The largest prose
+passage is 504 tokens and the largest table passage 409. `verify` checks this on
+every run. Before the last of these rules, 287 prose passages were being
+truncated, almost all of them flattened tables left in the text.
 
 `CHUNK_CHAR_MINIMUM` sets how far a passage may run past the budget, since a
 passage is closed only once it is over that minimum and one more paragraph can
@@ -595,7 +608,48 @@ Every field needed to build a citation is on the record, so nothing has to go
 back to the manifest at query time. Passing `fiscal_years` is what stops a
 question like "compare these companies in FY2024" from quietly answering across
 a mix of years; `tickers` and `key_items_only` narrow it the same way, the
-latter matching the `--key-items-only` flag on the chunk command.
+latter matching the `--key-items-only` flag on the chunk command. Each record
+also carries the `chunk_budget` and `chunk_overlap` its filing was cut with, so
+an index can record the settings it was built from rather than assume them.
+
+### Building the retrieval indexes
+
+The retrieval stage has its own command line beside the pipeline's:
+
+```bash
+python -m src.retrieval embed    # dense index, data/index/chroma/
+python -m src.retrieval bm25     # BM25 index, data/index/bm25.pkl
+python -m src.retrieval facts    # XBRL figures, data/index/facts.parquet
+python -m src.retrieval check    # does each index still match data/processed/?
+```
+
+`embed`, `bm25` and `check` read only `data/processed/`. `facts` queries EDGAR,
+so it needs a network connection and `EDGAR_IDENTITY`.
+
+`embed` is incremental. Each vector stores a digest of the exact text it was
+encoded from, so a run encodes the passages that are missing, re-encodes those
+whose text has changed, and removes vectors for passages the corpus no longer
+holds. After a re-chunk, run `embed` again rather than `embed --rebuild`.
+`--rebuild` re-encodes all 28,544 passages, about 6.6 hours on a laptop CPU, and
+is only needed after changing the embedding model. An interrupted run is resumed
+by running it again.
+
+Each index records what it was built from: the dense one in
+`data/index/chroma.manifest.json`, BM25 inside `bm25.pkl`. A retriever compares
+that against `data/processed/` before searching and refuses an index that no
+longer matches. `check` runs the same comparison for both and exits non-zero if
+either should not be searched, so it is the command to run after pulling
+changes to the pipeline.
+
+`embed` also writes `data/index/chroma.truncated.json`, listing the passages
+longer than the 512 tokens bge reads. Their stored text is whole, but their
+vector covers only the first 512 tokens.
+
+`facts --refresh` pulls the companies asked for again and replaces only their
+rows. Companies not asked for, and any whose request fails, keep what is stored.
+In a figure's row, `fiscal_year` is the year of the filing it was published in,
+which is not necessarily the year the figure describes; use `current_year()`
+or the `is_current_year` column for that.
 
 ## Team and course
 

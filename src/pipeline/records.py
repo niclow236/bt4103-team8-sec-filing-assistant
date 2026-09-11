@@ -160,3 +160,20 @@ class ChunkedFiling:
     source_path: str      # the interim file this was chunked from, posix-style
     chunks: list[ChunkRecord]
     period_of_report: str = ""   # see FilingRecord.period_of_report
+    # The settings these passages were actually cut with, rather than whatever
+    # the constants say when someone later reads the file. The chunk stage takes
+    # --budget and --overlap, so the two can differ, and an index built from
+    # this corpus records the budget its rows are reported against: without this
+    # the chunk-size sweep would label every row with the same wrong number.
+    #
+    # Optional, and None on a file written before they were recorded, so an
+    # older data/processed/ still loads through load_chunked rather than failing
+    # on a missing key. A reader that gets None knows only that the settings
+    # were not recorded, which is the truth and is worth being able to say.
+    chunk_budget: int | None = None
+    chunk_overlap: int | None = None
+    # Whether the run that produced these passages was narrowed to the key
+    # Items. Recorded for the same reason, though a change here is already
+    # caught by the corpus fingerprint, since it changes which passages exist.
+    # The fingerprint detects it; this explains it.
+    key_items_only: bool = False

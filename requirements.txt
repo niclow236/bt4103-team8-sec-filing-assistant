@@ -10,3 +10,20 @@ python-dotenv==1.2.3
 
 # Sparse keyword retrieval baseline.
 rank-bm25==0.2.2
+
+# Sentence embeddings for the dense retriever, and the store the vectors go in.
+# sentence-transformers pulls in torch, which is most of the install size. The
+# CPU build is enough, since nobody on the team is training anything, but it is
+# not fast: a full build of the dense index takes about 6.6 hours on a laptop
+# CPU. embed is incremental, so that cost is paid once rather than per re-chunk.
+sentence-transformers==6.0.1
+chromadb==1.5.9
+
+# The embedding model's tokenizer on its own, without torch, so verify can
+# count every passage in the model's tokens in seconds. Already installed as a
+# dependency of sentence-transformers; pinned here because verify uses it
+# directly.
+tokenizers==0.23.2
+
+# Tests: python -m pytest
+pytest==9.1.1

@@ -139,6 +139,29 @@ def table_budget_for(budget: int = CHUNK_CHAR_BUDGET) -> int:
     """
     return round(budget * TABLE_CHARS_PER_TOKEN / PROSE_CHARS_PER_TOKEN)
 
+
+# The four-characters-per-token rule fails inside prose too, wherever prose is
+# really figures: a table the rebuilder could not recover, left flattened in the
+# text so its numbers are not lost, an exhibit list, an ASCII chart. Those were
+# the last passages the encoder truncated -- 286 of them, all prose.
+#
+# Measured over this corpus's 33,072 paragraphs of 200 characters or more with
+# the bge tokenizer, the worst 1% of paragraphs run at these characters per
+# token, by density -- the share of visible characters that are not letters:
+#
+#     0.00-0.05  4.69     0.15-0.20  3.33     0.30-0.40  2.99
+#     0.05-0.10  4.09     0.20-0.25  3.12
+#     0.10-0.15  3.78     0.25-0.30  3.17
+#
+# So a paragraph is charged against the budget by density. Below
+# DENSE_TEXT_FROM it costs its length, exactly as before, which is 98% of
+# paragraphs and keeps ordinary prose cut where it always was. From there its
+# rate falls linearly from PROSE_CHARS_PER_TOKEN to TABLE_CHARS_PER_TOKEN,
+# reached at DENSE_TEXT_AT, so the densest prose is budgeted like the table it
+# usually is.
+DENSE_TEXT_FROM = 0.15
+DENSE_TEXT_AT = 0.35
+
 # Whole paragraphs are carried from the end of one chunk into the start of the
 # next, so a point made across a paragraph boundary is still retrievable. This
 # is the budget for that carried tail rather than an exact overlap, since only
@@ -204,5 +227,7 @@ PAGE_NUMBER_PATTERN = r"^\d{1,4}$"
 TABLE_MAX_ROWS_PER_CHUNK = 30
 
 # Below this a table carries no information worth indexing: a layout table used
-# for spacing, or a single stray cell.
+# for spacing, or a single stray cell. Counted over data cells, so a one-line
+# schedule of three years' figures is three; parse keeps a table like that
+# anyway when it plainly holds figures, rather than discarding it as layout.
 TABLE_MIN_CELLS = 4

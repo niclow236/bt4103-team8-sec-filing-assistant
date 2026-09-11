@@ -254,13 +254,25 @@ def _column_levels(rendered) -> tuple[list[str], list[list[str]]]:
     since a table with no labels at all is a table nothing can cite.
     """
     return _level_split([
-        tuple(_clean_cell(part) for part in column)
-        if isinstance(column, tuple) else (_clean_cell(column),)
+        tuple(_header_text(part) for part in column)
+        if isinstance(column, tuple) else (_header_text(column),)
         for column in rendered.columns
     ])
 
 
-def _index_levels(rendered) -> tuple[str, list[str]]:
+def _header_text(value: object) -> str:
+    """A header value as text, or "" where pandas numbered it rather than read it.
+
+    Header text from the filing always arrives as a string, years included.
+    Checked on all 75 filings: of 122,501 header values, the 5,832 that are not
+    strings are all integers under 100 -- pandas numbering the columns of a
+    table that had no header row. Printed, that put "| 0 | 1 |" above 872
+    tables, a label that says nothing about any figure.
+    """
+    return _clean_cell(value) if isinstance(value, str) else ""
+
+
+def _index_levels(rendered, header_depth: int) -> tuple[str, list[str]]:
     """The row-label header, and any first-column values caught in its name.
 
     The same fault as :func:`_column_levels` on the other axis. Where pandas
@@ -269,12 +281,52 @@ def _index_levels(rendered) -> tuple[str, list[str]]:
     index, so Item 15's exhibit numbers arrive as one 168-character name above
     two surviving rows. Returned separately because they are the first cell of
     each row the column levels give back, not a row of their own.
+
+    The name is split at ``header_depth``, the depth at which the column levels
+    split, rather than judged on its own. Each header row of the table is one
+    level on both axes, and the columns, holding a value at every level of
+    every column, are the better judge of which rows are data. Judged alone,
+    the name keeps a row label such as "Working capital" as header, because it
+    looks like one, and the figures in that row lose the only label they had.
     """
     name = rendered.index.name
     if not isinstance(name, tuple):
-        return _clean_cell(name), []
-    labels, trapped = _level_split([tuple(_clean_cell(part) for part in name)])
-    return labels[0], [row[0] for row in trapped]
+        # A name that is not text is pandas numbering the column it made the
+        # index -- 0, or 4 -- and labels nothing. Printed, it put "0" above the
+        # row labels and, as a caption, on the first line of 1,020 passages.
+        return (_clean_cell(name) if isinstance(name, str) else ""), []
+    parts = [_clean_cell(part) for part in name]
+    head, data = parts[:header_depth], parts[header_depth:]
+    return " ".join(part for part in head if part).strip(), data
+
+
+def _holds_figures(header: list[str], grid: list[list[str]], labelled: bool = True) -> bool:
+    """Whether a small grid is a table of figures rather than layout.
+
+    A data cell holding a digit and short enough to be a value rather than a
+    sentence, and at least TABLE_MIN_CELLS filled cells once the row labels and
+    header are counted. A signature block, or a paragraph set out in a table,
+    has no such cell and stays rejected; a one-line schedule of three years'
+    figures has three. ``labelled`` says whether the first column is row
+    labels, which are not data; in a table without them it is.
+    """
+    first = 1 if labelled else 0
+    figure = any(
+        len(cell) <= 40 and any(character.isdigit() for character in cell)
+        for row in grid for cell in row[first:]
+    )
+    filled = sum(1 for cell in header if cell.strip()) + sum(
+        1 for row in grid for cell in row if cell.strip()
+    )
+    return figure and filled >= TABLE_MIN_CELLS
+
+
+def _column_depth(rendered) -> int:
+    """How many header levels the column index holds."""
+    return max(
+        (len(column) if isinstance(column, tuple) else 1 for column in rendered.columns),
+        default=1,
+    )
 
 
 def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[str]]]:
@@ -372,24 +424,18 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
         # currency symbol or nothing at all, which arrive as empty columns that
         # push the year headers away from their figures. Dropping the columns
         # that hold no value anywhere puts each figure back under its own year.
+        #
+        # "Anywhere" includes the rows pandas read into the column index. Where
+        # the markup marks a table's data rows as headers, the body can be empty
+        # while the header levels hold every figure, and judging columns by the
+        # body alone would drop the columns the data is in.
+        _, trapped_rows = _column_levels(rendered)
         keep = [position for position in range(rendered.shape[1])
-                if rendered.iloc[:, position].astype(str).str.strip().any()]
+                if rendered.iloc[:, position].astype(str).str.strip().any()
+                or any(row[position] for row in trapped_rows)]
         if keep:
             rendered = rendered.iloc[:, keep]
         rendered = _promote_header_row(rendered)
-        if rendered.empty or rendered.size < TABLE_MIN_CELLS:
-            # It held data on arrival but not after the empty spacer columns
-            # were dropped, so the grid was mostly layout. Worth seeing, since
-            # it is the case most likely to be a fault in the cleanup rather
-            # than in the filing.
-            failures.append(TableFailure(
-                section_id=section.name, table_index=index,
-                kind="too few cells after dropping empty columns",
-                reason=f"only {rendered.size} cells left after dropping empty columns",
-                n_rows=int(rendered.shape[0]), n_cols=int(rendered.shape[1]),
-                html=_fragment(table),
-            ))
-            continue
 
         # The grid, not a rendered table: the row labels sit in the frame's index,
         # so they are moved into a first column and the header gains a cell above
@@ -397,19 +443,28 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
         # by column, which is what lets the chunker split a table too wide to fit.
         try:
             labels, trapped = _column_levels(rendered)
-            index_label, index_values = _index_levels(rendered)
-            header = [index_label] + labels
+            index_label, index_values = _index_levels(
+                rendered, header_depth=_column_depth(rendered) - len(trapped)
+            )
+            # A RangeIndex is pandas numbering the rows of a table it took no
+            # label column from, so it labels nothing, and the table's first
+            # real column already holds whatever labels its rows have. Moving
+            # it in would put "0", "1", "2" at the start of every row.
+            positional = type(rendered.index).__name__ == "RangeIndex"
+            header = ([] if positional else [index_label]) + labels
             # Rows recovered from the column index come first: they sat above
             # the surviving rows in the filing, and putting them back in order
             # is what makes the rebuilt table read like the printed one. Their
             # first cell comes from the index name, which is where that column's
             # values were caught, and is blank where it holds none.
             grid = [
-                [index_values[position] if position < len(index_values) else ""] + row
+                ([] if positional else
+                 [index_values[position] if position < len(index_values) else ""]) + row
                 for position, row in enumerate(trapped)
             ]
             grid += [
-                [_clean_cell(label)] + [_clean_cell(value) for value in row]
+                ([] if positional else [_clean_cell(label)])
+                + [_clean_cell(value) for value in row]
                 for label, row in zip(rendered.index, rendered.to_numpy().tolist())
             ]
             _uncomma_year_columns(grid)
@@ -424,7 +479,47 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
             ))
             continue
 
-        caption = str(getattr(table, "caption", "") or frame.index.name or "").strip()
+        # Judged on the grid rather than the frame's body, so the rows recovered
+        # from the header count. Measured the way it always was for a table with
+        # none -- body rows by kept columns -- so every table that passed before
+        # still passes. A table that fails the count is kept anyway when it is
+        # plainly figures, which the count alone cannot see: "Employee stock
+        # awards | 7 | 13 | 39" under three fiscal years is three cells by that
+        # measure, and 57 tables like it were being discarded as layout.
+        n_cells = len(grid) * len(labels)
+        if not grid or (
+            n_cells < TABLE_MIN_CELLS and not _holds_figures(header, grid, labelled=not positional)
+        ):
+            # It held data on arrival but not after the empty spacer columns
+            # were dropped, so the grid was mostly layout. Worth seeing, since
+            # it is the case most likely to be a fault in the cleanup rather
+            # than in the filing.
+            failures.append(TableFailure(
+                section_id=section.name, table_index=index,
+                kind="too few cells after dropping empty columns",
+                reason=f"only {n_cells} cells left after dropping empty columns",
+                n_rows=len(grid), n_cols=len(labels),
+                html=_fragment(table),
+            ))
+            continue
+
+        # The filing's own caption where it marked one up, which is rare.
+        # Otherwise the label above the row names, taken from index_label rather
+        # than the raw index name: a multi-level name is a tuple, and printing
+        # it put "('', 'Money market funds', ...)" on the first line of half the
+        # table passages in the corpus. An all-blank name gives "", so the
+        # chunker falls back to the Item title instead of a "('', '')" that is
+        # truthy and suppresses that fallback. The pipe escape is for grid cells
+        # and is taken back off, since the caption is a line of its own.
+        caption = (
+            str(getattr(table, "caption", "") or "").strip()
+            or index_label.replace(r"\|", "|")
+        )
+        # A caption with no letters in it names nothing -- Salesforce's FY2021
+        # filing has a stray "4" in the corner cell of 35 tables -- so those
+        # fall back to the Item title too.
+        if not any(character.isalpha() for character in caption):
+            caption = ""
         records.append(
             TableRecord(
                 # Number the tables we actually kept, not their position among

@@ -26,13 +26,100 @@ what stops Apple's FY2023 risk factors answering a question about FY2024.
 
 Every record is frozen and holds no mutable default, so a passage handed to
 three components cannot be edited by one of them behind the others' backs.
+
+The functions here are here for the same reason the records are: they compute
+fields of ``IndexManifest``, so every index that writes one writes it the same
+way. A manifest field defined once in each retriever is a field with no
+definition at all, which is what ``corpus_fingerprint`` was before it moved
+here.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from ..config import PROJECT_ROOT
+
+
+def corpus_fingerprint(
+    rows: Iterable[Mapping[str, Any]],
+    text_of: Callable[[Mapping[str, Any]], str] | None = None,
+) -> str:
+    """A digest identifying the exact set of passages an index was built from.
+
+    Here rather than in a retriever because it populates
+    :attr:`IndexManifest.corpus_fingerprint`, and a field with two definitions
+    has none: written once in ``bm25.py`` and once in ``embed.py``, the two
+    hashed the same corpus to different strings, so the manifests of a
+    bm25/dense pair could never agree no matter how many times either was
+    rebuilt.
+
+    Each passage's ``chunk_id`` is hashed together with its text, those digests
+    are sorted, and the sorted list is hashed. Sorting is what makes it a
+    fingerprint of the corpus rather than of one walk over it: the same passages
+    in a different order, which is all a renamed directory or a changed glob
+    amounts to, give the same answer.
+
+    ``text_of`` is what an index counts as the passage's content, defaulting to
+    the stored text. A retriever that feeds the encoder something other than the
+    stored text passes its own -- the dense index prepends a context header
+    built from metadata, so for that index a changed company name really does
+    move a vector, and the digest has to see it. That makes the digests of two
+    different index types incomparable by construction, which is why
+    :attr:`IndexManifest.corpus_fingerprint` is only ever compared against
+    another manifest of the same ``index_type``.
+
+    It changes when a passage's text changes, when passages are added or
+    removed, and when the chunker cuts the same filing differently, since that
+    renumbers ``chunk_id``.
+    """
+    content = text_of if text_of is not None else lambda row: row["text"]
+    return fingerprint_of(passage_digest(row["chunk_id"], content(row)) for row in rows)
+
+
+def passage_digest(chunk_id: str, content: str) -> str:
+    """The digest of one passage: its id and the content an index encoded.
+
+    The unit :func:`corpus_fingerprint` is folded from, exposed on its own so an
+    index can store it beside each entry. A vector that carries the digest of
+    the text it was encoded from can be checked against the corpus one passage
+    at a time, with or without a manifest, which is what makes a resumed build
+    safe after the corpus has moved under it.
+    """
+    return hashlib.sha256(f"{chunk_id}\x00{content}".encode("utf-8")).hexdigest()
+
+
+def fingerprint_of(digests: Iterable[str]) -> str:
+    """Fold passage digests into one fingerprint, independent of their order.
+
+    The same fold serves both sides of a stale-index check: over the corpus on
+    disk, and over the digests an index says it holds. Two sets of passages give
+    the same fingerprint only if they are the same passages.
+    """
+    total = hashlib.sha256()
+    for digest in sorted(digests):
+        total.update(digest.encode("ascii"))
+    return total.hexdigest()
+
+
+def manifest_path(index_path: Path) -> str:
+    """The index location as a manifest records it: project-relative posix.
+
+    An absolute path is machine-local, so a manifest carrying one says nothing
+    useful to the next person to read it out of a shared index. A directory
+    outside the project root -- pytest's ``tmp_path``, a scratch build on
+    another volume -- has no relative form, so it is recorded absolute rather
+    than raising, since failing here would throw away a whole build's manifest
+    after the build had already finished.
+    """
+    try:
+        return index_path.resolve().relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return index_path.as_posix()
 
 
 @dataclass(frozen=True)
@@ -122,9 +209,14 @@ class IndexManifest:
 
     index_type: str           # "bm25" or "dense"
     path: str                 # relative to the project root, posix-style, so this is portable
-    # A digest over the passages that went in -- their ids and their text. Two
-    # indexes with the same fingerprint were built from the same corpus; a
-    # different one means the chunker has been re-run since.
+    # A digest over the passages that went in, from :func:`corpus_fingerprint`.
+    # Two indexes OF THE SAME TYPE with the same fingerprint were built from the
+    # same corpus; a different one means the chunker has been re-run since.
+    # Across types it is not comparable: each index hashes what it actually
+    # indexed, and the dense index encodes a context header the sparse one never
+    # sees, so a bm25 and a dense manifest of one corpus hold different strings
+    # by design. Compare a manifest against a freshly computed digest using the
+    # same ``text_of``, never against a manifest of the other type.
     corpus_fingerprint: str
     n_passages: int
     n_filings: int
@@ -181,6 +273,12 @@ class Query:
     after it is passed on, and empty means unrestricted rather than nothing.
     They are named for the same things ``iter_chunks`` filters on, so a query is
     read against the corpus without a translation step.
+
+    Filter values are put in the corpus's own form when the Query is made:
+    tickers and Items upper case, fiscal years as integers. Every retriever
+    reads them from here, and one that compared "aapl" against the stored
+    "AAPL" would match nothing while another matched everything, so the
+    normalising is done once at the boundary rather than in each consumer.
     """
 
     text: str
@@ -190,6 +288,12 @@ class Query:
     items: tuple[str, ...] = ()       # "1A", "7", ...; matched case-insensitively
     content_type: str | None = None   # "prose" or "table"; None allows both
     key_items_only: bool = False      # the Items the project leans on: 1, 1A, 7, 7A, 8
+
+    def __post_init__(self) -> None:
+        # Frozen, so the normalised values are set through object.__setattr__.
+        object.__setattr__(self, "tickers", tuple(t.upper() for t in self.tickers))
+        object.__setattr__(self, "fiscal_years", tuple(int(y) for y in self.fiscal_years))
+        object.__setattr__(self, "items", tuple(i.upper() for i in self.items))
 
     @property
     def filters(self) -> dict[str, Any]:
