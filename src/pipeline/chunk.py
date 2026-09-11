@@ -173,39 +173,41 @@ def iter_chunks(
 
 def resolve_chunk_settings(
     seen: set[tuple[int | None, int | None]],
-    budget: int,
-    overlap: int,
 ) -> tuple[int | None, int | None, str | None]:
     """What a corpus was cut with, from what its filings recorded.
 
     ``seen`` is the distinct ``(chunk_budget, chunk_overlap)`` pairs observed
-    while walking the corpus, and ``budget``/``overlap`` are what the caller
-    would otherwise have assumed. Returns the pair to record and a note to print
-    when the answer is not clean, so both indexes report a mixed or unlabelled
-    corpus the same way instead of each inventing a rule.
+    while walking the corpus. Returns the pair an index manifest should record,
+    and a note to print when that answer is not a measurement, so both indexes
+    report an unlabelled or mixed corpus the same way.
+
+    There is deliberately no way for a caller to supply the values. An override
+    can only agree with what the corpus recorded, in which case it adds
+    nothing, or disagree, in which case it is wrong; and for a corpus that
+    predates the recording, re-chunking takes seconds and turns the guess into
+    a measurement.
 
     Three cases, and only the first is silent:
 
-    One recorded pair is the answer, and the caller's assumption is discarded in
-    its favour -- the corpus knows better than the constants.
+    One recorded pair is the answer.
 
-    Nothing recorded means the files predate this, so the caller's values stand.
-    They may well be right; the point is that nobody can tell, so it says so.
+    Nothing recorded means the files predate this, so the constants in force
+    stand in, and the note says they are assumed rather than measured.
 
     More than one pair means the corpus was cut in more than one way, and a
-    manifest has a single budget field. There is no honest value, so it records
-    none. This includes the half-and-half case -- some filings recorded, some
-    not -- because a file that did not record its settings is not evidence that
-    they matched.
+    manifest has a single budget field. There is no correct value, so it
+    records none. This includes the half-and-half case -- some filings
+    recorded, some not -- because a file that did not record its settings is
+    not evidence that they matched.
     """
     if len(seen) == 1:
         recorded_budget, recorded_overlap = next(iter(seen))
         if recorded_budget is None and recorded_overlap is None:
-            return budget, overlap, (
+            return CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP, (
                 f"data/processed/ predates the recording of chunker settings, so "
-                f"the manifest takes the values it was given ({budget}/{overlap}) "
-                f"rather than measured ones. Re-chunk to record them: "
-                f"python -m src.pipeline chunk --force"
+                f"the manifest assumes the current constants "
+                f"({CHUNK_CHAR_BUDGET}/{CHUNK_CHAR_OVERLAP}) rather than measuring "
+                f"them. Re-chunk to record them: python -m src.pipeline chunk --force"
             )
         return recorded_budget, recorded_overlap, None
 

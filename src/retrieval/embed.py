@@ -18,19 +18,35 @@ passage exactly as the chunker wrote it, because the stored text is what a
 citation quotes, and a citation that quotes our own annotation back at the
 reader is worse than none. The header exists in the vector and nowhere else.
 
-That has a consequence for staleness. Because the header reaches the encoder,
-this index's contents depend on metadata as well as on text: rename a company
-in the ticker map and every one of its vectors changes while its passages do
-not. So the fingerprint this stage writes is taken over ``embed_text`` rather
-than over the raw passage -- see :func:`records.corpus_fingerprint`.
+**Every vector records what it was encoded from.** Beside the citation
+metadata, each one stores the digest of its ``embed_text`` (``digest``), how
+many tokens that text ran to (``n_tokens``), and the model that encoded it
+(``embed_model``). That is what makes the index checkable one passage at a time
+against the corpus on disk, with or without a manifest:
 
-The index is derived data: delete it and it rebuilds from ``data/processed/``.
-What cannot be rebuilt is the knowledge of which corpus it came from, so an
-``IndexManifest`` is written beside it, and a retriever compares that against
-the corpus on disk before it will load one. A manifest is a claim about the
-whole index, so this module writes one only when the index holds the whole
-corpus: a run narrowed by ``--tickers`` builds real vectors and leaves the
-manifest alone.
+- A resumed build compares digests, so a passage whose text changed since its
+  vector was written is re-encoded rather than skipped because its id survived.
+- A truncated vector is marked on the vector itself, so the truncation report
+  is read back from the index and cannot lose entries to a resume.
+- An index encoded by a different model is refused rather than extended.
+
+Because the header reaches the encoder, the digest covers metadata as well as
+text: rename a company in the ticker map and each of its vectors is correctly
+seen as stale. See :func:`records.corpus_fingerprint`.
+
+**The manifest describes the index as it actually is.** It is deleted before a
+build first changes the collection and written again, from the digests the
+collection holds, when the build completes. So a manifest on disk was always
+written by a run that finished, after the index last changed, and its
+fingerprint matches the corpus only when every passage is present and current.
+An interrupted build leaves no manifest; a narrowed or partial one leaves a
+manifest that truthfully fails to match. :func:`check_index` is the check a
+retriever runs before searching.
+
+Every file this stage writes about an index sits beside that index, named after
+it: ``chroma.manifest.json`` and ``chroma.truncated.json`` for
+``data/index/chroma/``. A build pointed at a scratch directory therefore cannot
+read or overwrite the project's own.
 """
 
 from __future__ import annotations
@@ -38,14 +54,14 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..config import DIAGNOSTICS_DIR
+from ..config import PROCESSED_DIR
 from ..pipeline.chunk import iter_chunks, resolve_chunk_settings
-from ..pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
 from .constants import (
     CHROMA_DIR,
     CONTEXT_HEADER,
@@ -58,22 +74,12 @@ from .constants import (
     EMBED_NORMALIZE,
     PASSAGE_PREFIX,
 )
-from .records import IndexManifest, corpus_fingerprint, manifest_path
+from .records import IndexManifest, Query, fingerprint_of, manifest_path, passage_digest
 
 # One collection holds the whole corpus. Splitting per company would make a
 # cross-company question a fan-out over fifteen collections, and the metadata
 # pre-filter already narrows a query to one company when it needs to.
 COLLECTION_NAME = "passages"
-
-# Beside the index rather than inside it: Chroma owns the contents of its own
-# directory and is free to rewrite them, so a file that has to survive a
-# rebuild does not belong in there.
-MANIFEST_FILE = CHROMA_DIR.parent / "chroma.manifest.json"
-
-# Where the truncation report is written. Named here rather than inside the
-# function that writes it, so a resumed run and a rebuild can both find the
-# file the run before them left instead of each writing over it blind.
-TRUNCATION_FILE = "embed-truncated.json"
 
 # Everything from an ``iter_chunks`` row worth carrying into the index. The
 # first five are ``constants.PREFILTER_FIELDS``, which retrieval filters on;
@@ -86,8 +92,47 @@ METADATA_FIELDS = (
     "chunk_index", "n_chars", "table_index", "table_caption",
 )
 
+# Fields the index writes about each vector, as opposed to fields copied from
+# the passage. Named once so the builder, the check and the inverse of
+# metadata_for agree on which is which.
+DIGEST_FIELD = "digest"
+TOKENS_FIELD = "n_tokens"
+MODEL_FIELD = "embed_model"
+INDEX_FIELDS = (DIGEST_FIELD, TOKENS_FIELD, MODEL_FIELD)
 
-def context_header(row: dict) -> str:
+# What metadata_for drops as empty, and what an iter_chunks row holds in its
+# place, so a stored record can be turned back into that row exactly.
+_DROPPED_DEFAULTS: dict[str, Any] = {
+    "part": None, "item": None, "heading": None, "title": "",
+    "table_index": None, "table_caption": "", "period_of_report": "",
+    "fiscal_year": None,
+}
+
+# Records read per request when scanning the collection. Only three short
+# strings are kept from each, so the page size bounds the transient cost of
+# reading full metadata rather than what is held afterwards.
+SCAN_PAGE = 5_000
+
+
+def manifest_file_for(chroma_dir: Path) -> Path:
+    """Where the manifest of the index in ``chroma_dir`` lives: beside it.
+
+    Derived rather than passed separately, so no caller can pair one index with
+    another index's manifest. Beside the directory rather than inside it,
+    because Chroma owns its directory's contents and may rewrite them.
+    """
+    return chroma_dir.parent / f"{chroma_dir.name}.manifest.json"
+
+
+def truncation_file_for(chroma_dir: Path) -> Path:
+    """Where the truncation report of the index in ``chroma_dir`` lives."""
+    return chroma_dir.parent / f"{chroma_dir.name}.truncated.json"
+
+
+MANIFEST_FILE = manifest_file_for(CHROMA_DIR)
+
+
+def context_header(row: Mapping[str, Any]) -> str:
     """The header prepended to one passage at embed time and never stored.
 
     Missing fields become empty rather than the string "None": ``item`` is None
@@ -106,7 +151,7 @@ def context_header(row: dict) -> str:
     )
 
 
-def embed_text(row: dict) -> str:
+def embed_text(row: Mapping[str, Any]) -> str:
     """What actually goes to the encoder: prefix, header, then the passage.
 
     ``PASSAGE_PREFIX`` is empty for bge, which asks for a prefix on the query
@@ -120,14 +165,20 @@ def embed_text(row: dict) -> str:
     return f"{PASSAGE_PREFIX}{context_header(row)}{row['text']}"
 
 
-def metadata_for(row: dict) -> dict[str, Any]:
+def digest_of(row: Mapping[str, Any]) -> str:
+    """The digest a current vector for this passage would carry."""
+    return passage_digest(row["chunk_id"], embed_text(row))
+
+
+def metadata_for(row: Mapping[str, Any]) -> dict[str, Any]:
     """The row reduced to what Chroma will store alongside a vector.
 
     Chroma takes scalars only, so a None or a list has to go somewhere or go
     away. Empty values are dropped rather than stored as "": a filter on a field
     that is absent should not match a passage that merely has nothing in it.
     ``incorporated_into`` is a list, so it is joined, which keeps it readable in
-    a citation without pretending it is filterable.
+    a citation without pretending it is filterable. :func:`chunk_from_record`
+    undoes all of this.
     """
     metadata: dict[str, Any] = {}
     for field in METADATA_FIELDS:
@@ -141,6 +192,53 @@ def metadata_for(row: dict) -> dict[str, Any]:
     if incorporated:
         metadata["incorporated_into"] = ",".join(str(item) for item in incorporated)
     return metadata
+
+
+def chunk_from_record(
+    chunk_id: str, document: str, metadata: Mapping[str, Any]
+) -> dict[str, Any]:
+    """One stored record turned back into the row ``iter_chunks`` would yield.
+
+    The inverse of :func:`metadata_for`, kept beside it so the two directions
+    cannot drift. This is what lets the dense retriever hand
+    ``RetrievedPassage.from_chunk`` the same shape BM25 hands it: without it, a
+    passage whose Item or title was empty would reach ``from_chunk`` with the
+    key missing and raise, and one retriever would cite a passage differently
+    from another.
+
+    The index's own fields are left out, since they describe the vector rather
+    than the passage.
+    """
+    row: dict[str, Any] = dict(_DROPPED_DEFAULTS)
+    row.update({key: value for key, value in metadata.items() if key not in INDEX_FIELDS})
+    joined = row.pop("incorporated_into", "")
+    row["incorporated_into"] = joined.split(",") if joined else []
+    row["chunk_id"] = chunk_id
+    row["text"] = document
+    return row
+
+
+def where_for(query: Query) -> dict[str, Any] | None:
+    """The Chroma ``where`` clause that applies a Query's filters in the index.
+
+    The dense counterpart of ``base.matches``, which is how BM25 applies the
+    same filters to rows. The two have to select exactly the same passages for
+    every Query, or the ablation compares the methods over different corpora
+    and reports the difference as a difference in retrieval. It is written here
+    rather than in the retriever because what makes it correct is how
+    :func:`metadata_for` stores each field: values as the corpus holds them,
+    and an empty field absent rather than stored as "", so a filter on it
+    excludes the passage exactly as ``matches`` does.
+
+    None when the Query sets no filter, which Chroma reads as unrestricted.
+    """
+    clauses = [
+        {field: {"$in": value}} if isinstance(value, list) else {field: value}
+        for field, value in query.filters.items()
+    ]
+    if not clauses:
+        return None
+    return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
 def _use_threads(threads: int | None) -> int | None:
@@ -223,14 +321,27 @@ def _collection_names(client) -> set[str]:
     }
 
 
-def _open_collection(chroma_dir: Path, rebuild: bool):
-    """The persistent collection, created if absent, dropped first if asked."""
+def open_collection(chroma_dir: Path = CHROMA_DIR, rebuild: bool = False, create: bool = True):
+    """The persistent collection in ``chroma_dir``.
+
+    ``create=False`` is for a reader: it returns None rather than creating an
+    empty collection, and creates no directory, so checking for an index never
+    leaves one behind. ``rebuild`` drops the collection first.
+    """
     try:
         import chromadb
     except ImportError as error:   # pragma: no cover - depends on the install
         raise RuntimeError(
             "chromadb is not installed. Run: pip install -r requirements.txt"
         ) from error
+
+    if not create:
+        if not chroma_dir.is_dir():
+            return None
+        client = chromadb.PersistentClient(path=str(chroma_dir))
+        if COLLECTION_NAME not in _collection_names(client):
+            return None
+        return client.get_collection(COLLECTION_NAME)
 
     chroma_dir.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(chroma_dir))
@@ -269,28 +380,65 @@ def _open_collection(chroma_dir: Path, rebuild: bool):
     return collection
 
 
-def _existing_ids(collection) -> set[str]:
-    """Which passages this index already holds, so a run can resume.
+def _scan(collection) -> dict[str, tuple[str | None, str | None, str | None]]:
+    """What every vector says about itself: digest, filing, and model.
 
-    Asked for once and kept, rather than per batch: an interrupted build is the
-    normal reason to re-run, and thirty thousand ids is a set worth holding to
-    avoid thirty thousand round trips.
-
-    Nothing here swallows a read failure. "The index is empty" and "the index
-    could not be read" are one empty set to the caller and opposite situations:
-    the first means embed everything, the second means a corrupt or locked
-    store has just cost hours of re-encoding and handed ``add()`` thirty
-    thousand ids it already holds. Emptiness is settled by asking for the
-    count, which leaves only a genuine read problem to raise.
+    Read in pages, keeping three short strings per vector rather than full
+    metadata, so this costs a few megabytes and is released before the model
+    loads. Nothing here swallows a read failure: "the index is empty" and "the
+    index could not be read" would otherwise look identical, and the second
+    would cost a full re-encode.
     """
-    if not collection.count():
-        return set()
-    try:
-        return set(collection.get(include=[])["ids"])
-    except (TypeError, ValueError):
-        # Older chromadb rejects an empty include list. The default projection
-        # returns the ids too; it just pays for the documents on the way.
-        return set(collection.get()["ids"])
+    held: dict[str, tuple[str | None, str | None, str | None]] = {}
+    total = collection.count()
+    for offset in range(0, total, SCAN_PAGE):
+        page = collection.get(limit=SCAN_PAGE, offset=offset, include=["metadatas"])
+        for chunk_id, metadata in zip(page["ids"], page["metadatas"]):
+            metadata = metadata or {}
+            held[chunk_id] = (
+                metadata.get(DIGEST_FIELD),
+                metadata.get("accession_no"),
+                metadata.get(MODEL_FIELD),
+            )
+    return held
+
+
+def _corpus_digests(processed_dir: Path) -> tuple[dict[str, str], set, int]:
+    """Walk the corpus once: each passage's digest, the chunker settings seen,
+    and the row count.
+
+    The count is returned separately from the dict so a duplicated chunk_id,
+    which the dict would silently collapse, can be detected by the caller.
+    """
+    digests: dict[str, str] = {}
+    settings: set[tuple[int | None, int | None]] = set()
+    n_rows = 0
+    for row in iter_chunks(processed_dir=processed_dir):
+        n_rows += 1
+        digests[row["chunk_id"]] = digest_of(row)
+        settings.add((row.get("chunk_budget"), row.get("chunk_overlap")))
+    return digests, settings, n_rows
+
+
+def _differences(
+    held: Mapping[str, tuple[str | None, ...]], corpus: Mapping[str, str]
+) -> dict[str, int]:
+    """How an index departs from the corpus, counted in the three ways it can."""
+    missing = sum(1 for chunk_id in corpus if chunk_id not in held)
+    stale = sum(
+        1 for chunk_id, entry in held.items()
+        if chunk_id in corpus and entry[0] != corpus[chunk_id]
+    )
+    orphaned = sum(1 for chunk_id in held if chunk_id not in corpus)
+    return {"missing": missing, "stale": stale, "orphaned": orphaned}
+
+
+def _describe(differences: Mapping[str, int]) -> str:
+    return (
+        f"{differences['missing']:,} passages missing, "
+        f"{differences['stale']:,} stale, "
+        f"{differences['orphaned']:,} no longer in the corpus"
+    )
 
 
 def build(
@@ -300,41 +448,34 @@ def build(
     rebuild: bool = False,
     batch_size: int = EMBED_BATCH_SIZE,
     threads: int | None = None,
-    chunk_budget: int = CHUNK_CHAR_BUDGET,
-    chunk_overlap: int = CHUNK_CHAR_OVERLAP,
     chroma_dir: Path = CHROMA_DIR,
-    manifest_file: Path = MANIFEST_FILE,
-) -> IndexManifest | None:
-    """Embed the corpus into ``chroma_dir``, and write a manifest if it is whole.
+    processed_dir: Path = PROCESSED_DIR,
+) -> IndexManifest:
+    """Bring the index in ``chroma_dir`` up to date with ``processed_dir``.
 
     The filters are named parameters rather than a parsed namespace, so this is
     as usable from a notebook as from the command line, which is the shape
     ``passages.select`` uses one stage earlier.
 
-    A run that is interrupted can simply be run again: whatever is already in
-    the collection is skipped. That resume matches on ``chunk_id`` alone, which
-    is only safe while the corpus has not moved under it -- a re-chunk that
-    changes a passage's text without changing the count leaves most ids
-    identical, and the old vector would be kept for the new text. So the corpus
-    is fingerprinted before anything is embedded and compared against the
-    manifest already on disk; a run that would resume onto a corpus that moved
-    stops and says to pass ``rebuild``, rather than doing it quietly.
+    What a run does to each passage it is asked for:
 
-    ``chunk_budget`` and ``chunk_overlap`` are a fallback rather than the
-    answer. The chunk stage records what it cut with, so the settings are read
-    off the corpus and these are used only for filings written before that was
-    recorded. A corpus cut two different ways is reported and recorded as
-    neither, since the manifest has one budget field and labelling every sweep
-    row with a number that is wrong for part of the corpus is worse than
-    labelling none. ``resolve_chunk_settings`` holds that rule, so this index
-    and the BM25 one apply it identically.
+    - missing from the index: encoded and added;
+    - present with the digest of its current text: left alone;
+    - present with a different digest: its vector is deleted and re-encoded.
+      Deleted and re-added rather than upserted, because Chroma merges metadata
+      on upsert, so a field the new passage no longer has would survive from
+      the old one.
 
-    Returns the manifest when one was written, and None when the index does not
-    hold the whole corpus -- a narrowed run, or one interrupted partway. A
-    manifest is a claim about an entire index, and a filtered walk cannot make
-    it: build the full index, then run again with ``--tickers AAPL``, and the
-    manifest would describe two thousand Apple passages sitting beside
-    twenty-eight thousand vectors, which is worse than no manifest at all.
+    A run with no filters also removes vectors whose passage is no longer in
+    the corpus. A narrowed run leaves everything outside its filter as it
+    found it, including anything stale there; the manifest it writes records
+    that honestly and will not match the corpus until a full run completes.
+
+    So an interrupted build is resumed by running it again, and that is correct
+    even if the corpus was re-chunked in between: nothing is trusted because its
+    id survived. ``rebuild`` drops the collection first, for when every vector
+    should be re-encoded regardless -- a changed model, for one, which this
+    refuses to mix into an existing index.
 
     The corpus is walked twice rather than held in memory. Reading it into a
     list costs a few hundred megabytes that are still resident when torch loads
@@ -351,158 +492,161 @@ def build(
         )
 
     narrowed = bool(tickers or fiscal_years or key_items_only)
+    manifest_file = manifest_file_for(chroma_dir)
 
-    # First walk, and the only one over the whole corpus: the digest, the ids
-    # and the filings accumulated together rather than in a loop each. All that
-    # is kept is strings, so this is megabytes rather than the corpus.
-    corpus_ids: set[str] = set()
-    filings: set[str] = set()
-    settings: set[tuple[int | None, int | None]] = set()
-    n_rows = 0
-
-    def observed():
-        nonlocal n_rows
-        for row in iter_chunks():
-            n_rows += 1
-            corpus_ids.add(row["chunk_id"])
-            filings.add(row["accession_no"])
-            settings.add((row.get("chunk_budget"), row.get("chunk_overlap")))
-            yield row
-
-    fingerprint = corpus_fingerprint(observed(), text_of=embed_text)
+    # First walk, over the whole corpus whatever the filters say: the digests
+    # are what every decision below is made against.
+    corpus, settings, n_rows = _corpus_digests(processed_dir)
     if not n_rows:
         raise RuntimeError(
-            "No passages found in data/processed/. Run the chunk stage first: "
-            "python -m src.pipeline rebuild"
+            f"No passages found in {processed_dir}. Run the chunk stage first: "
+            f"python -m src.pipeline rebuild"
         )
-    if len(corpus_ids) != n_rows:
+    if len(corpus) != n_rows:
         # Resume, the manifest and every id in the index all key on chunk_id
         # being unique. A duplicate would silently drop a passage from the index.
         raise RuntimeError(
-            f"data/processed/ holds {n_rows:,} passages under only "
-            f"{len(corpus_ids):,} distinct chunk_ids. Re-chunk before indexing: "
+            f"{processed_dir} holds {n_rows:,} passages under only "
+            f"{len(corpus):,} distinct chunk_ids. Re-chunk before indexing: "
             f"python -m src.pipeline chunk --force"
         )
-    n_filings = len(filings)
-    print(
-        f"corpus: {n_rows:,} passages from {n_filings} filings"
-        f"  fingerprint {fingerprint[:12]}"
-    )
+    corpus_fingerprint = fingerprint_of(corpus.values())
+    print(f"corpus:   {n_rows:,} passages  fingerprint {corpus_fingerprint[:12]}")
 
-    # Measured off the corpus where it recorded them, rather than taken from the
-    # constants in force now, which is what the manifest's own docstring says
-    # these fields are for.
-    chunk_budget, chunk_overlap, note = resolve_chunk_settings(
-        settings, chunk_budget, chunk_overlap
-    )
+    chunk_budget, chunk_overlap, note = resolve_chunk_settings(settings)
     if note:
         print(f"  NOTE  {note}")
 
-    # Before a single vector is written, not after: resuming onto a corpus that
-    # has moved keeps the stale vector for every id that survived the re-chunk,
-    # and nothing downstream can see that it happened.
-    stored = read_manifest(manifest_file)
-    if stored is not None and not rebuild:
-        drift = stored.mismatches(
-            corpus_fingerprint=fingerprint,
-            model=EMBED_MODEL,
-            dimensions=EMBED_DIMENSIONS,
-        )
-        if drift:
-            detail = "\n".join(f"  - {problem}" for problem in drift)
+    invalidated = False
+
+    def invalidate() -> None:
+        """Remove the manifest before the index first changes.
+
+        From this point until a new manifest is written, the index is between
+        states, and a manifest describing the old state would certify it. So an
+        interrupted run leaves no manifest, and a retriever refuses the index
+        rather than loading half of it.
+        """
+        nonlocal invalidated
+        if not invalidated:
+            manifest_file.unlink(missing_ok=True)
+            invalidated = True
+
+    if rebuild:
+        invalidate()
+        collection = open_collection(chroma_dir, rebuild=True)
+        held: dict[str, tuple[str | None, str | None, str | None]] = {}
+    else:
+        collection = open_collection(chroma_dir)
+        held = _scan(collection)
+        # Refused rather than repaired: every vector would change, possibly its
+        # width too, and that is a decision to make on purpose.
+        foreign = sum(1 for entry in held.values() if entry[2] != EMBED_MODEL)
+        if foreign:
+            models = sorted({str(entry[2]) for entry in held.values() if entry[2] != EMBED_MODEL})
             raise RuntimeError(
-                f"The index beside {manifest_file} was built from something else:\n"
-                f"{detail}\n"
-                f"Resuming would keep the old vector for every passage whose "
-                f"chunk_id survived the change, and then write a manifest saying "
-                f"the index is current. Rebuild it instead:\n"
+                f"{foreign:,} of the {len(held):,} vectors in {chroma_dir} were not "
+                f"encoded by {EMBED_MODEL} (found: {', '.join(models)}; 'None' means "
+                f"built before this stage recorded the model). Mixing encoders in "
+                f"one index makes their scores incomparable. Rebuild it:\n"
                 f"  python -m src.retrieval embed --rebuild"
             )
 
-    collection = _open_collection(chroma_dir, rebuild=rebuild)
-    already = _existing_ids(collection)
-    # Known exactly for a full run, and only by counting up for a narrowed one,
-    # since the filtered subset is not knowable without walking it.
-    n_pending = None if narrowed else len(corpus_ids - already)
-    if already:
-        pending = "an unknown number" if n_pending is None else f"{n_pending:,}"
-        print(f"resuming: {len(already):,} already embedded, {pending} to go")
+    before = _differences(held, corpus)
+    if held:
+        print(f"index:    {len(held):,} vectors, {_describe(before)}")
+
+    # A full run makes the index equal to the corpus, so anything the corpus no
+    # longer holds goes. A narrowed run is not entitled to judge the rest.
+    orphaned = [chunk_id for chunk_id in held if chunk_id not in corpus]
+    if orphaned and not narrowed:
+        invalidate()
+        for start in range(0, len(orphaned), SCAN_PAGE):
+            collection.delete(ids=orphaned[start:start + SCAN_PAGE])
+        for chunk_id in orphaned:
+            del held[chunk_id]
+        print(f"removed:  {len(orphaned):,} vectors whose passage is no longer in the corpus")
+
+    # Exact for a full run. A narrowed run counts up instead, since which of
+    # its passages need work is not known without walking them.
+    n_pending = None if narrowed else before["missing"] + before["stale"]
 
     started = time.perf_counter()
     done = 0
+    replaced = 0
     model = None
-    used_threads: int | None = None
-    embedded: set[str] = set()
-    # Passages the encoder had to cut short, collected as it goes. bge reads
-    # EMBED_MAX_TOKENS and silently drops the rest, so without this the index
-    # looks complete while part of a passage was never embedded -- and a table
-    # passage is where it bites, since figures tokenise about twice as densely
-    # as prose and the chunker's budget is in characters.
-    oversized: list[tuple[str, int, str]] = []
 
     def flush(batch: list[dict]) -> None:
-        """Encode one batch and add it, holding nothing after it returns."""
-        nonlocal done, model, used_threads, started
+        """Encode one batch and write it, holding nothing after it returns."""
+        nonlocal done, replaced, model, started
+        invalidate()
         if model is None:
             # Loaded on the first batch rather than up front, so a run with
-            # nothing pending never pays for torch, and a narrowed run does not
-            # have to know its own size in advance in order to decide.
+            # nothing to do never pays for torch.
             print(f"loading {EMBED_MODEL} ...")
             model, used_threads = _load_model(threads)
             print(f"encoding on {used_threads} threads")
             started = time.perf_counter()
 
         texts = [embed_text(row) for row in batch]
-        # Tokenising a batch we are about to encode anyway costs a fraction of
-        # the encode, which is what makes measuring this affordable rather than
-        # a separate pass over the corpus.
-        for row, ids in zip(batch, model.tokenizer(texts)["input_ids"]):
-            if len(ids) > EMBED_MAX_TOKENS:
-                oversized.append(
-                    (row["chunk_id"], len(ids), row.get("content_type", "prose"))
-                )
+        # Tokenising a batch about to be encoded anyway costs a fraction of the
+        # encode. The count goes onto the vector: bge reads EMBED_MAX_TOKENS and
+        # silently drops the rest, so this is the only record that a vector
+        # represents less than its stored text.
+        counts = [len(ids) for ids in model.tokenizer(texts)["input_ids"]]
         vectors = model.encode(
             texts,
             batch_size=batch_size,
             normalize_embeddings=EMBED_NORMALIZE,
             show_progress_bar=False,
         )
+        ids = [row["chunk_id"] for row in batch]
+        # Hashed from the text actually encoded, not from the first walk, so a
+        # corpus rewritten between the two walks shows up as a mismatch at the
+        # end rather than as a vector certified for text it never saw.
+        digests = [passage_digest(chunk_id, text) for chunk_id, text in zip(ids, texts)]
+        replacing = [chunk_id for chunk_id in ids if chunk_id in held]
+        if replacing:
+            collection.delete(ids=replacing)
         collection.add(
-            ids=[row["chunk_id"] for row in batch],
+            ids=ids,
             embeddings=[vector.tolist() for vector in vectors],
             # The passage as the chunker wrote it. The header went into the
             # vector above and stops here.
             documents=[row["text"] for row in batch],
-            metadatas=[metadata_for(row) for row in batch],
+            metadatas=[
+                {**metadata_for(row), DIGEST_FIELD: digest,
+                 TOKENS_FIELD: count, MODEL_FIELD: EMBED_MODEL}
+                for row, digest, count in zip(batch, digests, counts)
+            ],
         )
-        embedded.update(row["chunk_id"] for row in batch)
+        for row, digest in zip(batch, digests):
+            held[row["chunk_id"]] = (digest, row["accession_no"], EMBED_MODEL)
         done += len(batch)
+        replaced += len(replacing)
+
         elapsed = time.perf_counter() - started
         rate = done / elapsed if elapsed else 0.0
         if n_pending:
             remaining = (n_pending - done) / rate if rate else 0.0
-            print(
-                f"  {done:,}/{n_pending:,} passages"
-                f"  {rate:.1f}/s  eta {remaining / 60:.1f} min",
-                flush=True,
-            )
+            print(f"  {done:,}/{n_pending:,} passages  {rate:.1f}/s"
+                  f"  eta {remaining / 60:.1f} min", flush=True)
         else:
-            print(
-                f"  {done:,} passages  {rate:.1f}/s"
-                f"  {elapsed / 60:.1f} min elapsed",
-                flush=True,
-            )
+            print(f"  {done:,} passages  {rate:.1f}/s"
+                  f"  {elapsed / 60:.1f} min elapsed", flush=True)
 
     # Second walk: the passages this run was asked for, one batch at a time.
-    # Only the batch in hand is resident, so peak memory no longer grows with
-    # the corpus and the model has room to load beside it.
+    # Only the batch in hand is resident, so peak memory does not grow with the
+    # corpus and the model has room to load beside it.
     batch: list[dict] = []
     for row in iter_chunks(
+        processed_dir=processed_dir,
         fiscal_years=fiscal_years,
         tickers=tickers,
         key_items_only=key_items_only,
     ):
-        if row["chunk_id"] in already:
+        entry = held.get(row["chunk_id"])
+        if entry is not None and entry[0] == corpus.get(row["chunk_id"]):
             continue
         batch.append(row)
         if len(batch) >= batch_size:
@@ -511,60 +655,99 @@ def build(
     if batch:
         flush(batch)
 
-    if not done:
-        print("nothing to embed: every passage asked for is already in the index")
+    if done:
+        print(f"embedded: {done:,} passages ({replaced:,} of them replacing a stale vector)")
+    else:
+        print("nothing to embed: every passage asked for is current in the index")
 
-    held = already | embedded
-    if oversized:
-        # Merged into whatever a previous run left, unless this run started
-        # from an empty collection. A resumed build embeds only its remainder,
-        # so overwriting would discard the record of every truncation before
-        # the interruption -- the only record there is, since a truncated
-        # vector carries no mark of its own.
-        report_truncation(oversized, n_embedded=len(held), merge=not rebuild)
-    elif rebuild:
-        clear_truncation_report()
+    # The collection should now hold exactly what this run believes it does. If
+    # it does not, something else wrote to it, and no manifest can describe it.
+    if collection.count() != len(held):
+        raise RuntimeError(
+            f"{chroma_dir} holds {collection.count():,} vectors but this run "
+            f"accounted for {len(held):,}. Something else changed the index while "
+            f"it was building; rebuild it: python -m src.retrieval embed --rebuild"
+        )
 
+    # From the index's own digests, not the corpus walk: the manifest says what
+    # the index holds, and matches the corpus only if the two are the same.
     manifest = IndexManifest(
         index_type=DENSE,
         path=manifest_path(chroma_dir),
-        corpus_fingerprint=fingerprint,
-        n_passages=n_rows,
-        n_filings=n_filings,
+        corpus_fingerprint=fingerprint_of(entry[0] or "" for entry in held.values()),
+        n_passages=len(held),
+        n_filings=len({entry[1] for entry in held.values()}),
         built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         model=EMBED_MODEL,
         dimensions=EMBED_DIMENSIONS,
         chunk_budget=chunk_budget,
         chunk_overlap=chunk_overlap,
     )
-    print(f"index:    {chroma_dir}")
-
-    if held != corpus_ids:
-        missing = len(corpus_ids - held)
-        extra = len(held - corpus_ids)
-        print()
-        print(f"  WARNING  no manifest written. The index holds {len(held):,} of "
-              f"the corpus's {n_rows:,} passages")
-        print(f"           ({missing:,} not embedded, {extra:,} not in the corpus).")
-        print("           A manifest describes a whole index and the stale-index "
-              "check reads it,")
-        print("           so a narrowed or interrupted build must not leave one. "
-              "Run again")
-        print("           without filters to finish the index and get a manifest.")
-        return None
-
     write_manifest(manifest, manifest_file)
+    write_truncation_report(collection, chroma_dir)
+
+    after = _differences(held, corpus)
+    print(f"index:    {chroma_dir}")
     print(f"manifest: {manifest_file}")
+    if manifest.corpus_fingerprint == corpus_fingerprint:
+        print(f"status:   current, {len(held):,} passages from "
+              f"{manifest.n_filings} filings")
+    else:
+        print(f"status:   does NOT match the corpus ({_describe(after)}).")
+        print("          The manifest records the index as it is, so a retriever will")
+        print("          refuse it until a run without filters completes.")
     return manifest
 
 
-def report_truncation(
-    oversized: list[tuple[str, int, str]],
-    n_embedded: int,
-    diagnostics_dir: Path = DIAGNOSTICS_DIR,
-    merge: bool = True,
-) -> Path:
-    """Say which passages the encoder cut short, on screen and to a file.
+def check_index(
+    chroma_dir: Path = CHROMA_DIR,
+    processed_dir: Path = PROCESSED_DIR,
+) -> list[str]:
+    """Every reason the index in ``chroma_dir`` should not be searched.
+
+    Empty when it is safe to load. This is the check a dense retriever runs
+    before its first query, written here beside the builder that defines what
+    a current index is, so the two cannot disagree about it.
+
+    It compares three things, and each catches something the others do not:
+    the manifest against the constants (model and width), the digests the
+    vectors carry against the corpus on disk (missing, stale and orphaned
+    passages, counted exactly), and the manifest against those same digests (a
+    manifest that does not describe the index beside it).
+    """
+    manifest_file = manifest_file_for(chroma_dir)
+    manifest = read_manifest(manifest_file)
+    if manifest is None:
+        return [
+            f"no manifest at {manifest_file}: the index was never completed, or the "
+            f"last build that changed it did not finish. Run: python -m src.retrieval embed"
+        ]
+
+    problems = manifest.mismatches(model=EMBED_MODEL, dimensions=EMBED_DIMENSIONS)
+
+    collection = open_collection(chroma_dir, create=False)
+    if collection is None:
+        return problems + [f"a manifest exists but there is no collection in {chroma_dir}"]
+    held = _scan(collection)
+
+    foreign = sum(1 for entry in held.values() if entry[2] != EMBED_MODEL)
+    if foreign:
+        problems.append(f"{foreign:,} vectors were not encoded by {EMBED_MODEL}")
+
+    index_fingerprint = fingerprint_of(entry[0] or "" for entry in held.values())
+    if index_fingerprint != manifest.corpus_fingerprint:
+        problems.append(
+            "the manifest does not describe the vectors beside it; rebuild the index"
+        )
+
+    corpus, _, _ = _corpus_digests(processed_dir)
+    if index_fingerprint != fingerprint_of(corpus.values()):
+        problems.append(f"the index does not match the corpus: {_describe(_differences(held, corpus))}")
+    return problems
+
+
+def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
+    """Say which vectors the encoder cut short, read back from the index itself.
 
     Loud on purpose. A truncated passage is not a failed one: it is indexed,
     searchable, and wrong in a way nothing downstream can see, because the text
@@ -573,56 +756,38 @@ def report_truncation(
     miss caused by the model, which is the kind of confound an ablation cannot
     untangle after the fact.
 
-    ``merge`` folds this run's findings into the file a previous run left,
-    keyed on ``chunk_id``. A build that was interrupted and resumed sees only
-    its own remainder, so overwriting would report the last few per cent as
-    though it were the whole story, and the truncations from the rest would be
-    gone -- permanently, since a truncated vector carries no mark of its own. A
-    rebuild passes ``merge=False``, every vector in the index then being this
-    run's.
-
-    ``n_embedded`` is how many passages the index holds once this run is done,
-    rather than how many this run encoded, so the percentage on screen means
-    the corpus-level figure it reads as.
-
-    The file goes to ``data/diagnostics/`` for the same reason the parse stage
-    writes the HTML of a table it could not rebuild: it explains a run rather
-    than feeding the next stage.
+    Read from the ``n_tokens`` each vector carries rather than collected during
+    the run, so it describes every vector in the index however many runs wrote
+    them, and a resumed build cannot report only its own remainder. Removed when
+    nothing is truncated, so a stale report never reads as a live finding.
     """
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    path = diagnostics_dir / TRUNCATION_FILE
+    path = truncation_file_for(chroma_dir)
+    found = collection.get(
+        where={TOKENS_FIELD: {"$gt": EMBED_MAX_TOKENS}}, include=["metadatas"]
+    )
+    if not found["ids"]:
+        path.unlink(missing_ok=True)
+        return None
 
-    found = {
-        chunk_id: {"chunk_id": chunk_id, "tokens": tokens, "content_type": kind}
-        for chunk_id, tokens, kind in oversized
-    }
-    carried = 0
-    if merge and path.exists():
-        previous = json.loads(path.read_text(encoding="utf-8")).get("passages", [])
-        kept = {row["chunk_id"]: row for row in previous}
-        carried = len(set(kept) - set(found))
-        kept.update(found)
-        found = kept
-
-    passages = sorted(found.values(), key=lambda row: -row["tokens"])
+    passages = sorted(
+        (
+            {"chunk_id": chunk_id, "tokens": metadata[TOKENS_FIELD],
+             "content_type": metadata.get("content_type", "prose")}
+            for chunk_id, metadata in zip(found["ids"], found["metadatas"])
+        ),
+        key=lambda row: (-row["tokens"], row["chunk_id"]),
+    )
+    n_indexed = collection.count()
     tables = sum(1 for row in passages if row["content_type"] == "table")
-    worst = max(row["tokens"] for row in passages)
-    share = 100 * len(passages) / n_embedded if n_embedded else 0.0
-
-    print()
-    print(f"  WARNING  {len(passages):,} of {n_embedded:,} passages ({share:.1f}%) "
-          f"exceeded {EMBED_MAX_TOKENS} tokens and were truncated by the encoder.")
-    print(f"           {tables:,} of them are table passages. Worst: {worst:,} tokens.")
-    if carried:
-        print(f"           {carried:,} carried over from an earlier run of this index.")
-    print("           Their stored text is whole; their vector is not.")
+    worst = passages[0]["tokens"]
+    share = 100 * len(passages) / n_indexed if n_indexed else 0.0
 
     path.write_text(
         json.dumps(
             {
                 "model": EMBED_MODEL,
                 "max_tokens": EMBED_MAX_TOKENS,
-                "n_embedded": n_embedded,
+                "n_indexed": n_indexed,
                 "n_truncated": len(passages),
                 "n_truncated_tables": tables,
                 "worst_tokens": worst,
@@ -633,21 +798,13 @@ def report_truncation(
         + "\n",
         encoding="utf-8",
     )
+    print()
+    print(f"  WARNING  {len(passages):,} of {n_indexed:,} vectors ({share:.1f}%) were "
+          f"truncated at {EMBED_MAX_TOKENS} tokens by the encoder.")
+    print(f"           {tables:,} of them are table passages. Worst: {worst:,} tokens.")
+    print("           Their stored text is whole; their vector is not.")
     print(f"           Listed in {path}")
     return path
-
-
-def clear_truncation_report(diagnostics_dir: Path = DIAGNOSTICS_DIR) -> None:
-    """Drop the truncation report after a rebuild that produced none.
-
-    A rebuild replaces every vector in the index, so a file left by the run
-    before it describes passages that are no longer in there. Left in place it
-    would read as a live finding about the index that is.
-    """
-    path = diagnostics_dir / TRUNCATION_FILE
-    if path.exists():
-        path.unlink()
-        print(f"cleared:  {path} (nothing was truncated this time)")
 
 
 def write_manifest(manifest: IndexManifest, path: Path = MANIFEST_FILE) -> Path:

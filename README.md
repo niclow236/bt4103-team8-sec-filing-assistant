@@ -595,7 +595,48 @@ Every field needed to build a citation is on the record, so nothing has to go
 back to the manifest at query time. Passing `fiscal_years` is what stops a
 question like "compare these companies in FY2024" from quietly answering across
 a mix of years; `tickers` and `key_items_only` narrow it the same way, the
-latter matching the `--key-items-only` flag on the chunk command.
+latter matching the `--key-items-only` flag on the chunk command. Each record
+also carries the `chunk_budget` and `chunk_overlap` its filing was cut with, so
+an index can record the settings it was built from rather than assume them.
+
+### Building the retrieval indexes
+
+The retrieval stage has its own command line beside the pipeline's:
+
+```bash
+python -m src.retrieval embed    # dense index, data/index/chroma/
+python -m src.retrieval bm25     # BM25 index, data/index/bm25.pkl
+python -m src.retrieval facts    # XBRL figures, data/index/facts.parquet
+python -m src.retrieval check    # does each index still match data/processed/?
+```
+
+`embed`, `bm25` and `check` read only `data/processed/`. `facts` queries EDGAR,
+so it needs a network connection and `EDGAR_IDENTITY`.
+
+`embed` is incremental. Each vector stores a digest of the exact text it was
+encoded from, so a run encodes the passages that are missing, re-encodes those
+whose text has changed, and removes vectors for passages the corpus no longer
+holds. After a re-chunk, run `embed` again rather than `embed --rebuild`.
+`--rebuild` re-encodes all 28,544 passages, about 6.6 hours on a laptop CPU, and
+is only needed after changing the embedding model. An interrupted run is resumed
+by running it again.
+
+Each index records what it was built from: the dense one in
+`data/index/chroma.manifest.json`, BM25 inside `bm25.pkl`. A retriever compares
+that against `data/processed/` before searching and refuses an index that no
+longer matches. `check` runs the same comparison for both and exits non-zero if
+either should not be searched, so it is the command to run after pulling
+changes to the pipeline.
+
+`embed` also writes `data/index/chroma.truncated.json`, listing the passages
+longer than the 512 tokens bge reads. Their stored text is whole, but their
+vector covers only the first 512 tokens.
+
+`facts --refresh` pulls the companies asked for again and replaces only their
+rows. Companies not asked for, and any whose request fails, keep what is stored.
+In a figure's row, `fiscal_year` is the year of the filing it was published in,
+which is not necessarily the year the figure describes; use `current_year()`
+or the `is_current_year` column for that.
 
 ## Team and course
 

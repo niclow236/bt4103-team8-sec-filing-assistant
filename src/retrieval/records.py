@@ -27,9 +27,9 @@ what stops Apple's FY2023 risk factors answering a question about FY2024.
 Every record is frozen and holds no mutable default, so a passage handed to
 three components cannot be edited by one of them behind the others' backs.
 
-Two functions sit here as well, and for the same reason the records do: they
-compute fields of ``IndexManifest``, so every index that writes one writes it
-the same way. A manifest field defined once in each retriever is a field with no
+The functions here are here for the same reason the records are: they compute
+fields of ``IndexManifest``, so every index that writes one writes it the same
+way. A manifest field defined once in each retriever is a field with no
 definition at all, which is what ``corpus_fingerprint`` was before it moved
 here.
 """
@@ -78,14 +78,30 @@ def corpus_fingerprint(
     renumbers ``chunk_id``.
     """
     content = text_of if text_of is not None else lambda row: row["text"]
-    digests = sorted(
-        hashlib.sha256(
-            f"{row['chunk_id']}\x00{content(row)}".encode("utf-8")
-        ).hexdigest()
-        for row in rows
-    )
+    return fingerprint_of(passage_digest(row["chunk_id"], content(row)) for row in rows)
+
+
+def passage_digest(chunk_id: str, content: str) -> str:
+    """The digest of one passage: its id and the content an index encoded.
+
+    The unit :func:`corpus_fingerprint` is folded from, exposed on its own so an
+    index can store it beside each entry. A vector that carries the digest of
+    the text it was encoded from can be checked against the corpus one passage
+    at a time, with or without a manifest, which is what makes a resumed build
+    safe after the corpus has moved under it.
+    """
+    return hashlib.sha256(f"{chunk_id}\x00{content}".encode("utf-8")).hexdigest()
+
+
+def fingerprint_of(digests: Iterable[str]) -> str:
+    """Fold passage digests into one fingerprint, independent of their order.
+
+    The same fold serves both sides of a stale-index check: over the corpus on
+    disk, and over the digests an index says it holds. Two sets of passages give
+    the same fingerprint only if they are the same passages.
+    """
     total = hashlib.sha256()
-    for digest in digests:
+    for digest in sorted(digests):
         total.update(digest.encode("ascii"))
     return total.hexdigest()
 
@@ -257,6 +273,12 @@ class Query:
     after it is passed on, and empty means unrestricted rather than nothing.
     They are named for the same things ``iter_chunks`` filters on, so a query is
     read against the corpus without a translation step.
+
+    Filter values are put in the corpus's own form when the Query is made:
+    tickers and Items upper case, fiscal years as integers. Every retriever
+    reads them from here, and one that compared "aapl" against the stored
+    "AAPL" would match nothing while another matched everything, so the
+    normalising is done once at the boundary rather than in each consumer.
     """
 
     text: str
@@ -266,6 +288,12 @@ class Query:
     items: tuple[str, ...] = ()       # "1A", "7", ...; matched case-insensitively
     content_type: str | None = None   # "prose" or "table"; None allows both
     key_items_only: bool = False      # the Items the project leans on: 1, 1A, 7, 7A, 8
+
+    def __post_init__(self) -> None:
+        # Frozen, so the normalised values are set through object.__setattr__.
+        object.__setattr__(self, "tickers", tuple(t.upper() for t in self.tickers))
+        object.__setattr__(self, "fiscal_years", tuple(int(y) for y in self.fiscal_years))
+        object.__setattr__(self, "items", tuple(i.upper() for i in self.items))
 
     @property
     def filters(self) -> dict[str, Any]:

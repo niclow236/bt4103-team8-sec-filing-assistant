@@ -8,18 +8,20 @@ from a test without a fake argument namespace.
 
     python -m src.retrieval                   # list the commands
     python -m src.retrieval embed --help      # options for one of them
-    python -m src.retrieval embed             # build the dense index
+    python -m src.retrieval embed             # build or update the dense index
+    python -m src.retrieval bm25              # build the BM25 index
     python -m src.retrieval facts             # build the XBRL facts store
+    python -m src.retrieval check             # are the indexes current?
 
 It is a separate command line from the pipeline's rather than more subcommands
 on it, because the two stages are separated by what they build from: the
 pipeline turns EDGAR into ``data/processed/``, and retrieval turns that into the
 indexes a question is answered against.
 
-``embed`` needs no network and no EDGAR identity, since it reads only what the
-pipeline already wrote. ``facts`` does need both, because the figures it stores
-are published through EDGAR rather than printed in the filing's HTML, so it is
-the one command here that goes back to the source.
+``embed``, ``bm25`` and ``check`` need no network and no EDGAR identity, since
+they read only what the pipeline already wrote. ``facts`` does need both,
+because the figures it stores are published through EDGAR rather than printed in
+the filing's HTML, so it is the one command here that goes back to the source.
 """
 
 from __future__ import annotations
@@ -27,8 +29,8 @@ from __future__ import annotations
 import argparse
 import logging
 
-from ..pipeline.constants import CHUNK_CHAR_BUDGET, CHUNK_CHAR_OVERLAP
 from ..utils import start_run_log
+from . import bm25 as bm25_stage
 from . import embed as embed_stage
 from . import facts as facts_stage
 from .constants import EMBED_BATCH_SIZE
@@ -112,33 +114,24 @@ def _add_embed(subparsers) -> None:
         "--rebuild",
         action="store_true",
         help=(
-            "Drop the collection and embed everything again. Use after the "
-            "corpus has been re-chunked; without it a run resumes instead, and "
-            "refuses to resume onto a corpus that has moved."
+            "Drop the collection and encode every passage again. Not needed "
+            "after a re-chunk: a normal run re-encodes exactly the passages "
+            "whose text changed. Needed after changing the embedding model."
         ),
     )
-    parser.add_argument(
-        "--chunk-budget",
-        type=_positive,
-        default=CHUNK_CHAR_BUDGET,
-        metavar="CHARS",
-        help=(
-            "Recorded in the manifest as the budget the corpus was cut with. "
-            "data/processed/ does not carry it, so pass the value used for "
-            "'python -m src.pipeline chunk --budget' if it was not the "
-            f"default of {CHUNK_CHAR_BUDGET}."
+
+
+def _add_bm25(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "bm25",
+        help=_summary(bm25_stage),
+        description=(
+            f"{_summary(bm25_stage)} Rebuilds data/index/bm25.pkl from "
+            "data/processed/ in full; there is no partial BM25 build, since its "
+            "statistics are corpus-wide."
         ),
     )
-    parser.add_argument(
-        "--chunk-overlap",
-        type=_positive,
-        default=CHUNK_CHAR_OVERLAP,
-        metavar="CHARS",
-        help=(
-            "As --chunk-budget, for the overlap the corpus was cut with. "
-            f"Default: {CHUNK_CHAR_OVERLAP}."
-        ),
-    )
+    parser.set_defaults(run=run_bm25)
 
 
 def _add_facts(subparsers) -> None:
@@ -158,22 +151,31 @@ def _add_facts(subparsers) -> None:
         "--refresh",
         action="store_true",
         help=(
-            "Pull every company again rather than skipping those already "
-            "stored. Use after the corpus has gained filings."
+            "Pull the companies asked for again rather than skipping those "
+            "already stored. Companies not asked for, and any whose request "
+            "fails, keep what is stored."
         ),
     )
+
+
+def _add_check(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "check",
+        help="Report whether each index matches the corpus on disk.",
+        description=(
+            "Run the same checks a retriever runs before loading an index, "
+            "against the dense index and the BM25 index, and exit non-zero if "
+            "either should not be searched."
+        ),
+    )
+    parser.set_defaults(run=run_check)
 
 
 # --- commands ---------------------------------------------------------------
 
 
-def run_facts(args) -> None:
-    """Pull the XBRL facts store for the corpus."""
-    facts_stage.build(tickers=args.tickers, refresh=args.refresh)
-
-
 def run_embed(args) -> None:
-    """Build the dense index from data/processed/."""
+    """Build or update the dense index from data/processed/."""
     embed_stage.build(
         tickers=args.tickers,
         fiscal_years=args.fiscal_years,
@@ -181,9 +183,49 @@ def run_embed(args) -> None:
         rebuild=args.rebuild,
         batch_size=args.batch_size,
         threads=args.threads,
-        chunk_budget=args.chunk_budget,
-        chunk_overlap=args.chunk_overlap,
     )
+
+
+def run_bm25(args) -> None:
+    """Build the BM25 index from data/processed/."""
+    index = bm25_stage.build_index()
+    manifest = index.manifest
+    print(f"bm25:     {manifest.n_passages:,} passages from {manifest.n_filings} filings"
+          f"  fingerprint {manifest.corpus_fingerprint[:12]}")
+    print(f"written:  {manifest.path}")
+
+
+def run_facts(args) -> None:
+    """Pull the XBRL facts store for the corpus."""
+    facts_stage.build(tickers=args.tickers, refresh=args.refresh)
+
+
+def run_check(args) -> None:
+    """Check both indexes against the corpus, the way their retrievers will."""
+    failed = False
+
+    problems = embed_stage.check_index()
+    print("dense: " + ("current" if not problems else "NOT usable"))
+    for problem in problems:
+        print(f"  - {problem}")
+    failed |= bool(problems)
+
+    if not bm25_stage.BM25_INDEX_FILE.exists():
+        print(f"bm25:  NOT usable\n  - no index at {bm25_stage.BM25_INDEX_FILE}. "
+              f"Build it: python -m src.retrieval bm25")
+        failed = True
+    else:
+        try:
+            bm25_stage.load_index()
+            print("bm25:  current")
+        except ValueError as error:
+            print("bm25:  NOT usable")
+            for line in str(error).splitlines():
+                print(f"  {line}")
+            failed = True
+
+    if failed:
+        raise SystemExit(1)
 
 
 # --- dispatch ---------------------------------------------------------------
@@ -196,7 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build and search the retrieval indexes.",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
-    for add in (_add_embed, _add_facts):
+    for add in (_add_embed, _add_bm25, _add_facts, _add_check):
         add(subparsers)
     return parser
 

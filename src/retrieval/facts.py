@@ -25,11 +25,17 @@ answers "Apple's FY2024 revenue" with FY2022's figure, and reads as confident an
 correct, which is the same failure the hard pre-filter in ``base.py`` exists to
 prevent one layer up.
 
-``is_current_year`` marks the rows describing the year the filing reports on, and
-:func:`current_year` filters to them. Use it, or match ``period_end`` against
-``period_of_report`` yourself. The comparatives are kept rather than dropped
-because "how did revenue move over three years" is answered from one filing when
-they are there, and needs three when they are not.
+**Ending on the fiscal year end is not enough either.** A 10-K can also tag a
+fourth-quarter figure, and the quarter ends on the same day the year does:
+Amazon's FY2022 10-K carries an annual impairment charge and a Q4 one, both
+ending 31 December 2022. ``fiscal_period`` cannot separate them, since it is the
+filing's period ("FY") on every fact. The duration can, so a duration fact
+counts as the reported year only when it runs about a year.
+
+``is_current_year`` marks the rows describing the year the filing reports on,
+and :func:`current_year` filters to them. The comparatives are kept rather than
+dropped because "how did revenue move over three years" is answered from one
+filing when they are there, and needs three when they are not.
 
 Every fact kept here is traceable to a filing this project holds. The SEC's
 companyfacts endpoint returns a company's whole history, across 10-Q and 8-K as
@@ -42,7 +48,6 @@ rather than stored as a figure with nowhere to point.
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, fields as dataclass_fields
 from pathlib import Path
 
 from ..config import configure_edgar
@@ -58,6 +63,14 @@ FACTS_FILE = INDEX_DIR / "facts.parquet"
 # and answers no financial question, so it is not carried.
 TAXONOMY = "us-gaap"
 
+# How long a duration has to run to be the fiscal year rather than a part of it.
+# A 52/53-week fiscal year runs 364 or 371 days, a calendar year 365 or 366, and
+# a quarter 90 to 98, so any window between the two separates them; this one is
+# wide enough for every calendar here and far from both. Measured on this
+# corpus: every current-year duration fact is either 90-91 or 363-365 days.
+ANNUAL_MIN_DAYS = 350
+ANNUAL_MAX_DAYS = 380
+
 # What is kept from each fact. The first group identifies the filing it came
 # from, which is what makes a stored figure citable; the second is the figure
 # itself; the third is the period it covers, which is what stops a comparative
@@ -70,6 +83,15 @@ COLUMNS = (
     "is_current_year",
     "statement_type", "is_audited",
 )
+
+# Two rows equal on all of these are the same figure counted twice. period_start
+# is part of the key because an annual and a fourth-quarter figure end on the
+# same day and can carry the same value -- a charge booked entirely in Q4 -- and
+# without it one of the two would be discarded at random. unit is part of it
+# because one concept can be reported in more than one.
+DUPLICATE_KEY = [
+    "ticker", "accession", "concept", "unit", "period_start", "period_end", "value",
+]
 
 
 def corpus_filings() -> dict[str, object]:
@@ -117,28 +139,10 @@ def _rows_for(entity_facts, filings: dict, ticker: str) -> list[dict]:
             "period_start": fact.period_start,
             "period_end": fact.period_end,
             "period_type": fact.period_type or "",
-            # Whether this fact describes the year the filing reports on, or one
-            # of the comparatives printed beside it. See the module docstring:
-            # this is the column that stops "Apple's FY2024 revenue" returning
-            # FY2022's figure, and it is computed here so that every caller gets
-            # it right rather than each one rediscovering the trap.
-            "is_current_year": _same_day(fact.period_end, record.period_of_report),
             "statement_type": fact.statement_type or "",
             "is_audited": bool(fact.is_audited),
         })
     return rows
-
-
-def _same_day(left, right) -> bool:
-    """Whether two dates name the same day, whatever type they arrive as.
-
-    ``period_end`` comes back as a date and ``period_of_report`` as the string
-    the manifest stored, so they are compared on their first ten characters
-    rather than by equality, which would be False for every row.
-    """
-    if left is None or not right:
-        return False
-    return str(left)[:10] == str(right)[:10]
 
 
 def _as_float(value) -> float | None:
@@ -149,6 +153,31 @@ def _as_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def mark_current_year(frame):
+    """Set ``is_current_year``: the fact describes the year its filing reports on.
+
+    Two conditions, both required. The fact's period ends on the filing's
+    period of report, which rules out the comparatives. And it is either an
+    instant -- a balance at year end -- or a duration of about a year, which
+    rules out a fourth quarter ending the same day. See the module docstring
+    for why each is needed.
+
+    The one definition of the column, used when the store is built and again
+    when it is read, so a store written before the rule changed is corrected on
+    load instead of answering with its old flags.
+    """
+    import pandas as pd
+
+    end = frame["period_end"].astype(str).str[:10]
+    report = frame["period_of_report"].astype(str).str[:10]
+    start = pd.to_datetime(frame["period_start"], errors="coerce")
+    days = (pd.to_datetime(end, errors="coerce") - start).dt.days
+    annual = days.between(ANNUAL_MIN_DAYS, ANNUAL_MAX_DAYS)
+    frame = frame.copy()
+    frame["is_current_year"] = (end == report) & (start.isna() | annual)
+    return frame
 
 
 def build(
@@ -162,6 +191,13 @@ def build(
     that stops half way has completed whole companies. Those are already in the
     parquet and are skipped on the next run unless ``refresh`` is passed, which
     is what to use when the corpus has gained filings.
+
+    A run only ever replaces the companies it successfully pulled. Everything
+    else in the store is carried over as it was: the companies a ``--tickers``
+    run was not asked about, and any company whose request failed or came back
+    with nothing citable. So ``--refresh --tickers AAPL`` refreshes Apple and
+    leaves the other fourteen alone, and one failed request during a full
+    refresh costs that company nothing it already had.
 
     The SEC's rate limit is enforced by edgartools, which throttles and caches
     its own requests. Hand-rolling a second limiter on top would not make the
@@ -185,45 +221,63 @@ def build(
         if wanted is None or record.ticker in wanted:
             by_ticker[record.ticker] = int(record.cik)
 
-    existing = None
-    done: set[str] = set()
-    if facts_file.exists() and not refresh:
-        existing = pd.read_parquet(facts_file)
-        done = set(existing["ticker"].unique())
-        if done:
-            print(f"resuming: {len(done)} companies already stored")
+    existing = pd.read_parquet(facts_file) if facts_file.exists() else None
+    stored = set(existing["ticker"].unique()) if existing is not None else set()
+    if stored and not refresh:
+        print(f"resuming: {len(stored)} companies already stored")
+    pending = [t for t in sorted(by_ticker) if refresh or t not in stored]
 
-    rows: list[dict] = []
-    pending = [t for t in sorted(by_ticker) if t not in done]
+    pulled: dict[str, list[dict]] = {}
+    failed: list[str] = []
     for position, ticker in enumerate(pending, start=1):
         try:
             entity_facts = get_company_facts(by_ticker[ticker])
         except Exception as error:
-            # One company having no facts published is not a reason to lose the
-            # fourteen already pulled, so it is reported and the run goes on.
             logger.warning("no company facts for %s: %s", ticker, error)
-            print(f"  {position}/{len(pending)}  {ticker}: no facts ({error})")
+            print(f"  {position}/{len(pending)}  {ticker}: request failed ({error})")
+            failed.append(ticker)
             continue
         found = _rows_for(entity_facts, filings, ticker)
-        rows.extend(found)
+        if not found:
+            # This company's filings are in the manifest, so an answer with
+            # nothing citable in it is an anomaly rather than a result, and not
+            # a reason to discard what an earlier run stored.
+            print(f"  {position}/{len(pending)}  {ticker}: no citable facts returned")
+            failed.append(ticker)
+            continue
+        pulled[ticker] = found
         print(f"  {position}/{len(pending)}  {ticker}: {len(found):,} facts", flush=True)
 
-    frame = pd.DataFrame(rows, columns=list(COLUMNS))
+    frames = []
     if existing is not None and not existing.empty:
-        frame = pd.concat([existing, frame], ignore_index=True)
-    # One concept reported once per filing: the endpoint repeats a fact across
-    # the filings that restate it, and two rows identical on these five would be
-    # the same figure counted twice by anything that aggregates.
-    frame = frame.drop_duplicates(
-        subset=["ticker", "accession", "concept", "period_end", "value"]
-    )
+        frames.append(existing[~existing["ticker"].isin(list(pulled))])
+    if pulled:
+        frames.append(pd.DataFrame(
+            [row for rows in pulled.values() for row in rows],
+            columns=[column for column in COLUMNS if column != "is_current_year"],
+        ))
+    if not frames:
+        raise RuntimeError("No company facts were pulled and none were stored before.")
+    frame = pd.concat(frames, ignore_index=True)
+
+    # Applied to everything, carried-over rows included, so a filing that has
+    # since left the manifest takes its facts with it.
+    untraceable = ~frame["accession"].isin(list(filings))
+    if untraceable.any():
+        print(f"dropped:  {int(untraceable.sum()):,} facts from filings no longer in the manifest")
+        frame = frame[~untraceable]
+    frame = frame.drop_duplicates(subset=DUPLICATE_KEY)
+    frame = mark_current_year(frame)[list(COLUMNS)]
 
     facts_file.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(facts_file, index=False)
 
     print()
-    print(f"facts:    {len(frame):,} rows, {frame['concept'].nunique():,} concepts")
+    print(f"facts:    {len(frame):,} rows, {frame['concept'].nunique():,} concepts, "
+          f"{int(frame['is_current_year'].sum()):,} describing their filing's own year")
     print(f"filings:  {frame['accession'].nunique()} of {len(filings)} in the manifest")
+    if failed:
+        print(f"kept as stored, not refreshed: {', '.join(failed)}")
     print(f"written:  {facts_file}")
     return facts_file
 
@@ -240,7 +294,12 @@ def current_year(frame):
 
 
 def load_facts(facts_file: Path = FACTS_FILE):
-    """Read the store back, or raise saying how to build it."""
+    """Read the store back, or raise saying how to build it.
+
+    ``is_current_year`` is recomputed on the way out, so a store built before
+    the fourth-quarter rule existed answers with the current rule rather than
+    the flags it was written with.
+    """
     import pandas as pd
 
     if not facts_file.exists():
@@ -248,4 +307,4 @@ def load_facts(facts_file: Path = FACTS_FILE):
             f"No facts store at {facts_file}. Build it with: "
             "python -m src.retrieval facts"
         )
-    return pd.read_parquet(facts_file)
+    return mark_current_year(pd.read_parquet(facts_file))
