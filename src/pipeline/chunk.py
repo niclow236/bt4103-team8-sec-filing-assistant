@@ -65,12 +65,16 @@ from .constants import (
     CHUNK_CHAR_BUDGET,
     CHUNK_CHAR_MINIMUM,
     CHUNK_CHAR_OVERLAP,
+    DENSE_TEXT_AT,
+    DENSE_TEXT_FROM,
     FURNITURE_PATTERNS,
     HEADING_BODY_MINIMUM,
     HEADING_CHAR_LIMIT,
     PAGE_NUMBER_PATTERN,
+    PROSE_CHARS_PER_TOKEN,
     REJOIN_PAGE_BREAK_SPLITS,
     SKIP_UNNUMBERED_SECTIONS,
+    TABLE_CHARS_PER_TOKEN,
     TABLE_MAX_ROWS_PER_CHUNK,
     table_budget_for,
 )
@@ -338,7 +342,43 @@ def _split_table_columns(
     ]
 
 
-def _is_table_debris(block: str, figures_in_tables: set[str]) -> bool:
+def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
+    """The distinct cells of an Item's rebuilt tables, keyed by their first three
+    characters.
+
+    Keyed that way so a block can be matched against the thousands of cells an
+    Item 8 holds by looking only at cells that could begin somewhere in it.
+    Cells under three characters are left out: a lone "$" or ")" says nothing
+    about whether a block came from the table.
+    """
+    index: dict[str, list[str]] = {}
+    for cell in {cell for table in tables for row in [table.headers, *table.rows] for cell in row}:
+        if len(cell) >= 3:
+            index.setdefault(cell[:3], []).append(cell)
+    return index
+
+
+def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
+    """What is left of a block once every table cell found in it is removed.
+
+    Longest cells first, so a row label is removed whole before a shorter cell
+    that happens to sit inside it.
+    """
+    grams = {block[start:start + 3] for start in range(len(block) - 2)}
+    found = sorted(
+        {cell for gram in grams & cells.keys() for cell in cells[gram] if cell in block},
+        key=len, reverse=True,
+    )
+    for cell in found:
+        block = block.replace(cell, " ")
+    return block
+
+
+def _is_table_debris(
+    block: str,
+    figures_in_tables: set[str],
+    cells: dict[str, list[str]] | None = None,
+) -> bool:
     """Whether a block is the flattened wreckage of a table rather than prose.
 
     In a section that holds tables, the extractor's plain text runs each table
@@ -352,6 +392,15 @@ def _is_table_debris(block: str, figures_in_tables: set[str]) -> bool:
     else. A block is therefore only dropped once its own figures are confirmed
     present in a rebuilt table, which makes the loss impossible by construction.
 
+    That test alone misses most of them, because flattening also runs cells
+    into each other: "Balance -- July 31, 2020" followed by "0.4" becomes
+    "20200.4", a figure no table holds, and one such join keeps the whole block.
+    Those were 199 of the 286 passages the encoder was truncating. So a block
+    is also debris when the table's own cells account for it: remove every cell
+    found in it, and if no figure is left and at most a fifth of its letters
+    and digits, the block was the table. The guarantee is the same one -- a
+    figure present nowhere else survives the removal and keeps the block.
+
     A real sentence is spared because it closes with punctuation, and a heading
     such as "Americas" is spared because it carries no figures at all.
     """
@@ -359,11 +408,23 @@ def _is_table_debris(block: str, figures_in_tables: set[str]) -> bool:
         return False
     dense = sum(character.isdigit() or character in "$%()," for character in block)
     visible = sum(1 for character in block if not character.isspace())
-    if visible == 0 or dense / visible < 0.3:
+    if visible == 0:
         return False
 
     figures = {match.group() for match in _FIGURE.finditer(block)}
-    return bool(figures) and figures <= figures_in_tables
+    if dense / visible >= 0.3 and figures and figures <= figures_in_tables:
+        return True
+    if cells is None or dense / visible < 0.15:
+        return False
+
+    # Whitespace normalised the way cells were, since the extractor writes
+    # non-breaking spaces where the rebuilt grid has plain ones.
+    remainder = _unexplained(" ".join(block.split()), cells)
+    if _FIGURE.search(remainder):
+        return False
+    before = sum(character.isalnum() for character in block)
+    after = sum(character.isalnum() for character in remainder)
+    return after <= 0.2 * before
 
 
 def _is_heading(block: str, following: str) -> bool:
@@ -402,11 +463,42 @@ def _headings_in_force(blocks: list[str]) -> list[str | None]:
 _JOIN_CHARS = len("\n\n")
 
 
+def _density(text: str) -> float:
+    """The share of visible characters that are not letters."""
+    visible = [character for character in text if not character.isspace()]
+    if not visible:
+        return 0.0
+    return sum(not character.isalpha() for character in visible) / len(visible)
+
+
+def _chars_per_token(block: str) -> float:
+    """The characters per token to budget a paragraph at, from its density.
+
+    PROSE_CHARS_PER_TOKEN below DENSE_TEXT_FROM, falling linearly to
+    TABLE_CHARS_PER_TOKEN at DENSE_TEXT_AT; see constants.py for the
+    measurements this follows.
+    """
+    progress = (_density(block) - DENSE_TEXT_FROM) / (DENSE_TEXT_AT - DENSE_TEXT_FROM)
+    progress = min(max(progress, 0.0), 1.0)
+    return PROSE_CHARS_PER_TOKEN - progress * (PROSE_CHARS_PER_TOKEN - TABLE_CHARS_PER_TOKEN)
+
+
+def _cost(block: str) -> int:
+    """What a paragraph costs against the prose budget, in prose characters.
+
+    Its length for ordinary prose, and more for text dense with figures, which
+    tokenises at up to two and a half times the rate. Charging it more is what
+    keeps a passage of such text inside the encoder's window, where the budget
+    in plain characters let 286 passages overrun it.
+    """
+    return round(len(block) * PROSE_CHARS_PER_TOKEN / _chars_per_token(block))
+
+
 def _packed_size(passage: list[int], blocks: list[str]) -> int:
-    """How long the rendered passage will be, separators included."""
+    """What the rendered passage costs against the budget, separators included."""
     if not passage:
         return 0
-    return sum(len(blocks[position]) for position in passage) + _JOIN_CHARS * (len(passage) - 1)
+    return sum(_cost(blocks[position]) for position in passage) + _JOIN_CHARS * (len(passage) - 1)
 
 
 def _overlap_tail(passage: list[int], blocks: list[str], overlap: int) -> list[int]:
@@ -414,10 +506,10 @@ def _overlap_tail(passage: list[int], blocks: list[str], overlap: int) -> list[i
     tail: list[int] = []
     size = 0
     for position in reversed(passage):
-        if size + len(blocks[position]) > overlap:
+        if size + _cost(blocks[position]) > overlap:
             break
         tail.insert(0, position)
-        size += len(blocks[position])
+        size += _cost(blocks[position])
     return tail
 
 
@@ -502,13 +594,15 @@ def _pack_blocks(blocks: list[str], budget: int, overlap: int) -> list[list[int]
         # The blank line between paragraphs is charged against the budget too,
         # because it is in the passage. Counting only the paragraphs lets a
         # passage of many short ones run hundreds of characters past the budget,
-        # which is exactly the overshoot the budget exists to prevent.
-        addition = len(block) + (_JOIN_CHARS if current else 0)
+        # which is exactly the overshoot the budget exists to prevent. A
+        # paragraph is charged its cost rather than its length, which is the
+        # same thing for ordinary prose and more for text dense with figures.
+        addition = _cost(block) + (_JOIN_CHARS if current else 0)
         if size >= CHUNK_CHAR_MINIMUM and size + addition > budget:
             passages.append(current)
             current = _overlap_tail(current, blocks, overlap)
             size = _packed_size(current, blocks)
-            addition = len(block) + (_JOIN_CHARS if current else 0)
+            addition = _cost(block) + (_JOIN_CHARS if current else 0)
         current.append(position)
         size += addition
 
@@ -530,6 +624,31 @@ def _pack_blocks(blocks: list[str], budget: int, overlap: int) -> list[list[int]
     return passages
 
 
+def prose_blocks(section: SectionRecord) -> tuple[list[str], list[str]]:
+    """An Item's paragraphs as the chunker packs them, and those it drops as
+    flattened copies of its rebuilt tables.
+
+    One function for both, because ``verify`` has to agree with the chunker on
+    what may be dropped: a paragraph missing from every passage is either
+    debris this rule removed on purpose, or prose that was lost.
+    """
+    blocks = [block.strip() for block in section.text.split("\n\n") if block.strip()]
+    blocks = _strip_furniture(blocks, has_tables=section.n_tables > 0)
+    blocks = _rejoin_page_breaks(blocks)
+    # Where the Item's tables were rebuilt properly, the flattened copies
+    # still sitting in the prose are pure noise, so they are dropped rather
+    # than indexed alongside the readable version.
+    if not section.tables:
+        return blocks, []
+    figures = table_figures(section.tables)
+    cells = table_cells(section.tables)
+    kept: list[str] = []
+    dropped: list[str] = []
+    for block in blocks:
+        (dropped if _is_table_debris(block, figures, cells) else kept).append(block)
+    return kept, dropped
+
+
 def chunk_section(
     section: SectionRecord,
     accession_no: str,
@@ -538,21 +657,20 @@ def chunk_section(
     overlap: int = CHUNK_CHAR_OVERLAP,
 ) -> list[ChunkRecord]:
     """Cut one Item into passages."""
-    blocks = [block.strip() for block in section.text.split("\n\n") if block.strip()]
-    blocks = _strip_furniture(blocks, has_tables=section.n_tables > 0)
-    blocks = _rejoin_page_breaks(blocks)
-    # Where the Item's tables were rebuilt properly, the flattened copies
-    # still sitting in the prose are pure noise, so they are dropped rather
-    # than indexed alongside the readable version.
-    if section.tables:
-        figures = table_figures(section.tables)
-        blocks = [block for block in blocks if not _is_table_debris(block, figures)]
+    blocks, _ = prose_blocks(section)
     if not blocks:
         return []
     # After the debris filter, so a flattened table is judged as the one block
     # the extractor produced, and before headings, so every heading is measured
-    # against the block that actually follows it.
-    blocks = [part for block in blocks for part in _split_long_block(block, budget)]
+    # against the block that actually follows it. A dense paragraph is split to
+    # the characters its cost allows, not to the prose budget in characters.
+    blocks = [
+        part
+        for block in blocks
+        for part in _split_long_block(
+            block, round(budget * _chars_per_token(block) / PROSE_CHARS_PER_TOKEN)
+        )
+    ]
 
     headings = _headings_in_force(blocks)
 
@@ -662,7 +780,10 @@ def _slice_table_rows(
     current: list[list[str]] = []
     size = header_chars
     for row in rows:
-        width = sum(len(cell) for cell in row) + 3 * len(row) + 1
+        # "| " before each cell and " " after it, the closing "|", and the
+        # newline that puts the row on its own line. Leaving the newline out
+        # let every slice overrun by one character per row.
+        width = sum(len(cell) for cell in row) + 3 * len(row) + 2
         too_many = len(current) >= TABLE_MAX_ROWS_PER_CHUNK
         too_wide = current and size + width > budget
         if too_many or too_wide:
@@ -673,6 +794,12 @@ def _slice_table_rows(
     if current:
         slices.append(current)
     return slices or [rows]
+
+
+# The widest "(part n of m)" suffix a table is expected to need, reserved in
+# the budget before a table is split. A table cut into a hundred parts or more
+# overruns it by a character or two.
+_PART_SUFFIX_RESERVE = " (part 99 of 99)"
 
 
 def chunk_tables(
@@ -703,21 +830,33 @@ def chunk_tables(
         if not table.rows or not table.headers:
             continue
 
+        # The caption line opens every piece, so like the header it is charged
+        # against the budget before anything is split, on both axes. Left
+        # uncharged it put a third of table passages over the budget by about
+        # its own width. The part suffix is reserved at its widest, because how
+        # many parts there are is not known until the splitting it would change
+        # has been done.
+        label = table.caption or section.title or f"Item {section.item}"
+        # Never below half the budget: a caption long enough to take more would
+        # otherwise shatter its table into one-row pieces, which is worse than
+        # letting that one caption overrun.
+        room = max(budget - len(label) - len(_PART_SUFFIX_RESERVE) - len("\n\n"), budget // 2)
+
         # Columns first, then rows within each group, so that every piece is
         # inside the budget on both axes.
         pieces: list[tuple[list[str], list[list[str]]]] = []
-        for headers, rows in _split_table_columns(table.headers, table.rows, budget):
+        for headers, rows in _split_table_columns(table.headers, table.rows, room):
             # The header and the rule beneath it are repeated on every slice,
             # so their cost comes off the budget before any row is added.
             header_chars = len(render_table(headers, []))
-            for row_slice in _slice_table_rows(rows, header_chars, budget):
+            for row_slice in _slice_table_rows(rows, header_chars, room):
                 pieces.append((headers, row_slice))
 
         for part_number, (headers, row_slice) in enumerate(pieces):
-            label = table.caption or section.title or f"Item {section.item}"
+            title = label
             if len(pieces) > 1:
-                label = f"{label} (part {part_number + 1} of {len(pieces)})"
-            text = "\n".join([label, "", render_table(headers, row_slice)])
+                title = f"{label} (part {part_number + 1} of {len(pieces)})"
+            text = "\n".join([title, "", render_table(headers, row_slice)])
             passages.append(
                 ChunkRecord(
                     chunk_id=(

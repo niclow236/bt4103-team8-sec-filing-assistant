@@ -40,8 +40,8 @@ RETRIEVERS = (BM25, DENSE, HYBRID, RERANK)
 # --- embedding model --------------------------------------------------------
 # The corpus was already cut for this class of model. CHUNK_CHAR_BUDGET is 1,800
 # characters because that is about 450 tokens at four characters per token, and
-# verify.py gates the corpus at EMBED_CHAR_LIMIT = 2,048 characters so that no
-# passage exceeds the 512 tokens a sentence-transformer will read. Choosing a
+# verify.py counts every passage in this model's tokens, context header
+# included, so that none exceeds the 512 a sentence-transformer reads. Choosing a
 # model with a shorter window than 512 tokens silently truncates passages the
 # corpus was built to fit; choosing a longer-window model is safe but wastes the
 # calibration. bge-base-en-v1.5 is one of the two the chunker's own comment names.
