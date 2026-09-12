@@ -142,7 +142,7 @@ def test_an_enormous_caption_does_not_shatter_its_table():
     assert len(passages) < 60, "one passage per row means the caption ate the budget"
 
 
-def test_a_passage_repeated_within_an_item_is_indexed_once():
+def test_a_table_passage_repeated_within_an_item_is_indexed_once():
     """A filer printing one table twice would otherwise put one vector in the index twice."""
     from dataclasses import replace
 
@@ -159,3 +159,40 @@ def test_a_passage_repeated_within_an_item_is_indexed_once():
     texts = [chunk.text for chunk in chunks]
     assert len(texts) == len(set(texts))
     assert {chunk.table_index for chunk in chunks if chunk.content_type == "table"} == {0}
+
+
+def test_identical_prose_under_different_headings_keeps_both_occurrences():
+    from src.pipeline.chunk import chunk_filing
+    from src.pipeline.records import ParsedFiling
+
+    intro = (
+        "We use contractual arrangements to manage our exposure and assess the "
+        "effectiveness of these arrangements on an ongoing basis. " * 12
+    ).strip()
+    shared = (
+        "The Company monitors the counterparties and evaluates their ability to "
+        "perform under the agreements. Changes in market conditions may affect "
+        "the value of these arrangements and the amounts recognized in earnings. " * 7
+    ).strip()
+    ending = (
+        "Management reviews the related balances and updates the estimates using "
+        "available information at each reporting date. " * 12
+    ).strip()
+    item = section("\n\n".join([
+        "Foreign currency risk", intro, shared, ending,
+        "Interest rate risk", intro, shared, ending,
+    ]))
+    parsed = ParsedFiling(
+        ticker="AAA", cik=1, company="Alpha", form="10-K", filing_date="2025-02-01",
+        accession_no="acc", url="u", source_path="s", period_of_report="2024-12-31",
+        sections=[item],
+    )
+
+    chunks = chunk_filing(parsed, source_path="s").chunks
+    occurrences = [chunk for chunk in chunks if chunk.text == shared]
+    assert [chunk.heading for chunk in occurrences] == [
+        "Foreign currency risk", "Interest rate risk",
+    ]
+    assert len({chunk.chunk_id for chunk in occurrences}) == 2
+    # Preserve source positions and all other prose metadata as well as text.
+    assert chunks == chunk_section(item, accession_no="acc")

@@ -545,8 +545,10 @@ passages there:
   Using" above Total and Levels 1 to 3 -- is stated once, above the row labels,
   instead of inside every column label. Repeated, it took a median of a third of
   each table passage and cut many tables into one-row pieces.
-- A passage identical to another in the same Item is kept once. Filers do print a
-  table twice, and in one Item the two would be the same vector indexed twice.
+- A table passage identical to another in the same Item is kept once. Filers do
+  print a table twice, and in one Item the two would be the same vector indexed
+  twice. Repeated prose keeps each occurrence's heading and source position,
+  since its surrounding evidence can differ.
 - The flattened copy of a table the parser rebuilt is dropped from the prose, so
   the same figures are not indexed twice, once unreadable. A block is judged a
   copy when the table's own cells account for it and no figure is left over.

@@ -739,7 +739,7 @@ def chunk_filing(
             incorporated_into=also_answers,
             budget=budget,
         )
-        # A passage identical to one already cut from the same Item is dropped.
+        # A table passage identical to one already cut from the same Item is dropped.
         # Within an Item the context header is the same too, so the two would
         # be one vector indexed twice: taking two of a question's top-k slots
         # with the same text, and counted twice by any metric over them. Filers
@@ -747,6 +747,12 @@ def chunk_filing(
         # notes -- and two tables sharing a header can yield identical slices.
         seen: set[str] = set()
         for passage in cut:
+            # Identical prose can occur under different headings or beside
+            # different evidence. Keep each occurrence and its source position
+            # so enrichment and neighbour expansion retain that context.
+            if passage.content_type != "table":
+                passages.append(passage)
+                continue
             if passage.text not in seen:
                 seen.add(passage.text)
                 passages.append(passage)
