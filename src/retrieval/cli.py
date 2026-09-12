@@ -33,7 +33,7 @@ from ..utils import start_run_log
 from . import bm25 as bm25_stage
 from . import embed as embed_stage
 from . import facts as facts_stage
-from .constants import EMBED_BATCH_SIZE
+from .constants import EMBED_BATCH_SIZE, EMBED_SORT_WINDOW
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,23 @@ def _add_embed(subparsers) -> None:
         "--batch-size",
         type=_positive,
         default=EMBED_BATCH_SIZE,
-        help=f"Passages per encode call. Default: {EMBED_BATCH_SIZE}.",
+        help=(
+            f"Passages per forward pass. Default: {EMBED_BATCH_SIZE}. This is "
+            f"what the encoder runs at once, not what it is handed per call: "
+            f"--sort-window sets that, and is what to lower if a machine runs "
+            f"out of memory."
+        ),
+    )
+    parser.add_argument(
+        "--sort-window",
+        type=_positive,
+        default=EMBED_SORT_WINDOW,
+        help=(
+            f"Passages handed to the encoder per call, which it sorts by length "
+            f"before cutting into batches of --batch-size. Default: "
+            f"{EMBED_SORT_WINDOW}. A throughput knob: it changes no vector, but "
+            f"it bounds what is held in memory and re-done after an interrupt."
+        ),
     )
     parser.add_argument(
         "--threads",
@@ -183,6 +199,7 @@ def run_embed(args) -> None:
         rebuild=args.rebuild,
         batch_size=args.batch_size,
         threads=args.threads,
+        sort_window=args.sort_window,
     )
 
 

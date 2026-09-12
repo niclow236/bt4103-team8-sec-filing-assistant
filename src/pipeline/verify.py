@@ -340,7 +340,7 @@ def bge_token_counter() -> Callable[[list[str]], list[int]]:
 
     ``tokenizers`` reads the model's own tokenizer file and pulls in no torch, so
     counting the whole corpus takes seconds. Checked against the counts the
-    encoder recorded on every vector of the index: identical for all 28,544.
+    encoder recorded on every vector of the index, and identical for every one.
     Truncation and padding are switched off explicitly, since a tokenizer file
     can carry either, and a counter that stops at 512 can never report a
     passage over it.

@@ -727,23 +727,35 @@ def chunk_filing(
             continue
 
         also_answers = sorted(incorporated.get(section.section_id, []))
-        passages.extend(
-            chunk_section(
-                section,
-                accession_no=parsed.accession_no,
-                incorporated_into=also_answers,
-                budget=budget,
-                overlap=overlap,
-            )
+        cut = chunk_section(
+            section,
+            accession_no=parsed.accession_no,
+            incorporated_into=also_answers,
+            budget=budget,
+            overlap=overlap,
+        ) + chunk_tables(
+            section,
+            accession_no=parsed.accession_no,
+            incorporated_into=also_answers,
+            budget=budget,
         )
-        passages.extend(
-            chunk_tables(
-                section,
-                accession_no=parsed.accession_no,
-                incorporated_into=also_answers,
-                budget=budget,
-            )
-        )
+        # A table passage identical to one already cut from the same Item is dropped.
+        # Within an Item the context header is the same too, so the two would
+        # be one vector indexed twice: taking two of a question's top-k slots
+        # with the same text, and counted twice by any metric over them. Filers
+        # do print a table twice -- Microsoft repeats derivatives tables across
+        # notes -- and two tables sharing a header can yield identical slices.
+        seen: set[str] = set()
+        for passage in cut:
+            # Identical prose can occur under different headings or beside
+            # different evidence. Keep each occurrence and its source position
+            # so enrichment and neighbour expansion retain that context.
+            if passage.content_type != "table":
+                passages.append(passage)
+                continue
+            if passage.text not in seen:
+                seen.add(passage.text)
+                passages.append(passage)
 
     return ChunkedFiling(
         ticker=parsed.ticker,

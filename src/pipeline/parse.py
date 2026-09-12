@@ -228,8 +228,26 @@ def _clean_cell(value: object) -> str:
     return " ".join(text.split()).replace("|", r"\|")
 
 
-def _column_levels(rendered) -> tuple[list[str], list[list[str]]]:
-    """Split a column index into header labels and any data rows caught in it.
+def _join_levels(parts) -> str:
+    """Join a column's header levels into one label, stating a level once.
+
+    Filers mark a header row twice, so the same text arrives at two levels of
+    the same column and the join printed it twice: ServiceNow's exhibit index
+    heads its first column ``("Exhibit Number", "Exhibit Number")`` and read
+    "Exhibit Number Exhibit Number", on every piece of a seven-part table. A
+    level identical to the one already taken is dropped; blanks never count, so
+    a repeat separated only by an empty level is caught as well.
+    """
+    kept: list[str] = []
+    for part in parts:
+        if part and (not kept or kept[-1] != part):
+            kept.append(part)
+    return " ".join(kept).strip()
+
+
+def _column_levels(rendered) -> tuple[list[str], list[list[str]], str]:
+    """Split a column index into header labels, any data rows caught in it, and
+    the spanning header over every column, if there is one (see _level_split).
 
     pandas reads a table's leading rows as header rows, and where a filer marks
     several rows as headers it returns a MultiIndex whose tuples hold one entry
@@ -297,7 +315,7 @@ def _index_levels(rendered, header_depth: int) -> tuple[str, list[str]]:
         return (_clean_cell(name) if isinstance(name, str) else ""), []
     parts = [_clean_cell(part) for part in name]
     head, data = parts[:header_depth], parts[header_depth:]
-    return " ".join(part for part in head if part).strip(), data
+    return _join_levels(head), data
 
 
 def _holds_figures(header: list[str], grid: list[list[str]], labelled: bool = True) -> bool:
@@ -329,10 +347,22 @@ def _column_depth(rendered) -> int:
     )
 
 
-def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[str]]]:
-    """Split tuples of index levels into header labels and trapped data rows."""
+def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[str]], str]:
+    """Split tuples of index levels into header labels, trapped data rows, and
+    a spanning header.
+
+    The spanning header is a header level that holds the same text over every
+    column -- "Fair Value Measurements at Reporting Date Using" above "Total",
+    "Level 1", "Level 2" and "Level 3" -- and it is returned once rather than
+    joined into each column's label. Joined, it is repeated in every column and
+    then on every piece of a split table: across the corpus it put a median of
+    a third of each table passage into its header line, and cut tables into
+    one-row pieces because the header left no room for a second row. It is
+    only taken out when every column carries it and another header level is
+    left beneath it, so the columns can still be told apart.
+    """
     if not tuples:
-        return [], []
+        return [], [], ""
     depth = max(len(item) for item in tuples)
     tuples = [item + ("",) * (depth - len(item)) for item in tuples]
 
@@ -347,15 +377,23 @@ def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[st
             break
     header_depth = max(header_depth, 1)
 
+    spanning = ""
+    written = [level for level in range(header_depth) if any(item[level] for item in tuples)]
+    if len(written) >= 2 and len({item[written[0]] for item in tuples}) == 1:
+        spanning = tuples[0][written[0]]
+
     labels = [
-        " ".join(part for part in item[:header_depth] if part).strip()
+        _join_levels(
+            part for level, part in enumerate(item[:header_depth])
+            if not (spanning and level == written[0])
+        )
         for item in tuples
     ]
     trapped = [
         [item[level] for item in tuples]
         for level in range(header_depth, depth)
     ]
-    return labels, trapped
+    return labels, trapped, spanning
 
 
 def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]]:
@@ -429,7 +467,7 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
         # the markup marks a table's data rows as headers, the body can be empty
         # while the header levels hold every figure, and judging columns by the
         # body alone would drop the columns the data is in.
-        _, trapped_rows = _column_levels(rendered)
+        _, trapped_rows, _ = _column_levels(rendered)
         keep = [position for position in range(rendered.shape[1])
                 if rendered.iloc[:, position].astype(str).str.strip().any()
                 or any(row[position] for row in trapped_rows)]
@@ -442,7 +480,7 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
         # them. Every row is then the same width as the header and can be indexed
         # by column, which is what lets the chunker split a table too wide to fit.
         try:
-            labels, trapped = _column_levels(rendered)
+            labels, trapped, spanning = _column_levels(rendered)
             index_label, index_values = _index_levels(
                 rendered, header_depth=_column_depth(rendered) - len(trapped)
             )
@@ -451,7 +489,28 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
             # real column already holds whatever labels its rows have. Moving
             # it in would put "0", "1", "2" at the start of every row.
             positional = type(rendered.index).__name__ == "RangeIndex"
-            header = ([] if positional else [index_label]) + labels
+            if positional:
+                # No corner cell to state a spanning header in once, so it goes
+                # back into each column's label as before.
+                labels = [f"{spanning} {label}".strip() for label in labels]
+                header = labels
+            else:
+                # Stated once, in the cell above the row labels: it describes
+                # every value column, and that cell is the one a split table
+                # repeats on every piece anyway.
+                #
+                # Unless the row-label header already says it. pandas puts the
+                # same header levels on both axes, so a level spanning the
+                # columns is often the level the index name was read from too,
+                # and appending it there would print the phrase twice in one
+                # cell: Microsoft's "(In millions) Year Ended June 30," would
+                # open every piece of a split table as "(In millions) Year
+                # Ended June 30, (In millions)". Repeating a phrase in the cell
+                # this change exists to shorten spends the budget it frees.
+                corner = index_label if spanning and spanning in index_label else (
+                    " ".join(part for part in (index_label, spanning) if part)
+                )
+                header = [corner] + labels
             # Rows recovered from the column index come first: they sat above
             # the surviving rows in the filing, and putting them back in order
             # is what makes the rebuilt table read like the printed one. Their

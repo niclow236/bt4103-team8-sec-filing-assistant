@@ -34,3 +34,21 @@ def test_embed_takes_no_chunker_settings():
 def test_batch_size_zero_is_a_parse_error():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["embed", "--batch-size", "0"])
+
+
+def test_sort_window_zero_is_a_parse_error():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["embed", "--sort-window", "0"])
+
+
+def test_run_embed_passes_the_sort_window_through(monkeypatch):
+    """The window bounds memory, so the command line has to be able to lower it."""
+    from src.retrieval import cli
+
+    passed = {}
+    monkeypatch.setattr(cli.embed_stage, "build", lambda **kwargs: passed.update(kwargs))
+    args = build_parser().parse_args(
+        ["embed", "--batch-size", "8", "--sort-window", "16"]
+    )
+    args.run(args)
+    assert passed["batch_size"] == 8 and passed["sort_window"] == 16
