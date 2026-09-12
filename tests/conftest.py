@@ -100,7 +100,12 @@ class FakeTokenizer:
 
 
 class FakeModel:
-    """Stands in for SentenceTransformer: the same two members build() uses."""
+    """Stands in for SentenceTransformer: the same two members build() uses.
+
+    ``encode`` defaults everything but the texts, the way the real one does, so
+    a caller that encodes a single query without naming a batch size -- the
+    dense retriever -- reaches the same signature the builder does.
+    """
 
     tokenizer = FakeTokenizer()
 
@@ -108,7 +113,7 @@ class FakeModel:
         self.calls = 0
         self.fail_after = fail_after
 
-    def encode(self, texts, batch_size, normalize_embeddings, show_progress_bar):
+    def encode(self, texts, batch_size=32, normalize_embeddings=True, show_progress_bar=False):
         self.calls += 1
         if self.fail_after is not None and self.calls > self.fail_after:
             raise KeyboardInterrupt("simulated kill")

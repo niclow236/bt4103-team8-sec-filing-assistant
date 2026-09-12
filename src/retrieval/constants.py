@@ -189,11 +189,19 @@ RERANK_MAX_TOKENS = 512
 # curve justified.
 #
 # The scales differ, so they cannot share a value. BM25 scores are unbounded and
-# corpus-dependent. RRF scores are tiny and bounded -- one method at rank 1 gives
-# 1/61 -- so a threshold here is really a "how many methods agreed" test. The
-# cross-encoder emits logits, roughly -11 to +11, where 0 is the natural
-# indifference point and the only one of the three with a meaningful prior.
+# corpus-dependent. Dense scores are cosine similarities on unit vectors, so
+# they are bounded to [-1, 1] and comparable between queries -- but the
+# indifference point is a property of the model, not 0. Measured on this corpus
+# with bge-base-en-v1.5: an off-topic query ("recipe for sourdough bread") tops
+# out at 0.45 and a nonsense one at 0.44, while a question the corpus answers
+# runs 0.68 to 0.74. So the gap is real but the floor sits near 0.45, and a
+# threshold set by reasoning rather than by #26's sweep would cut either
+# everything or nothing. RRF scores are tiny and bounded -- one method at rank 1
+# gives 1/61 -- so a threshold there is really a "how many methods agreed" test.
+# The cross-encoder emits logits, roughly -11 to +11, where 0 is the natural
+# indifference point and the only one of the four with a meaningful prior.
 MIN_BM25_SCORE: float | None = None
+MIN_DENSE_SCORE: float | None = None
 MIN_FUSED_SCORE: float | None = None
 MIN_RERANK_SCORE: float | None = None
 
@@ -235,7 +243,7 @@ __all__ = [
     "CANDIDATE_K", "FINAL_K",
     "RRF_K", "FUSION_WEIGHTS",
     "RERANK_MODEL", "RERANK_BATCH_SIZE", "RERANK_MAX_TOKENS",
-    "MIN_BM25_SCORE", "MIN_FUSED_SCORE", "MIN_RERANK_SCORE",
+    "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE", "MIN_RERANK_SCORE",
     "PREFILTER_FIELDS", "TABLE_BOOST",
     "INDEX_DIR", "BM25_INDEX_FILE", "CHROMA_DIR",
 ]
