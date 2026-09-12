@@ -228,6 +228,23 @@ def _clean_cell(value: object) -> str:
     return " ".join(text.split()).replace("|", r"\|")
 
 
+def _join_levels(parts) -> str:
+    """Join a column's header levels into one label, stating a level once.
+
+    Filers mark a header row twice, so the same text arrives at two levels of
+    the same column and the join printed it twice: ServiceNow's exhibit index
+    heads its first column ``("Exhibit Number", "Exhibit Number")`` and read
+    "Exhibit Number Exhibit Number", on every piece of a seven-part table. A
+    level identical to the one already taken is dropped; blanks never count, so
+    a repeat separated only by an empty level is caught as well.
+    """
+    kept: list[str] = []
+    for part in parts:
+        if part and (not kept or kept[-1] != part):
+            kept.append(part)
+    return " ".join(kept).strip()
+
+
 def _column_levels(rendered) -> tuple[list[str], list[list[str]], str]:
     """Split a column index into header labels, any data rows caught in it, and
     the spanning header over every column, if there is one (see _level_split).
@@ -298,7 +315,7 @@ def _index_levels(rendered, header_depth: int) -> tuple[str, list[str]]:
         return (_clean_cell(name) if isinstance(name, str) else ""), []
     parts = [_clean_cell(part) for part in name]
     head, data = parts[:header_depth], parts[header_depth:]
-    return " ".join(part for part in head if part).strip(), data
+    return _join_levels(head), data
 
 
 def _holds_figures(header: list[str], grid: list[list[str]], labelled: bool = True) -> bool:
@@ -366,10 +383,10 @@ def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[st
         spanning = tuples[0][written[0]]
 
     labels = [
-        " ".join(
+        _join_levels(
             part for level, part in enumerate(item[:header_depth])
-            if part and not (spanning and level == written[0])
-        ).strip()
+            if not (spanning and level == written[0])
+        )
         for item in tuples
     ]
     trapped = [

@@ -481,10 +481,10 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 28,318 passages over 75 filings: 17,564 of prose
-and 10,754 of tables. Prose runs to a median of 1,529 characters and 95% of it
+The corpus currently chunks to 28,179 passages over 75 filings: 17,564 of prose
+and 10,615 of tables. Prose runs to a median of 1,529 characters and 95% of it
 carries a heading; tables, cut to fit the embedding window, run to a median of
-628 and 32%, since a table sits under a caption more often than under a heading.
+624 and 32%, since a table sits under a caption more often than under a heading.
 
 Four things about that output are worth knowing before you build on it.
 
@@ -556,8 +556,8 @@ passages there:
   single item in a wide table and carries no meaning to a model reading it.
 
 The result, counted in bge's own tokens with the context header the encoder also
-reads: **none of the 28,318 passages exceeds 512 tokens.** The largest prose
-passage is 504 tokens and the largest table passage 409. `verify` checks this on
+reads: **none of the 28,179 passages exceeds 512 tokens.** The largest prose
+passage is 504 tokens and the largest table passage 385. `verify` checks this on
 every run. Before the last of these rules, 287 prose passages were being
 truncated, almost all of them flattened tables left in the text.
 

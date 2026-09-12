@@ -163,6 +163,27 @@ def test_a_header_over_only_some_columns_is_left_in_each_label():
                                   "2023 First quarter", "2023 Second quarter"]
 
 
+def test_a_header_level_repeated_by_the_filer_is_stated_once():
+    """ServiceNow's exhibit index marks its header row twice.
+
+    The same text arrives at two levels of the same column, and joining the
+    levels printed it twice on every piece of a split table. A level that only
+    repeats the one above it says nothing the first did not.
+    """
+    frame = pd.DataFrame(
+        [["3.1", "Restated Certificate of Incorporation", "8-K"],
+         ["4.1", "Form of Common Stock Certificate", "S-1/A"]],
+        columns=pd.MultiIndex.from_tuples([
+            ("Exhibit Number", "Exhibit Number"),
+            ("Description of Document", "Description of Document"),
+            ("Incorporated by Reference", "Form"),
+        ]),
+    )
+    records, _, _ = _extract_tables(section_of(frame, name="part_iv_item_15"))
+    assert records[0].headers == ["Exhibit Number", "Description of Document",
+                                  "Incorporated by Reference Form"]
+
+
 def test_a_single_header_level_is_never_factored_out():
     """Nothing would be left to tell the columns apart."""
     frame = pd.DataFrame(
