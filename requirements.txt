@@ -14,8 +14,9 @@ rank-bm25==0.2.2
 # Sentence embeddings for the dense retriever, and the store the vectors go in.
 # sentence-transformers pulls in torch, which is most of the install size. The
 # CPU build is enough, since nobody on the team is training anything, but it is
-# not fast: a full build of the dense index takes about 6.6 hours on a laptop
-# CPU. embed is incremental, so that cost is paid once rather than per re-chunk.
+# not fast: the first full build of the dense index took 6.6 hours on a laptop
+# CPU, before a 1.19x speed-up from sorting by length. embed is incremental, so
+# that cost is paid once rather than per re-chunk.
 sentence-transformers==6.0.1
 chromadb==1.5.9
 

@@ -68,6 +68,7 @@ from .constants import (
     DENSE,
     DISTANCE_METRIC,
     EMBED_BATCH_SIZE,
+    EMBED_SORT_WINDOW,
     EMBED_DIMENSIONS,
     EMBED_MAX_TOKENS,
     EMBED_MODEL,
@@ -450,8 +451,13 @@ def build(
     threads: int | None = None,
     chroma_dir: Path = CHROMA_DIR,
     processed_dir: Path = PROCESSED_DIR,
+    sort_window: int = EMBED_SORT_WINDOW,
 ) -> IndexManifest:
     """Bring the index in ``chroma_dir`` up to date with ``processed_dir``.
+
+    ``batch_size`` is what the encoder runs at once; ``sort_window`` is how many
+    passages it is handed per call, which it sorts by length before batching.
+    See ``constants.EMBED_SORT_WINDOW``: the window changes speed, never results.
 
     The filters are named parameters rather than a parsed namespace, so this is
     as usable from a notebook as from the command line, which is the shape
@@ -484,12 +490,13 @@ def build(
     system, twice, at 86% built. Disk is cheap here and memory is not: the
     second walk costs seconds against an encode measured in hours.
     """
-    if batch_size < 1:
+    if batch_size < 1 or sort_window < 1:
         raise ValueError(
-            f"batch_size must be at least 1, got {batch_size}. A batch that "
-            f"never fills would gather the whole corpus in memory and then be "
-            f"rejected by the encoder."
+            f"batch_size and sort_window must be at least 1, got {batch_size} and "
+            f"{sort_window}. A batch that never fills would gather the whole corpus "
+            f"in memory and then be rejected by the encoder."
         )
+    window = max(batch_size, sort_window)
 
     narrowed = bool(tickers or fiscal_years or key_items_only)
     manifest_file = manifest_file_for(chroma_dir)
@@ -635,8 +642,8 @@ def build(
             print(f"  {done:,} passages  {rate:.1f}/s"
                   f"  {elapsed / 60:.1f} min elapsed", flush=True)
 
-    # Second walk: the passages this run was asked for, one batch at a time.
-    # Only the batch in hand is resident, so peak memory does not grow with the
+    # Second walk: the passages this run was asked for, one window at a time.
+    # Only the window in hand is resident, so peak memory does not grow with the
     # corpus and the model has room to load beside it.
     batch: list[dict] = []
     for row in iter_chunks(
@@ -649,7 +656,7 @@ def build(
         if entry is not None and entry[0] == corpus.get(row["chunk_id"]):
             continue
         batch.append(row)
-        if len(batch) >= batch_size:
+        if len(batch) >= window:
             flush(batch)
             batch = []
     if batch:

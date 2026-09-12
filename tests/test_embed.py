@@ -20,7 +20,9 @@ from src.retrieval.records import Query, RetrievedPassage, fingerprint_of
 
 
 def build(corpus, chroma, **kwargs):
-    return embed.build(chroma_dir=chroma, processed_dir=corpus, batch_size=8, **kwargs)
+    # A small window, so the 90-passage corpus is several encoder calls and a
+    # build can be killed part-way through.
+    return embed.build(chroma_dir=chroma, processed_dir=corpus, batch_size=8, sort_window=8, **kwargs)
 
 
 def stored(chroma):
@@ -208,3 +210,13 @@ def test_a_record_with_empty_fields_still_projects():
     row = embed.chunk_from_record("x", "text", {"ticker": "A", "company": "A", "url": "u"})
     passage = RetrievedPassage.from_chunk(row, 0.0, 1, "dense")
     assert passage.item is None and passage.title == "" and passage.fiscal_year is None
+
+
+def test_the_sort_window_changes_nothing_but_speed(corpus, tmp_path, fake_model):
+    """One call per passage-window or one for the lot: the same index either way."""
+    narrow = embed.build(chroma_dir=tmp_path / "a", processed_dir=corpus, batch_size=8, sort_window=8)
+    wide = embed.build(chroma_dir=tmp_path / "b", processed_dir=corpus, batch_size=8, sort_window=256)
+    assert narrow.corpus_fingerprint == wide.corpus_fingerprint
+    a, b = stored(tmp_path / "a"), stored(tmp_path / "b")
+    assert set(a) == set(b)
+    assert all(np.allclose(a[c][2], b[c][2]) for c in a)

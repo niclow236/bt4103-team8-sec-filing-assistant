@@ -539,6 +539,12 @@ passages there:
 - Tables get their own budget, derived from the prose one, and are split by rows
   and by columns with the header repeated on every piece. The caption line counts
   against that budget too, since it opens every piece.
+- A header spanning every column -- "Fair Value Measurements at Reporting Date
+  Using" above Total and Levels 1 to 3 -- is stated once, above the row labels,
+  instead of inside every column label. Repeated, it took a median of a third of
+  each table passage and cut many tables into one-row pieces.
+- A passage identical to another in the same Item is kept once. Filers do print a
+  table twice, and in one Item the two would be the same vector indexed twice.
 - The flattened copy of a table the parser rebuilt is dropped from the prose, so
   the same figures are not indexed twice, once unreadable. A block is judged a
   copy when the table's own cells account for it and no figure is left over.
@@ -548,7 +554,7 @@ passages there:
   single item in a wide table and carries no meaning to a model reading it.
 
 The result, counted in bge's own tokens with the context header the encoder also
-reads: **none of the 29,234 passages exceeds 512 tokens.** The largest prose
+reads: **none of the 28,332 passages exceeds 512 tokens.** The largest prose
 passage is 504 tokens and the largest table passage 409. `verify` checks this on
 every run. Before the last of these rules, 287 prose passages were being
 truncated, almost all of them flattened tables left in the text.
@@ -630,9 +636,12 @@ so it needs a network connection and `EDGAR_IDENTITY`.
 encoded from, so a run encodes the passages that are missing, re-encodes those
 whose text has changed, and removes vectors for passages the corpus no longer
 holds. After a re-chunk, run `embed` again rather than `embed --rebuild`.
-`--rebuild` re-encodes all 28,544 passages, about 6.6 hours on a laptop CPU, and
-is only needed after changing the embedding model. An interrupted run is resumed
-by running it again.
+`--rebuild` re-encodes every passage and is only needed after changing the
+embedding model. The first full build took 6.6 hours on a laptop CPU; the encoder
+now sorts passages by length across 256 at a time before batching them, which
+measured 1.19x faster with identical vectors. An interrupted run is resumed by
+running it again, and a long one is best run in your own terminal, since a run
+started from a tool session ends when that session does.
 
 Each index records what it was built from: the dense one in
 `data/index/chroma.manifest.json`, BM25 inside `bm25.pkl`. A retriever compares

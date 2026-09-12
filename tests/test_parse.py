@@ -45,7 +45,8 @@ def test_a_table_whose_data_sits_in_its_header_is_rebuilt():
     assert table.rows[0][0] == "Working capital"
     assert "$(2,086" in table.rows[0] and "$12,122" in table.rows[0]
     assert table.rows[1][0] == "Cash, cash equivalents and marketable securities"
-    assert table.headers[0] == "(Dollars in millions)"
+    # "As of May 31," spans every column, so it is stated once, above the labels.
+    assert table.headers == ["(Dollars in millions) As of May 31,", "2023", "", "Change", "2022"]
 
 
 def test_the_caption_is_never_a_tuple():
@@ -62,7 +63,7 @@ def test_an_all_blank_index_name_gives_no_caption():
     )
     records, _, _ = _extract_tables(section_of(frame))
     assert records[0].caption == ""
-    assert records[0].headers == ["", "Year 2024", "Year 2023"]
+    assert records[0].headers == ["Year", "2024", "2023"]
     assert records[0].rows == [["Revenue", "100", "200"], ["Cost", "300", "400"]]
 
 
@@ -109,6 +110,48 @@ def test_a_table_with_an_ordinary_header_is_unchanged():
     assert table.caption == "(In millions)"
     assert table.headers == ["(In millions)", "2024", "2023"]
     assert table.rows == [["Revenue", "1,000", "900"], ["Net income", "250", "200"]]
+
+
+def test_a_header_spanning_every_column_is_stated_once():
+    frame = pd.DataFrame(
+        [["$1,000", "$400", "$600"], ["$200", "$200", "-"]],
+        index=pd.Index(["Money market funds", "Treasuries"], name="(in millions)"),
+        columns=pd.MultiIndex.from_tuples([
+            ("Fair Value Measurements Using", "Total"),
+            ("Fair Value Measurements Using", "Level 1"),
+            ("Fair Value Measurements Using", "Level 2"),
+        ]),
+    )
+    records, _, _ = _extract_tables(section_of(frame))
+    assert records[0].headers == ["(in millions) Fair Value Measurements Using",
+                                  "Total", "Level 1", "Level 2"]
+    assert records[0].caption == "(in millions)"
+
+
+def test_a_header_over_only_some_columns_is_left_in_each_label():
+    """Two year groups: neither spans every column, so neither is factored out."""
+    frame = pd.DataFrame(
+        [["10", "20", "30", "40"], ["50", "60", "70", "80"]],
+        index=pd.Index(["Revenue", "Cost"], name="(in millions)"),
+        columns=pd.MultiIndex.from_tuples([
+            ("2024", "First quarter"), ("2024", "Second quarter"),
+            ("2023", "First quarter"), ("2023", "Second quarter"),
+        ]),
+    )
+    records, _, _ = _extract_tables(section_of(frame))
+    assert records[0].headers == ["(in millions)", "2024 First quarter", "2024 Second quarter",
+                                  "2023 First quarter", "2023 Second quarter"]
+
+
+def test_a_single_header_level_is_never_factored_out():
+    """Nothing would be left to tell the columns apart."""
+    frame = pd.DataFrame(
+        [["10", "20"], ["30", "40"]],
+        index=pd.Index(["Revenue", "Cost"], name="(in millions)"),
+        columns=pd.MultiIndex.from_tuples([("Amount", ""), ("Amount", "")]),
+    )
+    records, _, _ = _extract_tables(section_of(frame))
+    assert records[0].headers == ["(in millions)", "Amount", "Amount"]
 
 
 def test_a_one_line_schedule_of_figures_is_kept():
