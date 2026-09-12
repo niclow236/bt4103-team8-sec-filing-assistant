@@ -481,7 +481,19 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
                 # Stated once, in the cell above the row labels: it describes
                 # every value column, and that cell is the one a split table
                 # repeats on every piece anyway.
-                header = [" ".join(part for part in (index_label, spanning) if part)] + labels
+                #
+                # Unless the row-label header already says it. pandas puts the
+                # same header levels on both axes, so a level spanning the
+                # columns is often the level the index name was read from too,
+                # and appending it there would print the phrase twice in one
+                # cell: Microsoft's "(In millions) Year Ended June 30," would
+                # open every piece of a split table as "(In millions) Year
+                # Ended June 30, (In millions)". Repeating a phrase in the cell
+                # this change exists to shorten spends the budget it frees.
+                corner = index_label if spanning and spanning in index_label else (
+                    " ".join(part for part in (index_label, spanning) if part)
+                )
+                header = [corner] + labels
             # Rows recovered from the column index come first: they sat above
             # the surviving rows in the filing, and putting them back in order
             # is what makes the rebuilt table read like the printed one. Their

@@ -346,7 +346,7 @@ Measured on the fifteen-company corpus, 75 filings, over a home connection, with
 | download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
 | parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
 | chunk | 15s | pure text processing over the parsed Items |
-| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then eight checks over 24,000 passages |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then eight checks over 28,000 passages |
 | **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
 
 Parse is quoted as a range because it is CPU-bound and single-threaded: the same
@@ -481,8 +481,10 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 23,958 passages over 75 filings: 17,957 of prose
-and 6,001 of tables, at a median of 1,472 characters. 86% carry a heading.
+The corpus currently chunks to 28,318 passages over 75 filings: 17,564 of prose
+and 10,754 of tables. Prose runs to a median of 1,529 characters and 95% of it
+carries a heading; tables, cut to fit the embedding window, run to a median of
+628 and 32%, since a table sits under a caption more often than under a heading.
 
 Four things about that output are worth knowing before you build on it.
 
@@ -496,7 +498,7 @@ column labels stripped off, which leaves a figure like 245,122 with nothing to
 say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
-98% of the tables that hold data rebuild cleanly, 5,342 of 5,428; where one
+All but 6 of the tables that hold data rebuild cleanly, 5,422 of 5,428; where one
 cannot, its flattened copy is left in the prose, so no figure is ever lost, it
 is just harder to read.
 
@@ -505,7 +507,7 @@ bullet points in a one-cell `<table>` to indent them, and Item 1A is written
 almost entirely that way, so 3,121 of the 8,549 `<table>` elements in the corpus
 are page formatting rather than data. Their text is already in the Item, so
 skipping them loses nothing, and counting them as failed rebuilds would put the
-figure around 62% and read as though a third of the financial statements were
+figure around 63% and read as though a third of the financial statements were
 broken. Where a
 table arrives with no header row of its own, the first row is promoted to the
 header if it reads as labels rather than figures, so that every piece of a split
@@ -554,7 +556,7 @@ passages there:
   single item in a wide table and carries no meaning to a model reading it.
 
 The result, counted in bge's own tokens with the context header the encoder also
-reads: **none of the 28,332 passages exceeds 512 tokens.** The largest prose
+reads: **none of the 28,318 passages exceeds 512 tokens.** The largest prose
 passage is 504 tokens and the largest table passage 409. `verify` checks this on
 every run. Before the last of these rules, 287 prose passages were being
 truncated, almost all of them flattened tables left in the text.

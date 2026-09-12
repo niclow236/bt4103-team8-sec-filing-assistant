@@ -459,6 +459,14 @@ def build(
     passages it is handed per call, which it sorts by length before batching.
     See ``constants.EMBED_SORT_WINDOW``: the window changes speed, never results.
 
+    The window is what bounds memory here, not the batch: it is how many rows
+    ``flush`` holds, how many texts are tokenised at once, and how many ids go
+    into one Chroma delete and add. It is also how much work an interrupt
+    re-does. So it is ``--sort-window`` that a machine short of memory should
+    lower, and both are on the command line for that reason. A window smaller
+    than a batch would leave the batch unable to fill, so the effective window
+    is ``max(batch_size, sort_window)``.
+
     The filters are named parameters rather than a parsed namespace, so this is
     as usable from a notebook as from the command line, which is the shape
     ``passages.select`` uses one stage earlier.

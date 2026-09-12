@@ -128,6 +128,26 @@ def test_a_header_spanning_every_column_is_stated_once():
     assert records[0].caption == "(in millions)"
 
 
+def test_a_spanning_header_the_row_labels_already_state_is_not_repeated():
+    """Microsoft's income statement: "(In millions)" is on both axes.
+
+    pandas puts the same header levels on the index name and on the columns, so
+    the phrase factored out of the column labels is often already in the corner
+    cell. Appending it would print it twice in the cell that opens every piece
+    of a split table.
+    """
+    frame = pd.DataFrame(
+        [["211,915", "198,270"], ["88,136", "83,383"]],
+        index=pd.Index(["Revenue", "Cost of revenue"],
+                       name=("(In millions)", "Year Ended June 30,")),
+        columns=pd.MultiIndex.from_tuples([
+            ("(In millions)", "2024"), ("(In millions)", "2023"),
+        ]),
+    )
+    records, _, _ = _extract_tables(section_of(frame))
+    assert records[0].headers == ["(In millions) Year Ended June 30,", "2024", "2023"]
+
+
 def test_a_header_over_only_some_columns_is_left_in_each_label():
     """Two year groups: neither spans every column, so neither is factored out."""
     frame = pd.DataFrame(
