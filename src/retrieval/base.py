@@ -46,8 +46,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from src.config import PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
 
 from .constants import CANDIDATE_K
@@ -69,6 +71,10 @@ class Retriever(Protocol):
     - The list is sorted best first and ``rank`` counts from 1 with no gaps,
       because the metrics in #25 read the rank rather than the position.
     - The Query's filters are applied BEFORE scoring, not after (#22).
+    - ``query.table_boost`` weights table passages BEFORE the cut to k, so a
+      table the boost lifts into the top k is returned even when its raw score
+      sat below it. ``rank`` applies it to rows; a second stage passes it to
+      ``reorder``, since its new scores replace the ones already boosted.
     - ``retriever`` on every passage returned equals this retriever's ``name``,
       so the harness can attribute a passage without threading its own state.
     - Fewer than k results is a normal answer, not an error. A filtered corpus
@@ -129,14 +135,18 @@ def matches(chunk: Mapping[str, Any], query: Query) -> bool:
     return True
 
 
-def candidates(query: Query, chunks: Iterable[Mapping[str, Any]] | None = None) -> Iterator[dict]:
+def candidates(
+    query: Query,
+    chunks: Iterable[Mapping[str, Any]] | None = None,
+    processed_dir: Path = PROCESSED_DIR,
+) -> Iterator[dict]:
     """Every corpus row the Query allows, as ``iter_chunks`` rows.
 
     This is the searchable corpus for one query: the filter first, the scoring
     inside it. Pass ``chunks`` to filter a corpus already held in memory -- an
     index built once at startup, say -- and leave it out to read from
-    ``data/processed/``, which is what a retriever that scores the corpus
-    directly wants.
+    ``processed_dir``, which is what a retriever that scores the corpus directly
+    wants.
 
     The ticker and fiscal-year filters are pushed down into ``iter_chunks`` when
     the corpus is read from disk, so a query pinned to one company does not load
@@ -144,6 +154,7 @@ def candidates(query: Query, chunks: Iterable[Mapping[str, Any]] | None = None) 
     """
     if chunks is None:
         chunks = iter_chunks(
+            processed_dir=processed_dir,
             tickers=list(query.tickers) or None,
             fiscal_years=list(query.fiscal_years) or None,
             key_items_only=query.key_items_only,
@@ -175,6 +186,18 @@ def _ordered(
     return kept if k is None else kept[:k]
 
 
+def _boosted(score: float, boost: float) -> float:
+    """A score moved by ``boost`` in the same direction whichever side of zero it is.
+
+    Multiplying only lifts a positive score. A cosine similarity can be
+    negative, and -0.3 times 1.5 is -0.45, which sinks the table passage the
+    boost was asked to lift. A negative score is divided instead, which moves it
+    toward zero -- upward -- by the same factor, and a boost below 1 lowers both
+    kinds of score for the same reason.
+    """
+    return score * boost if score >= 0 else score / boost
+
+
 def rank(
     scored: Iterable[tuple[Mapping[str, Any], float]],
     retriever: str,
@@ -193,12 +216,21 @@ def rank(
     #22 asks for: a numeric question can lean toward the passages that keep
     figures under their row and column labels. It defaults to off rather than to
     ``constants.TABLE_BOOST``, because a boost belongs to a question that is
-    numeric and not to every question a retriever is ever asked -- the caller
-    that knows the question is numeric passes ``TABLE_BOOST`` in.
+    numeric and not to every question a retriever is ever asked -- a retriever
+    passes ``query.table_boost``, which the caller that knows the question is
+    numeric set. The floor is
+    applied to the boosted score, since that is the score the passage is
+    returned with.
+
+    A boost must be positive. Zero would tie every table at nothing and a
+    negative one would turn "lean toward tables" into its opposite, both
+    silently, so either is refused.
     """
+    if table_boost <= 0:
+        raise ValueError(f"table_boost must be positive, got {table_boost}")
     entries = [
         (
-            score * table_boost if chunk.get("content_type") == "table" else score,
+            _boosted(score, table_boost) if chunk.get("content_type") == "table" else score,
             chunk["chunk_id"],
             chunk,
         )
@@ -215,6 +247,7 @@ def reorder(
     retriever: str,
     k: int | None = None,
     min_score: float | None = None,
+    table_boost: float = 1.0,
 ) -> list[RetrievedPassage]:
     """Re-rank passages that have already been retrieved, under new scores.
 
@@ -223,13 +256,29 @@ def reorder(
     its text and its citation and takes the new score, the new rank and the new
     method's name.
 
+    ``table_boost`` is ``rank``'s, applied to the new scores. A stage that
+    replaces the first stage's scores has discarded the boost they carried, so
+    it applies the boost again; a stage that fuses ranks already ordered under
+    the boost, as RRF does, should leave it at 1.0 or count it twice. A
+    cross-encoder's logits run negative, which is where the sign handling in
+    ``_boosted`` earns its keep.
+
     Provenance survives the rescoring. A passage that arrived with ``sources``
     keeps them, since a fused passage already records which methods surfaced it;
     a passage that arrived without them gets the method that produced it, so
     reranking a plain BM25 result set still leaves a trail back to BM25 after
     ``retriever`` has been overwritten with "rerank".
     """
-    entries = [(score, passage.chunk_id, passage) for passage, score in scored]
+    if table_boost <= 0:
+        raise ValueError(f"table_boost must be positive, got {table_boost}")
+    entries = [
+        (
+            _boosted(score, table_boost) if passage.content_type == "table" else score,
+            passage.chunk_id,
+            passage,
+        )
+        for passage, score in scored
+    ]
     return [
         replace(
             passage,
@@ -294,6 +343,7 @@ class WrappingRetriever(ABC):
             retriever=self.name,
             k=wanted,
             min_score=self.min_score,
+            table_boost=query.table_boost,
         )
 
     @abstractmethod

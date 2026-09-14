@@ -178,7 +178,9 @@ class BM25Retriever:
 
         The filters are applied before scoring, as #22 requires, but the scores
         themselves come from the corpus-wide fit -- see the module docstring for
-        why those are two different things.
+        why those are two different things. Every admitted passage is scored, so
+        ``query.table_boost`` applied in ``rank`` sees all of them before the cut
+        to k.
         """
         wanted = resolve_k(query, k)
         if wanted <= 0 or self._bm25 is None:
@@ -198,6 +200,7 @@ class BM25Retriever:
             retriever=self.name,
             k=wanted,
             min_score=MIN_BM25_SCORE,
+            table_boost=query.table_boost,
         )
 
 
