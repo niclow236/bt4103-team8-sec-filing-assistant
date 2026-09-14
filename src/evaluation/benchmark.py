@@ -51,7 +51,12 @@ def load_questions(
     available = _available_chunk_ids(chunk_ids, processed_dir)
     questions: list[BenchmarkQuestion] = []
     seen_ids: set[str] = set()
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    # utf-8-sig drops the byte-order mark some editors write. Records are split on
+    # \r\n, \r and \n only: JSON cannot hold those raw inside a string, but it can
+    # hold U+2028, U+2029 and U+0085, which str.splitlines() would also split on.
+    text = path.read_text(encoding="utf-8-sig")
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
         try:

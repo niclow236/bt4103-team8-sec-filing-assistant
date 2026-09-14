@@ -66,6 +66,39 @@ def test_loader_reports_missing_corpus(tmp_path):
         load_questions(path, processed_dir=tmp_path / "processed")
 
 
+def test_loader_keeps_unicode_line_separators_inside_a_record(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    answer = "Net sales rose in FY2024overall"
+    path.write_text(
+        json.dumps(_question(expected_answer=answer), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    questions = load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+    assert len(questions) == 1
+    assert questions[0].expected_answer == answer
+
+
+def test_loader_accepts_a_byte_order_mark(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    path.write_text(json.dumps(_question()) + "\n", encoding="utf-8-sig")
+
+    questions = load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+    assert questions[0].question_id == "q001"
+
+
+def test_loader_reports_line_numbers_with_windows_line_endings(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    path.write_bytes(
+        ("\r\n".join(json.dumps(_question()) for _ in range(2)) + "\r\n").encode("utf-8")
+    )
+
+    with pytest.raises(BenchmarkValidationError, match=r"questions\.jsonl:2: duplicate question_id"):
+        load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+
 def test_empty_run_result_keeps_retriever_name():
     result = RunResult.from_passages("q001", [], retriever="bm25")
 
