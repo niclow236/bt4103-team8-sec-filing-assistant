@@ -152,6 +152,15 @@ class DenseRetriever:
         The filters reach Chroma as a ``where`` clause, so they are applied
         during the search and the k that comes back is k passages the Query
         allows -- not the global top k with the disallowed ones removed.
+
+        A table boost has the same problem one step later. Chroma cuts to k
+        before this module sees a score, so boosting what came back could never
+        lift a table that sat just outside the top k. When a boost is set and
+        both kinds of passage are allowed, the index is asked twice, for the top
+        k tables and the top k of everything else, and ``rank`` boosts the union
+        and cuts it to k. That union holds the true boosted top k: the boost
+        preserves order within each kind, so no passage below its own kind's
+        top k can climb above k passages of that kind.
         """
         wanted = resolve_k(query, k)
         if wanted <= 0:
@@ -164,18 +173,35 @@ class DenseRetriever:
         if not held:
             return []
 
-        found = self.collection.query(
-            query_embeddings=[self._encode(query.text)],
-            n_results=min(wanted, held),
-            where=where_for(query),
-            include=["documents", "metadatas", "distances"],
-        )
+        vector = self._encode(query.text)
+        depth = min(wanted, held)
+        where = where_for(query)
+        if query.table_boost == 1.0 or query.content_type:
+            rows = self._nearest(vector, depth, where)
+        else:
+            rows = [
+                *self._nearest(vector, depth, _within(where, {"content_type": "table"})),
+                *self._nearest(vector, depth, _within(where, {"content_type": {"$ne": "table"}})),
+            ]
         return rank(
-            self._rows(found),
+            rows,
             retriever=self.name,
             k=wanted,
             min_score=self.min_score,
+            table_boost=query.table_boost,
         )
+
+    def _nearest(
+        self, vector: list[float], n_results: int, where: dict[str, Any] | None
+    ) -> list[tuple[dict[str, Any], float]]:
+        """The n passages nearest the query vector inside ``where``, as rank's pairs."""
+        found = self.collection.query(
+            query_embeddings=[vector],
+            n_results=n_results,
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+        return self._rows(found)
 
     def _rows(self, found: Any) -> list[tuple[dict[str, Any], float]]:
         """Chroma's column-of-lists answer as the (chunk, score) pairs rank takes.
@@ -225,6 +251,11 @@ class DenseRetriever:
 
             self._model, _ = _load_model()
         return self._model
+
+
+def _within(where: dict[str, Any] | None, clause: dict[str, Any]) -> dict[str, Any]:
+    """A Query's ``where`` clause narrowed by one more condition."""
+    return clause if where is None else {"$and": [where, clause]}
 
 
 def _first(found: Any, field: str) -> Sequence[Any]:

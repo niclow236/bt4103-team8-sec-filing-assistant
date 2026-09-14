@@ -1,5 +1,7 @@
 """The shared fingerprint, and the Query every retriever reads its filters from."""
 
+import pytest
+
 from src.retrieval.records import Query, corpus_fingerprint, fingerprint_of, passage_digest
 
 ROWS = [
@@ -44,3 +46,14 @@ def test_query_normalises_filter_values():
 
 def test_query_without_filters_is_unrestricted():
     assert Query("q").filters == {}
+
+
+def test_table_boost_is_off_by_default_and_is_not_a_filter():
+    assert Query("q").table_boost == 1.0
+    assert Query("q", table_boost=2).filters == {}
+
+
+@pytest.mark.parametrize("boost", [0, -1.5])
+def test_query_refuses_a_table_boost_that_is_not_positive(boost):
+    with pytest.raises(ValueError, match="table_boost"):
+        Query("q", table_boost=boost)

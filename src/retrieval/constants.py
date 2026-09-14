@@ -227,6 +227,11 @@ PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type", "is_key_sec
 # yourself with, since boosting tables always looks better on the handful of
 # numeric questions you happen to try. #24 generates the mechanical XBRL
 # benchmark precisely so this can be set from data.
+#
+# It reaches the retrievers as ``Query(table_boost=TABLE_BOOST)``, set by
+# whatever decides the question is numeric, and never as a retriever default:
+# a boost applied to every question is a thumb on the scale for prose questions
+# too. ``Query(content_type="table")`` is the hard version -- tables only.
 TABLE_BOOST = 1.0
 
 # --- where indexes live -----------------------------------------------------

@@ -288,12 +288,25 @@ class Query:
     items: tuple[str, ...] = ()       # "1A", "7", ...; matched case-insensitively
     content_type: str | None = None   # "prose" or "table"; None allows both
     key_items_only: bool = False      # the Items the project leans on: 1, 1A, 7, 7A, 8
+    # How far to lean toward table passages without excluding prose: a
+    # multiplier on a table passage's score, applied before the cut to k. 1.0 is
+    # off. Not a filter, so it is not in ``filters`` -- it changes the order
+    # inside the admitted corpus, never the corpus. It rides on the Query for the
+    # same reason the filters do: whatever decides a question is numeric builds
+    # the Query, and a weight passed beside it is a weight one retriever drops.
+    # ``constants.TABLE_BOOST`` is the value to set when a question is numeric.
+    table_boost: float = 1.0
 
     def __post_init__(self) -> None:
         # Frozen, so the normalised values are set through object.__setattr__.
         object.__setattr__(self, "tickers", tuple(t.upper() for t in self.tickers))
         object.__setattr__(self, "fiscal_years", tuple(int(y) for y in self.fiscal_years))
         object.__setattr__(self, "items", tuple(i.upper() for i in self.items))
+        # Refused here rather than on the first search, so a bad weight is an
+        # error where the Query was built and not three calls deep in a retriever.
+        if self.table_boost <= 0:
+            raise ValueError(f"table_boost must be positive, got {self.table_boost}")
+        object.__setattr__(self, "table_boost", float(self.table_boost))
 
     @property
     def filters(self) -> dict[str, Any]:
