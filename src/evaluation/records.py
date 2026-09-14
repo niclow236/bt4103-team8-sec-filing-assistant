@@ -116,9 +116,12 @@ class RunResult:
     retrieved_chunk_ids: tuple[str, ...]
     retrieved_scores: tuple[float, ...]
     latency_ms: float | None = None
-    config: Mapping[str, Any] = field(default_factory=dict)
+    config: Mapping[str, Any] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "retrieved_chunk_ids", tuple(self.retrieved_chunk_ids))
+        object.__setattr__(self, "retrieved_scores", tuple(self.retrieved_scores))
+        object.__setattr__(self, "config", dict(self.config))
         if len(self.retrieved_chunk_ids) != len(self.retrieved_scores):
             raise ValueError("retrieved_chunk_ids and retrieved_scores must have equal lengths")
         if len(set(self.retrieved_chunk_ids)) != len(self.retrieved_chunk_ids):
@@ -130,13 +133,17 @@ class RunResult:
         question_id: str,
         passages: list[RetrievedPassage],
         *,
+        retriever: str,
         latency_ms: float | None = None,
         config: Mapping[str, Any] | None = None,
     ) -> RunResult:
-        """Build a result without coupling metrics to a retriever class."""
-        retriever = passages[0].retriever if passages else ""
+        """Build a result without coupling metrics to a retriever class.
+
+        ``retriever`` is passed in rather than read off the passages, because a
+        retriever that finds nothing returns no passages to read it from.
+        """
         if any(passage.retriever != retriever for passage in passages):
-            raise ValueError("all passages in a RunResult must have the same retriever")
+            raise ValueError(f"all passages in a RunResult must come from retriever {retriever!r}")
         return cls(
             question_id=question_id,
             retriever=retriever,

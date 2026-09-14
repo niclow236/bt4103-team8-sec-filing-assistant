@@ -58,13 +58,36 @@ def test_loader_rejects_duplicate_question_ids(tmp_path):
         load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
 
 
-def test_run_result_keeps_retrieval_order_and_scores():
+def test_loader_reports_missing_corpus(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question())
+
+    with pytest.raises(FileNotFoundError, match="python -m src.pipeline chunk"):
+        load_questions(path, processed_dir=tmp_path / "processed")
+
+
+def test_empty_run_result_keeps_retriever_name():
+    result = RunResult.from_passages("q001", [], retriever="bm25")
+
+    assert result.retriever == "bm25"
+
+
+def test_run_result_is_hashable_and_copies_inputs():
+    chunk_ids = ["chunk-1"]
+    scores = [3.5]
+    config = {"k": 10}
     result = RunResult(
         question_id="q001",
         retriever="bm25",
-        retrieved_chunk_ids=("chunk-1", "chunk-2"),
-        retrieved_scores=(3.5, 1.2),
+        retrieved_chunk_ids=chunk_ids,
+        retrieved_scores=scores,
+        config=config,
     )
+    chunk_ids.append("chunk-2")
+    scores.append(1.2)
+    config["k"] = 20
 
-    assert result.to_dict()["retrieved_chunk_ids"] == ["chunk-1", "chunk-2"]
-    assert result.to_dict()["retrieved_scores"] == [3.5, 1.2]
+    assert result.to_dict()["retrieved_chunk_ids"] == ["chunk-1"]
+    assert result.to_dict()["retrieved_scores"] == [3.5]
+    assert result.config == {"k": 10}
+    assert isinstance(hash(result), int)

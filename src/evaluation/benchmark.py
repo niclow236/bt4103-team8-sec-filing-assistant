@@ -20,7 +20,13 @@ def _available_chunk_ids(
     processed_dir: Path,
 ) -> set[str]:
     if chunk_ids is None:
-        return {chunk["chunk_id"] for chunk in iter_chunks(processed_dir=processed_dir)}
+        available = {chunk["chunk_id"] for chunk in iter_chunks(processed_dir=processed_dir)}
+        if not available:
+            raise FileNotFoundError(
+                f"No chunked filings found under {processed_dir}; run "
+                "`python -m src.pipeline chunk` first, or pass chunk_ids explicitly"
+            )
+        return available
     return {
         item if isinstance(item, str) else item["chunk_id"]
         for item in chunk_ids
