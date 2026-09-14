@@ -23,9 +23,10 @@ class HybridRetriever:
         if wanted <= 0:
             return []
 
+        depth = max(CANDIDATE_K, wanted)
         result_lists = (
-            (self.bm25.search(query, k=CANDIDATE_K), BM25),
-            (self.dense.search(query, k=CANDIDATE_K), DENSE),
+            (self.bm25.search(query, k=depth), BM25),
+            (self.dense.search(query, k=depth), DENSE),
         )
         fused: dict[str, tuple[RetrievedPassage, float, list[str]]] = {}
         for passages, method in result_lists:
