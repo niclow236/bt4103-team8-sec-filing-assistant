@@ -180,6 +180,46 @@ def test_a_range_too_wide_to_be_a_filter_is_not_expanded():
     assert parsed.unresolved == ("1999",)
 
 
+def test_a_short_range_after_a_four_digit_year_expands():
+    assert _parse("revenue FY2022-24").fiscal_years == (2022, 2023, 2024)
+
+
+def test_a_curly_apostrophe_year_is_a_year():
+    assert _parse("revenue in ’23").fiscal_years == (2023,)
+
+
+@pytest.mark.parametrize("question", [
+    "How does Micron describe the CHIPS Act of 2022?",
+    "What does Apple say about the Securities Exchange Act of 1934?",
+    "How does Oracle describe Sarbanes-Oxley Act of 2002 compliance?",
+])
+def test_the_year_of_a_law_is_not_a_fiscal_year(question):
+    parsed = _parse(question)
+    assert parsed.fiscal_years == ()
+    assert parsed.unresolved == ()
+    assert parsed.question_type != "unanswerable"
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("What was Meta's 2023 headcount?", (2023,)),
+    ("What were Apple's 2024 shares outstanding?", (2024,)),
+    ("Was Apple's revenue in 2024 more than 2023?", (2023, 2024)),
+])
+def test_a_year_that_dates_a_count_or_a_comparison_is_still_a_year(question, expected):
+    assert _parse(question).fiscal_years == expected
+
+
+@pytest.mark.parametrize("question", [
+    "Did Apple have more than 2000 suppliers?",
+    "What does the term '10-K' mean for Apple?",
+])
+def test_a_quantity_or_a_quoted_number_is_not_a_year(question):
+    parsed = _parse(question)
+    assert parsed.fiscal_years == ()
+    assert parsed.unresolved == ()
+    assert parsed.question_type != "unanswerable"
+
+
 # --- unresolved companies -------------------------------------------------------
 
 def test_a_dropped_peer_does_not_filter_and_is_reported():
@@ -281,6 +321,9 @@ def test_a_question_about_what_the_filing_says_is_answerable(question):
     "Given what Oracle reported, estimate its revenue going forward",
     # Nor is "you expect" a reporting verb.
     "What revenue do you expect from Apple next year?",
+    # Nor is a reporting verb in the future, or "expected" describing the thing asked for.
+    "What will Apple report next year?",
+    "What is Apple's expected stock price next year?",
 ])
 def test_a_request_for_advice_a_prediction_or_a_price_is_unanswerable(question):
     assert _parse(question).question_type == "unanswerable"

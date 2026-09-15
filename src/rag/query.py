@@ -40,35 +40,39 @@ from .constants import (
     BEYOND_FILING_NOUNS,
     COMPANY_ALIASES,
     COMPARATIVE_CUES,
+    COUNT_AFTER,
     CURRENCY_BEFORE,
     FUTURE_CUES,
+    MAGNITUDE_AFTER,
     NUMERIC_CUES,
     OUT_OF_SCOPE_ALIASES,
     PREDICTION_VERBS,
+    QUANTITY_BEFORE,
     QUESTION_TYPES,
     REPORTING_VERBS,
     TEMPORAL_CUES,
-    UNIT_AFTER,
 )
 
 # A year as a question writes it. Four alternatives, tried in this order:
 #   FY2024, FY24, FYE2024      -- a fiscal prefix, then two or four digits
 #   fiscal 2024, fiscal year 24
-#   '24                        -- an apostrophe is enough to mark a two-digit year
+#   '24, ’24                   -- an apostrophe, straight or curly, marks a two-digit
+#                                 year, but not a quoted number like '10-K'
 #   2024                       -- a bare number, but only one that looks like a year
 # A bare two-digit number is never a year: "24" in "24 percent" is a figure.
 _YEAR = re.compile(
     r"\b(?:fye?)\s?(?P<fy>\d{4}|\d{2})\b"
     r"|\bfiscal(?:\s+year)?\s+(?P<fiscal>\d{4}|\d{2})\b"
-    r"|'(?P<apos>\d{2})\b"
+    r"|['’](?P<apos>\d{2})(?![\w'’]|-[A-Za-z])"
     r"|\b(?P<bare>(?:19|20)\d{2})\b",
     re.IGNORECASE,
 )
 
-# "FY22-24" and "FY22 to 24": the second year borrows the first one's prefix.
-# Rewritten to "FY22 - FY24" before scanning, so the scanner sees two years.
+# "FY22-24", "FY2022-24" and "FY22 to 24": the second year borrows the first
+# one's prefix. Rewritten to "FY22 - FY24" before scanning, so the scanner sees
+# two years; a two-digit second year reads as 20xx whatever the first one was.
 _SHORT_RANGE = re.compile(
-    r"\b(fye?\s?)(\d{2})\s*(-|–|—|to|through)\s*(\d{2})\b", re.IGNORECASE
+    r"\b(fye?\s?)(\d{4}|\d{2})\s*(-|–|—|to|through)\s*(\d{2})\b", re.IGNORECASE
 )
 
 # What can sit between two years to make them a range rather than a pair.
@@ -81,15 +85,28 @@ _BETWEEN = re.compile(r"\bbetween\s*$", re.IGNORECASE)
 # and there to stop "1999 to 2024" turning into twenty-six filters.
 _MAX_RANGE = 10
 
-# What marks a bare four-digit number as a figure rather than a year: a
-# currency before it, with or without a space, or a magnitude or count unit
-# after it. See ``constants.CURRENCY_BEFORE`` and ``UNIT_AFTER``.
+# What marks a bare four-digit number as something other than a filing year:
+# a currency before it, a magnitude after it, a count after it with no
+# possessive before it, a comparison of quantity before it with a plural after
+# it, or "Act of" before it. See the tables in ``constants.py`` and
+# ``_is_not_a_year``.
 _CURRENCY_BEFORE = re.compile(
     "(?:" + "|".join(re.escape(c) for c in CURRENCY_BEFORE) + r")\s*$", re.IGNORECASE
 )
-_UNIT_AFTER = re.compile(
-    r"^\s*(?:" + "|".join(re.escape(u) for u in UNIT_AFTER) + r")(?!\w)", re.IGNORECASE
+_MAGNITUDE_AFTER = re.compile(
+    r"^\s*(?:" + "|".join(re.escape(u) for u in MAGNITUDE_AFTER) + r")(?!\w)", re.IGNORECASE
 )
+_COUNT_AFTER = re.compile(
+    r"^\s*(?:" + "|".join(re.escape(u) for u in COUNT_AFTER) + r")(?!\w)", re.IGNORECASE
+)
+_QUANTITY_BEFORE = re.compile(
+    r"\b(?:" + "|".join(re.escape(q).replace(r"\ ", r"\s+") for q in QUANTITY_BEFORE)
+    + r")\s+$",
+    re.IGNORECASE,
+)
+_POSSESSIVE_BEFORE = re.compile(r"(?:['’]s|\b(?:its|their|the))\s+$", re.IGNORECASE)
+_PLURAL_AFTER = re.compile(r"^\s+[a-z]+s\b", re.IGNORECASE)
+_LAW_BEFORE = re.compile(r"\bact\s+of\s+$", re.IGNORECASE)
 
 # A prediction verb used as a request: at the start, after a clause break, or
 # after "can you" / "could you" / "please". "what does Apple predict" has the
@@ -106,6 +123,20 @@ _REPORTING = re.compile(
     r"(?<!\byou\s)(?<!\w)(?:" + "|".join(re.escape(v) for v in REPORTING_VERBS) + r")(?!\w)",
     re.IGNORECASE,
 )
+
+# A reporting verb only makes the question about what the filing said when the
+# filing is the one reporting. Not after "will", "would", "shall", "going to"
+# or "'ll", up to three words back: "what will Apple report next year" asks
+# about a filing that does not exist yet. And not when "expected" or
+# "anticipated" describes the thing asked for rather than what was said:
+# "Apple's expected stock price", "revenue is expected to".
+_FUTURE_BEFORE = re.compile(
+    r"(?:\b(?:will|would|shall|going\s+to)|['’]ll)\s+(?:[\w'’.-]+\s+){0,3}$", re.IGNORECASE
+)
+_DESCRIBED_BEFORE = re.compile(
+    r"(?:['’]s|\b(?:is|are|be|been|its|their|the|an?))\s+$", re.IGNORECASE
+)
+_DESCRIBING_FORMS = frozenset({"expected", "anticipated"})
 
 
 @dataclass(frozen=True)
@@ -318,19 +349,31 @@ def _year_value(match: re.Match[str]) -> int:
     return int(digits) if len(digits) == 4 else 2000 + int(digits)
 
 
-def _is_amount(text: str, match: re.Match[str]) -> bool:
-    """Whether a bare four-digit match is a figure rather than a year.
+def _is_not_a_year(text: str, match: re.Match[str]) -> bool:
+    """Whether a bare four-digit match is a figure, or a year that dates
+    something other than a filing.
 
     Only the bare form is in doubt: "FY2024" and "'24" say they are years.
     "$2024 million" has a currency before it and a magnitude after; either
-    alone is enough, since "$2024" and "2000 employees" are both figures.
+    alone is enough, since "$2024" and "2024 million" are both figures. A count
+    after the number is a figure too, unless a possessive before it makes the
+    number date the count: "2000 employees" is a figure, "Meta's 2023
+    headcount" is a year. A comparison before it with a plural after it is a
+    figure whatever the noun, as in "more than 2000 suppliers". And "Act of
+    2022" dates a law, which is no reason to filter the filings.
     """
     if match.group("bare") is None:
         return False
-    return (
-        _CURRENCY_BEFORE.search(text[:match.start()]) is not None
-        or _UNIT_AFTER.match(text[match.end():]) is not None
-    )
+    before, after = text[:match.start()], text[match.end():]
+    if (
+        _CURRENCY_BEFORE.search(before)
+        or _MAGNITUDE_AFTER.match(after)
+        or _LAW_BEFORE.search(before)
+    ):
+        return True
+    if _COUNT_AFTER.match(after):
+        return _POSSESSIVE_BEFORE.search(before) is None
+    return bool(_QUANTITY_BEFORE.search(before) and _PLURAL_AFTER.match(after))
 
 
 def _years(question: str, bounds: tuple[int, int]) -> tuple[tuple[int, ...], tuple[str, ...]]:
@@ -339,7 +382,7 @@ def _years(question: str, bounds: tuple[int, int]) -> tuple[tuple[int, ...], tup
     text = _SHORT_RANGE.sub(r"\1\2 \3 \1\4", question)
     # Figures are dropped before ranges are read, so "$2000 to $2024 million"
     # cannot become a range of years between two amounts.
-    matches = [m for m in _YEAR.finditer(text) if not _is_amount(text, m)]
+    matches = [m for m in _YEAR.finditer(text) if not _is_not_a_year(text, m)]
     low, high = bounds
 
     named: set[int] = set()
@@ -383,6 +426,18 @@ def _any_cue(question: str, cues: Iterable[str]) -> bool:
     )
 
 
+def _reports_on_the_filing(question: str) -> bool:
+    """Whether some reporting verb in the question is the filing's, as above."""
+    for match in _REPORTING.finditer(question):
+        before = question[:match.start()]
+        if _FUTURE_BEFORE.search(before):
+            continue
+        if match.group(0).lower() in _DESCRIBING_FORMS and _DESCRIBED_BEFORE.search(before):
+            continue
+        return True
+    return False
+
+
 def _asks_beyond_the_filing(question: str) -> bool:
     """Whether the question asks for something no 10-K can give.
 
@@ -396,7 +451,7 @@ def _asks_beyond_the_filing(question: str) -> bool:
     """
     if _any_cue(question, ADVICE_CUES) or _PREDICTION_REQUEST.search(question):
         return True
-    if _REPORTING.search(question):
+    if _reports_on_the_filing(question):
         return False
     return _any_cue(question, BEYOND_FILING_NOUNS) or _any_cue(question, FUTURE_CUES)
 

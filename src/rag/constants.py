@@ -23,9 +23,10 @@ from __future__ import annotations
 # The ticker itself is matched separately, in upper case only, so that "now"
 # in "how is revenue recognised now" does not resolve to ServiceNow. That
 # still leaves the tickers that are also words in their own field: "CRM" in
-# "which companies sell CRM software" resolves to Salesforce. It is the wrong
-# reading of that question, and the app shows the filter back to the user
-# precisely so a wrong reading is visible rather than silent.
+# "which companies sell CRM software" resolves to Salesforce, and so does
+# "NOW" in a question typed entirely in capitals. It is the wrong reading of
+# that question, and the app shows the filter back to the user precisely so
+# a wrong reading is visible rather than silent.
 COMPANY_ALIASES: dict[str, tuple[str, ...]] = {
     "AAPL": ("apple",),
     "MSFT": ("microsoft",),
@@ -178,15 +179,39 @@ REPORTING_VERBS = (
 
 # --- numbers that are not years -----------------------------------------------
 # A bare four-digit number is read as a year only when nothing marks it as an
-# amount or a count. "$2024 million" and "2000 employees" are figures, and a
-# figure read as a year either filters to a year the user never asked about
-# or, for "$2000", reports a year outside the corpus and refuses the question.
-# A year written with a prefix or an apostrophe -- "FY2024", "'24" -- is never
-# in doubt and is not checked. Both tables are matched case-insensitively.
+# amount, a count, or the date of something other than a filing. "$2024
+# million" and "2000 employees" are figures, and a figure read as a year either
+# filters to a year the user never asked about or, for "$2000", reports a year
+# outside the corpus and refuses the question. A year written with a prefix or
+# an apostrophe -- "FY2024", "'24" -- is never in doubt and is not checked.
+# Every table here is matched case-insensitively.
 CURRENCY_BEFORE = ("$", "us$", "usd", "€", "eur", "£", "gbp", "s$", "sgd", "¥", "jpy")
-UNIT_AFTER = (
+
+# A magnitude after the number always makes it a figure: no year is followed
+# by "million" or "percent".
+MAGNITUDE_AFTER = (
     "million", "millions", "billion", "billions", "trillion", "thousand", "mn", "bn",
-    "percent", "per cent", "%", "employees", "people", "staff", "workers", "headcount",
-    "shares", "units", "customers", "stores", "patents", "locations", "countries",
-    "subscribers", "users", "cases", "transactions",
+    "percent", "per cent", "%",
+)
+
+# A count after the number makes it a figure, unless a possessive or "the"
+# comes before the number. "2000 employees" is a count, but "Meta's 2023
+# headcount" and "Apple's 2024 shares outstanding" name a year, and reading
+# those as figures would drop the year filter without telling anyone.
+COUNT_AFTER = (
+    "employees", "people", "staff", "workers", "headcount", "shares", "units",
+    "customers", "stores", "patents", "locations", "countries", "subscribers",
+    "users", "cases", "transactions",
+)
+
+# A comparison of quantity before the number makes it a figure when a plural
+# noun follows, whatever the noun, so "more than 2000 suppliers" is not read
+# as the year 2000 and refused as outside the corpus. The plural is required
+# so that "was revenue in 2024 more than 2023?" still names two years. "about"
+# and "over" are left out on purpose: "what did Apple say about 2024 results"
+# is a question about a year.
+QUANTITY_BEFORE = (
+    "more than", "fewer than", "less than", "at least", "at most",
+    "approximately", "roughly", "nearly", "almost",
+    "exceed", "exceeds", "exceeded", "exceeding",
 )
