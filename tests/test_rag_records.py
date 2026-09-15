@@ -92,8 +92,18 @@ def test_answer_normalises_lists_to_tuples():
 
 
 def test_answer_refuses_a_resolved_citation_to_an_unseen_passage():
-    with pytest.raises(ValueError, match="not shown: ghost"):
+    with pytest.raises(ValueError, match="do not match the numbered passages"):
         _answer(citations=(Citation(1, "ghost", True),))
+
+
+@pytest.mark.parametrize("citation", [
+    Citation(1, "p3", True),    # in range, wrong passage
+    Citation(9, "p1", True),    # resolved past the last source
+    Citation(2, None, False),   # unresolved though source 2 exists
+])
+def test_answer_refuses_a_citation_that_disagrees_with_its_position(citation):
+    with pytest.raises(ValueError, match="do not match the numbered passages"):
+        _answer(citations=(citation,))
 
 
 def test_answer_allows_an_unresolved_marker():

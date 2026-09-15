@@ -117,9 +117,11 @@ class Answer:
     the index for what the retriever already returned.
 
     ``citations`` holds one entry per distinct marker the model wrote, resolved
-    or not. A resolved one must name a passage in ``passages``, which is the
-    invariant that makes a rendered citation trustworthy: the record cannot say
-    a claim is supported by a source the model was never shown.
+    or not. Each must agree with its position: ``[n]`` resolves to
+    ``passages[n - 1]`` when that source exists and is unresolved when it does
+    not. That is the invariant that makes a rendered citation trustworthy: the
+    record cannot show ``[1]`` with source 3's metadata, claim support from a
+    source the model was never shown, or flag a real source as unsupported.
 
     ``abstained`` is True when the model declined to answer from the passages
     it was given. An abstention is an answer, not an error: the harness counts
@@ -148,16 +150,20 @@ class Answer:
         if len(set(markers)) != len(markers):
             raise ValueError("citations must hold one entry per marker")
 
-        # A resolved citation says "this claim rests on that passage", and the
-        # only passages it may rest on are the ones the model was shown.
-        unseen = sorted(
-            citation.chunk_id for citation in self.citations
-            if citation.resolved and citation.chunk_id not in shown
-        )
-        if unseen:
+        # Marker [n] names passages[n - 1], so each citation must say exactly
+        # what that position holds: its chunk_id when the marker is in range,
+        # None when it is not. Checking membership alone would let [1] render
+        # with source 3's metadata, or flag a real source as unsupported.
+        mismatched = [
+            f"[{citation.marker}] names {citation.chunk_id} but source is {numbered}"
+            for citation in self.citations
+            if citation.chunk_id != (numbered := (
+                shown[citation.marker - 1] if citation.marker <= len(shown) else None
+            ))
+        ]
+        if mismatched:
             raise ValueError(
-                "resolved citations name passages the model was not shown: "
-                + ", ".join(unseen)
+                "citations do not match the numbered passages: " + "; ".join(mismatched)
             )
 
     @property
