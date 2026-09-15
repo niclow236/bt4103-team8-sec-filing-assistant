@@ -55,9 +55,26 @@ def test_a_name_inside_a_longer_word_does_not_resolve():
     assert _parse("pineapple").tickers == ()
 
 
-def test_only_tickers_in_scope_resolve():
-    parsed = _parse("Compare Apple and Microsoft", known_tickers=("AAPL",))
+def test_only_tickers_in_scope_resolve_and_the_rest_are_reported():
+    parsed = _parse("Compare Apple and Microsoft in FY2024", known_tickers=("AAPL",))
     assert parsed.tickers == ("AAPL",)
+    assert parsed.unresolved == ("Microsoft",)
+    assert parsed.question_type != "unanswerable"
+
+
+@pytest.mark.parametrize("question, mention", [
+    ("Microsoft revenue FY2024", "Microsoft"),
+    ("MSFT revenue FY2024", "MSFT"),
+])
+def test_a_company_dropped_from_scope_is_reported_not_skipped(question, mention):
+    # The alias table still knows Microsoft; the scope does not. Searching the
+    # other filings for it without a word is the failure the unresolved list
+    # exists to prevent.
+    parsed = _parse(question, known_tickers=("AAPL",))
+    assert parsed.tickers == ()
+    assert parsed.unresolved == (mention,)
+    assert parsed.question_type == "unanswerable"
+    assert parsed.to_query().filters == {"fiscal_year": [2024]}
 
 
 def test_a_ticker_in_scope_without_aliases_is_found_by_ticker():
@@ -104,6 +121,29 @@ def test_a_number_that_is_not_a_year_is_ignored():
     assert parsed.unresolved == ()
 
 
+@pytest.mark.parametrize("question", [
+    "Did Adobe report more than $2024 million in debt?",
+    "Did Adobe report more than $2000 million in debt?",
+    "Did Adobe report more than $ 2024 million in debt?",
+    "Did Adobe report USD 2024 million in debt?",
+    "Did Adobe have 2000 employees?",
+    "Did Adobe issue 2021 shares?",
+    "Was debt between $2021 and $2024 million?",
+])
+def test_an_amount_or_a_count_is_not_a_year(question):
+    parsed = _parse(question)
+    assert parsed.fiscal_years == ()
+    assert parsed.unresolved == ()
+    assert parsed.question_type != "unanswerable"
+
+
+def test_a_year_next_to_an_amount_is_still_a_year():
+    parsed = _parse("Was debt above $2000 million in 2024?")
+    assert parsed.fiscal_years == (2024,)
+    assert parsed.unresolved == ()
+    assert _parse("Was debt above $2000 million in 2015?").unresolved == ("2015",)
+
+
 def test_years_outside_the_corpus_do_not_filter_and_are_reported():
     parsed = _parse("What was Apple's revenue in 2015?")
     assert parsed.fiscal_years == ()
@@ -119,6 +159,19 @@ def test_a_range_that_straddles_the_corpus_keeps_the_years_inside_it():
 
 def test_an_unresolved_year_is_reported_as_written():
     assert _parse("revenue in FY15").unresolved == ("FY15",)
+
+
+@pytest.mark.parametrize("question", [
+    "What was Apple's revenue between FY2021 and FY2025?",
+    "What was Apple's revenue between FY2025 and FY2021?",
+    "What was Apple's revenue from 2025 to 2021?",
+])
+def test_a_range_expands_in_either_endpoint_order(question):
+    assert _parse(question).fiscal_years == (2021, 2022, 2023, 2024, 2025)
+
+
+def test_a_plain_pair_is_still_a_pair_in_either_order():
+    assert _parse("revenue in 2025 and 2021").fiscal_years == (2021, 2025)
 
 
 def test_a_range_too_wide_to_be_a_filter_is_not_expanded():
@@ -201,6 +254,40 @@ def test_between_two_years_is_a_range_not_a_comparison():
 def test_will_inside_a_real_question_is_not_a_forecast():
     parsed = _parse("What risks did Apple say will affect its supply chain?")
     assert parsed.question_type == "factual"
+
+
+@pytest.mark.parametrize("question", [
+    # A topic the filing discusses, asked as what the filing said about it.
+    "What risks did Apple disclose about its stock price in FY2024?",
+    "What did Apple say about forecasting risk?",
+    "What does Microsoft's 10-K say about its outlook for next year?",
+    "What did Apple say it expects next year?",
+    "What guidance did Oracle give going forward?",
+    "According to its 10-K, how does Cisco describe share price volatility?",
+])
+def test_a_question_about_what_the_filing_says_is_answerable(question):
+    assert _parse(question).question_type != "unanswerable"
+
+
+@pytest.mark.parametrize("question", [
+    # The thing itself, not what the filing said about it.
+    "What is Apple's stock price?",
+    "What will Apple's revenue be next year?",
+    "Should I buy Microsoft stock?",
+    "What is Apple's price target?",
+    # A reporting verb does not excuse a request for a new prediction.
+    "Based on what Apple disclosed, predict next quarter's revenue",
+    "Can you forecast Microsoft's FY2026 revenue?",
+    "Given what Oracle reported, estimate its revenue going forward",
+    # Nor is "you expect" a reporting verb.
+    "What revenue do you expect from Apple next year?",
+])
+def test_a_request_for_advice_a_prediction_or_a_price_is_unanswerable(question):
+    assert _parse(question).question_type == "unanswerable"
+
+
+def test_a_prediction_verb_after_a_subject_asks_what_the_filing_predicts():
+    assert _parse("What does Apple predict for its supply chain?").question_type == "factual"
 
 
 def test_goodwill_is_not_a_forecast_cue():

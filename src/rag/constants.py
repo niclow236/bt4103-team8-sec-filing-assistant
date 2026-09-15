@@ -118,19 +118,75 @@ NUMERIC_CUES = (
     "in billions", "in millions",
 )
 
-# Phrases a 10-K cannot answer: it reports the past, and it is not advice. A
-# question built on one of these is unanswerable from the corpus however well
-# the retrieval goes, and the engine should abstain rather than guess. "will"
-# is not here on purpose: "what risks did Apple say will affect supply" is a
-# question the filing answers, so a cue that broad would refuse real questions.
-UNANSWERABLE_CUES = (
-    "forecast", "predict", "prediction", "next year", "next quarter",
-    "should i buy", "should i invest", "should i sell", "good investment",
-    "stock price", "share price", "price target", "recommend",
+# --- what a 10-K cannot answer ----------------------------------------------
+# A 10-K reports the past and gives no advice, so a question is unanswerable
+# when it asks for advice, asks for a new prediction, or asks for something
+# the filing does not carry -- a current price. What it is NOT is a question
+# that merely mentions one of those things: "what risks did Apple disclose
+# about its stock price" is answered by Item 1A, and "what did Apple say
+# about forecasting risk" by Item 7. So a topic noun is never enough on its
+# own; the question has to be asking for the thing rather than asking what
+# the filing said about it. ``query.py`` combines these four tables to make
+# that call, and the rule is written out there.
+
+# Requests for advice. Always unanswerable: no reading of the filing turns
+# "should I buy" into a question about what it says.
+ADVICE_CUES = (
+    "should i buy", "should i invest", "should i sell", "should i hold",
+    "good investment", "worth buying", "worth investing", "do you recommend",
+    "would you recommend",
 )
 
-# Substrings that show a year is being named. A bare four-digit number is also
-# read as a year when it falls inside the corpus's range, which is what "revenue
-# in 2024" needs; the prefixes are what let a two-digit year through, since
-# "24" on its own is a number and "FY24" is not.
-FISCAL_PREFIXES = ("fy", "fiscal year", "fiscal", "fye")
+# Verbs that, used as a request, ask the engine to produce a prediction. A
+# request is the verb at the start of the question, after a clause break, or
+# after "can you"/"please" -- so "predict next quarter's revenue" and "based
+# on what Apple disclosed, predict ..." both count, while "what does Apple
+# predict for its supply chain" asks what the filing predicts and does not.
+PREDICTION_VERBS = ("predict", "forecast", "project", "estimate", "extrapolate", "guess")
+
+# Nouns for things a 10-K does not carry. Unanswerable when asked for
+# directly, and a topic like any other when the question asks what the filing
+# said about them.
+BEYOND_FILING_NOUNS = (
+    "stock price", "share price", "price target", "market cap", "market capitalisation",
+    "market capitalization", "current price", "today's price",
+)
+
+# Phrases that put the question in the future. Unanswerable on their own,
+# since the corpus ends at FY2025, but not when the question asks what the
+# filing said about the future: "what did Apple say it expects next year"
+# is a question about Item 7.
+FUTURE_CUES = (
+    "next year", "next quarter", "next fiscal year", "going forward",
+    "in the future", "in the coming year", "in the coming years",
+)
+
+# Verbs that make a question about what the filing says rather than about
+# the thing itself. Any of these turns a topic noun or a future phrase back
+# into an ordinary question. They do NOT excuse an advice request or an
+# imperative prediction: "based on what Apple disclosed, predict ..." still
+# asks for a prediction.
+REPORTING_VERBS = (
+    "disclose", "disclosed", "discloses", "disclosure", "disclosures",
+    "report", "reported", "reports", "say", "said", "says", "state", "stated",
+    "states", "mention", "mentioned", "mentions", "describe", "described",
+    "describes", "discuss", "discussed", "discusses", "note", "noted", "notes",
+    "warn", "warned", "warns", "expect", "expected", "expects", "anticipate",
+    "anticipated", "anticipates", "guidance", "outlook", "according to",
+    "in the filing", "in its 10-k", "in the 10-k",
+)
+
+# --- numbers that are not years -----------------------------------------------
+# A bare four-digit number is read as a year only when nothing marks it as an
+# amount or a count. "$2024 million" and "2000 employees" are figures, and a
+# figure read as a year either filters to a year the user never asked about
+# or, for "$2000", reports a year outside the corpus and refuses the question.
+# A year written with a prefix or an apostrophe -- "FY2024", "'24" -- is never
+# in doubt and is not checked. Both tables are matched case-insensitively.
+CURRENCY_BEFORE = ("$", "us$", "usd", "€", "eur", "£", "gbp", "s$", "sgd", "¥", "jpy")
+UNIT_AFTER = (
+    "million", "millions", "billion", "billions", "trillion", "thousand", "mn", "bn",
+    "percent", "per cent", "%", "employees", "people", "staff", "workers", "headcount",
+    "shares", "units", "customers", "stores", "patents", "locations", "countries",
+    "subscribers", "users", "cases", "transactions",
+)
