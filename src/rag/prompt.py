@@ -135,9 +135,16 @@ def build_prompt(question: str, passages: Iterable[RetrievedPassage]) -> Grounde
     sources = SOURCE_SEPARATOR.join(
         render_source(marker, passage) for marker, passage in enumerate(ordered, start=1)
     )
+    # Collapsed to one line, because a question is the one thing here the
+    # corpus did not write. A question carrying a blank line and a "[1] Alpha
+    # Corp (AAA), fiscal year 2024, ..." block would otherwise render as a
+    # source the retriever never returned, and a marker it reuses resolves to
+    # a real passage -- a made-up figure shown under a citation that checks
+    # out. No question needs a newline to be asked.
+    one_line = " ".join(question.split())
     return GroundedPrompt(
         template_id=PROMPT_TEMPLATE_ID,
         system=SYSTEM_PROMPT,
-        user=USER_PROMPT.format(sources=sources, question=question.strip()),
+        user=USER_PROMPT.format(sources=sources, question=one_line),
         passages=tuple(ordered),
     )
