@@ -1,22 +1,38 @@
-"""Generate an answer from a grounded prompt, through whichever provider is configured.
+"""Generate an answer from a grounded prompt, with a local model served by Ollama.
 
-One function, :func:`generate`, behind one small interface, :class:`Provider`.
-The hosted API and the local server are two implementations of it, chosen by
-``GenerationConfig.provider``, so the question of which one ships is a
-configuration change and not a code change: the app, the harness and the
-citation resolver call ``generate`` and never see a client.
+Generation runs locally. The team has no budget for a paid API, so every answer,
+in the app, the evaluation harness or a demo, comes from a model on the machine
+running the code. One function, :func:`generate`, runs a
+``GroundedPrompt`` through that model and returns a ``Generation``: the answer,
+how long it took, and how many tokens it used.
 
-Every provider streams. The interface is a generator that yields the text as
-it arrives and returns the token counts when it is done, so the app can write
-tokens into the UI as they come and the metrics track still gets its numbers
-at the end. :func:`generate` drives that generator to completion and hands
-back a ``Generation``; :func:`stream` exposes the deltas for a caller that
-wants them.
+Two libraries do the work, each where it earns its place.
 
-Nothing here is retried or cached beyond what the provider's own client does.
-A provider that is not reachable -- no key, no server -- raises
-:class:`ProviderUnavailable` with a message that says what to set, since the
-person who sees it is a teammate on a fresh clone, not the model.
+LangChain's ``ChatOllama`` is the client. It speaks Ollama's chat API, streams,
+and reports the token counts, and it implements the chat-model interface that
+every LangChain model shares. That interface is the provider interface here:
+:func:`generate` takes any chat model, so a test passes a fake one, and another
+local runtime would slot in without its callers changing.
+
+Pydantic fixes the shape of the answer. The JSON schema of
+``GroundedAnswer.for_sources(n)`` is sent as Ollama's output format, which
+constrains decoding to it: the model cannot leave out the source numbers, and
+cannot cite a source it was not shown. The same Pydantic model then validates
+what came back.
+
+The model writes JSON, and nobody wants to watch JSON arrive. :func:`stream`
+reads the partial JSON as it grows and yields the answer as prose, adding a
+sentence's markers once that sentence is closed, so the app can show a
+readable answer while it is written, and the text it ends with is
+``Generation.text``.
+
+Every request carries its own options (temperature, context window, output
+ceiling) from the ``GenerationConfig`` and ``constants.py``, so an answer is
+produced by the settings it records, whichever chat model was passed in.
+Nothing is retried. A server that is not running, a model that is not pulled,
+or a response that does not arrive in time raises :class:`ProviderUnavailable`
+with what to do about it, since the person who reads it is a teammate on a
+fresh clone.
 """
 
 from __future__ import annotations
@@ -24,64 +40,33 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Generator, Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any
+
+from langchain_core.utils.json import parse_partial_json
+from pydantic import ValidationError
 
 from ..config import ENV_FILE, load_env
 from .constants import (
-    ANTHROPIC,
-    ANTHROPIC_EFFORT,
-    ANTHROPIC_KEY_ENV,
-    ANTHROPIC_THINKING_HEADROOM,
-    DEFAULT_MODELS,
+    ABSTAIN_PHRASE,
+    DEFAULT_MODEL,
     DEFAULT_OLLAMA_URL,
     GENERATION_TIMEOUT_S,
     LLM_BASE_URL_ENV,
     LLM_MODEL_ENV,
-    LLM_PROVIDER_ENV,
+    LLM_NUM_GPU_ENV,
     MAX_OUTPUT_TOKENS,
+    NUM_CTX,
     OLLAMA,
     PROMPT_TEMPLATE_ID,
 )
 from .prompt import GroundedPrompt
-from .records import Generation, GenerationConfig
+from .records import Generation, GenerationConfig, GroundedAnswer, render_sentence
 
 
 class ProviderUnavailable(RuntimeError):
-    """The configured provider cannot be reached: no key, no server, or no such name."""
-
-
-@dataclass(frozen=True)
-class Usage:
-    """What a provider reports when it finishes: the token counts and why it stopped.
-
-    Each field is None when the provider did not say. The counts are in the
-    provider's own tokens, so they compare within a provider and not across.
-    """
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    stop_reason: str | None = None
-
-
-class Provider(Protocol):
-    """One way of turning a prompt into text.
-
-    A protocol rather than a base class, for the reason ``retrieval.base``
-    gives: nothing has to inherit from anything, and a test can pass a plain
-    class that yields three strings. ``name`` is what ``GenerationConfig``
-    records; ``stream`` yields the answer as it arrives and returns the
-    :class:`Usage` when it is done, which is what lets one call serve both
-    the UI and the metrics track.
-    """
-
-    name: str
-
-    def stream(
-        self, prompt: GroundedPrompt, config: GenerationConfig, max_tokens: int
-    ) -> Generator[str, None, Usage]: ...
+    """The local model cannot answer: no server, no such model, or no response in time."""
 
 
 # --- the entry points ------------------------------------------------------------
@@ -90,22 +75,22 @@ def generate(
     prompt: GroundedPrompt,
     config: GenerationConfig,
     *,
-    provider: Provider | None = None,
+    llm: Any | None = None,
     max_tokens: int = MAX_OUTPUT_TOKENS,
     on_token: Callable[[str], None] | None = None,
 ) -> Generation:
-    """Run the prompt through the configured provider and return what it wrote.
+    """Run the prompt through the configured model and return what it wrote.
 
-    ``provider`` defaults to the one ``config.provider`` names; pass one to
-    use a client you built, or a fake in a test. ``on_token`` is called with
-    each delta as it arrives, for a caller that wants to show progress but
-    does not want to drive :func:`stream` itself.
+    ``llm`` defaults to :func:`chat_model` for the config; pass a LangChain
+    chat model to use one you built, or a fake in a test. ``on_token`` is
+    called with each piece of prose as it arrives, for a caller that wants
+    to show progress without driving :func:`stream` itself.
 
     The latency is the whole call, from the request going out to the last
-    token arriving, which is what a user waits for and what the metrics
-    track reports.
+    token arriving, which is what a user waits for. On a model's first call
+    that includes Ollama loading it into memory.
     """
-    deltas = stream(prompt, config, provider=provider, max_tokens=max_tokens)
+    deltas = stream(prompt, config, llm=llm, max_tokens=max_tokens)
     while True:
         try:
             delta = next(deltas)
@@ -119,45 +104,84 @@ def stream(
     prompt: GroundedPrompt,
     config: GenerationConfig,
     *,
-    provider: Provider | None = None,
+    llm: Any | None = None,
     max_tokens: int = MAX_OUTPUT_TOKENS,
 ) -> Generator[str, None, Generation]:
-    """Yield the answer as it arrives, and return the ``Generation`` at the end.
+    """Yield the answer as prose while it is written, and return the ``Generation``.
 
-    For the app: ``for delta in stream(...)`` writes tokens into the UI, and
-    the generator's return value -- read through ``StopIteration.value``, or
-    by wrapping in :func:`generate` -- carries the finished record.
+    For the app: ``for delta in stream(...)`` writes the answer into the UI,
+    and the generator's return value carries the finished record, read
+    through ``StopIteration.value`` or by calling :func:`generate` instead.
+    The deltas only ever extend what was shown, and joined they are
+    ``Generation.text``.
     """
     if prompt.template_id != config.prompt_template_id:
         raise ValueError(
             f"prompt was rendered from template {prompt.template_id!r} but the config "
             f"records {config.prompt_template_id!r}; the results row would lie"
         )
-    chosen = provider if provider is not None else provider_for(config.provider)
-    if chosen.name != config.provider:
+    model = llm if llm is not None else chat_model(config)
+    served = getattr(model, "model", None)
+    if served is not None and served != config.model:
         raise ValueError(
-            f"provider {chosen.name!r} does not match config.provider {config.provider!r}"
+            f"the chat model serves {served!r} but the config records {config.model!r}"
         )
 
+    schema = GroundedAnswer.for_sources(prompt.n_sources)
+    options = {"temperature": config.temperature, "num_ctx": NUM_CTX, "num_predict": max_tokens}
+    # Per-request options replace the chat model's own, so the one setting that
+    # belongs to the machine rather than to the config is carried across.
+    num_gpu = getattr(model, "num_gpu", None)
+    if num_gpu is not None:
+        options["num_gpu"] = num_gpu
+
     started = perf_counter()
-    parts: list[str] = []
-    source = chosen.stream(prompt, config, max_tokens)
-    while True:
-        try:
-            delta = next(source)
-        except StopIteration as done:
-            usage: Usage = done.value if isinstance(done.value, Usage) else Usage()
-            break
-        parts.append(delta)
-        yield delta
+    raw = ""
+    shown = ""
+    merged = None
+    try:
+        for chunk in model.stream(
+            prompt.to_messages(), format=schema.model_json_schema(), options=options
+        ):
+            merged = chunk if merged is None else merged + chunk
+            if not chunk.content:
+                continue
+            raw += chunk.content
+            prose = _prose(raw, complete=False)
+            if len(prose) > len(shown) and prose.startswith(shown):
+                yield prose[len(shown):]
+                shown = prose
+    except Exception as error:
+        unavailable = _unavailable(error, model, config)
+        if unavailable is None:
+            raise
+        raise unavailable from error
     latency_ms = (perf_counter() - started) * 1000.0
+
+    answer, parse_error = _validate(raw, schema)
+    if answer is not None:
+        text = answer.render()
+    else:
+        text = _prose(raw, complete=_is_json(raw))
+        if not text.startswith(shown):
+            # Cut inside an escape, the last sentence cannot be read at all,
+            # so what was already shown is the most of the answer there is.
+            text = shown
+    if len(text) > len(shown) and text.startswith(shown):
+        yield text[len(shown):]
+
+    usage = getattr(merged, "usage_metadata", None) or {}
+    metadata = getattr(merged, "response_metadata", None) or {}
     return Generation(
-        text="".join(parts),
+        text=text,
+        answer=answer,
+        raw=raw,
         config=config,
         latency_ms=latency_ms,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        stop_reason=usage.stop_reason,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        stop_reason=metadata.get("done_reason"),
+        parse_error=parse_error,
     )
 
 
@@ -168,9 +192,8 @@ def _environment(environ: Mapping[str, str] | None, dotenv: Path) -> Mapping[str
     with the local .env loaded into it first.
 
     Loading here rather than at import is what makes .env.example true: every
-    variable it documents is read on the path that uses it, and a teammate
-    who puts a key in .env is not routed to a local server they never
-    installed because nothing looked at the file.
+    variable it documents is read on the path that uses it. A variable already
+    set in the shell wins over the file.
     """
     if environ is not None:
         return environ
@@ -179,7 +202,6 @@ def _environment(environ: Mapping[str, str] | None, dotenv: Path) -> Mapping[str
 
 
 def config_from_env(
-    provider: str | None = None,
     model: str | None = None,
     temperature: float = 0.0,
     environ: Mapping[str, str] | None = None,
@@ -187,206 +209,159 @@ def config_from_env(
 ) -> GenerationConfig:
     """The ``GenerationConfig`` the environment asks for.
 
-    Provider: the argument, else ``LLM_PROVIDER``, else "anthropic" when a
-    key is present and "ollama" when not, so a fresh clone with no key still
-    answers. Model: the argument, else ``LLM_MODEL``, else the provider's
-    default. The environment is the process's, with ``dotenv`` (the project's
-    .env) loaded into it first; ``environ`` replaces both, for a test.
+    Model: the argument, else ``LLM_MODEL``, else ``DEFAULT_MODEL``. The
+    environment is the process's, with ``dotenv`` (the project's .env) loaded
+    into it first; ``environ`` replaces both, for a test.
     """
     env = _environment(environ, dotenv)
-    chosen = (provider or env.get(LLM_PROVIDER_ENV) or "").strip().lower()
-    if not chosen:
-        chosen = ANTHROPIC if env.get(ANTHROPIC_KEY_ENV, "").strip() else OLLAMA
-    if chosen not in DEFAULT_MODELS:
-        raise ProviderUnavailable(
-            f"unknown provider {chosen!r}; set {LLM_PROVIDER_ENV} to one of "
-            + ", ".join(sorted(DEFAULT_MODELS))
-        )
+    chosen = (model or env.get(LLM_MODEL_ENV) or "").strip() or DEFAULT_MODEL
     return GenerationConfig(
-        provider=chosen,
-        model=(model or env.get(LLM_MODEL_ENV) or DEFAULT_MODELS[chosen]).strip(),
+        provider=OLLAMA,
+        model=chosen,
         prompt_template_id=PROMPT_TEMPLATE_ID,
         temperature=temperature,
     )
 
 
-def provider_for(name: str, **options: Any) -> Provider:
-    """The provider a config names, built from the environment.
+def chat_model(
+    config: GenerationConfig,
+    *,
+    base_url: str | None = None,
+    dotenv: Path = ENV_FILE,
+) -> Any:
+    """The LangChain chat model for a config: ``ChatOllama`` on the configured server.
 
-    ``options`` go to the provider's constructor: a client for a test, a
-    base URL for a server on another machine.
+    The server is ``base_url``, else ``LLM_BASE_URL`` from the environment or
+    .env, else Ollama's default address. ``LLM_NUM_GPU``, when set, says how
+    many layers go on the GPU; see ``constants.LLM_NUM_GPU_ENV`` for when to
+    set it. The generation options are not set here: :func:`stream` sends
+    them with every request.
+
+    ``langchain_ollama`` is imported here rather than at the top of the module
+    because it takes seconds to import, and code that only parses a question
+    or renders a prompt should not pay for it.
     """
-    if name == ANTHROPIC:
-        return AnthropicProvider(**options)
-    if name == OLLAMA:
-        return OllamaProvider(**options)
-    raise ProviderUnavailable(
-        f"unknown provider {name!r}; expected one of " + ", ".join(sorted(DEFAULT_MODELS))
+    if config.provider != OLLAMA:
+        raise ProviderUnavailable(
+            f"unknown provider {config.provider!r}: answers are generated locally through "
+            f"{OLLAMA!r}, since the team has no budget for a hosted API"
+        )
+    from langchain_ollama import ChatOllama
+
+    load_env(dotenv)
+    if base_url is None:
+        base_url = os.environ.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL
+    layers = os.environ.get(LLM_NUM_GPU_ENV, "").strip()
+    if layers and not layers.isdigit():
+        raise ValueError(f"{LLM_NUM_GPU_ENV} must be a whole number of layers, got {layers!r}")
+    return ChatOllama(
+        model=config.model,
+        base_url=base_url.rstrip("/"),
+        num_gpu=int(layers) if layers else None,
+        client_kwargs={"timeout": GENERATION_TIMEOUT_S},
     )
 
 
-# --- the hosted API ----------------------------------------------------------------
+# --- reading the output --------------------------------------------------------------
 
-class AnthropicProvider:
-    """The hosted API, through the official SDK.
+def _prose(raw: str, *, complete: bool) -> str:
+    """The answer as prose, as far as the JSON written so far says it.
 
-    The prompt's system text goes in ``system`` and its user text as the one
-    user turn, which is the shape the API takes. The SDK's streaming helper
-    yields the text deltas -- only the text; the model's thinking never
-    reaches the stream -- and accumulates the final message, whose ``usage``
-    carries the token counts.
-
-    The model thinks before it answers, out of the same token ceiling as the
-    answer, so the request turns the effort down and adds headroom to
-    ``max_tokens``: see ``constants.ANTHROPIC_EFFORT``. ``output_tokens`` in
-    the returned usage still counts the thinking, because the API reports
-    one number.
-
-    Temperature is not sent. The current Claude models do not take a
-    sampling temperature -- the request is rejected -- and there is no
-    substitute knob worth pretending is one, so a config asking for anything
-    but 0.0 is refused here rather than silently ignored: the config is a
-    record of what was actually used.
+    ``complete`` is whether ``raw`` is the model's whole output. Until it is,
+    the last sentence may still be being written: its text is shown as it
+    grows, but its markers wait until the sentence is closed, since a
+    half-written "[1" could yet become "[12]". A sentence is closed once the
+    next one has begun. So what this returns only ever extends what it
+    returned for a shorter prefix of the same output, which is what lets
+    :func:`stream` show it as it comes.
     """
-
-    name = ANTHROPIC
-
-    def __init__(
-        self,
-        client: Any | None = None,
-        timeout: float = GENERATION_TIMEOUT_S,
-        dotenv: Path = ENV_FILE,
-    ):
-        # The SDK is imported here rather than at module level so that the
-        # local provider works on a machine without it installed, and so a
-        # missing key is reported as a ProviderUnavailable with the variable
-        # to set rather than as the SDK's own exception at first call.
-        if client is None:
-            import anthropic
-
-            load_env(dotenv)
-            if not os.environ.get(ANTHROPIC_KEY_ENV, "").strip():
-                raise ProviderUnavailable(
-                    f"{ANTHROPIC_KEY_ENV} is not set; put it in .env, or set "
-                    f"{LLM_PROVIDER_ENV}={OLLAMA} to use the local server"
-                )
-            client = anthropic.Anthropic(timeout=timeout)
-        self._client = client
-
-    def stream(
-        self, prompt: GroundedPrompt, config: GenerationConfig, max_tokens: int
-    ) -> Generator[str, None, Usage]:
-        if config.temperature != 0.0:
-            raise ValueError(
-                f"the {ANTHROPIC} provider does not take a temperature; "
-                f"got {config.temperature}, set 0.0"
-            )
-        with self._client.messages.stream(
-            model=config.model,
-            max_tokens=max_tokens + ANTHROPIC_THINKING_HEADROOM,
-            output_config={"effort": ANTHROPIC_EFFORT},
-            system=prompt.system,
-            messages=[{"role": "user", "content": prompt.user}],
-        ) as response:
-            for delta in response.text_stream:
-                yield delta
-            final = response.get_final_message()
-        usage = getattr(final, "usage", None)
-        return Usage(
-            input_tokens=getattr(usage, "input_tokens", None),
-            output_tokens=getattr(usage, "output_tokens", None),
-            stop_reason=getattr(final, "stop_reason", None),
-        )
-
-
-# --- the local server ----------------------------------------------------------------
-
-class OllamaProvider:
-    """A local Ollama server, through its HTTP API.
-
-    ``POST /api/chat`` with ``stream: true`` answers with one JSON object per
-    line: each carries the next piece of the message, and the last one, with
-    ``done`` true, carries the token counts and the reason it stopped. No
-    SDK: the API is three fields, and ``httpx`` is already a dependency.
-
-    The prompt goes over as the two chat messages it renders to, so the
-    system rules and the sources reach the model the same way they reach the
-    hosted one. Temperature is passed through, and ``num_predict`` is
-    Ollama's name for the output ceiling.
-    """
-
-    name = OLLAMA
-
-    def __init__(
-        self,
-        base_url: str | None = None,
-        client: Any | None = None,
-        timeout: float = GENERATION_TIMEOUT_S,
-        dotenv: Path = ENV_FILE,
-    ):
-        import httpx
-
-        if base_url is None:
-            load_env(dotenv)
-            base_url = os.environ.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL
-        self._base_url = base_url.rstrip("/")
-        self._client = client if client is not None else httpx.Client(timeout=timeout)
-
-    def stream(
-        self, prompt: GroundedPrompt, config: GenerationConfig, max_tokens: int
-    ) -> Generator[str, None, Usage]:
-        import httpx
-
-        body = {
-            "model": config.model,
-            "messages": prompt.to_messages(),
-            "stream": True,
-            "options": {"temperature": config.temperature, "num_predict": max_tokens},
-        }
-        try:
-            with self._client.stream("POST", f"{self._base_url}/api/chat", json=body) as response:
-                if response.status_code == 404:
-                    # Ollama answers 404 for a model it has not pulled, with
-                    # the reason in the body. Read it so the message says so.
-                    response.read()
-                    raise ProviderUnavailable(
-                        f"Ollama at {self._base_url} has no model {config.model!r}: "
-                        f"{_ollama_error(response)}. Run: ollama pull {config.model}"
-                    )
-                response.raise_for_status()
-                usage = Usage()
-                for line in response.iter_lines():
-                    if not line.strip():
-                        continue
-                    event = json.loads(line)
-                    if "error" in event:
-                        raise ProviderUnavailable(f"Ollama error: {event['error']}")
-                    delta = event.get("message", {}).get("content", "")
-                    if delta:
-                        yield delta
-                    if event.get("done"):
-                        usage = Usage(
-                            input_tokens=event.get("prompt_eval_count"),
-                            output_tokens=event.get("eval_count"),
-                            stop_reason=event.get("done_reason"),
-                        )
-                return usage
-        except httpx.TransportError as error:
-            # TransportError covers a refused connection and also a timeout
-            # on connect or read: a server that is listening but wedged, or a
-            # base URL pointing at a host that swallows packets, should get
-            # the same instructions as one that is not there.
-            raise ProviderUnavailable(
-                f"no usable Ollama server at {self._base_url} "
-                f"({type(error).__name__}: {error}); start it with `ollama serve`, "
-                f"or set {LLM_BASE_URL_ENV}, or set {LLM_PROVIDER_ENV}={ANTHROPIC} "
-                f"with an {ANTHROPIC_KEY_ENV}"
-            ) from error
-
-
-def _ollama_error(response: Any) -> str:
-    """The error string in an Ollama error body, or the raw text if it is not JSON."""
     try:
-        return response.json().get("error", response.text)
+        data = parse_partial_json(raw)
     except ValueError:
-        return response.text
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    if data.get("answerable") is False:
+        return ABSTAIN_PHRASE
+    items = data.get("sentences")
+    if not isinstance(items, list):
+        items = []
+    parts = []
+    for position, item in enumerate(items):
+        text = item.get("text") if isinstance(item, dict) else None
+        if not isinstance(text, str):
+            break
+        closed = complete or position < len(items) - 1
+        sources = item.get("sources") if closed else None
+        numbers = (
+            [n for n in sources if isinstance(n, int) and not isinstance(n, bool)]
+            if isinstance(sources, list)
+            else []
+        )
+        if text.strip():
+            parts.append(render_sentence(text, numbers))
+    prose = " ".join(parts)
+    if complete and not prose:
+        return ABSTAIN_PHRASE
+    return prose
+
+
+def _is_json(raw: str) -> bool:
+    """Whether the output is a whole JSON document, as opposed to one cut off."""
+    try:
+        json.loads(raw)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate(
+    raw: str, schema: type[GroundedAnswer]
+) -> tuple[GroundedAnswer | None, str | None]:
+    """The output validated against the schema it was decoded under, or why not.
+
+    A valid answer is handed on as a plain ``GroundedAnswer``, so that two
+    answers compare equal whatever source count they were validated against.
+    """
+    try:
+        parsed = schema.model_validate_json(raw)
+    except ValidationError as error:
+        problems = [
+            f"{'.'.join(str(part) for part in problem['loc']) or 'output'}: {problem['msg']}"
+            for problem in error.errors()[:3]
+        ]
+        return None, "; ".join(problems)
+    return GroundedAnswer.model_validate(parsed.model_dump()), None
+
+
+def _unavailable(error: Exception, model: Any, config: GenerationConfig) -> ProviderUnavailable | None:
+    """The error to raise in place of one from the client, or None to let it through.
+
+    The Ollama client does not wrap every failure the same way on a streamed
+    request: a refused connection arrives as httpx's ``ConnectError``, not
+    the client's own ``ConnectionError``, and a model that has not been pulled
+    as a ``ResponseError`` with status 404. Each becomes a message that says
+    what to run.
+    """
+    import httpx
+    from ollama import ResponseError
+
+    url = getattr(model, "base_url", None) or DEFAULT_OLLAMA_URL
+    if isinstance(error, (httpx.ConnectError, ConnectionError)):
+        return ProviderUnavailable(
+            f"no Ollama server at {url}: start the Ollama app or run `ollama serve`, "
+            f"or set {LLM_BASE_URL_ENV} in .env to where it runs"
+        )
+    if isinstance(error, httpx.TimeoutException):
+        return ProviderUnavailable(
+            f"Ollama at {url} sent nothing for {GENERATION_TIMEOUT_S:.0f}s while running "
+            f"{config.model!r}; on this machine it needs a smaller model (set {LLM_MODEL_ENV}) "
+            f"or a longer GENERATION_TIMEOUT_S"
+        )
+    if isinstance(error, ResponseError):
+        if error.status_code == 404:
+            return ProviderUnavailable(
+                f"Ollama at {url} has no model {config.model!r}: run `ollama pull {config.model}`"
+            )
+        return ProviderUnavailable(f"Ollama could not run {config.model!r}: {error.error}")
+    return None

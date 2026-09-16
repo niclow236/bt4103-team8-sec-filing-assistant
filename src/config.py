@@ -52,9 +52,9 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 MANIFEST_FILE = RAW_DIR / "manifest.jsonl"
 
 
-# The local settings file .env.example describes: API keys, the EDGAR identity,
-# which LLM provider answers. Git-ignored, and read into the environment by
-# load_env before anything reads the environment.
+# The local settings file .env.example describes: the EDGAR identity, and which
+# local model answers and where Ollama runs. Git-ignored, and read into the
+# environment by load_env before anything reads the environment.
 ENV_FILE = PROJECT_ROOT / ".env"
 
 

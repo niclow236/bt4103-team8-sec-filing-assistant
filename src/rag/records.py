@@ -7,7 +7,7 @@ shape without importing each other. A generator imports this module; nothing
 here imports a generator.
 
 Four records, each answering a question the stage would otherwise answer in
-several places:
+several places, and the schema the model's output is held to:
 
 ``GenerationConfig`` is what produced an answer: provider, model, temperature
 and which prompt template was rendered. It rides on the ``Answer`` rather than
@@ -16,10 +16,20 @@ configurations over the same question and has to attribute every answer it is
 handed without threading extra state through the call -- the same reason
 ``RetrievedPassage`` carries ``retriever``.
 
+``GroundedAnswer`` is the shape the model is made to answer in: whether the
+sources answer the question, then the answer as sentences, each listing the
+source numbers it draws on. It is a Pydantic model rather than a dataclass
+because it is the one record here that is filled by something untrusted. Its
+JSON schema is handed to Ollama as the output format, so decoding is
+constrained to it, and the same model validates what comes back. Everything
+else in this module is built by our own code and checks itself in
+``__post_init__``.
+
 ``Generation`` is what the model wrote, before anything is made of it: the
-text, what produced it, how long it took and how many tokens it cost. The
-citation resolver reads the text out of it and the metrics track reads the
-rest, and neither needs the provider client that filled it.
+answer as parsed, the same answer as prose with its markers, what produced it,
+how long it took and how many tokens it used. The citation resolver reads the
+answer out of it and the metrics track reads the rest, and neither needs the
+client that filled it.
 
 ``Citation`` is one ``[n]`` marker the model wrote, resolved back to the
 passage it was shown as source ``n``. The model never writes a company, a year
@@ -39,10 +49,15 @@ the others' backs.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any
+from functools import lru_cache
+from typing import Annotated, Any
+
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..retrieval.records import RetrievedPassage
+from .constants import ABSTAIN_PHRASE
 
 
 @dataclass(frozen=True)
@@ -57,7 +72,7 @@ class GenerationConfig:
     the budget its passages were cut with.
     """
 
-    provider: str          # "anthropic", "openai", "ollama", ...; what the generator dispatches on
+    provider: str          # "ollama", the local runtime that served the model; what the generator dispatches on
     # The model exactly as the provider names it, since two checkpoints of one
     # family answer differently and a results row has to say which one spoke.
     model: str
@@ -79,68 +94,164 @@ class GenerationConfig:
         return asdict(self)
 
 
+def render_sentence(text: str, sources: Iterable[int]) -> str:
+    """One sentence as the app shows it and the resolver (#31) reads it.
+
+    The text, then a marker per source in the form the resolver matches:
+    "Revenue was $5 billion. [1][3]". A sentence that cites nothing is shown
+    bare, so that it reads as unsupported rather than as supported.
+    """
+    markers = "".join(f"[{number}]" for number in sources)
+    return f"{text.strip()} {markers}" if markers else text.strip()
+
+
+class CitedSentence(BaseModel):
+    """One sentence of a model's answer, and the numbers of the sources it draws on.
+
+    ``sources`` may be empty. Rule 5 asks the model to say what the sources do
+    not cover, and a sentence saying so draws on no source; forcing a number
+    onto it would dress an unsupported sentence in a citation, which is worse
+    than leaving it bare for the verifier (#32) to flag.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    sources: tuple[int, ...]
+
+
+class GroundedAnswer(BaseModel):
+    """The shape a model answers in, and what its answer was once validated.
+
+    ``answerable`` comes first, so the model commits to whether the sources
+    bear on the question before it writes anything, and a model that says
+    they do not is not then asked to fill ``sentences`` from memory. Both
+    fields are required, so the schema Ollama decodes against always has the
+    citations field in it.
+
+    Use :meth:`for_sources` rather than this class to talk to a model: it
+    narrows ``sources`` to the numbers the prompt actually showed.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    answerable: bool
+    sentences: tuple[CitedSentence, ...]
+
+    @classmethod
+    def for_sources(cls, n_sources: int) -> type[GroundedAnswer]:
+        """This model with every source number held to 1..``n_sources``.
+
+        Its JSON schema is what Ollama decodes against, so a model shown eight
+        sources cannot write a ninth: the constraint is on the tokens it may
+        produce, not a check made after it has produced them. Validating with
+        the same class then refuses an out-of-range number from a runtime
+        that ignored the schema. Parse with it, then :meth:`model_validate`
+        the result into a plain ``GroundedAnswer`` to hand on.
+        """
+        if n_sources < 1:
+            raise ValueError(f"n_sources must be at least 1, got {n_sources}")
+        return _for_sources(n_sources)
+
+    @property
+    def abstained(self) -> bool:
+        """Whether this is a refusal to answer from the sources.
+
+        True when the model said the sources do not bear on the question, and
+        also when it said they do and then wrote nothing but blank sentences:
+        an empty answer is not an answer. Sentences written after
+        ``answerable`` came back false are not shown, since by the model's own
+        account they cannot be from the sources.
+        """
+        return not self.answerable or not any(s.text.strip() for s in self.sentences)
+
+    def render(self) -> str:
+        """The answer as prose with inline markers, or the abstain sentence.
+
+        Blank sentences are skipped rather than shown as a stray marker.
+        """
+        if self.abstained:
+            return ABSTAIN_PHRASE
+        return " ".join(
+            render_sentence(s.text, s.sources) for s in self.sentences if s.text.strip()
+        )
+
+
+@lru_cache(maxsize=None)
+def _for_sources(n_sources: int) -> type[GroundedAnswer]:
+    """Build :meth:`GroundedAnswer.for_sources` once per source count."""
+    number = Annotated[int, Field(ge=1, le=n_sources)]
+    sentence = create_model(
+        "CitedSentence", __base__=CitedSentence, sources=(tuple[number, ...], ...)
+    )
+    return create_model(
+        "GroundedAnswer", __base__=GroundedAnswer, sentences=(tuple[sentence, ...], ...)
+    )
+
+
 @dataclass(frozen=True)
 class Generation:
-    """One model response to one prompt, as the provider returned it.
+    """One model response to one prompt: what it wrote, and what writing it cost.
 
-    This is the raw output: the citation resolver (#31) turns ``text`` into an
-    ``Answer``, and the metrics track reads the rest. The token counts are
-    the provider's own, so they are comparable within a provider and not
-    across; None where a provider did not report one, which is the truth of
-    it rather than a zero that would average in as free. On the hosted
-    provider ``output_tokens`` includes the model's thinking as well as the
-    answer, because the API reports one number; the local provider has no
-    thinking to count.
+    ``raw`` is the JSON exactly as the model emitted it, kept so a results row
+    can be traced back to the output that produced it. ``answer`` is that JSON
+    validated into a ``GroundedAnswer``, or None when it could not be, and
+    ``parse_error`` then says why: almost always because the output was cut
+    off at the token limit and the JSON never closed. ``text`` is the answer
+    as prose with its markers, which is what the app shows and what the
+    resolver (#31) reads. For an answer that did not parse it holds what
+    arrived before the cut rather than nothing: the closed sentences with
+    their markers, then the text of the one being written, without, so a
+    truncated answer is still shown for what it is.
 
-    ``stop_reason`` is the provider's own word for why it stopped, kept as
-    given so a results row can be traced back. Two readings of it are what
-    every consumer needs. :attr:`truncated`: an answer cut off at the token
-    limit has lost its last citation, and the resolver should know that
-    before it flags the final sentence as unsupported. :attr:`refused`: the
-    hosted model declined to answer at all, which leaves little or no text
-    and is not an abstention the prompt asked for, so it should be counted
-    apart from one.
+    ``input_tokens`` and ``output_tokens`` are Ollama's counts, None where it
+    did not report one, which is the truth of it rather than a zero that would
+    average in as free.
+
+    ``stop_reason`` is Ollama's word for why it stopped, kept as given.
+    :attr:`truncated` is the reading every consumer needs: an answer cut off
+    at the token limit has lost its last citation, and the resolver should
+    know that before it flags the final sentence as unsupported.
     """
 
     text: str
+    answer: GroundedAnswer | None
+    raw: str
     config: GenerationConfig
-    latency_ms: float          # wall-clock time of the call, first byte to last
+    latency_ms: float          # wall-clock time of the call, request out to last token in
     input_tokens: int | None
     output_tokens: int | None
     stop_reason: str | None
+    parse_error: str | None = None
 
-    # The words each provider uses for "hit the output limit". Anthropic says
-    # "max_tokens"; Ollama says "length".
-    _TRUNCATED_REASONS = frozenset({"max_tokens", "length"})
-    # The hosted API's word for a safety decline. Ollama has none.
-    _REFUSED_REASONS = frozenset({"refusal"})
+    # Ollama's word for "hit the output limit".
+    _TRUNCATED_REASONS = frozenset({"length"})
 
     def __post_init__(self) -> None:
         if self.latency_ms < 0:
             raise ValueError(f"latency_ms must not be negative, got {self.latency_ms}")
         object.__setattr__(self, "latency_ms", float(self.latency_ms))
+        if (self.answer is None) == (self.parse_error is None):
+            raise ValueError("a generation has either a parsed answer or a parse_error, exactly one")
 
     @property
     def truncated(self) -> bool:
         """Whether the output was cut off at the token limit rather than finished."""
         return self.stop_reason in self._TRUNCATED_REASONS
 
-    @property
-    def refused(self) -> bool:
-        """Whether the model declined to answer, as distinct from abstaining."""
-        return self.stop_reason in self._REFUSED_REASONS
-
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON-compatible representation for results files."""
         return {
             "text": self.text,
+            "answer": None if self.answer is None else self.answer.model_dump(mode="json"),
+            "raw": self.raw,
             "config": self.config.to_dict(),
             "latency_ms": self.latency_ms,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "stop_reason": self.stop_reason,
             "truncated": self.truncated,
-            "refused": self.refused,
+            "parse_error": self.parse_error,
         }
 
 

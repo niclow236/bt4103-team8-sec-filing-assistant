@@ -228,41 +228,57 @@ QUANTITY_BEFORE = (
 # holding the sources and the question. ``GenerationConfig.prompt_template_id``
 # records this id on every answer, so the id changes whenever any of the text
 # below does. Edit the wording and bump it; a results file that says
-# "grounded_v3" has to mean this text and no other. A test digests a prompt
+# "grounded_v4" has to mean this text and no other. A test digests a prompt
 # rendered from this template and pins the pair, so forgetting the bump
 # fails the suite rather than passing silently.
-PROMPT_TEMPLATE_ID = "grounded_v3"
+#
+# v4 asks for the answer as JSON in the shape of ``records.GroundedAnswer``,
+# which Ollama is also made to decode against. v3 asked for prose with inline
+# "[n]" markers and an exact abstain sentence, both of which a small local
+# model has to reproduce character for character to be read correctly.
+PROMPT_TEMPLATE_ID = "grounded_v4"
 
-# What the model writes, and nothing else, when the sources do not answer the
-# question. One fixed sentence rather than "say you don't know", so that #33
-# can recognise an abstention by equality rather than by guessing at the
-# wording, and the harness can count it.
+# What an abstention reads as, in the app and in ``Generation.text``. The model
+# no longer writes it: it sets ``answerable`` to false, and
+# ``GroundedAnswer.render`` shows this sentence. It stays one fixed sentence so
+# that #33 and the harness can still recognise an abstention in the text by
+# equality, as well as from ``GroundedAnswer.abstained``.
 ABSTAIN_PHRASE = "The filings do not answer this question."
 
 # The rules. The model is shown numbered sources and told to cite by number.
 # It is never shown a URL and never asked to name a document, because whatever
-# it is allowed to write it will sometimes invent: an integer that names no
-# source is caught by the resolver (#31), while an invented URL would read as
+# it is allowed to write it will sometimes invent: a source number is held to
+# the ones shown by the output schema, while an invented URL would read as
 # real. A company and a year it may name, but only the ones its own source's
 # header states, which is also why that metadata is in the header: so the
 # model can tell FY2023 from FY2024 when both are shown.
 #
-# Markers are one integer per bracket, "[1][3]" and not "[1, 3]", because that
-# is the form the resolver reads. The rest are the failure modes a grounded
-# answer has: mixing years, quoting a figure without its period or unit, and
+# The output format is described in words as well as enforced by the schema,
+# because the schema fixes the shape but not the meaning of each field. The
+# example's values are "..." on purpose: a small model copies the content of
+# an example into its answer. The rest are the failure modes a grounded answer
+# has: mixing years, quoting a figure without its period or unit, and
 # answering from memory when the sources fall short.
-SYSTEM_PROMPT = f"""\
+SYSTEM_PROMPT = """\
 You answer questions about companies' annual reports (Form 10-K filings) using \
 only the numbered sources you are given.
 
+Reply with a JSON object with two fields:
+- "answerable": true if the sources contain anything that answers the \
+question, even in part. false if nothing in them bears on it.
+- "sentences": the answer, one sentence per item. Each item has "text", the \
+sentence, and "sources", the numbers of the sources that sentence draws on. \
+When "answerable" is false, leave the list empty.
+
+For example: {"answerable": true, "sentences": [{"text": "...", "sources": [2]}, \
+{"text": "...", "sources": [1, 3]}]}
+
 Rules:
 1. Use only the sources. Do not use any outside knowledge, even if you are sure \
-of it. If nothing in the sources bears on the question, reply with exactly this \
-sentence and nothing else: {ABSTAIN_PHRASE}
-2. Cite every claim. After each sentence that draws on a source, write the \
-source number in square brackets, like [2]. If a sentence draws on more than \
-one source, write each number in its own brackets, like [1][3]. Never write a \
-number that is not one of the sources given.
+of it.
+2. Cite every claim. Put the number of every source a sentence draws on in its \
+"sources", and never a number that is not one of the sources given. Do not \
+write source numbers inside "text".
 3. Name a company or a fiscal year only when the source you cite is that \
 company's filing for that year, as its header states, or when the source text \
 says it. Never name a document, a filename or a web address.
@@ -272,7 +288,8 @@ year each belongs to. Do not calculate a figure the sources do not state \
 unless the question asks for one, and then show the figures you used.
 5. If the sources bear on the question but answer only part of it, or \
 disagree with each other, give what they do support and say what is missing \
-or in dispute. Do not abstain, and do not silently pick one side.
+or in dispute. That is still an answer, so "answerable" stays true. Do not \
+silently pick one side.
 6. Be concise: answer the question directly, then stop."""
 
 # One source, as the model sees it. Company and ticker so the model can tell
@@ -304,58 +321,53 @@ Question: {question}"""
 SOURCE_SEPARATOR = "\n\n\n"
 
 # --- generation -------------------------------------------------------------
-# The providers ``generate.py`` can dispatch to, and the model each starts on.
-# "anthropic" is the hosted API and "ollama" the local fallback; the open
-# question with the supervisor is which one ships, and the provider interface
-# is what keeps that from blocking anything. Names are what
-# ``GenerationConfig.provider`` records, so a results row says which one spoke.
-#
-# claude-opus-5 is the current hosted model. llama3.1:8b is the local one
-# because it runs on a laptop CPU at a usable speed and is small enough that
-# every teammate can pull it; swap it with ``ollama pull`` and LLM_MODEL.
-ANTHROPIC = "anthropic"
+# Answers are generated locally, by a model served through Ollama. The team has
+# no budget for a paid API (the charter allocates none), so there is no hosted
+# provider to configure, and nothing in the app, the harness or a demo depends on
+# a key. ``GenerationConfig.provider`` still records the runtime, so a results
+# row says what served the answer.
 OLLAMA = "ollama"
-DEFAULT_MODELS = {
-    ANTHROPIC: "claude-opus-5",
-    OLLAMA: "llama3.1:8b",
-}
 
-# Where the provider and model come from when nothing is passed in. Provider
-# first: if LLM_PROVIDER is unset, the hosted API is used when a key is
-# present and the local server otherwise, so a fresh clone with no key still
-# answers and a demo never depends on one.
-LLM_PROVIDER_ENV = "LLM_PROVIDER"
+# The model a fresh clone uses, as Ollama names it. Swap it with
+# ``ollama pull <model>`` and LLM_MODEL in .env.
+DEFAULT_MODEL = "llama3.2:3b"
+
+# Where the model and the server come from when nothing is passed in. Both are
+# read from the environment, with the project's .env loaded into it first.
 LLM_MODEL_ENV = "LLM_MODEL"
-ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
-# The local server. .env.example names this for "Ollama or LM Studio"; the
-# default is Ollama's own port.
 LLM_BASE_URL_ENV = "LLM_BASE_URL"
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# Ollama's own default address. 127.0.0.1 rather than localhost, which Windows
+# can resolve to ::1 first, where Ollama is not listening.
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
-# The output ceiling, in tokens of visible answer. A grounded answer is a few
-# sentences with markers -- rule 6 says answer directly, then stop -- so 2,048
-# is roughly eight times the longest answer the benchmark expects, and low
-# enough that a model that ignores rule 6 and starts reciting sources is cut
-# off rather than billed for the whole context back. A ``Generation`` whose
-# ``stop_reason`` says it hit this is marked truncated, so the cut is never
-# silent.
-MAX_OUTPUT_TOKENS = 2048
+# How many of the model's layers Ollama puts on the GPU. Unset leaves it to
+# Ollama, which is right on a machine with a capable GPU or Apple silicon. It is
+# wrong on a laptop with a small discrete GPU: on a 2 GB MX450, Ollama put 3 of
+# llama3.2:3b's 29 layers on the GPU and generated 1.7 tokens a second, against
+# 7.6 with the GPU left out. Set LLM_NUM_GPU=0 in .env on such a machine. It
+# changes where the model runs and not what it writes, so it is not recorded
+# on the GenerationConfig.
+LLM_NUM_GPU_ENV = "LLM_NUM_GPU"
 
-# The hosted models think before they answer, and the thinking is drawn from
-# the same max_tokens as the answer. Left at the default effort, a run can
-# spend the whole ceiling thinking and come back with the answer cut off or
-# missing, and ``output_tokens`` then counts reasoning the user never sees.
-# Two settings keep the ceiling meaning what it says: the effort is turned
-# down -- a grounded answer over eight passages is a reading task, not a
-# reasoning one, and low effort is the supported lever (disabling thinking on
-# these models is documented to leak tool calls and thinking tags into the
-# text) -- and the provider adds this headroom to max_tokens so the thinking
-# has room of its own. ``output_tokens`` on the hosted provider still includes
-# the thinking; the API reports one number, and the record says so.
-ANTHROPIC_EFFORT = "low"
-ANTHROPIC_THINKING_HEADROOM = 4096
+# Ollama's context window, in tokens, set on every request rather than left to
+# Ollama. A prompt longer than the window is cut from the front with no error
+# to the caller, only a "truncating input prompt" warning in the server's log.
+# That drops the rules and the first sources, and leaves an answer that still
+# looks fine. The prompt over FINAL_K passages measured 2,700 to 3,300
+# tokens across ten questions, and the output ceiling has to fit beside it.
+# Ollama's own default depends on the GPU's memory and is 4,096 on a laptop,
+# which leaves little room for either.
+NUM_CTX = 8192
 
-# How long to wait on a provider before giving up, in seconds. Generous,
-# because a local model on a CPU can take a minute to answer over eight
-# passages, and a timeout that fires first turns a slow answer into no answer.
-GENERATION_TIMEOUT_S = 180.0
+# The output ceiling. A grounded answer is a few sentences with their source
+# numbers (rule 6 says answer directly, then stop), so 1,024 tokens is
+# several times the longest answer the benchmark expects, while bounding how
+# long a model that ignores rule 6 can run on a laptop CPU. A ``Generation``
+# whose ``stop_reason`` says it hit this is marked truncated, so the cut is
+# never silent.
+MAX_OUTPUT_TOKENS = 1024
+
+# How long to wait on Ollama for the next piece of a response, in seconds.
+# This is a read timeout, not a limit on the whole answer, and the longest wait
+# is the first one: nothing streams back until the whole prompt has been read.
+GENERATION_TIMEOUT_S = 600.0

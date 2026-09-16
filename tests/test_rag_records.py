@@ -143,6 +143,6 @@ def test_answer_to_dict_is_json_shaped():
 
 def test_config_rides_on_the_answer():
     # The harness reads what generated an answer off the answer itself.
-    other = GenerationConfig(provider="anthropic", model="claude-sonnet-5",
+    other = GenerationConfig(provider="ollama", model="llama3.1:8b",
                              prompt_template_id="grounded_v1")
     assert _answer(config=other).config is other
