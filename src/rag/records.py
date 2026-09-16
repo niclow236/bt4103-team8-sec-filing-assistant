@@ -6,7 +6,7 @@ the retrievers, so the app, the harness and the verifier can all agree on one
 shape without importing each other. A generator imports this module; nothing
 here imports a generator.
 
-Three records, each answering a question the stage would otherwise answer in
+Four records, each answering a question the stage would otherwise answer in
 several places:
 
 ``GenerationConfig`` is what produced an answer: provider, model, temperature
@@ -15,6 +15,11 @@ being tracked alongside it, because the evaluation harness runs several
 configurations over the same question and has to attribute every answer it is
 handed without threading extra state through the call -- the same reason
 ``RetrievedPassage`` carries ``retriever``.
+
+``Generation`` is what the model wrote, before anything is made of it: the
+text, what produced it, how long it took and how many tokens it cost. The
+citation resolver reads the text out of it and the metrics track reads the
+rest, and neither needs the provider client that filled it.
 
 ``Citation`` is one ``[n]`` marker the model wrote, resolved back to the
 passage it was shown as source ``n``. The model never writes a company, a year
@@ -72,6 +77,57 @@ class GenerationConfig:
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON-compatible representation for results files."""
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class Generation:
+    """One model response to one prompt, as the provider returned it.
+
+    This is the raw output: the citation resolver (#31) turns ``text`` into an
+    ``Answer``, and the metrics track reads the rest. The token counts are
+    the provider's own, so they are comparable within a provider and not
+    across; None where a provider did not report one, which is the truth of
+    it rather than a zero that would average in as free.
+
+    ``stop_reason`` is the provider's own word for why it stopped, kept as
+    given so a results row can be traced back. :attr:`truncated` is the one
+    reading every consumer needs: an answer cut off at the token limit has
+    lost its last citation, and the resolver should know that before it
+    flags the final sentence as unsupported.
+    """
+
+    text: str
+    config: GenerationConfig
+    latency_ms: float          # wall-clock time of the call, first byte to last
+    input_tokens: int | None
+    output_tokens: int | None
+    stop_reason: str | None
+
+    # The words each provider uses for "hit the output limit". Anthropic says
+    # "max_tokens"; Ollama says "length".
+    _TRUNCATED_REASONS = frozenset({"max_tokens", "length"})
+
+    def __post_init__(self) -> None:
+        if self.latency_ms < 0:
+            raise ValueError(f"latency_ms must not be negative, got {self.latency_ms}")
+        object.__setattr__(self, "latency_ms", float(self.latency_ms))
+
+    @property
+    def truncated(self) -> bool:
+        """Whether the output was cut off at the token limit rather than finished."""
+        return self.stop_reason in self._TRUNCATED_REASONS
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON-compatible representation for results files."""
+        return {
+            "text": self.text,
+            "config": self.config.to_dict(),
+            "latency_ms": self.latency_ms,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "stop_reason": self.stop_reason,
+            "truncated": self.truncated,
+        }
 
 
 @dataclass(frozen=True)

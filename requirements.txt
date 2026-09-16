@@ -26,5 +26,13 @@ chromadb==1.5.9
 # directly.
 tokenizers==0.23.2
 
+# The hosted LLM provider, through the official SDK. The local provider talks
+# to Ollama over HTTP and needs nothing beyond httpx.
+anthropic==1.6.0
+
+# HTTP client for the local Ollama provider. Already installed as a dependency
+# of edgartools and chromadb; pinned here because generate uses it directly.
+httpx==0.28.1
+
 # Tests: python -m pytest
 pytest==9.1.1

@@ -98,7 +98,8 @@ bt4103-team8-sec-filing-assistant/
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
-│   │   ├── constants.py     #   company aliases, cue words, and the prompt template
+│   │   ├── generate.py      #   runs the prompt through the hosted API or a local Ollama, streaming
+│   │   ├── constants.py     #   company aliases, cue words, the prompt template, provider defaults
 │   │   └── records.py       #   Answer, Citation and GenerationConfig
 │   ├── evaluation/          # benchmark and metrics
 │   └── app/                 # Streamlit or Gradio UI

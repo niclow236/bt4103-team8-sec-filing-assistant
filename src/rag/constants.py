@@ -302,3 +302,45 @@ Question: {question}"""
 # What separates one source from the next. Two blank lines, so a passage that
 # itself contains a blank line does not look like a source boundary.
 SOURCE_SEPARATOR = "\n\n\n"
+
+# --- generation -------------------------------------------------------------
+# The providers ``generate.py`` can dispatch to, and the model each starts on.
+# "anthropic" is the hosted API and "ollama" the local fallback; the open
+# question with the supervisor is which one ships, and the provider interface
+# is what keeps that from blocking anything. Names are what
+# ``GenerationConfig.provider`` records, so a results row says which one spoke.
+#
+# claude-opus-5 is the current hosted model. llama3.1:8b is the local one
+# because it runs on a laptop CPU at a usable speed and is small enough that
+# every teammate can pull it; swap it with ``ollama pull`` and LLM_MODEL.
+ANTHROPIC = "anthropic"
+OLLAMA = "ollama"
+DEFAULT_MODELS = {
+    ANTHROPIC: "claude-opus-5",
+    OLLAMA: "llama3.1:8b",
+}
+
+# Where the provider and model come from when nothing is passed in. Provider
+# first: if LLM_PROVIDER is unset, the hosted API is used when a key is
+# present and the local server otherwise, so a fresh clone with no key still
+# answers and a demo never depends on one.
+LLM_PROVIDER_ENV = "LLM_PROVIDER"
+LLM_MODEL_ENV = "LLM_MODEL"
+ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
+# The local server. .env.example names this for "Ollama or LM Studio"; the
+# default is Ollama's own port.
+LLM_BASE_URL_ENV = "LLM_BASE_URL"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+# The output ceiling. A grounded answer is a few sentences with markers -- rule
+# 6 says answer directly, then stop -- so 2,048 tokens is roughly eight times
+# the longest answer the benchmark expects, and low enough that a model that
+# ignores rule 6 and starts reciting sources is cut off rather than billed for
+# the whole context back. A ``Generation`` whose ``stop_reason`` says it hit
+# this is marked truncated, so the cut is never silent.
+MAX_OUTPUT_TOKENS = 2048
+
+# How long to wait on a provider before giving up, in seconds. Generous,
+# because a local model on a CPU can take a minute to answer over eight
+# passages, and a timeout that fires first turns a slow answer into no answer.
+GENERATION_TIMEOUT_S = 180.0
