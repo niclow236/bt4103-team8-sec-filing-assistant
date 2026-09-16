@@ -750,9 +750,13 @@ connection once the model is downloaded.
 
 ### Setting up Ollama
 
-Install Ollama from <https://ollama.com/download> (on Windows,
+Everyone runs their own copy: install Ollama and pull the model on your own
+computer. Install it from <https://ollama.com/download> (on Windows,
 `winget install Ollama.Ollama` also works). It runs in the background and
-listens on `127.0.0.1:11434`. Then download the model the code uses by default:
+listens on `127.0.0.1:11434`. `127.0.0.1` always means the computer the code
+runs on, so that address reaches your own Ollama and never a teammate's, and
+Ollama accepts no connections from other computers unless it is configured to.
+There is no API key. Then download the model the code uses by default:
 
 ```bash
 ollama pull llama3.2:3b     # 2.0 GB
@@ -764,7 +768,7 @@ Three settings in `.env` change how generation runs. None is required:
 | Variable | Default | When to set it |
 |---|---|---|
 | `LLM_MODEL` | `llama3.2:3b` | to use another model; `ollama pull` it first |
-| `LLM_BASE_URL` | `http://127.0.0.1:11434` | when Ollama runs on another machine or port |
+| `LLM_BASE_URL` | `http://127.0.0.1:11434`, your own computer | only if your own Ollama listens on a different port |
 | `LLM_NUM_GPU` | Ollama decides | `0` on a laptop with a small GPU, as explained below |
 
 ### From a question to an answer

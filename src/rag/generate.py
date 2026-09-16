@@ -349,8 +349,8 @@ def _unavailable(error: Exception, model: Any, config: GenerationConfig) -> Prov
     url = getattr(model, "base_url", None) or DEFAULT_OLLAMA_URL
     if isinstance(error, (httpx.ConnectError, ConnectionError)):
         return ProviderUnavailable(
-            f"no Ollama server at {url}: start the Ollama app or run `ollama serve`, "
-            f"or set {LLM_BASE_URL_ENV} in .env to where it runs"
+            f"no Ollama server at {url}: start the Ollama app or run `ollama serve` on "
+            f"this computer, or set {LLM_BASE_URL_ENV} in .env if you changed its port"
         )
     if isinstance(error, httpx.TimeoutException):
         return ProviderUnavailable(

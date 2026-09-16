@@ -336,8 +336,9 @@ DEFAULT_MODEL = "llama3.2:3b"
 # read from the environment, with the project's .env loaded into it first.
 LLM_MODEL_ENV = "LLM_MODEL"
 LLM_BASE_URL_ENV = "LLM_BASE_URL"
-# Ollama's own default address. 127.0.0.1 rather than localhost, which Windows
-# can resolve to ::1 first, where Ollama is not listening.
+# Ollama's own default address, which is always the computer the code runs on:
+# every member runs their own Ollama. 127.0.0.1 rather than localhost, which
+# Windows can resolve to ::1 first, where Ollama is not listening.
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # How many of the model's layers Ollama puts on the GPU. Unset leaves it to
