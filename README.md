@@ -97,7 +97,8 @@ bt4103-team8-sec-filing-assistant/
 │   │   └── records.py       #   what a retriever returns and what an index says of itself
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
-│   │   ├── constants.py     #   company aliases and the cue words the question reader matches
+│   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
+│   │   ├── constants.py     #   company aliases, cue words, and the prompt template
 │   │   └── records.py       #   Answer, Citation and GenerationConfig
 │   ├── evaluation/          # benchmark and metrics
 │   └── app/                 # Streamlit or Gradio UI
