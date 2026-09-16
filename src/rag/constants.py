@@ -228,10 +228,10 @@ QUANTITY_BEFORE = (
 # holding the sources and the question. ``GenerationConfig.prompt_template_id``
 # records this id on every answer, so the id changes whenever any of the text
 # below does. Edit the wording and bump it; a results file that says
-# "grounded_v2" has to mean this text and no other. A test digests the
-# template and pins the pair, so forgetting the bump fails the suite rather
-# than passing silently.
-PROMPT_TEMPLATE_ID = "grounded_v2"
+# "grounded_v3" has to mean this text and no other. A test digests a prompt
+# rendered from this template and pins the pair, so forgetting the bump
+# fails the suite rather than passing silently.
+PROMPT_TEMPLATE_ID = "grounded_v3"
 
 # What the model writes, and nothing else, when the sources do not answer the
 # question. One fixed sentence rather than "say you don't know", so that #33
@@ -240,12 +240,12 @@ PROMPT_TEMPLATE_ID = "grounded_v2"
 ABSTAIN_PHRASE = "The filings do not answer this question."
 
 # The rules. The model is shown numbered sources and told to cite by number.
-# It is never shown a URL and never asked to name a company, a year or a
-# document, because whatever it is allowed to write it will sometimes invent:
-# an integer that names no source is caught by the resolver (#31), while an
-# invented URL would read as real. The sources' own metadata is in the header
-# so the model can tell FY2023 from FY2024 when both are shown, and that is
-# the only reason it is there.
+# It is never shown a URL and never asked to name a document, because whatever
+# it is allowed to write it will sometimes invent: an integer that names no
+# source is caught by the resolver (#31), while an invented URL would read as
+# real. A company and a year it may name, but only the ones its own source's
+# header states, which is also why that metadata is in the header: so the
+# model can tell FY2023 from FY2024 when both are shown.
 #
 # Markers are one integer per bracket, "[1][3]" and not "[1, 3]", because that
 # is the form the resolver reads. The rest are the failure modes a grounded
@@ -257,7 +257,7 @@ only the numbered sources you are given.
 
 Rules:
 1. Use only the sources. Do not use any outside knowledge, even if you are sure \
-of it. If the sources do not contain the answer, reply with exactly this \
+of it. If nothing in the sources bears on the question, reply with exactly this \
 sentence and nothing else: {ABSTAIN_PHRASE}
 2. Cite every claim. After each sentence that draws on a source, write the \
 source number in square brackets, like [2]. If a sentence draws on more than \
@@ -270,8 +270,9 @@ says it. Never name a document, a filename or a web address.
 period they cover. If the sources give figures for several years, say which \
 year each belongs to. Do not calculate a figure the sources do not state \
 unless the question asks for one, and then show the figures you used.
-5. If the sources disagree with each other or only partly answer the \
-question, say so rather than choosing one silently.
+5. If the sources bear on the question but answer only part of it, or \
+disagree with each other, give what they do support and say what is missing \
+or in dispute. Do not abstain, and do not silently pick one side.
 6. Be concise: answer the question directly, then stop."""
 
 # One source, as the model sees it. Company and ticker so the model can tell

@@ -24,7 +24,7 @@ straight through so the two cannot drift.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..retrieval.records import RetrievedPassage
@@ -108,7 +108,7 @@ def render_source(marker: int, passage: RetrievedPassage) -> str:
     return f"{header}\n{passage.text.strip()}"
 
 
-def build_prompt(question: str, passages: Sequence[RetrievedPassage]) -> GroundedPrompt:
+def build_prompt(question: str, passages: Iterable[RetrievedPassage]) -> GroundedPrompt:
     """Render the grounded prompt for one question over its retrieved passages.
 
     Sources are numbered in rank order, ties broken by ``chunk_id``, so the

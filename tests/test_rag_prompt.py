@@ -6,17 +6,7 @@ import re
 
 import pytest
 
-from src.rag.constants import (
-    ABSTAIN_PHRASE,
-    PROMPT_TEMPLATE_ID,
-    SOURCE_HEADER,
-    SOURCE_SECTION,
-    SOURCE_SECTION_NO_ITEM,
-    SOURCE_SEPARATOR,
-    SOURCE_TABLE_TAG,
-    SYSTEM_PROMPT,
-    USER_PROMPT,
-)
+from src.rag.constants import ABSTAIN_PHRASE, PROMPT_TEMPLATE_ID, SYSTEM_PROMPT
 from src.rag.prompt import GroundedPrompt, build_prompt, render_source
 from src.rag.records import Answer, Citation, GenerationConfig
 from src.retrieval.records import RetrievedPassage
@@ -136,27 +126,30 @@ def test_the_abstain_phrase_is_one_sentence_the_harness_can_match():
     assert "\n" not in ABSTAIN_PHRASE
 
 
-def test_the_template_id_is_bound_to_the_template_text():
-    """A wording change fails here until the id is bumped alongside it.
+# A set chosen to exercise every branch of the rendering: a table tag, a
+# missing fiscal year, a header with no Item, and a rank tie broken by
+# chunk_id. Digesting what these render pins the template text and the
+# rendering logic together, which is what the id names.
+GOLDEN = (
+    _passage("g1", 1),
+    _passage("g2", 2, content_type="table"),
+    _passage("g3", 3, fiscal_year=None),
+    _passage("g4", 4, item=None),
+    _passage("g0", 4),
+)
+
+
+def test_the_template_id_is_bound_to_the_prompt_it_renders():
+    """Any change to the rules or to how a source is rendered fails here.
 
     The id only means something if two results files that both say
-    "grounded_v2" were produced by the same prompt. Nothing else ties the id
-    to the text, so an edit would otherwise pass silently.
+    "grounded_v3" were produced by the same prompt. Digesting the constants
+    alone would leave the fiscal-year fallback, the header/text join and the
+    sort key free to change the prompt silently, so the digest is taken over
+    a rendered prompt instead.
     """
-    digest = hashlib.sha256(
-        "\0".join(
-            (
-                SYSTEM_PROMPT,
-                USER_PROMPT,
-                SOURCE_HEADER,
-                SOURCE_SECTION,
-                SOURCE_SECTION_NO_ITEM,
-                SOURCE_TABLE_TAG,
-                SOURCE_SEPARATOR,
-            )
-        ).encode()
-    ).hexdigest()[:16]
-    assert (PROMPT_TEMPLATE_ID, digest) == ("grounded_v2", "b2cb6c5bc3aa94f5")
+    digest = hashlib.sha256(build_prompt(QUESTION, GOLDEN).as_text().encode()).hexdigest()[:16]
+    assert (PROMPT_TEMPLATE_ID, digest) == ("grounded_v3", "d0d9f8aff7481d04")
 
 
 # --- numbering and determinism ----------------------------------------------------
