@@ -332,13 +332,28 @@ ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
 LLM_BASE_URL_ENV = "LLM_BASE_URL"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
-# The output ceiling. A grounded answer is a few sentences with markers -- rule
-# 6 says answer directly, then stop -- so 2,048 tokens is roughly eight times
-# the longest answer the benchmark expects, and low enough that a model that
-# ignores rule 6 and starts reciting sources is cut off rather than billed for
-# the whole context back. A ``Generation`` whose ``stop_reason`` says it hit
-# this is marked truncated, so the cut is never silent.
+# The output ceiling, in tokens of visible answer. A grounded answer is a few
+# sentences with markers -- rule 6 says answer directly, then stop -- so 2,048
+# is roughly eight times the longest answer the benchmark expects, and low
+# enough that a model that ignores rule 6 and starts reciting sources is cut
+# off rather than billed for the whole context back. A ``Generation`` whose
+# ``stop_reason`` says it hit this is marked truncated, so the cut is never
+# silent.
 MAX_OUTPUT_TOKENS = 2048
+
+# The hosted models think before they answer, and the thinking is drawn from
+# the same max_tokens as the answer. Left at the default effort, a run can
+# spend the whole ceiling thinking and come back with the answer cut off or
+# missing, and ``output_tokens`` then counts reasoning the user never sees.
+# Two settings keep the ceiling meaning what it says: the effort is turned
+# down -- a grounded answer over eight passages is a reading task, not a
+# reasoning one, and low effort is the supported lever (disabling thinking on
+# these models is documented to leak tool calls and thinking tags into the
+# text) -- and the provider adds this headroom to max_tokens so the thinking
+# has room of its own. ``output_tokens`` on the hosted provider still includes
+# the thinking; the API reports one number, and the record says so.
+ANTHROPIC_EFFORT = "low"
+ANTHROPIC_THINKING_HEADROOM = 4096
 
 # How long to wait on a provider before giving up, in seconds. Generous,
 # because a local model on a CPU can take a minute to answer over eight

@@ -23,14 +23,18 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol
 
+from ..config import ENV_FILE, load_env
 from .constants import (
     ANTHROPIC,
+    ANTHROPIC_EFFORT,
     ANTHROPIC_KEY_ENV,
+    ANTHROPIC_THINKING_HEADROOM,
     DEFAULT_MODELS,
     DEFAULT_OLLAMA_URL,
     GENERATION_TIMEOUT_S,
@@ -159,20 +163,37 @@ def stream(
 
 # --- configuration ------------------------------------------------------------------
 
+def _environment(environ: Mapping[str, str] | None, dotenv: Path) -> Mapping[str, str]:
+    """The settings to read: the mapping given, else the process environment
+    with the local .env loaded into it first.
+
+    Loading here rather than at import is what makes .env.example true: every
+    variable it documents is read on the path that uses it, and a teammate
+    who puts a key in .env is not routed to a local server they never
+    installed because nothing looked at the file.
+    """
+    if environ is not None:
+        return environ
+    load_env(dotenv)
+    return os.environ
+
+
 def config_from_env(
     provider: str | None = None,
     model: str | None = None,
     temperature: float = 0.0,
-    environ: dict[str, str] | None = None,
+    environ: Mapping[str, str] | None = None,
+    dotenv: Path = ENV_FILE,
 ) -> GenerationConfig:
     """The ``GenerationConfig`` the environment asks for.
 
     Provider: the argument, else ``LLM_PROVIDER``, else "anthropic" when a
     key is present and "ollama" when not, so a fresh clone with no key still
     answers. Model: the argument, else ``LLM_MODEL``, else the provider's
-    default. ``environ`` is for tests; it defaults to ``os.environ``.
+    default. The environment is the process's, with ``dotenv`` (the project's
+    .env) loaded into it first; ``environ`` replaces both, for a test.
     """
-    env = os.environ if environ is None else environ
+    env = _environment(environ, dotenv)
     chosen = (provider or env.get(LLM_PROVIDER_ENV) or "").strip().lower()
     if not chosen:
         chosen = ANTHROPIC if env.get(ANTHROPIC_KEY_ENV, "").strip() else OLLAMA
@@ -211,8 +232,15 @@ class AnthropicProvider:
 
     The prompt's system text goes in ``system`` and its user text as the one
     user turn, which is the shape the API takes. The SDK's streaming helper
-    yields the text deltas and accumulates the final message, whose ``usage``
+    yields the text deltas -- only the text; the model's thinking never
+    reaches the stream -- and accumulates the final message, whose ``usage``
     carries the token counts.
+
+    The model thinks before it answers, out of the same token ceiling as the
+    answer, so the request turns the effort down and adds headroom to
+    ``max_tokens``: see ``constants.ANTHROPIC_EFFORT``. ``output_tokens`` in
+    the returned usage still counts the thinking, because the API reports
+    one number.
 
     Temperature is not sent. The current Claude models do not take a
     sampling temperature -- the request is rejected -- and there is no
@@ -223,7 +251,12 @@ class AnthropicProvider:
 
     name = ANTHROPIC
 
-    def __init__(self, client: Any | None = None, timeout: float = GENERATION_TIMEOUT_S):
+    def __init__(
+        self,
+        client: Any | None = None,
+        timeout: float = GENERATION_TIMEOUT_S,
+        dotenv: Path = ENV_FILE,
+    ):
         # The SDK is imported here rather than at module level so that the
         # local provider works on a machine without it installed, and so a
         # missing key is reported as a ProviderUnavailable with the variable
@@ -231,6 +264,7 @@ class AnthropicProvider:
         if client is None:
             import anthropic
 
+            load_env(dotenv)
             if not os.environ.get(ANTHROPIC_KEY_ENV, "").strip():
                 raise ProviderUnavailable(
                     f"{ANTHROPIC_KEY_ENV} is not set; put it in .env, or set "
@@ -249,7 +283,8 @@ class AnthropicProvider:
             )
         with self._client.messages.stream(
             model=config.model,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens + ANTHROPIC_THINKING_HEADROOM,
+            output_config={"effort": ANTHROPIC_EFFORT},
             system=prompt.system,
             messages=[{"role": "user", "content": prompt.user}],
         ) as response:
@@ -287,10 +322,14 @@ class OllamaProvider:
         base_url: str | None = None,
         client: Any | None = None,
         timeout: float = GENERATION_TIMEOUT_S,
+        dotenv: Path = ENV_FILE,
     ):
         import httpx
 
-        self._base_url = (base_url or os.environ.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL).rstrip("/")
+        if base_url is None:
+            load_env(dotenv)
+            base_url = os.environ.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL
+        self._base_url = base_url.rstrip("/")
         self._client = client if client is not None else httpx.Client(timeout=timeout)
 
     def stream(
@@ -332,11 +371,16 @@ class OllamaProvider:
                             stop_reason=event.get("done_reason"),
                         )
                 return usage
-        except httpx.ConnectError as error:
+        except httpx.TransportError as error:
+            # TransportError covers a refused connection and also a timeout
+            # on connect or read: a server that is listening but wedged, or a
+            # base URL pointing at a host that swallows packets, should get
+            # the same instructions as one that is not there.
             raise ProviderUnavailable(
-                f"no Ollama server at {self._base_url} ({error}); start it with "
-                f"`ollama serve`, or set {LLM_BASE_URL_ENV}, or set "
-                f"{LLM_PROVIDER_ENV}={ANTHROPIC} with an {ANTHROPIC_KEY_ENV}"
+                f"no usable Ollama server at {self._base_url} "
+                f"({type(error).__name__}: {error}); start it with `ollama serve`, "
+                f"or set {LLM_BASE_URL_ENV}, or set {LLM_PROVIDER_ENV}={ANTHROPIC} "
+                f"with an {ANTHROPIC_KEY_ENV}"
             ) from error
 
 

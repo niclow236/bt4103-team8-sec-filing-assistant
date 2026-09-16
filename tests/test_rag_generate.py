@@ -9,12 +9,15 @@ canned server.
 
 import dataclasses
 import json
+import os
 from collections.abc import Generator
 
 import httpx
 import pytest
 
 from src.rag.constants import (
+    ANTHROPIC_EFFORT,
+    ANTHROPIC_THINKING_HEADROOM,
     DEFAULT_MODELS,
     DEFAULT_OLLAMA_URL,
     MAX_OUTPUT_TOKENS,
@@ -150,9 +153,18 @@ def test_generation_is_frozen_and_serialises():
     assert data["text"] == result.text
     assert data["config"] == _config().to_dict()
     assert data["truncated"] is False
+    assert data["refused"] is False
     assert set(data) == {"text", "config", "latency_ms", "input_tokens", "output_tokens",
-                         "stop_reason", "truncated"}
+                         "stop_reason", "truncated", "refused"}
     json.dumps(data)
+
+
+def test_a_refusal_is_read_apart_from_a_truncation_and_an_abstention():
+    refused = generate(PROMPT, _config(), provider=FakeProvider(pieces=(), usage=Usage(5, 0, "refusal")))
+    assert refused.refused is True
+    assert refused.truncated is False
+    assert refused.text == ""
+    assert generate(PROMPT, _config(), provider=FakeProvider()).refused is False
 
 
 def test_generation_refuses_negative_latency():
@@ -193,10 +205,75 @@ def test_provider_for_refuses_an_unknown_name():
         provider_for("gpt")
 
 
-def test_anthropic_provider_without_a_key_says_what_to_set(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+# --- .env ------------------------------------------------------------------------------
+# The path every teammate hits first: a .env written from .env.example has to
+# be read on the generation path, not only where configure_edgar runs.
+
+_LLM_VARS = ("ANTHROPIC_API_KEY", "LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL")
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    """No LLM variables before the test, and none left behind by it.
+
+    load_dotenv writes into the real os.environ, which monkeypatch does not
+    see, so the variables a .env test loads are removed again afterwards.
+    """
+    for name in _LLM_VARS:
+        monkeypatch.delenv(name, raising=False)
+    yield
+    for name in _LLM_VARS:
+        os.environ.pop(name, None)
+
+
+def _dotenv(tmp_path, **values):
+    path = tmp_path / ".env"
+    path.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
+    return path
+
+
+def test_config_from_env_reads_the_dotenv_file(tmp_path, clean_env):
+    path = _dotenv(tmp_path, ANTHROPIC_API_KEY="sk-test", LLM_PROVIDER="anthropic",
+                   LLM_MODEL="claude-opus-5")
+    config = config_from_env(dotenv=path)
+    assert (config.provider, config.model) == ("anthropic", "claude-opus-5")
+
+
+def test_a_key_in_the_dotenv_file_alone_selects_the_hosted_api(tmp_path, clean_env):
+    config = config_from_env(dotenv=_dotenv(tmp_path, ANTHROPIC_API_KEY="sk-test"))
+    assert config.provider == "anthropic"
+
+
+def test_a_missing_dotenv_file_falls_back_to_the_local_server(tmp_path, clean_env):
+    config = config_from_env(dotenv=tmp_path / "absent.env")
+    assert config.provider == "ollama"
+
+
+def test_a_shell_variable_wins_over_the_dotenv_file(tmp_path, clean_env, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "from-shell")
+    config = config_from_env(dotenv=_dotenv(tmp_path, LLM_MODEL="from-file"))
+    assert config.model == "from-shell"
+
+
+def test_anthropic_provider_finds_the_key_in_the_dotenv_file(tmp_path, clean_env, monkeypatch):
+    # The key is only in the file. The provider has to see it, and must not
+    # send the teammate back to the .env they already filled in.
+    path = _dotenv(tmp_path, ANTHROPIC_API_KEY="sk-test")
+    built = {}
+    monkeypatch.setattr("anthropic.Anthropic", lambda **kw: built.setdefault("client", object()))
+    provider = AnthropicProvider(dotenv=path)
+    assert provider._client is built["client"]
+
+
+def test_anthropic_provider_without_a_key_anywhere_says_what_to_set(tmp_path, clean_env):
     with pytest.raises(ProviderUnavailable, match="ANTHROPIC_API_KEY is not set"):
-        AnthropicProvider()
+        AnthropicProvider(dotenv=tmp_path / "absent.env")
+
+
+def test_ollama_provider_reads_the_base_url_from_the_dotenv_file(tmp_path, clean_env):
+    path = _dotenv(tmp_path, LLM_BASE_URL="http://gpu-box:11434/")
+    provider = OllamaProvider(client=object(), dotenv=path)
+    assert provider._base_url == "http://gpu-box:11434"
 
 
 # --- the hosted API -----------------------------------------------------------------
@@ -237,13 +314,31 @@ def test_anthropic_provider_sends_system_and_user_turns_and_reads_usage():
     result = generate(PROMPT, _config("anthropic", model="claude-opus-5"), provider=provider)
     assert client.requests == [{
         "model": "claude-opus-5",
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": MAX_OUTPUT_TOKENS + ANTHROPIC_THINKING_HEADROOM,
+        "output_config": {"effort": ANTHROPIC_EFFORT},
         "system": PROMPT.system,
         "messages": [{"role": "user", "content": PROMPT.user}],
     }]
     assert result.text == "AB"
     assert (result.input_tokens, result.output_tokens) == (120, 7)
     assert result.stop_reason == "end_turn"
+
+
+def test_anthropic_provider_turns_the_effort_down_and_gives_thinking_its_own_room():
+    # The model thinks out of the same ceiling as the answer. Left at the
+    # default effort, the ceiling meant for the answer can go on thinking.
+    client = FakeAnthropicClient()
+    generate(PROMPT, _config("anthropic"), provider=AnthropicProvider(client=client), max_tokens=100)
+    [request] = client.requests
+    assert request["output_config"]["effort"] == "low"
+    assert request["max_tokens"] == 100 + ANTHROPIC_THINKING_HEADROOM
+    assert "thinking" not in request   # never disabled: that leaks tags into the text
+
+
+def test_anthropic_provider_reads_a_refusal():
+    provider = AnthropicProvider(client=FakeAnthropicClient(pieces=(), stop_reason="refusal"))
+    result = generate(PROMPT, _config("anthropic"), provider=provider)
+    assert result.refused is True and result.text == ""
 
 
 def test_anthropic_provider_flags_a_max_tokens_stop():
@@ -342,11 +437,17 @@ def test_ollama_provider_says_when_the_model_is_not_pulled():
         generate(PROMPT, _config("ollama", model="nope"), provider=_ollama_provider(handler))
 
 
-def test_ollama_provider_says_when_the_server_is_down():
+@pytest.mark.parametrize("error", [
+    httpx.ConnectError("connection refused"),
+    httpx.ConnectTimeout("timed out"),      # a host that swallows packets
+    httpx.ReadTimeout("timed out"),         # a server that is listening but wedged
+])
+def test_ollama_provider_says_when_the_server_is_down_or_wedged(error):
     def handler(request):
-        raise httpx.ConnectError("connection refused", request=request)
+        error.request = request
+        raise error
 
-    with pytest.raises(ProviderUnavailable, match="no Ollama server at .*ollama serve"):
+    with pytest.raises(ProviderUnavailable, match="no usable Ollama server at .*ollama serve"):
         generate(PROMPT, _config("ollama"), provider=_ollama_provider(handler))
 
 

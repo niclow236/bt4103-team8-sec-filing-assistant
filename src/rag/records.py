@@ -87,13 +87,19 @@ class Generation:
     ``Answer``, and the metrics track reads the rest. The token counts are
     the provider's own, so they are comparable within a provider and not
     across; None where a provider did not report one, which is the truth of
-    it rather than a zero that would average in as free.
+    it rather than a zero that would average in as free. On the hosted
+    provider ``output_tokens`` includes the model's thinking as well as the
+    answer, because the API reports one number; the local provider has no
+    thinking to count.
 
     ``stop_reason`` is the provider's own word for why it stopped, kept as
-    given so a results row can be traced back. :attr:`truncated` is the one
-    reading every consumer needs: an answer cut off at the token limit has
-    lost its last citation, and the resolver should know that before it
-    flags the final sentence as unsupported.
+    given so a results row can be traced back. Two readings of it are what
+    every consumer needs. :attr:`truncated`: an answer cut off at the token
+    limit has lost its last citation, and the resolver should know that
+    before it flags the final sentence as unsupported. :attr:`refused`: the
+    hosted model declined to answer at all, which leaves little or no text
+    and is not an abstention the prompt asked for, so it should be counted
+    apart from one.
     """
 
     text: str
@@ -106,6 +112,8 @@ class Generation:
     # The words each provider uses for "hit the output limit". Anthropic says
     # "max_tokens"; Ollama says "length".
     _TRUNCATED_REASONS = frozenset({"max_tokens", "length"})
+    # The hosted API's word for a safety decline. Ollama has none.
+    _REFUSED_REASONS = frozenset({"refusal"})
 
     def __post_init__(self) -> None:
         if self.latency_ms < 0:
@@ -117,6 +125,11 @@ class Generation:
         """Whether the output was cut off at the token limit rather than finished."""
         return self.stop_reason in self._TRUNCATED_REASONS
 
+    @property
+    def refused(self) -> bool:
+        """Whether the model declined to answer, as distinct from abstaining."""
+        return self.stop_reason in self._REFUSED_REASONS
+
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON-compatible representation for results files."""
         return {
@@ -127,6 +140,7 @@ class Generation:
             "output_tokens": self.output_tokens,
             "stop_reason": self.stop_reason,
             "truncated": self.truncated,
+            "refused": self.refused,
         }
 
 
