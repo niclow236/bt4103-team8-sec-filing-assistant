@@ -39,6 +39,53 @@ def test_loader_validates_and_normalises_question(tmp_path):
     assert questions[0].supporting_chunk_ids == ("AAPL-2024-1",)
 
 
+def test_a_comparison_across_companies_and_years_has_no_single_ticker_or_year(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question(question_type="comparative", ticker=None, fiscal_year=None))
+
+    [question] = load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+    assert (question.ticker, question.fiscal_year) == (None, None)
+
+
+def test_an_unanswerable_question_has_no_supporting_chunks(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question(
+        question_type="unanswerable", supporting_chunk_ids=[], ticker=None,
+        expected_answer="The filings do not answer this question.",
+    ))
+
+    [question] = load_questions(path, chunk_ids={"AAPL-2023-1"})
+
+    assert question.supporting_chunk_ids == ()
+    assert question.hard_negative_chunk_ids == ("AAPL-2023-1",)
+
+
+def test_an_unanswerable_question_with_supporting_chunks_is_rejected(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question(question_type="unanswerable"))
+
+    with pytest.raises(BenchmarkValidationError, match="unanswerable question has no supporting"):
+        load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+
+def test_an_answerable_question_needs_supporting_chunks(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question(supporting_chunk_ids=[]))
+
+    with pytest.raises(BenchmarkValidationError, match="at least one chunk ID"):
+        load_questions(path, chunk_ids={"AAPL-2023-1"})
+
+
+@pytest.mark.parametrize("question_type", ["comparison", "narrative", "Numeric"])
+def test_question_type_must_be_one_the_engine_assigns(tmp_path, question_type):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question(question_type=question_type))
+
+    with pytest.raises(BenchmarkValidationError, match="question_type must be one of"):
+        load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+
 def test_loader_rejects_unknown_chunk_ids(tmp_path):
     path = tmp_path / "questions.jsonl"
     _write_question(path, _question(supporting_chunk_ids=["missing"]))

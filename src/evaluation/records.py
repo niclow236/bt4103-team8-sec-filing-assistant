@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from src.rag.constants import QUESTION_TYPES
 from src.retrieval.records import RetrievedPassage
+
+# The type of a question the corpus cannot answer. It is the one type with no
+# supporting chunks, since there is no evidence to support an answer with.
+UNANSWERABLE = "unanswerable"
 
 
 class BenchmarkValidationError(ValueError):
@@ -30,15 +35,24 @@ def _string_tuple(value: Any, field_name: str, *, allow_empty: bool = True) -> t
 
 @dataclass(frozen=True)
 class BenchmarkQuestion:
-    """One ground-truth question used to evaluate retrieval."""
+    """One ground-truth question used to evaluate retrieval.
+
+    ``ticker`` and ``fiscal_year`` are None when the question does not name
+    exactly one: a comparison across companies, a change across years, or a
+    question about a company outside the corpus. ``question_type`` is one of
+    ``rag.constants.QUESTION_TYPES``, the labels ``rag/query.py`` assigns, so
+    results can be broken down by the type the engine read a question as.
+    An unanswerable question carries no supporting chunks; chunks that look
+    relevant but do not answer it belong in ``hard_negative_chunk_ids``.
+    """
 
     question_id: str
     question: str
     expected_answer: str
     supporting_chunk_ids: tuple[str, ...]
     hard_negative_chunk_ids: tuple[str, ...]
-    ticker: str
-    fiscal_year: int
+    ticker: str | None
+    fiscal_year: int | None
     question_type: str
     difficulty: str
     source: str
@@ -73,12 +87,30 @@ class BenchmarkQuestion:
             )
 
         fiscal_year = data["fiscal_year"]
-        if isinstance(fiscal_year, bool) or not isinstance(fiscal_year, int) or fiscal_year < 1900:
-            raise BenchmarkValidationError("fiscal_year must be an integer year")
+        if fiscal_year is not None and (
+            isinstance(fiscal_year, bool) or not isinstance(fiscal_year, int) or fiscal_year < 1900
+        ):
+            raise BenchmarkValidationError("fiscal_year must be an integer year or null")
 
+        ticker = data["ticker"]
+        if ticker is not None:
+            ticker = _required_text(ticker, "ticker").upper()
+
+        question_type = _required_text(data["question_type"], "question_type")
+        if question_type not in QUESTION_TYPES:
+            raise BenchmarkValidationError(
+                f"question_type must be one of {', '.join(QUESTION_TYPES)}, got {question_type!r}"
+            )
+
+        unanswerable = question_type == UNANSWERABLE
         supporting = _string_tuple(
-            data["supporting_chunk_ids"], "supporting_chunk_ids", allow_empty=False
+            data["supporting_chunk_ids"], "supporting_chunk_ids", allow_empty=unanswerable
         )
+        if unanswerable and supporting:
+            raise BenchmarkValidationError(
+                "an unanswerable question has no supporting_chunk_ids; list chunks that "
+                "look relevant as hard_negative_chunk_ids instead"
+            )
         hard_negatives = _string_tuple(data["hard_negative_chunk_ids"], "hard_negative_chunk_ids")
         overlap = set(supporting) & set(hard_negatives)
         if overlap:
@@ -92,9 +124,9 @@ class BenchmarkQuestion:
             expected_answer=_required_text(data["expected_answer"], "expected_answer"),
             supporting_chunk_ids=supporting,
             hard_negative_chunk_ids=hard_negatives,
-            ticker=_required_text(data["ticker"], "ticker").upper(),
+            ticker=ticker,
             fiscal_year=fiscal_year,
-            question_type=_required_text(data["question_type"], "question_type"),
+            question_type=question_type,
             difficulty=_required_text(data["difficulty"], "difficulty"),
             source=_required_text(data["source"], "source"),
         )
