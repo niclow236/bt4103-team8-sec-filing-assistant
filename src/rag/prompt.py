@@ -3,10 +3,12 @@
 The prompt is where the citation contract is made. The model is shown the
 retrieved passages as sources ``[1]`` to ``[k]``, each under a header naming
 the company, the fiscal year and the Item, and is told to answer from those
-alone and to cite by number. It never sees a URL and is never asked to name a
-document, so the only thing it can write about a source is its integer -- and
-an integer is the one thing the resolver (#31) can check. Everything the
-citation shows, it takes from the passage's own stored metadata.
+alone and to cite by number. A source's stored URL is never put in the prompt
+-- a passage's own text may quote one, as 168 of the corpus's 28,179 chunks do
+-- and the model is never asked to name a document, so what it writes about a
+source is its integer, and an integer is the one thing the resolver (#31) can
+check. Everything the citation shows, it takes from the passage's own stored
+metadata.
 
 The builder is deterministic. The same passages produce the same prompt, in
 the same order, whatever order they arrive in: sources are numbered by rank,
@@ -83,9 +85,10 @@ def render_source(marker: int, passage: RetrievedPassage) -> str:
 
     The header names what a model needs to choose between sources -- company,
     fiscal year, Item -- and nothing it could copy into an answer. A table
-    passage is tagged so its first line reads as column headers. Text is
-    stripped of surrounding whitespace so that two passages differing only in
-    a trailing newline render the same.
+    passage is tagged so the model reads it as a rendered grid rather than as
+    prose: its text opens with the table's caption, then the grid under its
+    own column headers. Text is stripped of surrounding whitespace so that
+    two passages differing only in a trailing newline render the same.
     """
     if passage.item is not None:
         section = SOURCE_SECTION.format(item=passage.item, title=passage.title)
@@ -118,10 +121,12 @@ def build_prompt(question: str, passages: Sequence[RetrievedPassage]) -> Grounde
     """
     if not question or not question.strip():
         raise ValueError("question must not be blank")
-    if not passages:
-        raise ValueError("cannot build a grounded prompt with no passages")
 
+    # Sorted first so the emptiness check sees what actually arrived: a
+    # generator is truthy however little it yields.
     ordered = sorted(passages, key=lambda p: (p.rank, p.chunk_id))
+    if not ordered:
+        raise ValueError("cannot build a grounded prompt with no passages")
     ids = [p.chunk_id for p in ordered]
     if len(set(ids)) != len(ids):
         duplicates = sorted({i for i in ids if ids.count(i) > 1})

@@ -228,8 +228,10 @@ QUANTITY_BEFORE = (
 # holding the sources and the question. ``GenerationConfig.prompt_template_id``
 # records this id on every answer, so the id changes whenever any of the text
 # below does. Edit the wording and bump it; a results file that says
-# "grounded_v1" has to mean this text and no other.
-PROMPT_TEMPLATE_ID = "grounded_v1"
+# "grounded_v2" has to mean this text and no other. A test digests the
+# template and pins the pair, so forgetting the bump fails the suite rather
+# than passing silently.
+PROMPT_TEMPLATE_ID = "grounded_v2"
 
 # What the model writes, and nothing else, when the sources do not answer the
 # question. One fixed sentence rather than "say you don't know", so that #33
@@ -261,8 +263,9 @@ sentence and nothing else: {ABSTAIN_PHRASE}
 source number in square brackets, like [2]. If a sentence draws on more than \
 one source, write each number in its own brackets, like [1][3]. Never write a \
 number that is not one of the sources given.
-3. Do not name a company, a fiscal year, a document or a web address unless \
-the source you are citing says it. The citation carries that information.
+3. Name a company or a fiscal year only when the source you cite is that \
+company's filing for that year, as its header states, or when the source text \
+says it. Never name a document, a filename or a web address.
 4. Quote figures exactly as the source gives them, with their unit and the \
 period they cover. If the sources give figures for several years, say which \
 year each belongs to. Do not calculate a figure the sources do not state \
@@ -280,8 +283,9 @@ SOURCE_HEADER = "[{marker}] {company} ({ticker}), fiscal year {fiscal_year}, {se
 # The Item line inside the header, with and without an Item number.
 SOURCE_SECTION = "Item {item}: {title}"
 SOURCE_SECTION_NO_ITEM = "{title}"
-# What a table passage is labelled, so the model reads its first line as
-# column headers rather than as prose.
+# What a table passage is labelled, so the model reads it as a rendered grid
+# rather than as prose: the text opens with the table's caption, then the grid
+# under its own column headers.
 SOURCE_TABLE_TAG = " (table)"
 
 # The user message: every source, then the question. Sources first so that

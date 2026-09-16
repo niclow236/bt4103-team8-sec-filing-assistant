@@ -1,11 +1,22 @@
 """The grounded prompt: what it shows the model, what it refuses, and that it is stable."""
 
 import dataclasses
+import hashlib
 import re
 
 import pytest
 
-from src.rag.constants import ABSTAIN_PHRASE, PROMPT_TEMPLATE_ID, SYSTEM_PROMPT
+from src.rag.constants import (
+    ABSTAIN_PHRASE,
+    PROMPT_TEMPLATE_ID,
+    SOURCE_HEADER,
+    SOURCE_SECTION,
+    SOURCE_SECTION_NO_ITEM,
+    SOURCE_SEPARATOR,
+    SOURCE_TABLE_TAG,
+    SYSTEM_PROMPT,
+    USER_PROMPT,
+)
 from src.rag.prompt import GroundedPrompt, build_prompt, render_source
 from src.rag.records import Answer, Citation, GenerationConfig
 from src.retrieval.records import RetrievedPassage
@@ -94,10 +105,14 @@ def test_a_table_source_is_tagged():
     assert "(table)" not in render_source(1, P1)
 
 
-def test_the_prompt_never_shows_a_url():
+def test_the_stored_url_is_never_rendered():
+    # The metadata URL stays out of the prompt. A passage's own text is
+    # rendered verbatim and may quote an address; that is content, not leakage.
     prompt = build_prompt(QUESTION, [P1, P2, P3])
-    assert "http" not in prompt.as_text()
     assert "example.test" not in prompt.as_text()
+    quoting = _passage("q", 1, text="See www.example.org for details.")
+    assert "www.example.org" in build_prompt(QUESTION, [quoting]).user
+    assert "example.test" not in build_prompt(QUESTION, [quoting]).user
 
 
 def test_a_passage_with_braces_or_a_blank_line_renders_verbatim():
@@ -119,6 +134,29 @@ def test_the_abstain_phrase_is_one_sentence_the_harness_can_match():
     assert ABSTAIN_PHRASE == ABSTAIN_PHRASE.strip()
     assert ABSTAIN_PHRASE.endswith(".")
     assert "\n" not in ABSTAIN_PHRASE
+
+
+def test_the_template_id_is_bound_to_the_template_text():
+    """A wording change fails here until the id is bumped alongside it.
+
+    The id only means something if two results files that both say
+    "grounded_v2" were produced by the same prompt. Nothing else ties the id
+    to the text, so an edit would otherwise pass silently.
+    """
+    digest = hashlib.sha256(
+        "\0".join(
+            (
+                SYSTEM_PROMPT,
+                USER_PROMPT,
+                SOURCE_HEADER,
+                SOURCE_SECTION,
+                SOURCE_SECTION_NO_ITEM,
+                SOURCE_TABLE_TAG,
+                SOURCE_SEPARATOR,
+            )
+        ).encode()
+    ).hexdigest()[:16]
+    assert (PROMPT_TEMPLATE_ID, digest) == ("grounded_v2", "b2cb6c5bc3aa94f5")
 
 
 # --- numbering and determinism ----------------------------------------------------
@@ -159,6 +197,13 @@ def test_marker_n_is_passages_n_minus_1():
 def test_no_passages_is_refused():
     with pytest.raises(ValueError, match="no passages"):
         build_prompt(QUESTION, [])
+
+
+def test_an_empty_generator_is_refused_too():
+    # A generator is truthy however little it yields, so the guard has to
+    # look at what arrived rather than at the container.
+    with pytest.raises(ValueError, match="no passages"):
+        build_prompt(QUESTION, (p for p in []))
 
 
 def test_a_blank_question_is_refused():
