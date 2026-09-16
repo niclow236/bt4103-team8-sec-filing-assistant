@@ -56,7 +56,19 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language. The project uses LLM APIs and open-source LLMs, text embeddings and vector databases, RAG frameworks, information-retrieval methods, and an interactive UI framework. Exact libraries are pinned in `requirements.txt` as the project develops.
+Python is the primary language, and every model runs locally. The team has no budget for paid APIs, so nothing in the project needs an API key or a paid account: the embedding model, the search indexes and the language model all run on the machine running the code. Exact versions are pinned in `requirements.txt`.
+
+| Layer | What it uses |
+|---|---|
+| Filings | `edgartools` for EDGAR search, download and XBRL figures |
+| Keyword search | `rank-bm25` |
+| Dense search | `sentence-transformers` running `BAAI/bge-base-en-v1.5`, vectors stored in `chromadb` |
+| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default |
+| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) |
+| Holding the answer to a shape | `pydantic`, whose JSON schema Ollama decodes against |
+| Tests | `pytest` |
+
+Ollama is not a Python package, so it is installed separately; see [Answering a question](#answering-a-question).
 
 ## Repository structure
 
@@ -68,7 +80,7 @@ bt4103-team8-sec-filing-assistant/
 ├── GIT_WORKFLOW.md          # branching workflow and Git setup
 ├── requirements.txt
 ├── .gitignore
-├── .env.example             # template for API keys (copy to .env)
+├── .env.example             # template for local settings (copy to .env)
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
@@ -92,20 +104,30 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
 │   ├── retrieval/           # BM25, dense, hybrid
-│   │   ├── base.py          #   the Retriever contract every method satisfies
+│   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
+│   │   ├── cli.py           #   the command line: embed, bm25, facts, check
+│   │   ├── base.py          #   the Retriever contract, the metadata pre-filter, ranking helpers
 │   │   ├── constants.py     #   models, k values and fusion constants, in one place
-│   │   └── records.py       #   what a retriever returns and what an index says of itself
+│   │   ├── records.py       #   Query, RetrievedPassage, and what an index says of itself
+│   │   ├── embed.py         #   builds the dense index, incrementally
+│   │   ├── dense.py         #   searches the dense index
+│   │   ├── bm25.py          #   builds and searches the BM25 index
+│   │   ├── hybrid.py        #   fuses BM25 and dense results by reciprocal rank
+│   │   └── facts.py         #   XBRL figures from EDGAR into a table
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
-│   │   ├── generate.py      #   runs the prompt through the hosted API or a local Ollama, streaming
-│   │   ├── constants.py     #   company aliases, cue words, the prompt template, provider defaults
-│   │   └── records.py       #   Answer, Citation and GenerationConfig
+│   │   ├── generate.py      #   runs the prompt through a local model on Ollama, streaming
+│   │   ├── constants.py     #   company aliases, cue words, the prompt template, generation settings
+│   │   └── records.py       #   GroundedAnswer, Generation, Answer, Citation and GenerationConfig
 │   ├── evaluation/          # benchmark and metrics
+│   │   ├── benchmark.py     #   loads and validates benchmark/questions.jsonl
+│   │   └── records.py       #   BenchmarkQuestion and RunResult
 │   └── app/                 # Streamlit or Gradio UI
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
 ├── benchmark/               # ground-truth Q&A dataset
+│   └── schema.md            #   the fields a benchmark question must have
 └── docs/                    # reports, minutes, references
 ```
 
@@ -223,7 +245,9 @@ Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
 `EDGAR_IDENTITY=Jane Tan jane@example.com`. The SEC requires every automated
 request to carry a contact string and blocks traffic without one, so the
 download stops immediately with a `MissingIdentityError` if this is blank. The
-LLM API keys further down the file are not needed until the RAG work starts.
+generation settings further down the file are optional and have no API keys in
+them, since answers come from a local model; they are covered under
+[Answering a question](#answering-a-question).
 
 Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
@@ -668,6 +692,204 @@ rows. Companies not asked for, and any whose request fails, keep what is stored.
 In a figure's row, `fiscal_year` is the year of the filing it was published in,
 which is not necessarily the year the figure describes; use `current_year()`
 or the `is_current_year` column for that.
+
+### Searching the indexes
+
+There is no search command; retrieval is called from code, the same way the RAG
+stage and the evaluation harness call it. Every method takes a `Query` and
+returns `RetrievedPassage` records, best first:
+
+```python
+from src.retrieval.bm25 import BM25Retriever
+from src.retrieval.dense import DenseRetriever
+from src.retrieval.hybrid import HybridRetriever
+from src.retrieval.records import Query
+
+hybrid = HybridRetriever(BM25Retriever.load(), DenseRetriever.load())
+query = Query("How did revenue change?", top_k=8, tickers=("MSFT",), fiscal_years=(2024,))
+for passage in hybrid.search(query):
+    passage.rank, passage.score, passage.chunk_id, passage.sources
+```
+
+Three methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
+searches the bge vectors in Chroma, and `HybridRetriever` asks each of them for
+their top 50 (`CANDIDATE_K`) and fuses the two lists by reciprocal rank, so
+their scores, which are on different scales, are never compared directly. A
+fused passage records in `sources` which methods returned it. All three satisfy
+the `Retriever` protocol in `base.py`, so the evaluation harness can loop over
+them.
+
+The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`,
+`key_items_only`) are applied before scoring, not after, in every method. BM25
+scores only the passages the filters admit, and the dense retriever passes them
+to Chroma as a `where` clause, so a query pinned to Microsoft's FY2024 filing
+gets its top k from that filing rather than from whatever survives a
+corpus-wide top k. This matters more here than in most corpora: fifteen peers
+across five years write near-identical risk factors, and semantic similarity
+alone would happily return the right paragraph from the wrong year.
+
+`table_boost` leans a query toward table passages without excluding prose, by
+raising a table passage's score before the cut to k. It is off by default and is
+set by `rag/query.py` only for questions that ask for a figure.
+`retrieval.constants.TABLE_BOOST` is still 1.0, which is also off, until the
+XBRL benchmark (#24) gives a value measured rather than guessed.
+
+`Query.top_k` defaults to 10, which suits Recall@10 and nDCG@10. The RAG stage
+asks for `FINAL_K`, 8, since that is what goes into the prompt.
+
+Loading both retrievers takes about 15 seconds, and the first search about 30
+more while the embedding model loads. After that a hybrid search takes around
+half a second.
+
+## Answering a question
+
+The RAG stage turns a question into an answer that cites the passages it came
+from. The answer is written by a local model served by Ollama, since the team
+has no budget for a paid API. Nothing in this stage needs a key or a network
+connection once the model is downloaded.
+
+### Setting up Ollama
+
+Install Ollama from <https://ollama.com/download> (on Windows,
+`winget install Ollama.Ollama` also works). It runs in the background and
+listens on `127.0.0.1:11434`. Then download the model the code uses by default:
+
+```bash
+ollama pull llama3.2:3b     # 2.0 GB
+ollama list                 # it should be listed
+```
+
+Three settings in `.env` change how generation runs. None is required:
+
+| Variable | Default | When to set it |
+|---|---|---|
+| `LLM_MODEL` | `llama3.2:3b` | to use another model; `ollama pull` it first |
+| `LLM_BASE_URL` | `http://127.0.0.1:11434` | when Ollama runs on another machine or port |
+| `LLM_NUM_GPU` | Ollama decides | `0` on a laptop with a small GPU, as explained below |
+
+### From a question to an answer
+
+```python
+from src.rag import build_prompt, config_from_env, generate, parse_question
+from src.retrieval.bm25 import BM25Retriever
+from src.retrieval.constants import FINAL_K
+from src.retrieval.dense import DenseRetriever
+from src.retrieval.hybrid import HybridRetriever
+
+hybrid = HybridRetriever(BM25Retriever.load(), DenseRetriever.load())
+
+question = "What supply chain risks did Apple describe in its FY2024 10-K?"
+parsed = parse_question(question)            # AAPL, FY2024, a factual question
+passages = hybrid.search(parsed.to_query(top_k=FINAL_K))
+prompt = build_prompt(question, passages)    # the passages as sources [1] to [8]
+
+generation = generate(prompt, config_from_env(), on_token=lambda t: print(t, end=""))
+generation.answer.sentences    # each sentence with the source numbers it cites
+generation.text                # the same answer as prose, with [n] markers
+```
+
+`parse_question` reads the companies, fiscal years and question type out of the
+question, and `parsed.describe()` says what it read, so the app can show
+"Companies: AAPL" and the user can see when the reading was wrong. A company
+the corpus does not hold, such as Intel, is reported in `parsed.unresolved`
+rather than silently ignored. `build_prompt` numbers the passages as sources,
+puts the rules above them, and never shows the model a URL.
+
+`generate` returns a `Generation`: `answer`, the parsed answer; `text`, the
+same answer as prose; `raw`, exactly what the model emitted; and the
+`latency_ms`, `input_tokens`, `output_tokens` and `stop_reason` of the call.
+`stream` is the same call as a generator, for writing the answer into a page as
+it arrives. Joined, what it yields is `generation.text`.
+
+### What keeps the answer on the sources
+
+The model does not write free text. `GroundedAnswer` in `src/rag/records.py` is
+a Pydantic model: whether the sources answer the question at all, then the
+answer as a list of sentences, each with the numbers of the sources it draws on.
+Its JSON schema is sent to Ollama as the output format, which restricts the
+model's decoding to that shape. For a prompt with eight sources the schema only
+admits the numbers 1 to 8, so the model cannot cite a source it was not shown:
+asked outright to cite source 9 of 3, the model wrote `[2]`. The same Pydantic
+model validates the output afterwards.
+
+Three things follow from that.
+
+- An abstention is a field, not a sentence to reproduce. When the model sets
+  `answerable` to false, `generation.text` is the fixed sentence "The filings
+  do not answer this question.", and `generation.answer.abstained` is true.
+- The model writes JSON, but `stream` yields prose. It reads the partial JSON
+  as it grows and adds a sentence's `[n]` markers once that sentence is closed.
+- An answer cut off at the token limit does not parse. `generation.answer` is
+  then None, `parse_error` says why, `truncated` is true, and `text` still holds
+  what arrived.
+
+The context window is set on every request, to 8,192 tokens (`NUM_CTX`). This
+matters more than it looks. A grounded prompt over eight passages ran to 2,700
+to 3,300 tokens, and when a prompt is longer than Ollama's window, Ollama cuts it
+from the front without telling the caller: the only sign is a warning in its own
+server log. Run with a 2,048-token window, it kept 1,026 of 3,205 prompt tokens,
+dropping the rules and the first sources, and the model answered a question
+about revenue with a paragraph about hiring. Ollama's own default depends on the
+GPU's memory and is 4,096 tokens on a laptop, which fits today's prompts with
+little room for the answer, and would not fit a larger `FINAL_K`.
+
+A server that is not running, a model that has not been pulled, or a response
+that times out raises `ProviderUnavailable` with the command that fixes it.
+
+### How long an answer takes
+
+Minutes, on a laptop. Measured on a team laptop (Intel i5-1135G7, 16 GB of RAM,
+an NVIDIA MX450 with 2 GB), with a browser and an editor open, over real
+questions from the corpus:
+
+| Model | Where it ran | Reading the prompt | Writing | First words appear | Whole answer |
+|---|---|---|---|---|---|
+| `llama3.2:3b` | CPU (`LLM_NUM_GPU=0`) | about 17 tokens/s | about 3 tokens/s | 2.1 to 3.1 min | 2.3 to 3.4 min |
+
+Nearly all of that is the model reading the prompt, 2,700 to 3,300 tokens,
+before it writes anything; the answers themselves ran from 13 to 151 tokens.
+`llama3.1:8b` took 10.4 minutes on the same laptop for the first of these
+questions, against 3.2 for the 3B model, which is why the smaller model is the
+default. Comparing models properly is #46's job. Three things follow.
+
+- Stream the answer (#42), and show the passages first. On this hardware they
+  arrive minutes before the first word of the answer.
+- On a laptop with a small GPU, set `LLM_NUM_GPU=0`. Ollama put 3 of the 3B
+  model's 29 layers on the MX450, and the split ran 2.4 times slower at reading
+  the prompt and 4.4 times slower at writing than the CPU alone. On a capable
+  GPU or an Apple silicon Mac, leave it unset and let Ollama place the model.
+- The first request also loads the model into memory, which took 10 to 50
+  seconds here. Ollama unloads a model after five idle minutes, so the next
+  request pays for loading it again.
+
+## The benchmark
+
+Hand-written questions go in `benchmark/questions.jsonl`, one JSON object per
+line, and `benchmark/schema.md` lists the fields each one needs. The file does
+not exist yet; it is filled as each member writes their questions.
+
+```python
+from src.evaluation import load_questions
+
+questions = load_questions()   # benchmark/questions.jsonl, checked against data/processed/
+```
+
+The loader refuses a file it cannot trust rather than skipping the bad lines:
+a missing or unknown field, a duplicate `question_id`, a `question_type` other
+than the five the RAG engine assigns (`factual`, `comparative`, `temporal`,
+`numeric`, `unanswerable`), or a chunk id that is not in the corpus on disk.
+The last one is the check that matters over time. Re-chunking renames every
+chunk, so a benchmark written against an older corpus fails loudly on load
+instead of scoring every retriever at zero.
+
+A question does not have to be about one company in one year. `ticker` and
+`fiscal_year` are `null` for a comparison or a change across years, and an
+`unanswerable` question has no supporting chunks at all, only hard negatives:
+the passages that look relevant, which the system should see and still
+abstain from.
+
+`RunResult` in `src/evaluation/records.py` is what the harness will record per
+question and retriever: the chunk ids returned, their scores and the latency.
 
 ## Team and course
 
