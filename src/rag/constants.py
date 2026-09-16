@@ -353,8 +353,8 @@ LLM_NUM_GPU_ENV = "LLM_NUM_GPU"
 # Ollama. A prompt longer than the window is cut from the front with no error
 # to the caller, only a "truncating input prompt" warning in the server's log.
 # That drops the rules and the first sources, and leaves an answer that still
-# looks fine. The prompt over FINAL_K passages measured 2,700 to 3,300
-# tokens across ten questions, and the output ceiling has to fit beside it.
+# looks fine. The prompt over FINAL_K passages measured 2,700 to 3,400
+# tokens on the questions tried, and the output ceiling has to fit beside it.
 # Ollama's own default depends on the GPU's memory and is 4,096 on a laptop,
 # which leaves little room for either.
 NUM_CTX = 8192

@@ -825,7 +825,7 @@ Three things follow from that.
 
 The context window is set on every request, to 8,192 tokens (`NUM_CTX`). This
 matters more than it looks. A grounded prompt over eight passages ran to 2,700
-to 3,300 tokens, and when a prompt is longer than Ollama's window, Ollama cuts it
+to 3,400 tokens, and when a prompt is longer than Ollama's window, Ollama cuts it
 from the front without telling the caller: the only sign is a warning in its own
 server log. Run with a 2,048-token window, it kept 1,026 of 3,205 prompt tokens,
 dropping the rules and the first sources, and the model answered a question
@@ -846,7 +846,12 @@ questions from the corpus:
 |---|---|---|---|---|---|
 | `llama3.2:3b` | CPU (`LLM_NUM_GPU=0`) | about 17 tokens/s | about 3 tokens/s | 2.1 to 3.1 min | 2.3 to 3.4 min |
 
-Nearly all of that is the model reading the prompt, 2,700 to 3,300 tokens,
+These are ten questions in one sitting, and the same laptop is slower when it
+is busier or warmer: run again later the same day, the Apple question from the
+snippet above took 4.2 minutes against 2.3 the first time, reading the prompt
+at 13.6 tokens/s. Treat the table as typical rather than as a bound.
+
+Nearly all of that is the model reading the prompt, 2,700 to 3,400 tokens,
 before it writes anything; the answers themselves ran from 13 to 151 tokens.
 `llama3.1:8b` took 10.4 minutes on the same laptop for the first of these
 questions, against 3.2 for the 3B model, which is why the smaller model is the
