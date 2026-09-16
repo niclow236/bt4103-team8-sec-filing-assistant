@@ -5,6 +5,12 @@ tables rather than code because the corpus's scope is a list -- fifteen
 companies, five fiscal years -- and the names people use for those companies
 are a list too, and a list is easier to check, extend and argue about than a
 regular expression that happens to match it.
+
+The prompt template at the end is what ``prompt.py`` renders. It is here
+rather than in the builder for the reason ``GenerationConfig`` records a
+template id and not the rendered text: an answer says which template made
+it, and the id only means something if the template it names is one fixed
+thing in one place, and changes by getting a new id.
 """
 
 from __future__ import annotations
@@ -215,3 +221,79 @@ QUANTITY_BEFORE = (
     "approximately", "roughly", "nearly", "almost",
     "exceed", "exceeds", "exceeded", "exceeding",
 )
+
+# --- the grounded prompt ----------------------------------------------------
+# The template ``prompt.py`` renders, in the three pieces a chat model takes:
+# a system message with the rules, one line per source, and a user message
+# holding the sources and the question. ``GenerationConfig.prompt_template_id``
+# records this id on every answer, so the id changes whenever any of the text
+# below does. Edit the wording and bump it; a results file that says
+# "grounded_v1" has to mean this text and no other.
+PROMPT_TEMPLATE_ID = "grounded_v1"
+
+# What the model writes, and nothing else, when the sources do not answer the
+# question. One fixed sentence rather than "say you don't know", so that #33
+# can recognise an abstention by equality rather than by guessing at the
+# wording, and the harness can count it.
+ABSTAIN_PHRASE = "The filings do not answer this question."
+
+# The rules. The model is shown numbered sources and told to cite by number.
+# It is never shown a URL and never asked to name a company, a year or a
+# document, because whatever it is allowed to write it will sometimes invent:
+# an integer that names no source is caught by the resolver (#31), while an
+# invented URL would read as real. The sources' own metadata is in the header
+# so the model can tell FY2023 from FY2024 when both are shown, and that is
+# the only reason it is there.
+#
+# Markers are one integer per bracket, "[1][3]" and not "[1, 3]", because that
+# is the form the resolver reads. The rest are the failure modes a grounded
+# answer has: mixing years, quoting a figure without its period or unit, and
+# answering from memory when the sources fall short.
+SYSTEM_PROMPT = f"""\
+You answer questions about companies' annual reports (Form 10-K filings) using \
+only the numbered sources you are given.
+
+Rules:
+1. Use only the sources. Do not use any outside knowledge, even if you are sure \
+of it. If the sources do not contain the answer, reply with exactly this \
+sentence and nothing else: {ABSTAIN_PHRASE}
+2. Cite every claim. After each sentence that draws on a source, write the \
+source number in square brackets, like [2]. If a sentence draws on more than \
+one source, write each number in its own brackets, like [1][3]. Never write a \
+number that is not one of the sources given.
+3. Do not name a company, a fiscal year, a document or a web address unless \
+the source you are citing says it. The citation carries that information.
+4. Quote figures exactly as the source gives them, with their unit and the \
+period they cover. If the sources give figures for several years, say which \
+year each belongs to. Do not calculate a figure the sources do not state \
+unless the question asks for one, and then show the figures you used.
+5. If the sources disagree with each other or only partly answer the \
+question, say so rather than choosing one silently.
+6. Be concise: answer the question directly, then stop."""
+
+# One source, as the model sees it. Company and ticker so the model can tell
+# fifteen peers apart; the fiscal year so it can tell one company's five
+# filings apart; the Item and its title so it knows whether it is reading
+# risk factors or the income statement. No URL, no accession number, no date:
+# nothing it could copy into the answer.
+SOURCE_HEADER = "[{marker}] {company} ({ticker}), fiscal year {fiscal_year}, {section}"
+# The Item line inside the header, with and without an Item number.
+SOURCE_SECTION = "Item {item}: {title}"
+SOURCE_SECTION_NO_ITEM = "{title}"
+# What a table passage is labelled, so the model reads its first line as
+# column headers rather than as prose.
+SOURCE_TABLE_TAG = " (table)"
+
+# The user message: every source, then the question. Sources first so that
+# the question, which the model attends to most, sits closest to where it
+# starts writing.
+USER_PROMPT = """\
+Sources:
+
+{sources}
+
+Question: {question}"""
+
+# What separates one source from the next. Two blank lines, so a passage that
+# itself contains a blank line does not look like a source boundary.
+SOURCE_SEPARATOR = "\n\n\n"
