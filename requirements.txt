@@ -47,5 +47,15 @@ pydantic==2.13.5
 # and the tests mock Ollama's server with it.
 httpx==0.28.1
 
+# The Mistral test notebook (notebooks/mistral/):
+# - langchain-mistralai: Mistral's chat model for LangChain, the same interface ChatOllama implements.
+# - ipykernel: runs the notebook in VS Code or Jupyter.
+# - nbconvert: runs it from a terminal or an agent (jupyter nbconvert --execute).
+# - openpyxl: refreshes the test questions from the team's workbook.
+langchain-mistralai==1.1.6
+ipykernel==7.3.0
+nbconvert==7.17.1
+openpyxl==3.1.5
+
 # Tests: python -m pytest
 pytest==9.1.1
