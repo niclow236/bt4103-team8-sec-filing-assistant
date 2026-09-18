@@ -52,8 +52,26 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 MANIFEST_FILE = RAW_DIR / "manifest.jsonl"
 
 
+# The local settings file .env.example describes: the EDGAR identity, and which
+# local model answers and where Ollama runs. Git-ignored, and read into the
+# environment by load_env before anything reads the environment.
+ENV_FILE = PROJECT_ROOT / ".env"
+
+
 class MissingIdentityError(RuntimeError):
     """Raised when EDGAR_IDENTITY is not set."""
+
+
+def load_env(path: Path = ENV_FILE) -> bool:
+    """Read the local .env into the environment, once, without overriding it.
+
+    Every module that reads a setting from the environment calls this first,
+    so a value a teammate puts in .env is seen wherever it is read and not
+    only on the paths that happen to run configure_edgar. A variable already
+    set in the process wins over the file, so a shell export still overrides
+    it. Returns whether the file was found.
+    """
+    return load_dotenv(path)
 
 
 def configure_edgar() -> str:
@@ -67,7 +85,7 @@ def configure_edgar() -> str:
 
     Returns the identity string that was applied.
     """
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_env()
 
     identity = os.getenv("EDGAR_IDENTITY", "").strip()
     if not identity:

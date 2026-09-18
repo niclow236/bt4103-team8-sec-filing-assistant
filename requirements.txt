@@ -5,7 +5,7 @@
 # SEC EDGAR access: company lookup, filing download, and 10-K/10-Q section parsing.
 edgartools==5.56.0
 
-# Reads the local .env file so API keys and the EDGAR identity stay out of the repo.
+# Reads the local .env file so the EDGAR identity and machine settings stay out of the repo.
 python-dotenv==1.2.3
 
 # Sparse keyword retrieval baseline.
@@ -25,6 +25,27 @@ chromadb==1.5.9
 # dependency of sentence-transformers; pinned here because verify uses it
 # directly.
 tokenizers==0.23.2
+
+# Answer generation runs on a local model served by Ollama, since the team has
+# no budget for a paid API. Ollama itself is not a Python package: install it
+# from https://ollama.com/download and pull a model (see the README).
+#
+# LangChain's Ollama chat model is the client, streaming and token counts
+# included; langchain-core is what generate reads partial JSON with. ollama is
+# the client library underneath, pinned because generate catches its errors.
+langchain-core==1.6.3
+langchain-ollama==1.1.0
+ollama==0.6.2
+
+# The schema an answer is generated against and validated with. Already
+# installed as a dependency of chromadb and langchain-core; pinned here because
+# rag/records.py uses it directly.
+pydantic==2.13.5
+
+# HTTP client underneath the Ollama client. Already installed as a dependency
+# of edgartools and chromadb; pinned here because generate catches its errors
+# and the tests mock Ollama's server with it.
+httpx==0.28.1
 
 # Tests: python -m pytest
 pytest==9.1.1

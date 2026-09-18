@@ -8,7 +8,7 @@ import pytest
 
 from src.rag.constants import ABSTAIN_PHRASE, PROMPT_TEMPLATE_ID, SYSTEM_PROMPT
 from src.rag.prompt import GroundedPrompt, build_prompt, render_source
-from src.rag.records import Answer, Citation, GenerationConfig
+from src.rag.records import Answer, Citation, CitedSentence, GenerationConfig, GroundedAnswer
 from src.retrieval.records import RetrievedPassage
 
 
@@ -114,10 +114,21 @@ def test_a_passage_with_braces_or_a_blank_line_renders_verbatim():
 
 # --- the rules -----------------------------------------------------------------
 
-def test_the_rules_tell_the_model_to_cite_by_number_and_when_to_abstain():
-    assert "[1][3]" in SYSTEM_PROMPT
+def test_the_rules_describe_the_answer_schema_and_when_to_abstain():
+    # The fields the rules name are the fields the output schema requires, so
+    # renaming one without the other fails here.
+    assert set(GroundedAnswer.model_fields) == {"answerable", "sentences"}
+    assert set(CitedSentence.model_fields) == {"text", "sources"}
+    for field in ('"answerable"', '"sentences"', '"text"', '"sources"'):
+        assert field in SYSTEM_PROMPT
     assert "only the sources" in SYSTEM_PROMPT
-    assert ABSTAIN_PHRASE in SYSTEM_PROMPT
+    assert '"answerable" is false' in SYSTEM_PROMPT
+
+
+def test_the_rules_example_carries_no_content_a_model_could_copy():
+    example = SYSTEM_PROMPT.split("For example: ", 1)[1].split("\n", 1)[0]
+    assert '"text": "..."' in example
+    assert not re.search(r"\$|\d{4}|billion|million", example)
 
 
 def test_the_abstain_phrase_is_one_sentence_the_harness_can_match():
@@ -143,13 +154,13 @@ def test_the_template_id_is_bound_to_the_prompt_it_renders():
     """Any change to the rules or to how a source is rendered fails here.
 
     The id only means something if two results files that both say
-    "grounded_v3" were produced by the same prompt. Digesting the constants
+    "grounded_v4" were produced by the same prompt. Digesting the constants
     alone would leave the fiscal-year fallback, the header/text join and the
     sort key free to change the prompt silently, so the digest is taken over
     a rendered prompt instead.
     """
     digest = hashlib.sha256(build_prompt(QUESTION, GOLDEN).as_text().encode()).hexdigest()[:16]
-    assert (PROMPT_TEMPLATE_ID, digest) == ("grounded_v3", "d0d9f8aff7481d04")
+    assert (PROMPT_TEMPLATE_ID, digest) == ("grounded_v4", "d275684f7d54dcbc")
 
 
 # --- numbering and determinism ----------------------------------------------------
