@@ -801,7 +801,7 @@ from src.rag import render_citation, resolve_citations
 answer = resolve_citations(question, generation, prompt.passages)
 print(answer.text)  # unresolvable markers have been removed
 for sentence in answer.flagged_sentences:
-    print("Citation warning:", sentence.text)
+    print("Citation warning:", sentence.warning_text)
 for citation in answer.citations:
     print(render_citation(citation, answer.passages))
 ```
