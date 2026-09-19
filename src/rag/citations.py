@@ -90,7 +90,11 @@ def resolve_citations(
             if recovered.render() == generation.text:
                 structured = recovered
 
-    abstained = structured is not None and structured.abstained
+    abstained = (
+        structured.abstained
+        if structured is not None
+        else generation.text.strip() == ABSTAIN_PHRASE
+    )
     incomplete = generation.truncated or (
         structured is None and generation.parse_error is not None
     )
