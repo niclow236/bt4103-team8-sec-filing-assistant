@@ -799,6 +799,18 @@ the corpus does not hold, such as Intel, is reported in `parsed.unresolved`
 rather than silently ignored. `build_prompt` numbers the passages as sources,
 puts the rules above them, and never shows the model a URL.
 
+`parsed.to_query()` gives BM25 a different text from dense search. Once the
+filters confine the search to Meta's FY2025 filing, "Meta's" and "fiscal year
+2025" tell no passage in it apart, but BM25 still scores the prose that repeats
+them above the balance sheet, which never does. So BM25 matches
+`parsed.search_text`, the question without the companies and years the filters
+apply ("What was total assets at the end?"). Dense search still reads the whole
+question, since the embedding uses the company name to place it. On the 48 test
+questions, this split put the expected figure in the hybrid top 8 for 18 of 28
+figure questions, against 12 with the whole question and 16 with the trimmed
+text for both retrievers, and prose questions improved too. The comparison is
+`python notebooks/retrieval/search_text_comparison.py`.
+
 `generate` returns a `Generation`: `answer`, the parsed answer; `text`, the
 same answer as prose; `raw`, exactly what the model emitted; and the
 `latency_ms`, `input_tokens`, `output_tokens` and `stop_reason` of the call.
