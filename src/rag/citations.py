@@ -91,7 +91,9 @@ def resolve_citations(
                 structured = recovered
 
     abstained = structured is not None and structured.abstained
-    incomplete = generation.parse_error is not None or generation.truncated
+    incomplete = generation.truncated or (
+        structured is None and generation.parse_error is not None
+    )
     if abstained:
         sentences = ()
     else:
