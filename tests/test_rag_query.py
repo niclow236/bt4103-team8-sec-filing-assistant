@@ -398,6 +398,70 @@ def test_build_query_is_the_short_form():
     assert query.top_k == 5
 
 
+# --- search text ----------------------------------------------------------------
+
+@pytest.mark.parametrize("question, expected", [
+    ("What was Meta's total assets at the end of fiscal year 2025?",
+     "What was total assets at the end?"),
+    ("What did AAPL say in fiscal 2023 about supply chain?",
+     "What did say about supply chain?"),
+    ("Meta Platforms' capital expenditure", "capital expenditure"),
+    ("How did Microsoft's revenue change from FY2022 to FY2024?",
+     "How did revenue change?"),
+    ("How did Microsoft's revenue change in FY22-24?", "How did revenue change?"),
+    ("How much did Amazon generate in net sales during fiscal year 2025?",
+     "How much did generate in net sales?"),
+])
+def test_search_text_drops_the_companies_and_years_the_filters_apply(question, expected):
+    assert _parse(question).search_text == expected
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("What was Amazon's AWS segment operating income in fiscal year 2024?",
+     "What was AWS segment operating income?"),
+    ("How did Google Cloud revenue change in FY2024?", "How did Google Cloud revenue change?"),
+    ("What was Microsoft 365 revenue in FY2024?", "What was Microsoft 365 revenue?"),
+])
+def test_search_text_keeps_an_alias_that_names_a_segment_or_product(question, expected):
+    assert _parse(question).search_text == expected
+
+
+def test_search_text_keeps_a_year_inside_a_date():
+    parsed = _parse("How much did Meta hold in total assets as of December 31, 2025?")
+    assert parsed.fiscal_years == (2025,)
+    assert parsed.search_text == "How much did hold in total assets as of December 31, 2025?"
+
+
+def test_search_text_keeps_what_did_not_resolve():
+    parsed = _parse("How did Apple compete with NVIDIA in FY2019?")
+    assert "NVIDIA" in parsed.search_text
+    assert "FY2019" in parsed.search_text
+    assert "Apple" not in parsed.search_text
+
+
+def test_search_text_is_the_question_when_nothing_would_be_left():
+    assert _parse("Apple 2024").search_text == "Apple 2024"
+    assert _parse("What is a 10-K?").search_text == "What is a 10-K?"
+
+
+def test_to_query_gives_keyword_search_the_trimmed_text_and_dense_the_question():
+    query = _parse("What was Apple's revenue in FY2024?").to_query()
+    assert query.text == "What was Apple's revenue in FY2024?"
+    assert query.keyword_text == "What was revenue?"
+
+
+def test_to_query_sets_no_keyword_text_when_nothing_was_trimmed():
+    assert _parse("What is a 10-K?").to_query().keyword_text is None
+
+
+def test_a_hand_built_parsed_question_searches_its_question():
+    parsed = ParsedQuestion(
+        question="q", question_type="factual", tickers=(), fiscal_years=(),
+        unresolved=(), wants_figures=False,
+    )
+    assert parsed.search_text == "q"
+
+
 # --- frozen -------------------------------------------------------------------
 
 def test_parsed_question_is_frozen_and_normalised():

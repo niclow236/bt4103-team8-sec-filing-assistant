@@ -1,0 +1,433 @@
+﻿qid,retriever,text,search_text,figure_question,figure_in_top_k,figure_rank,section_in_top_k,terms_in_top_k
+Q01,bm25,full,What types of services did offer?,False,,,True,1.0
+Q01,dense,full,What types of services did offer?,False,,,True,1.0
+Q01,hybrid,full,What types of services did offer?,False,,,True,1.0
+Q01,bm25,trimmed,What types of services did offer?,False,,,False,0.4
+Q01,dense,trimmed,What types of services did offer?,False,,,True,1.0
+Q01,hybrid,trimmed,What types of services did offer?,False,,,True,0.2
+Q01,bm25,shipped,What types of services did offer?,False,,,False,0.4
+Q01,dense,shipped,What types of services did offer?,False,,,True,1.0
+Q01,hybrid,shipped,What types of services did offer?,False,,,True,1.0
+Q02,bm25,full,What services did provide?,False,,,True,1.0
+Q02,dense,full,What services did provide?,False,,,True,1.0
+Q02,hybrid,full,What services did provide?,False,,,True,1.0
+Q02,bm25,trimmed,What services did provide?,False,,,True,1.0
+Q02,dense,trimmed,What services did provide?,False,,,True,0.4
+Q02,hybrid,trimmed,What services did provide?,False,,,True,0.4
+Q02,bm25,shipped,What services did provide?,False,,,True,1.0
+Q02,dense,shipped,What services did provide?,False,,,True,1.0
+Q02,hybrid,shipped,What services did provide?,False,,,True,1.0
+Q03,bm25,full,What was total value of Accounts Payable at the end?,True,False,,True,
+Q03,dense,full,What was total value of Accounts Payable at the end?,True,True,8.0,True,
+Q03,hybrid,full,What was total value of Accounts Payable at the end?,True,False,20.0,True,
+Q03,bm25,trimmed,What was total value of Accounts Payable at the end?,True,False,13.0,True,
+Q03,dense,trimmed,What was total value of Accounts Payable at the end?,True,False,20.0,True,
+Q03,hybrid,trimmed,What was total value of Accounts Payable at the end?,True,True,5.0,True,
+Q03,bm25,shipped,What was total value of Accounts Payable at the end?,True,False,13.0,True,
+Q03,dense,shipped,What was total value of Accounts Payable at the end?,True,True,8.0,True,
+Q03,hybrid,shipped,What was total value of Accounts Payable at the end?,True,True,2.0,True,
+Q04,bm25,full,What was iPhone net sales?,True,False,11.0,True,
+Q04,dense,full,What was iPhone net sales?,True,True,2.0,True,
+Q04,hybrid,full,What was iPhone net sales?,True,True,5.0,True,
+Q04,bm25,trimmed,What was iPhone net sales?,True,True,3.0,True,
+Q04,dense,trimmed,What was iPhone net sales?,True,True,1.0,True,
+Q04,hybrid,trimmed,What was iPhone net sales?,True,True,2.0,True,
+Q04,bm25,shipped,What was iPhone net sales?,True,True,3.0,True,
+Q04,dense,shipped,What was iPhone net sales?,True,True,2.0,True,
+Q04,hybrid,shipped,What was iPhone net sales?,True,True,3.0,True,
+Q05,bm25,full,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,dense,full,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,hybrid,full,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,bm25,trimmed,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,dense,trimmed,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,hybrid,trimmed,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,bm25,shipped,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,dense,shipped,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q05,hybrid,shipped,What were the adverse macroeconomic conditions that could negatively impact demand for its products and services?,False,,,True,1.0
+Q06,bm25,full,What was Inventories value at the end?,True,False,,True,
+Q06,dense,full,What was Inventories value at the end?,True,False,19.0,True,
+Q06,hybrid,full,What was Inventories value at the end?,True,False,40.0,True,
+Q06,bm25,trimmed,What was Inventories value at the end?,True,False,,True,
+Q06,dense,trimmed,What was Inventories value at the end?,True,False,25.0,True,
+Q06,hybrid,trimmed,What was Inventories value at the end?,True,False,46.0,True,
+Q06,bm25,shipped,What was Inventories value at the end?,True,False,,True,
+Q06,dense,shipped,What was Inventories value at the end?,True,False,19.0,True,
+Q06,hybrid,shipped,What was Inventories value at the end?,True,False,39.0,True,
+Q07,bm25,full,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,dense,full,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,hybrid,full,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,bm25,trimmed,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,dense,trimmed,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,hybrid,trimmed,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,bm25,shipped,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,dense,shipped,Who were the Executive Vice President of?,False,,,True,1.0
+Q07,hybrid,shipped,Who were the Executive Vice President of?,False,,,True,1.0
+Q08,bm25,full,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,dense,full,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,hybrid,full,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,bm25,trimmed,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,dense,trimmed,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,hybrid,trimmed,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,bm25,shipped,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,dense,shipped,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q08,hybrid,shipped,Which executives held the title of Executive Vice President at?,False,,,True,1.0
+Q09,bm25,full,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,dense,full,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,hybrid,full,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,bm25,trimmed,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,dense,trimmed,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,hybrid,trimmed,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,bm25,shipped,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,dense,shipped,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q09,hybrid,shipped,What hardware products does identify as having quality or supply problems?,False,,,True,1.0
+Q10,bm25,full,What was total net income?,True,False,37.0,True,
+Q10,dense,full,What was total net income?,True,False,20.0,True,
+Q10,hybrid,full,What was total net income?,True,False,11.0,True,
+Q10,bm25,trimmed,What was total net income?,True,False,25.0,True,
+Q10,dense,trimmed,What was total net income?,True,True,2.0,True,
+Q10,hybrid,trimmed,What was total net income?,True,True,6.0,True,
+Q10,bm25,shipped,What was total net income?,True,False,25.0,True,
+Q10,dense,shipped,What was total net income?,True,False,20.0,True,
+Q10,hybrid,shipped,What was total net income?,True,True,7.0,True,
+Q11,bm25,full,What was Intelligent Cloud operating income?,True,False,12.0,True,
+Q11,dense,full,What was Intelligent Cloud operating income?,True,True,3.0,True,
+Q11,hybrid,full,What was Intelligent Cloud operating income?,True,True,6.0,True,
+Q11,bm25,trimmed,What was Intelligent Cloud operating income?,True,True,3.0,True,
+Q11,dense,trimmed,What was Intelligent Cloud operating income?,True,True,3.0,True,
+Q11,hybrid,trimmed,What was Intelligent Cloud operating income?,True,True,2.0,True,
+Q11,bm25,shipped,What was Intelligent Cloud operating income?,True,True,3.0,True,
+Q11,dense,shipped,What was Intelligent Cloud operating income?,True,True,3.0,True,
+Q11,hybrid,shipped,What was Intelligent Cloud operating income?,True,True,2.0,True,
+Q12,bm25,full,What was effective tax rate?,True,False,38.0,True,
+Q12,dense,full,What was effective tax rate?,True,True,3.0,True,
+Q12,hybrid,full,What was effective tax rate?,True,True,8.0,True,
+Q12,bm25,trimmed,What was effective tax rate?,True,False,14.0,True,
+Q12,dense,trimmed,What was effective tax rate?,True,True,5.0,True,
+Q12,hybrid,trimmed,What was effective tax rate?,True,True,6.0,True,
+Q12,bm25,shipped,What was effective tax rate?,True,False,14.0,True,
+Q12,dense,shipped,What was effective tax rate?,True,True,3.0,True,
+Q12,hybrid,shipped,What was effective tax rate?,True,True,6.0,True,
+Q13,bm25,full,What were the risks relating to taxes for?,False,,,False,0.375
+Q13,dense,full,What were the risks relating to taxes for?,False,,,True,1.0
+Q13,hybrid,full,What were the risks relating to taxes for?,False,,,True,1.0
+Q13,bm25,trimmed,What were the risks relating to taxes for?,False,,,True,0.875
+Q13,dense,trimmed,What were the risks relating to taxes for?,False,,,True,1.0
+Q13,hybrid,trimmed,What were the risks relating to taxes for?,False,,,True,1.0
+Q13,bm25,shipped,What were the risks relating to taxes for?,False,,,True,0.875
+Q13,dense,shipped,What were the risks relating to taxes for?,False,,,True,1.0
+Q13,hybrid,shipped,What were the risks relating to taxes for?,False,,,True,1.0
+Q14,bm25,full,What were tax risk exposures?,False,,,False,0.5
+Q14,dense,full,What were tax risk exposures?,False,,,True,1.0
+Q14,hybrid,full,What were tax risk exposures?,False,,,False,0.375
+Q14,bm25,trimmed,What were tax risk exposures?,False,,,True,0.875
+Q14,dense,trimmed,What were tax risk exposures?,False,,,True,1.0
+Q14,hybrid,trimmed,What were tax risk exposures?,False,,,True,1.0
+Q14,bm25,shipped,What were tax risk exposures?,False,,,True,0.875
+Q14,dense,shipped,What were tax risk exposures?,False,,,True,1.0
+Q14,hybrid,shipped,What were tax risk exposures?,False,,,True,0.75
+Q15,bm25,full,What was total net revenue from subscriptions and services?,True,True,2.0,True,
+Q15,dense,full,What was total net revenue from subscriptions and services?,True,True,4.0,True,
+Q15,hybrid,full,What was total net revenue from subscriptions and services?,True,True,1.0,True,
+Q15,bm25,trimmed,What was total net revenue from subscriptions and services?,True,True,1.0,True,
+Q15,dense,trimmed,What was total net revenue from subscriptions and services?,True,True,8.0,True,
+Q15,hybrid,trimmed,What was total net revenue from subscriptions and services?,True,True,3.0,True,
+Q15,bm25,shipped,What was total net revenue from subscriptions and services?,True,True,1.0,True,
+Q15,dense,shipped,What was total net revenue from subscriptions and services?,True,True,4.0,True,
+Q15,hybrid,shipped,What was total net revenue from subscriptions and services?,True,True,1.0,True,
+Q16,bm25,full,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,dense,full,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,hybrid,full,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,bm25,trimmed,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,dense,trimmed,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,hybrid,trimmed,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,bm25,shipped,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,dense,shipped,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q16,hybrid,shipped,Who was the Chief Legal and Coporate Affairs Officer of?,False,,,True,1.0
+Q17,bm25,full,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,dense,full,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,hybrid,full,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,bm25,trimmed,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,dense,trimmed,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,hybrid,trimmed,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,bm25,shipped,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,dense,shipped,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q17,hybrid,shipped,What are the main risks relating to indebtedness?,False,,,True,1.0
+Q18,bm25,full,What was total Cost of Products sold?,True,True,1.0,True,
+Q18,dense,full,What was total Cost of Products sold?,True,True,4.0,True,
+Q18,hybrid,full,What was total Cost of Products sold?,True,True,1.0,True,
+Q18,bm25,trimmed,What was total Cost of Products sold?,True,True,1.0,True,
+Q18,dense,trimmed,What was total Cost of Products sold?,True,False,10.0,True,
+Q18,hybrid,trimmed,What was total Cost of Products sold?,True,True,2.0,True,
+Q18,bm25,shipped,What was total Cost of Products sold?,True,True,1.0,True,
+Q18,dense,shipped,What was total Cost of Products sold?,True,True,4.0,True,
+Q18,hybrid,shipped,What was total Cost of Products sold?,True,True,1.0,True,
+Q19,bm25,full,What hardware products generated revenue for?,False,,,True,1.0
+Q19,dense,full,What hardware products generated revenue for?,False,,,True,1.0
+Q19,hybrid,full,What hardware products generated revenue for?,False,,,True,1.0
+Q19,bm25,trimmed,What hardware products generated revenue for?,False,,,True,1.0
+Q19,dense,trimmed,What hardware products generated revenue for?,False,,,True,1.0
+Q19,hybrid,trimmed,What hardware products generated revenue for?,False,,,True,1.0
+Q19,bm25,shipped,What hardware products generated revenue for?,False,,,True,1.0
+Q19,dense,shipped,What hardware products generated revenue for?,False,,,True,1.0
+Q19,hybrid,shipped,What hardware products generated revenue for?,False,,,True,1.0
+Q20,bm25,full,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,dense,full,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,hybrid,full,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,bm25,trimmed,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,dense,trimmed,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,hybrid,trimmed,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,bm25,shipped,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,dense,shipped,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q20,hybrid,shipped,Which hardware devices contributed to revenue?,False,,,True,1.0
+Q21,bm25,full,What percentage of total Revenue came from the United States?,True,True,1.0,True,
+Q21,dense,full,What percentage of total Revenue came from the United States?,True,True,1.0,True,
+Q21,hybrid,full,What percentage of total Revenue came from the United States?,True,True,1.0,True,
+Q21,bm25,trimmed,What percentage of total Revenue came from the United States?,True,True,5.0,True,
+Q21,dense,trimmed,What percentage of total Revenue came from the United States?,True,True,7.0,True,
+Q21,hybrid,trimmed,What percentage of total Revenue came from the United States?,True,True,4.0,True,
+Q21,bm25,shipped,What percentage of total Revenue came from the United States?,True,True,5.0,True,
+Q21,dense,shipped,What percentage of total Revenue came from the United States?,True,True,1.0,True,
+Q21,hybrid,shipped,What percentage of total Revenue came from the United States?,True,True,1.0,True,
+Q22,bm25,full,What was the total value of Marketable Securities at the end?,True,False,,True,
+Q22,dense,full,What was the total value of Marketable Securities at the end?,True,False,35.0,True,
+Q22,hybrid,full,What was the total value of Marketable Securities at the end?,True,False,,True,
+Q22,bm25,trimmed,What was the total value of Marketable Securities at the end?,True,False,,True,
+Q22,dense,trimmed,What was the total value of Marketable Securities at the end?,True,False,18.0,True,
+Q22,hybrid,trimmed,What was the total value of Marketable Securities at the end?,True,False,29.0,True,
+Q22,bm25,shipped,What was the total value of Marketable Securities at the end?,True,False,,True,
+Q22,dense,shipped,What was the total value of Marketable Securities at the end?,True,False,35.0,True,
+Q22,hybrid,shipped,What was the total value of Marketable Securities at the end?,True,False,,True,
+Q23,bm25,full,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.6
+Q23,dense,full,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.8
+Q23,hybrid,full,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.7
+Q23,bm25,trimmed,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,1.0
+Q23,dense,trimmed,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.6
+Q23,hybrid,trimmed,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.8
+Q23,bm25,shipped,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,1.0
+Q23,dense,shipped,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.8
+Q23,hybrid,shipped,What were the copyright and intellectual property risks associated with AI products and services?,False,,,True,0.8
+Q24,bm25,full,What was total cost of revenues?,True,False,9.0,True,
+Q24,dense,full,What was total cost of revenues?,True,False,13.0,True,
+Q24,hybrid,full,What was total cost of revenues?,True,False,14.0,True,
+Q24,bm25,trimmed,What was total cost of revenues?,True,True,2.0,True,
+Q24,dense,trimmed,What was total cost of revenues?,True,True,4.0,True,
+Q24,hybrid,trimmed,What was total cost of revenues?,True,True,6.0,True,
+Q24,bm25,shipped,What was total cost of revenues?,True,True,2.0,True,
+Q24,dense,shipped,What was total cost of revenues?,True,False,13.0,True,
+Q24,hybrid,shipped,What was total cost of revenues?,True,True,7.0,True,
+Q25,bm25,full,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,dense,full,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,hybrid,full,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,bm25,trimmed,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,dense,trimmed,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,hybrid,trimmed,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,bm25,shipped,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,dense,shipped,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q25,hybrid,shipped,What products did offer under its Family of Apps segment?,False,,,True,1.0
+Q26,bm25,full,What was total liabilities at the end?,True,False,,True,
+Q26,dense,full,What was total liabilities at the end?,True,False,11.0,True,
+Q26,hybrid,full,What was total liabilities at the end?,True,False,23.0,True,
+Q26,bm25,trimmed,What was total liabilities at the end?,True,False,,True,
+Q26,dense,trimmed,What was total liabilities at the end?,True,False,15.0,True,
+Q26,hybrid,trimmed,What was total liabilities at the end?,True,False,34.0,True,
+Q26,bm25,shipped,What was total liabilities at the end?,True,False,,True,
+Q26,dense,shipped,What was total liabilities at the end?,True,False,11.0,True,
+Q26,hybrid,shipped,What was total liabilities at the end?,True,False,22.0,True,
+Q27,bm25,full,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,dense,full,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,hybrid,full,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,bm25,trimmed,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,dense,trimmed,How did ad impressions and average price per ad change year over year?,True,True,3.0,True,
+Q27,hybrid,trimmed,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,bm25,shipped,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,dense,shipped,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q27,hybrid,shipped,How did ad impressions and average price per ad change year over year?,True,True,1.0,True,
+Q28,bm25,full,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,dense,full,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,hybrid,full,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,bm25,trimmed,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,dense,trimmed,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,hybrid,trimmed,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,bm25,shipped,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,dense,shipped,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q28,hybrid,shipped,What risks did identify as arising from its generative AI efforts?,False,,,True,1.0
+Q29,bm25,full,What was total assets at the end?,True,False,,True,
+Q29,dense,full,What was total assets at the end?,True,True,4.0,True,
+Q29,hybrid,full,What was total assets at the end?,True,False,14.0,True,
+Q29,bm25,trimmed,What was total assets at the end?,True,False,,True,
+Q29,dense,trimmed,What was total assets at the end?,True,False,11.0,True,
+Q29,hybrid,trimmed,What was total assets at the end?,True,False,22.0,True,
+Q29,bm25,shipped,What was total assets at the end?,True,False,,True,
+Q29,dense,shipped,What was total assets at the end?,True,True,4.0,True,
+Q29,hybrid,shipped,What was total assets at the end?,True,False,12.0,True,
+Q30,bm25,full,"How much did hold in total assets as of December 31, 2025?",True,False,27.0,True,
+Q30,dense,full,"How much did hold in total assets as of December 31, 2025?",True,True,5.0,True,
+Q30,hybrid,full,"How much did hold in total assets as of December 31, 2025?",True,False,17.0,True,
+Q30,bm25,trimmed,"How much did hold in total assets as of December 31, 2025?",True,False,12.0,True,
+Q30,dense,trimmed,"How much did hold in total assets as of December 31, 2025?",True,False,10.0,True,
+Q30,hybrid,trimmed,"How much did hold in total assets as of December 31, 2025?",True,False,23.0,True,
+Q30,bm25,shipped,"How much did hold in total assets as of December 31, 2025?",True,False,12.0,True,
+Q30,dense,shipped,"How much did hold in total assets as of December 31, 2025?",True,True,5.0,True,
+Q30,hybrid,shipped,"How much did hold in total assets as of December 31, 2025?",True,False,19.0,True,
+Q31,bm25,full,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,dense,full,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,hybrid,full,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,bm25,trimmed,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,dense,trimmed,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,hybrid,trimmed,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,bm25,shipped,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,dense,shipped,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q31,hybrid,shipped,What electronic devices did manufacture and sell?,False,,,True,1.0
+Q32,bm25,full,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,dense,full,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,hybrid,full,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,bm25,trimmed,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,dense,trimmed,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,hybrid,trimmed,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,bm25,shipped,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,dense,shipped,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q32,hybrid,shipped,What factors did identify as creating significant inventory risk?,False,,,True,1.0
+Q33,bm25,full,What was total stockholders' equity at the end?,True,False,23.0,True,
+Q33,dense,full,What was total stockholders' equity at the end?,True,True,3.0,True,
+Q33,hybrid,full,What was total stockholders' equity at the end?,True,True,4.0,True,
+Q33,bm25,trimmed,What was total stockholders' equity at the end?,True,True,2.0,True,
+Q33,dense,trimmed,What was total stockholders' equity at the end?,True,True,2.0,True,
+Q33,hybrid,trimmed,What was total stockholders' equity at the end?,True,True,1.0,True,
+Q33,bm25,shipped,What was total stockholders' equity at the end?,True,True,2.0,True,
+Q33,dense,shipped,What was total stockholders' equity at the end?,True,True,3.0,True,
+Q33,hybrid,shipped,What was total stockholders' equity at the end?,True,True,3.0,True,
+Q34,bm25,full,What was AWS segment operating income?,True,False,16.0,True,
+Q34,dense,full,What was AWS segment operating income?,True,False,14.0,True,
+Q34,hybrid,full,What was AWS segment operating income?,True,False,12.0,True,
+Q34,bm25,trimmed,What was AWS segment operating income?,True,False,10.0,True,
+Q34,dense,trimmed,What was AWS segment operating income?,True,False,17.0,True,
+Q34,hybrid,trimmed,What was AWS segment operating income?,True,False,10.0,True,
+Q34,bm25,shipped,What was AWS segment operating income?,True,False,10.0,True,
+Q34,dense,shipped,What was AWS segment operating income?,True,False,14.0,True,
+Q34,hybrid,shipped,What was AWS segment operating income?,True,True,7.0,True,
+Q35,bm25,full,What was total net sales?,True,False,43.0,True,
+Q35,dense,full,What was total net sales?,True,True,6.0,True,
+Q35,hybrid,full,What was total net sales?,True,False,20.0,True,
+Q35,bm25,trimmed,What was total net sales?,True,True,1.0,True,
+Q35,dense,trimmed,What was total net sales?,True,True,8.0,True,
+Q35,hybrid,trimmed,What was total net sales?,True,True,7.0,True,
+Q35,bm25,shipped,What was total net sales?,True,True,1.0,True,
+Q35,dense,shipped,What was total net sales?,True,True,6.0,True,
+Q35,hybrid,shipped,What was total net sales?,True,False,11.0,True,
+Q36,bm25,full,How much did generate in net sales?,True,False,44.0,True,
+Q36,dense,full,How much did generate in net sales?,True,False,10.0,True,
+Q36,hybrid,full,How much did generate in net sales?,True,False,23.0,True,
+Q36,bm25,trimmed,How much did generate in net sales?,True,False,37.0,True,
+Q36,dense,trimmed,How much did generate in net sales?,True,False,11.0,True,
+Q36,hybrid,trimmed,How much did generate in net sales?,True,False,21.0,True,
+Q36,bm25,shipped,How much did generate in net sales?,True,False,37.0,True,
+Q36,dense,shipped,How much did generate in net sales?,True,False,10.0,True,
+Q36,hybrid,shipped,How much did generate in net sales?,True,False,23.0,True,
+Q37,bm25,full,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,True,1.0,True,
+Q37,dense,full,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,False,,False,
+Q37,hybrid,full,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,True,8.0,True,
+Q37,bm25,trimmed,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,True,1.0,True,
+Q37,dense,trimmed,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,False,25.0,False,
+Q37,hybrid,trimmed,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,True,4.0,True,
+Q37,bm25,shipped,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,True,1.0,True,
+Q37,dense,shipped,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,False,,False,
+Q37,hybrid,shipped,"What was the aggregate amount of outstanding indebtedness, and over what period was it scheduled to mature?",True,True,4.0,True,
+Q38,bm25,full,What was revenue from cloud services and license support?,True,False,19.0,False,
+Q38,dense,full,What was revenue from cloud services and license support?,True,False,12.0,False,
+Q38,hybrid,full,What was revenue from cloud services and license support?,True,False,15.0,False,
+Q38,bm25,trimmed,What was revenue from cloud services and license support?,True,False,10.0,False,
+Q38,dense,trimmed,What was revenue from cloud services and license support?,True,False,22.0,False,
+Q38,hybrid,trimmed,What was revenue from cloud services and license support?,True,False,17.0,False,
+Q38,bm25,shipped,What was revenue from cloud services and license support?,True,False,10.0,False,
+Q38,dense,shipped,What was revenue from cloud services and license support?,True,False,12.0,False,
+Q38,hybrid,shipped,What was revenue from cloud services and license support?,True,False,11.0,False,
+Q39,bm25,full,What were the three businesses operated?,False,,,True,1.0
+Q39,dense,full,What were the three businesses operated?,False,,,True,1.0
+Q39,hybrid,full,What were the three businesses operated?,False,,,True,1.0
+Q39,bm25,trimmed,What were the three businesses operated?,False,,,True,1.0
+Q39,dense,trimmed,What were the three businesses operated?,False,,,True,1.0
+Q39,hybrid,trimmed,What were the three businesses operated?,False,,,True,1.0
+Q39,bm25,shipped,What were the three businesses operated?,False,,,True,1.0
+Q39,dense,shipped,What were the three businesses operated?,False,,,True,1.0
+Q39,hybrid,shipped,What were the three businesses operated?,False,,,True,1.0
+Q40,bm25,full,What were total revenues?,True,False,42.0,True,
+Q40,dense,full,What were total revenues?,True,False,15.0,True,
+Q40,hybrid,full,What were total revenues?,True,False,19.0,True,
+Q40,bm25,trimmed,What were total revenues?,True,False,13.0,True,
+Q40,dense,trimmed,What were total revenues?,True,False,15.0,True,
+Q40,hybrid,trimmed,What were total revenues?,True,False,14.0,True,
+Q40,bm25,shipped,What were total revenues?,True,False,13.0,True,
+Q40,dense,shipped,What were total revenues?,True,False,15.0,True,
+Q40,hybrid,shipped,What were total revenues?,True,False,15.0,True,
+Q41,bm25,full,What was net income?,True,False,31.0,False,
+Q41,dense,full,What was net income?,True,False,12.0,False,
+Q41,hybrid,full,What was net income?,True,False,16.0,False,
+Q41,bm25,trimmed,What was net income?,True,False,14.0,False,
+Q41,dense,trimmed,What was net income?,True,True,4.0,False,
+Q41,hybrid,trimmed,What was net income?,True,True,5.0,False,
+Q41,bm25,shipped,What was net income?,True,False,14.0,False,
+Q41,dense,shipped,What was net income?,True,False,12.0,False,
+Q41,hybrid,shipped,What was net income?,True,True,8.0,False,
+Q42,bm25,full,How much did earn in net income?,True,False,41.0,False,
+Q42,dense,full,How much did earn in net income?,True,False,12.0,False,
+Q42,hybrid,full,How much did earn in net income?,True,False,21.0,False,
+Q42,bm25,trimmed,How much did earn in net income?,True,False,11.0,False,
+Q42,dense,trimmed,How much did earn in net income?,True,True,3.0,False,
+Q42,hybrid,trimmed,How much did earn in net income?,True,True,2.0,False,
+Q42,bm25,shipped,How much did earn in net income?,True,False,11.0,False,
+Q42,dense,shipped,How much did earn in net income?,True,False,12.0,False,
+Q42,hybrid,shipped,How much did earn in net income?,True,True,7.0,False,
+Q43,bm25,full,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,dense,full,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,hybrid,full,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,bm25,trimmed,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,dense,trimmed,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,hybrid,trimmed,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,bm25,shipped,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,dense,shipped,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q43,hybrid,shipped,What service offerings made up Customer 360 platform?,False,,,True,1.0
+Q44,bm25,full,"What was subscription and support revenue, and what share of total revenues did it represent?",True,False,15.0,True,
+Q44,dense,full,"What was subscription and support revenue, and what share of total revenues did it represent?",True,True,14.0,True,
+Q44,hybrid,full,"What was subscription and support revenue, and what share of total revenues did it represent?",True,True,9.0,True,
+Q44,bm25,trimmed,"What was subscription and support revenue, and what share of total revenues did it represent?",True,False,11.0,True,
+Q44,dense,trimmed,"What was subscription and support revenue, and what share of total revenues did it represent?",True,False,11.0,True,
+Q44,hybrid,trimmed,"What was subscription and support revenue, and what share of total revenues did it represent?",True,False,10.0,True,
+Q44,bm25,shipped,"What was subscription and support revenue, and what share of total revenues did it represent?",True,False,11.0,True,
+Q44,dense,shipped,"What was subscription and support revenue, and what share of total revenues did it represent?",True,True,14.0,True,
+Q44,hybrid,shipped,"What was subscription and support revenue, and what share of total revenues did it represent?",True,True,9.0,True,
+Q45,bm25,full,What was the total value of Goodwill at the end?,True,False,,True,
+Q45,dense,full,What was the total value of Goodwill at the end?,True,False,46.0,True,
+Q45,hybrid,full,What was the total value of Goodwill at the end?,True,False,,True,
+Q45,bm25,trimmed,What was the total value of Goodwill at the end?,True,False,,True,
+Q45,dense,trimmed,What was the total value of Goodwill at the end?,True,False,,True,
+Q45,hybrid,trimmed,What was the total value of Goodwill at the end?,True,False,,True,
+Q45,bm25,shipped,What was the total value of Goodwill at the end?,True,False,,True,
+Q45,dense,shipped,What was the total value of Goodwill at the end?,True,False,46.0,True,
+Q45,hybrid,shipped,What was the total value of Goodwill at the end?,True,False,,True,
+Q46,bm25,full,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,dense,full,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,hybrid,full,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,bm25,trimmed,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,dense,trimmed,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,hybrid,trimmed,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,bm25,shipped,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,dense,shipped,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q46,hybrid,shipped,What were the known risks of generative AI that identified?,False,,,True,1.0
+Q47,bm25,full,What percentage of total revenue came from the Americas?,True,False,18.0,True,
+Q47,dense,full,What percentage of total revenue came from the Americas?,True,True,2.0,True,
+Q47,hybrid,full,What percentage of total revenue came from the Americas?,True,True,5.0,True,
+Q47,bm25,trimmed,What percentage of total revenue came from the Americas?,True,False,20.0,True,
+Q47,dense,trimmed,What percentage of total revenue came from the Americas?,True,True,2.0,True,
+Q47,hybrid,trimmed,What percentage of total revenue came from the Americas?,True,False,10.0,True,
+Q47,bm25,shipped,What percentage of total revenue came from the Americas?,True,False,20.0,True,
+Q47,dense,shipped,What percentage of total revenue came from the Americas?,True,True,2.0,True,
+Q47,hybrid,shipped,What percentage of total revenue came from the Americas?,True,True,4.0,True,
+Q48,bm25,full,What was the Americas' contribution as a percentage of total revenue?,True,False,23.0,True,
+Q48,dense,full,What was the Americas' contribution as a percentage of total revenue?,True,True,1.0,True,
+Q48,hybrid,full,What was the Americas' contribution as a percentage of total revenue?,True,True,7.0,True,
+Q48,bm25,trimmed,What was the Americas' contribution as a percentage of total revenue?,True,False,12.0,True,
+Q48,dense,trimmed,What was the Americas' contribution as a percentage of total revenue?,True,True,2.0,True,
+Q48,hybrid,trimmed,What was the Americas' contribution as a percentage of total revenue?,True,True,5.0,True,
+Q48,bm25,shipped,What was the Americas' contribution as a percentage of total revenue?,True,False,12.0,True,
+Q48,dense,shipped,What was the Americas' contribution as a percentage of total revenue?,True,True,1.0,True,
+Q48,hybrid,shipped,What was the Americas' contribution as a percentage of total revenue?,True,True,4.0,True,

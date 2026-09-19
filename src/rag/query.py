@@ -50,6 +50,7 @@ from .constants import (
     QUANTITY_BEFORE,
     QUESTION_TYPES,
     REPORTING_VERBS,
+    SEGMENT_ALIASES,
     TEMPORAL_CUES,
 )
 
@@ -159,6 +160,13 @@ class ParsedQuestion:
     fiscal_years: tuple[int, ...]
     unresolved: tuple[str, ...]
     wants_figures: bool
+    # The question with the companies and years the filters apply taken out
+    # (#87), which is what keyword search matches. Inside the filtered filing
+    # those words tell no passage apart, but BM25 still scores the prose that
+    # repeats them above the statement tables that never do. None, for a
+    # ParsedQuestion built by hand, means the question itself. See
+    # ``_search_text`` for what is removed and what stays.
+    search_text: str | None = None
 
     def __post_init__(self) -> None:
         if self.question_type not in QUESTION_TYPES:
@@ -169,6 +177,8 @@ class ParsedQuestion:
         object.__setattr__(self, "tickers", tuple(self.tickers))
         object.__setattr__(self, "fiscal_years", tuple(self.fiscal_years))
         object.__setattr__(self, "unresolved", tuple(self.unresolved))
+        if self.search_text is None:
+            object.__setattr__(self, "search_text", self.question)
 
     @property
     def filters(self) -> dict[str, Any]:
@@ -211,9 +221,16 @@ class ParsedQuestion:
         wants a figure, and only then: ``constants.TABLE_BOOST`` is documented
         as the value to set for a numeric question and never as a default, so
         a prose question is scored with the boost off.
+
+        Keyword search gets ``search_text`` and dense search the question as
+        asked, which is the split that measured best (see
+        ``Query.keyword_text``). The prompt is built from the question by
+        whoever calls ``build_prompt``, so the model still reads what the user
+        asked.
         """
         fields: dict[str, Any] = {
             "text": self.question,
+            "keyword_text": self.search_text if self.search_text != self.question else None,
             "tickers": self.tickers,
             "fiscal_years": self.fiscal_years,
             "table_boost": TABLE_BOOST if self.wants_figures else 1.0,
@@ -258,6 +275,7 @@ def parse_question(
         fiscal_years=years,
         unresolved=tuple(out_of_scope) + tuple(bad_years),
         wants_figures=wants_figures,
+        search_text=_search_text(question.strip(), tickers, years),
     )
 
 
@@ -410,6 +428,85 @@ def _years(question: str, bounds: tuple[int, int]) -> tuple[tuple[int, ...], tup
                 named.update(range(start, end + 1))
 
     return tuple(sorted(y for y in named if low <= y <= high)), tuple(bad)
+
+
+# --- search text ------------------------------------------------------------
+
+# What follows a company name to make it possessive: "Apple's", "Meta Platforms'".
+_POSSESSIVE_AFTER = re.compile(r"['’]s\b|['’](?!\w)")
+# What follows an alias to make it part of a product or segment name rather
+# than the company: "Google Cloud", "Microsoft 365". Not a four-digit number,
+# which is a year: "Apple 2024" is Apple in 2024.
+_NAME_CONTINUES = re.compile(r"\s+(?:[A-Z]|\d(?!\d{3}\b))")
+# The word that introduces a year, or joins two into a range, and means nothing
+# once the year is gone: "in FY2024", "from 2022 to 2024", "FY22 - FY24".
+_YEAR_LEAD_IN = re.compile(
+    r"(?:\b(?:in|for|during|from|to|through|between|and|of)|[-–—])\s*$", re.IGNORECASE
+)
+# A month and day before a year make it a date, which stays: "December 31,
+# 2025" is how a balance sheet heads its column, so it is the one way of
+# writing the year that matches a statement table.
+_DATE_BEFORE = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s*$",
+    re.IGNORECASE,
+)
+_SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:?!])")
+_REPEATED_PUNCTUATION = re.compile(r"([,;:])(?:\s*[,;:])+")
+
+
+def _search_text(question: str, tickers: tuple[str, ...], years: tuple[int, ...]) -> str:
+    """The question without the companies and years its filters already apply.
+
+    Only what resolved is removed: a company or a year the corpus does not hold
+    filters nothing, so its name is still the best thing to search for. A
+    ticker, an alias with its possessive, and a year with the word that
+    introduces it all go. An alias that names a segment or a product stays
+    (see ``constants.SEGMENT_ALIASES``), and so does a year inside a date,
+    which is how a statement table writes it. If nothing but punctuation would be
+    left, the question is searched as asked.
+    """
+    # The same rewrite _years reads, so "FY22-24" loses both years.
+    text = _SHORT_RANGE.sub(r"\1\2 \3 \1\4", question)
+    spans: list[tuple[int, int]] = []
+
+    if tickers:
+        for match in _ticker_pattern(frozenset(tickers)).finditer(text):
+            spans.append((match.start(), _past_possessive(text, match.end())))
+        for ticker in tickers:
+            pattern = _IN_SCOPE_PATTERNS.get(ticker)
+            for match in pattern.finditer(text) if pattern else ():
+                end = match.end()
+                if match.group(0).lower() in SEGMENT_ALIASES:
+                    continue
+                if not _POSSESSIVE_AFTER.match(text, end) and _NAME_CONTINUES.match(text, end):
+                    continue
+                spans.append((match.start(), _past_possessive(text, end)))
+
+    for match in _YEAR.finditer(text):
+        if _is_not_a_year(text, match) or _year_value(match) not in years:
+            continue
+        if _DATE_BEFORE.search(text, 0, match.start()):
+            continue
+        lead_in = _YEAR_LEAD_IN.search(text, 0, match.start())
+        spans.append((lead_in.start() if lead_in else match.start(), match.end()))
+
+    if not spans:
+        return question
+    kept, position = [], 0
+    for start, end in sorted(spans):
+        if start > position:
+            kept.append(text[position:start])
+        position = max(position, end)
+    kept.append(text[position:])
+    trimmed = " ".join("".join(kept).split())
+    trimmed = _REPEATED_PUNCTUATION.sub(r"\1", _SPACE_BEFORE_PUNCTUATION.sub(r"\1", trimmed))
+    return trimmed if re.search(r"\w", trimmed) else question
+
+
+def _past_possessive(text: str, end: int) -> int:
+    """Where a name ends once the possessive after it is included."""
+    match = _POSSESSIVE_AFTER.match(text, end)
+    return match.end() if match else end
 
 
 # --- classification ---------------------------------------------------------
