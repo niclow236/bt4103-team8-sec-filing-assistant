@@ -18,8 +18,13 @@ hands to the model and whose ``passages`` go onto the ``Answer`` unchanged.
 LangChain's ``ChatOllama`` with the answer's JSON schema as the output format,
 streaming the answer as prose and returning a ``Generation`` with the parsed
 answer, the latency and the token counts.
+
+``citations.py`` resolves a completed generation against ``prompt.passages``,
+removes invented markers from displayed text, and attaches sentence warnings.
+It renders citation labels exclusively from the passages' stored metadata.
 """
 
+from .citations import render_citation, resolve_citations
 from .generate import (
     ProviderUnavailable,
     chat_model,
@@ -36,6 +41,7 @@ from .records import (
     Generation,
     GenerationConfig,
     GroundedAnswer,
+    SentenceCitations,
 )
 
 __all__ = [
@@ -48,12 +54,15 @@ __all__ = [
     "GroundedPrompt",
     "ParsedQuestion",
     "ProviderUnavailable",
+    "SentenceCitations",
     "build_prompt",
     "build_query",
     "chat_model",
     "config_from_env",
     "generate",
     "parse_question",
+    "render_citation",
     "render_source",
+    "resolve_citations",
     "stream",
 ]

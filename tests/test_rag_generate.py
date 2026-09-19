@@ -25,6 +25,7 @@ from src.rag.constants import (
     NUM_CTX,
     PROMPT_TEMPLATE_ID,
 )
+from src.rag.citations import resolve_citations
 from src.rag.generate import (
     ProviderUnavailable,
     _prose,
@@ -96,6 +97,20 @@ def _serving(output, requests=None, **ndjson) -> ChatOllama:
         return httpx.Response(200, text=_ndjson(body, **ndjson))
 
     return _ollama(handler)
+
+
+@pytest.mark.parametrize("marker", [1, 99])
+def test_generation_resolves_real_and_invented_citations_end_to_end(marker):
+    output = {"answerable": True, "sentences": [{"text": "Revenue rose.", "sources": [marker]}]}
+    generation = generate(PROMPT, _config(), llm=_serving(output))
+    answer = resolve_citations("What was revenue?", generation, PROMPT.passages)
+    citation, = answer.citations
+    assert citation.marker == marker
+    assert citation.resolved is (marker == 1)
+    assert citation.chunk_id == ("p1" if marker == 1 else None)
+    assert answer.text == ("Revenue rose. [1]" if marker == 1 else "Revenue rose.")
+    assert bool(answer.flagged_sentences) is (marker == 99)
+    assert answer.parse_error == generation.parse_error
 
 
 # --- the answer ----------------------------------------------------------------------
