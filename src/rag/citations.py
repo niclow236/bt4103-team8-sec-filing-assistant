@@ -23,7 +23,7 @@ from .records import (
 )
 
 # Include zero and negative numbers so they are removed and flagged, too.
-_MARKER = re.compile(r"\[([+-]?[0-9]+)\]")
+_MARKER = re.compile(r"([ \t]*)\[([+-]?[0-9]+)\]")
 
 
 def _resolve_sentence(
@@ -33,9 +33,9 @@ def _resolve_sentence(
     invalid: list[str] = []
 
     def replace_marker(match: re.Match[str]) -> str:
-        number = int(match[1])
+        number = int(match[2])
         if number < 1:
-            invalid.append(match[0])
+            invalid.append(match[0].strip())
             return ""
         passage = passages[number - 1] if number <= len(passages) else None
         citations[number] = Citation(
@@ -43,12 +43,11 @@ def _resolve_sentence(
             chunk_id=None if passage is None else passage.chunk_id,
             resolved=passage is not None,
         )
-        return f"[{number}]" if passage is not None else ""
+        # Drop the space before a removed marker with it, so " [9]" leaves
+        # neither a doubled space nor "claim ."; the model's own spacing stays.
+        return match[0] if passage is not None else ""
 
-    cleaned = _MARKER.sub(replace_marker, text)
-    # Removing " [9]" must not leave doubled spaces or "claim .".
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-    cleaned = re.sub(r"[ \t]+([.,;:!?])", r"\1", cleaned).strip()
+    cleaned = _MARKER.sub(replace_marker, text).strip()
     return SentenceCitations(
         raw_text=text,
         text=cleaned,
