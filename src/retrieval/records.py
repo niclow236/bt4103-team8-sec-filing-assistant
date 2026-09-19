@@ -156,6 +156,12 @@ class RetrievedPassage:
     # stays immutable, and empty for a single-method result, where ``retriever``
     # already says everything there is to say.
     sources: tuple[str, ...] = ()
+    # Stored filing identity used to render citations without another lookup.
+    # Defaults keep older callers usable; missing metadata is never guessed.
+    cik: int | None = None
+    form: str | None = None
+    part: str | None = None
+    filing_date: str | None = None
 
     @classmethod
     def from_chunk(
@@ -188,6 +194,10 @@ class RetrievedPassage:
             url=chunk["url"],
             content_type=chunk.get("content_type", "prose"),
             sources=sources,
+            cik=chunk.get("cik"),
+            form=chunk.get("form"),
+            part=chunk.get("part"),
+            filing_date=chunk.get("filing_date"),
         )
 
 

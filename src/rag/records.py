@@ -287,6 +287,53 @@ class Citation:
 
 
 @dataclass(frozen=True)
+class SentenceCitations:
+    """Citation checks for one sentence, not a judgement of factual support.
+
+    ``raw_text`` keeps the model's markers; ``text`` drops unresolved ones.
+    Non-positive markers cannot be Citations and are kept in ``invalid_markers``.
+    A fallback block from unparseable output is conservatively checked as one
+    unit, with ``incomplete`` True, rather than guessing its sentence boundaries.
+    """
+
+    raw_text: str
+    text: str
+    citations: tuple[Citation, ...]
+    invalid_markers: tuple[str, ...] = ()
+    incomplete: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "citations", tuple(self.citations))
+        object.__setattr__(self, "invalid_markers", tuple(self.invalid_markers))
+
+    @property
+    def flagged(self) -> bool:
+        """Whether this sentence needs a visible citation warning."""
+        return (
+            self.incomplete
+            or bool(self.invalid_markers)
+            or not self.citations
+            or any(not citation.resolved for citation in self.citations)
+        )
+
+    @property
+    def warning_text(self) -> str:
+        """What a citation warning shows: the cleaned text, or the model's own
+        text when cleaning left nothing, so a warning is never blank."""
+        return self.text or self.raw_text
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "raw_text": self.raw_text,
+            "text": self.text,
+            "citations": [citation.to_dict() for citation in self.citations],
+            "invalid_markers": list(self.invalid_markers),
+            "incomplete": self.incomplete,
+            "flagged": self.flagged,
+        }
+
+
+@dataclass(frozen=True)
 class Answer:
     """One answered question, with everything needed to show, check and score it.
 
@@ -316,12 +363,16 @@ class Answer:
     abstained: bool
     config: GenerationConfig
     latency_ms: float | None = None   # wall-clock time of the generation call, for the metrics track
+    sentences: tuple[SentenceCitations, ...] = ()
+    parse_error: str | None = None
+    truncated: bool = False
 
     def __post_init__(self) -> None:
         # Tuples rather than lists, so a caller that built them as lists gets
         # the same immutable record as one that did not.
         object.__setattr__(self, "citations", tuple(self.citations))
         object.__setattr__(self, "passages", tuple(self.passages))
+        object.__setattr__(self, "sentences", tuple(self.sentences))
 
         shown = [passage.chunk_id for passage in self.passages]
         if len(set(shown)) != len(shown):
@@ -346,6 +397,11 @@ class Answer:
             raise ValueError(
                 "citations do not match the numbered passages: " + "; ".join(mismatched)
             )
+
+    @property
+    def flagged_sentences(self) -> tuple[SentenceCitations, ...]:
+        """Sentences with missing, unresolved, invalid or incomplete citations."""
+        return tuple(sentence for sentence in self.sentences if sentence.flagged)
 
     @property
     def cited_passages(self) -> tuple[RetrievedPassage, ...]:
@@ -384,4 +440,7 @@ class Answer:
             "abstained": self.abstained,
             "config": self.config.to_dict(),
             "latency_ms": self.latency_ms,
+            "sentences": [sentence.to_dict() for sentence in self.sentences],
+            "parse_error": self.parse_error,
+            "truncated": self.truncated,
         }

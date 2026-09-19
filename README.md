@@ -792,6 +792,40 @@ generation.answer.sentences    # each sentence with the source numbers it cites
 generation.text                # the same answer as prose, with [n] markers
 ```
 
+Resolve the completed generation before showing final citations. Pass the
+prompt's numbered passages, since `build_prompt` may reorder retrieval results:
+
+```python
+from src.rag import render_citation, resolve_citations
+
+answer = resolve_citations(question, generation, prompt.passages)
+print(answer.text)  # unresolvable markers have been removed
+for sentence in answer.flagged_sentences:
+    print("Citation warning:", sentence.warning_text)
+for citation in answer.citations:
+    print(render_citation(citation, answer.passages))
+```
+
+A label reads `[1] Alpha Corp (AAA, CIK 0000000123), 10-K, fiscal year 2024,
+Part II / Item 7, Management's Discussion, filed 2025-02-01`. Every field comes
+from stored passage metadata, with missing values explicitly shown as unknown.
+The filing URL stays on `answer.passages[citation.marker - 1].url` for resolved
+citations, so the app can link the label to the source.
+
+Invented markers remain in `answer.citations` with `resolved=False` and
+`chunk_id=None`, even after removal from the displayed text. A sentence with
+an invented marker or no marker is flagged; a valid marker elsewhere does not
+clear that warning. `answer.sentences` stores the original and cleaned text,
+its citations, and its `flagged` status, all included in `answer.to_dict()`.
+Resolution establishes source identity; checking the claim against the source
+is the separate verification stage (#32).
+
+An abstention has no sentence warnings. Malformed or truncated output keeps
+its `parse_error` and `truncated` status. When structured sentence boundaries
+cannot be recovered, the available prose is kept as one flagged block.
+Streamed prose is provisional; replace it with the resolved answer and show
+its warnings when generation finishes.
+
 `parse_question` reads the companies, fiscal years and question type out of the
 question, and `parsed.describe()` says what it read, so the app can show
 "Companies: AAPL" and the user can see when the reading was wrong. A company

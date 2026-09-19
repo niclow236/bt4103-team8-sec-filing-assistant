@@ -49,11 +49,15 @@ def test_it_satisfies_the_retriever_protocol(retriever):
     assert retriever.name == "dense"
 
 
-def test_search_returns_retrieved_passages(retriever):
+def test_search_returns_retrieved_passages(retriever, corpus):
     found = retriever.search(Query("revenue by segment", top_k=5))
     assert found and all(isinstance(passage, RetrievedPassage) for passage in found)
     assert all(passage.retriever == "dense" for passage in found)
     assert all(passage.text and passage.ticker and passage.url for passage in found)
+    rows = {row["chunk_id"]: row for row in iter_chunks(processed_dir=corpus)}
+    for passage in found:
+        for field in ("cik", "form", "part", "filing_date"):
+            assert getattr(passage, field) == rows[passage.chunk_id][field]
 
 
 def test_results_are_ordered_and_numbered_from_one(retriever):
