@@ -146,7 +146,19 @@ def test_range_validation_failure_recovers_sentence_boundaries_but_keeps_error()
     assert len(result.sentences) == 2
     assert result.unresolved_markers == (9,)
     assert result.parse_error == generation.parse_error
-    assert all(s.flagged for s in result.sentences)
+    assert [s.flagged for s in result.sentences] == [False, True]
+
+
+def test_truncated_abstention_has_no_sentences_or_citations():
+    generation = _generation(
+        answer=None, raw='{"answerable": false', text=ABSTAIN_PHRASE,
+        parse_error="invalid JSON", stop_reason="length",
+    )
+    result = resolve_citations("q", generation, [_passage()])
+    assert result.abstained
+    assert result.text == ABSTAIN_PHRASE
+    assert result.citations == result.sentences == result.flagged_sentences == ()
+    assert result.truncated and result.parse_error == "invalid JSON"
 
 
 def test_truncated_output_remains_visible_and_flagged():
