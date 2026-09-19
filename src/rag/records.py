@@ -316,6 +316,12 @@ class SentenceCitations:
             or any(not citation.resolved for citation in self.citations)
         )
 
+    @property
+    def warning_text(self) -> str:
+        """What a citation warning shows: the cleaned text, or the model's own
+        text when cleaning left nothing, so a warning is never blank."""
+        return self.text or self.raw_text
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "raw_text": self.raw_text,
