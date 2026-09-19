@@ -233,3 +233,22 @@ def test_checks_are_frozen_and_json_serializable_for_the_app_and_metrics():
 def test_duplicate_source_ids_are_refused():
     with pytest.raises(ValueError, match="duplicate chunk_ids"):
         resolve_citations("q", _generation(("Claim.", (1,))), [_passage(), _passage()])
+
+
+def test_removing_a_marker_leaves_the_rest_of_the_text_as_written():
+    result = resolve_citations(
+        "q", _generation(("Growth (see [9]) was 3 : 1.", (1,))), [_passage()]
+    )
+    assert result.text == "Growth (see) was 3 : 1. [1]"
+    assert result.unresolved_markers == (9,)
+
+
+def test_a_sentence_of_only_an_invented_marker_is_audited_but_not_shown_blank():
+    result = resolve_citations("q", _generation(
+        ("A.", (1,)), ("[9]", ()), ("B.", (1,)),
+    ), [_passage()])
+    assert result.text == "A. [1] B. [1]"
+    assert len(result.sentences) == 3
+    assert result.unresolved_markers == (9,)
+    flagged, = result.flagged_sentences
+    assert flagged.text == "" and flagged.warning_text == "[9]"
