@@ -107,6 +107,21 @@ def test_the_wrong_year_cannot_answer_when_the_year_is_set(bm25):
     assert (pinned[0].ticker, pinned[0].item) == ("AAA", "1A")
 
 
+# --- keyword text ---------------------------------------------------------------
+
+def test_bm25_matches_the_keyword_text_when_one_is_set(bm25):
+    keyword = Query("AAA risk factors paragraph 0", keyword_text="Revenue by segment", top_k=5)
+    assert [p.chunk_id for p in bm25.search(keyword)] == [
+        p.chunk_id for p in bm25.search(Query("Revenue by segment", top_k=5))
+    ]
+
+
+def test_dense_ignores_the_keyword_text(dense):
+    query = Query("AAA risk factors paragraph 0", top_k=5)
+    keyword = replace(query, keyword_text="Revenue by segment")
+    assert [p.chunk_id for p in dense.search(keyword)] == [p.chunk_id for p in dense.search(query)]
+
+
 # --- weighting toward tables ------------------------------------------------
 
 

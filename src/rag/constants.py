@@ -51,6 +51,14 @@ COMPANY_ALIASES: dict[str, tuple[str, ...]] = {
     "PANW": ("palo alto", "palo alto networks"),
 }
 
+# Aliases that name a part of the company rather than the whole of it. They
+# resolve to the company like any other alias, but the search text keeps them
+# (#87): "AWS operating income" asks for the AWS segment's row, and taking
+# "AWS" out would leave Amazon's total operating income as the best match.
+# An alias followed by a capitalised word or a number is kept for the same
+# reason -- "Google Cloud", "Microsoft 365" -- without needing a row here.
+SEGMENT_ALIASES = ("aws", "amazon web services")
+
 # Companies a question about this industry is likely to name that the corpus
 # does not hold. companies.txt records why each was dropped. A mention of one
 # is reported back as unresolved rather than ignored, so the app can say

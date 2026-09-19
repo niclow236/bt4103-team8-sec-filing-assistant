@@ -194,7 +194,7 @@ class BM25Retriever:
         if not candidates:
             return []
 
-        scores = self._bm25.get_scores(tokenize(query.text))
+        scores = self._bm25.get_scores(tokenize(query.keyword_text or query.text))
         return rank(
             ((chunk, float(scores[position])) for position, chunk in candidates),
             retriever=self.name,

@@ -296,6 +296,19 @@ class Query:
     # the Query, and a weight passed beside it is a weight one retriever drops.
     # ``constants.TABLE_BOOST`` is the value to set when a question is numeric.
     table_boost: float = 1.0
+    # What keyword search matches instead of ``text``, when set. None means
+    # ``text``. BM25 reads it and dense does not, because the two want
+    # different things (#87): with the filters already confined to one
+    # filing, the company name and the year add BM25 score only to the prose
+    # that repeats them, and bury the statement tables that never do; but the
+    # embedding uses the name to place the question, and loses more without
+    # it. ``ParsedQuestion.to_query`` sets it to the question minus what the
+    # filters apply. Measured on the 48 test questions, hybrid over this and
+    # the full question found the expected figure in the top 8 for 18 of 28
+    # figure questions, against 12 with the full question for both and 16
+    # with the trimmed text for both, while prose questions improved as well
+    # (notebooks/retrieval/search_text_comparison.py).
+    keyword_text: str | None = None
 
     def __post_init__(self) -> None:
         # Frozen, so the normalised values are set through object.__setattr__.
