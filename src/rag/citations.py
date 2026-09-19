@@ -113,7 +113,7 @@ def resolve_citations(
     citations = {c.marker: c for sentence in sentences for c in sentence.citations}
     return Answer(
         question=question,
-        text=ABSTAIN_PHRASE if abstained else " ".join(s.text for s in sentences),
+        text=ABSTAIN_PHRASE if abstained else " ".join(s.text for s in sentences if s.text),
         citations=tuple(citations[n] for n in sorted(citations)),
         passages=shown,
         abstained=abstained,
