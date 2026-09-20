@@ -263,7 +263,8 @@ def verify_answer(
     Passing the original ParsedQuestion preserves any caller-selected scope.
     """
     parsed = parsed or parse_question(answer.question)
-    if parsed.question != answer.question:
+    # parse_question strips, so an untrimmed question would fail its own default.
+    if parsed.question != answer.question.strip():
         raise ValueError("parsed question must match Answer.question")
     checks = []
     if answer.parse_error or answer.truncated:
