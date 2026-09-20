@@ -740,14 +740,22 @@ alone would happily return the right paragraph from the wrong year.
 
 A question that asks for a figure is fused with its own weights,
 `FIGURE_FUSION_WEIGHTS`, which `rag/query.py` selects by setting
-`Query.wants_figures`. Equal weights reward the passage both retrievers
-returned, and BM25 rarely returns a financial statement table: it names neither
-the company nor the fiscal year, and writes the year as "December 31, 2025". So
-a table only the dense retriever ranked highly lost to prose the two agreed on.
-Meta's FY2025 total assets sat at dense rank 4 and hybrid rank 14; Apple's
-FY2022 accounts payable at 8 and 20. `notebooks/retrieval/fusion_weight_sweep.py`
-measures the pair on the 48 test questions, figure and prose questions apart,
-and the shipped values are the ones it justified.
+`Query.wants_figures`. They are equal today, and that is a measurement rather
+than an untouched default. The concern was that equal weights reward the
+passage both retrievers returned, and BM25 rarely returned a financial
+statement table: it names neither the company nor the fiscal year, and writes
+the year as "December 31, 2025", so a table only the dense retriever ranked
+highly lost to prose the two agreed on. Meta's FY2025 total assets sat at
+dense rank 4 and hybrid rank 14.
+
+`python notebooks/retrieval/fusion_weight_sweep.py` swept BM25's weight over
+the 48 test questions with dense held at 1.0. Quieting BM25 costs figure
+questions rather than helping: the expected figure reached the top 8 for 20 of
+28 questions at equal weights, 18 at 0.3, and 13 with dense alone, while prose
+barely moved. Carrying each statement's title into its passages (#88) is what
+changed it: a balance sheet passage now holds the words "CONSOLIDATED BALANCE
+SHEETS", so BM25 finds the table it used to miss. The sweep is worth re-running
+when the corpus changes or the reranker (#21) lands.
 
 `table_boost` leans a query toward table passages without excluding prose, by
 raising a table passage's score before the cut to k. It is off by default and is
