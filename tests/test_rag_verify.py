@@ -313,3 +313,20 @@ def test_viewer_rejects_invalid_records_with_line_number(tmp_path, capsys):
     with pytest.raises(SystemExit):
         main([str(path)])
     assert "line 1" in capsys.readouterr().err
+
+
+def test_an_untrimmed_question_still_verifies(store):
+    result = verify_answer(answer(question=QUESTION + " "), facts_file=store)
+    assert result.verification is not None
+
+
+def test_a_table_without_a_declared_scale_is_unverified_not_mismatch(store):
+    table = passage("| Total assets | $364,980 | $352,583 |", content_type="table")
+    scaled = passage("In millions" + chr(10) * 2 + "| Total assets | $364,980 | $352,583 |",
+                     content_type="table")
+    claim = "Apple's total assets were $364.98 billion."
+    unscaled_checks = checks(verify_answer(answer(claim, passages=[table]), facts_file=store), "passage")
+    assert [c.status for c in unscaled_checks] == ["unverified"]
+    assert "declares no scale" in unscaled_checks[0].reason
+    assert [c.status for c in checks(
+        verify_answer(answer(claim, passages=[scaled]), facts_file=store), "passage")] == ["supported"]
