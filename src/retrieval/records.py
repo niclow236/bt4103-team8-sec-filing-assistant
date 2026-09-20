@@ -319,6 +319,11 @@ class Query:
     # with the trimmed text for both, while prose questions improved as well
     # (notebooks/retrieval/search_text_comparison.py).
     keyword_text: str | None = None
+    # Whether the question asks for a figure (#86). Fusion reads it: BM25
+    # rarely returns a financial statement table, so equal reciprocal-rank
+    # weights bury a table only the dense retriever found. The retrievers
+    # themselves ignore it; it selects ``constants.FIGURE_FUSION_WEIGHTS``.
+    wants_figures: bool = False
 
     def __post_init__(self) -> None:
         # Frozen, so the normalised values are set through object.__setattr__.

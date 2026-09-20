@@ -234,6 +234,7 @@ class ParsedQuestion:
             "tickers": self.tickers,
             "fiscal_years": self.fiscal_years,
             "table_boost": TABLE_BOOST if self.wants_figures else 1.0,
+            "wants_figures": self.wants_figures,
         }
         if top_k is not None:
             fields["top_k"] = top_k

@@ -48,6 +48,10 @@ from .constants import (
     INCORPORATION_PHRASES,
     KEY_ITEMS,
     STUB_CHAR_LIMIT,
+    STATEMENT_TITLE_GAP,
+    STATEMENT_TITLE_LINES,
+    STATEMENT_TITLE_OVERLAP,
+    STATEMENT_TITLE_ROWS,
     TABLE_FRAGMENT_CHARS,
     TABLE_MIN_CELLS,
 )
@@ -396,6 +400,257 @@ def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[st
     return labels, trapped, spanning
 
 
+# The heading a filer puts above a financial statement, with the emphasis and
+# escaping markdown adds already taken off: "CONSOLIDATED BALANCE SHEETS",
+# "Consolidated Statements of Cash Flows", "Balance sheets as of December 31,
+# 2024 and 2023". Anchored at the start, so a sentence that mentions the
+# balance sheet ("Amounts recognized on our Consolidated Balance Sheets as of
+# December 31, are as follows:") is not taken for one. What may follow the
+# name is the scale, a date or a period, which is how filers qualify it:
+# "(In millions)", "as of December 31, 2024", "for the years ended".
+_STATEMENT_TITLE = re.compile(
+    r"^(?:consolidated\s+|combined\s+|condensed\s+)?(?:"
+    r"statements?\s+of\s+(?:operations|income|earnings|comprehensive\s+income"
+    r"|comprehensive\s+loss|cash\s+flows?|shareholders.{0,3}\s*equity"
+    r"|stockholders.{0,3}\s*equity|equity|financial\s+position)"
+    r"|(?:operations|income|earnings|comprehensive\s+income|comprehensive\s+loss"
+    r"|cash\s+flows?|shareholders.{0,3}\s*equity|stockholders.{0,3}\s*equity)"
+    r"\s+statements?"
+    r"|balance\s+sheets?)"
+    r"(?:\s*[(\[].*)?(?:\s+(?:as\s+of|for\s+the)\s.*)?[.:]?$",
+    re.IGNORECASE,
+)
+
+
+# The same pattern with its spacing made optional, for a heading whose letters
+# arrive spaced out: Microsoft's "COMPREHENSIVE IN COME STATEMENTS". Built from
+# _STATEMENT_TITLE so the two cannot drift apart.
+_SQUEEZED_TITLE = re.compile(
+    _STATEMENT_TITLE.pattern.replace(r"\s+", r"\s*").replace(r"\s.*", r".*"),
+    re.IGNORECASE,
+)
+
+
+# A company name in front of the heading, which some filers set on one line:
+# "ServiceNow, Inc. Consolidated Balance Sheets". Recognised by the corporate
+# suffix that ends it, so a sentence about the balance sheet, which has no
+# such suffix, is still not a heading.
+_COMPANY_PREFIX = re.compile(
+    r"^.{0,60}?\b(?:inc|corp|corporation|company|co|plc|ltd|limited|holdings"
+    r"|group|n\.v|s\.a|ag|se)\b\.?,?\s+",
+    re.IGNORECASE,
+)
+
+
+def _markdown_text(line: str) -> str:
+    """One markdown line as its words: emphasis, escapes and spacing removed."""
+    text = " ".join(re.sub(r"[*\\#]", "", line).split()).strip()
+    # Filers bullet a statement's heading, and the bullet arrives as a glyph
+    # the encoding lost: "� Balance sheets as of December 31, 2024".
+    return re.sub(r"^[^0-9A-Za-z(]+", "", text)
+
+
+def _statement_tail(text: str) -> str:
+    """The heading inside this text, or "" when it holds none.
+
+    Tried as written, with the spaces taken out (Microsoft sets its headings
+    with letter spacing), and with a company name in front of it removed.
+    """
+    written = " ".join(str(text or "").split())
+    for candidate in (written, _COMPANY_PREFIX.sub("", written, count=1)):
+        if not candidate:
+            continue
+        if _STATEMENT_TITLE.match(candidate) or _SQUEEZED_TITLE.match(candidate.replace(" ", "")):
+            return candidate
+    return ""
+
+
+def names_a_statement(text: str) -> bool:
+    """Whether this text is a financial statement's own heading.
+
+    Shared with the verify gate, which reports filings whose statements carry
+    no title, so both answer the question the same way.
+    """
+    return bool(_statement_tail(text))
+
+
+# The words a statement's heading is built from, for repairing one whose
+# letters arrive spaced out. Only these are rejoined, so a heading that reads
+# normally is returned exactly as the filing wrote it.
+_TITLE_WORDS = frozenset((
+    "consolidated", "combined", "condensed", "statement", "statements", "of",
+    "cash", "flow", "flows", "balance", "sheet", "sheets", "income", "loss",
+    "comprehensive", "operations", "earnings", "stockholders", "shareholders",
+    "equity", "financial", "position",
+))
+
+
+def _clean_title(text: str) -> str:
+    """A matched heading, without the table cells or the letter spacing.
+
+    Microsoft sets its headings with letter spacing, which arrives as spaces
+    inside the words: "CASH FLOWS S TATEMENTS", "INC OME STATEMENTS". The
+    pieces are rejoined where they make one of the words a statement heading
+    is built from, so the label reads as the filing meant it and a question
+    asking for the cash flow statement can match it.
+    """
+    heading = _statement_tail(text) or text
+    written = heading.split("|")[0].strip().rstrip(".:").strip().split()
+    joined: list[str] = []
+    index = 0
+    while index < len(written):
+        for end in range(len(written), index, -1):
+            merged = "".join(written[index:end])
+            if end - index > 1 and merged.casefold().strip("’'�") in _TITLE_WORDS:
+                joined.append(merged)
+                index = end
+                break
+        else:
+            joined.append(written[index])
+            index += 1
+    return " ".join(joined)
+
+
+def _title_candidate(line: str) -> str:
+    """The heading a line could hold, with the table cells around it taken off.
+
+    A heading arrives inside a table two ways. Intuit sets it as a row of its
+    own, the only cell with anything in it. ServiceNow puts it in the running
+    header that opens each page, beside the other cells: "Table of Contents |
+    Part II | ServiceNow, Inc. | Consolidated Balance Sheets | (in millions".
+    Either way the heading is one cell, and read whole the line matches
+    nothing. A row naming several statements is the Item's index, and the
+    caller rejects it on that count rather than here.
+    """
+    text = _markdown_text(line)
+    if "|" not in text:
+        return text
+    written = [cell.strip() for cell in text.strip("|").split("|") if cell.strip()]
+    if len(written) == 1:
+        return written[0]
+    named = [cell for cell in written if names_a_statement(cell)]
+    return named[0] if len(named) == 1 else text
+
+
+def _row_labels(rows) -> set[str]:
+    """The first cell of each row, which is what names a row in a statement."""
+    labels = set()
+    for row in rows:
+        cells = row if isinstance(row, list) else [
+            _clean_cell(getattr(cell, "content", cell)) for cell in getattr(row, "cells", [])
+        ]
+        label = (cells[0] if cells else "").strip()
+        if label and not set(label) <= {"-", " "}:
+            labels.add(label.casefold())
+    return labels
+
+
+def _rejoins(lines: list[str], end: int, start: int) -> bool:
+    """Whether the lines between two runs of table rows are one wrapped row.
+
+    Short, and holding no statement heading: a heading there is a new table,
+    however few lines separate them.
+    """
+    between = [_title_candidate(line) for line in lines[end:start]]
+    written = [text for text in between if text]
+    return len(written) <= STATEMENT_TITLE_GAP and not any(
+        _STATEMENT_TITLE.match(text) for text in written
+    )
+
+
+def _statement_titles(section) -> list[str]:
+    """The statement title above each of this Item's tables, in their order.
+
+    The parser hands back a table's grid but not the heading above it, and a
+    statement split into parts leaves every part after the first with nothing
+    saying which statement it is (#88): Apple's FY2024 balance sheet opens
+    "Financial Statements (part 2 of 3)". The Item's markdown still has the
+    filing's own layout, so the heading is read from there.
+
+    Each run of table lines in the markdown is one block. A block takes the
+    nearest statement heading above it, within ``STATEMENT_TITLE_LINES``
+    non-empty lines, which spans the company name and the scale line a filer
+    puts between them without reaching the statement before. Tables are then
+    paired with blocks by how much their row labels overlap, not by position:
+    a wide table is laid out as several markdown blocks, so the two orders do
+    not line up. An unheaded table, which is every note and schedule, gets "".
+    """
+    markdown = getattr(section, "markdown", "")
+    text = markdown() if callable(markdown) else markdown
+    if not isinstance(text, str) or not text:
+        return ["" for _ in section.tables()]
+    lines = text.splitlines()
+
+    runs: list[tuple[int, int]] = []
+    start = None
+    for index, line in enumerate(lines + [""]):
+        if line.lstrip().startswith("|"):
+            start = index if start is None else start
+        elif start is not None:
+            # A row long enough to wrap leaves its tail on a line of its own,
+            # which holds no pipe and ends the run. Rejoin the pieces, so the
+            # heading is looked for above the table rather than inside it.
+            if runs and _rejoins(lines, runs[-1][1], start):
+                runs[-1] = (runs[-1][0], index)
+            else:
+                runs.append((start, index))
+            start = None
+
+    blocks = [
+        (first, _row_labels([line.strip().strip("|").split("|") for line in lines[first:last]]))
+        for first, last in runs
+    ]
+
+    titles: list[str] = []
+    for (start, _), (_, last) in zip(blocks, runs):
+        # A heading set as a row of the table itself sits a row or two into
+        # the block rather than above it: Palo Alto opens the balance sheet
+        # with two spacer rows, then "CONSOLIDATED BALANCE SHEETS" alone on a
+        # row of its own. Read those rows before looking above the table.
+        title = ""
+        # The Item opens with an index listing every statement and its page.
+        # Each of its rows names a statement, so a table with more than one
+        # such row is that index, not a statement, and takes no title.
+        block_titles = sum(
+            1 for line in lines[start:last]
+            if names_a_statement(_title_candidate(line))
+        )
+        for index in range(start, min(start + STATEMENT_TITLE_ROWS, len(lines))):
+            if block_titles > 1:
+                break
+            candidate = _title_candidate(lines[index])
+            if candidate and names_a_statement(candidate):
+                title = _clean_title(candidate)
+                break
+        seen = 0
+        for index in range(start - 1, -1, -1):
+            if title:
+                break
+            candidate = _title_candidate(lines[index])
+            if not candidate:
+                continue
+            if names_a_statement(candidate):
+                title = _clean_title(candidate)
+                break
+            seen += 1
+            if seen > STATEMENT_TITLE_LINES:
+                break
+        titles.append(title)
+
+    found = []
+    for table in section.tables():
+        labels = _row_labels(getattr(table, "rows", []))
+        best, score = "", 0.0
+        for (_, block_labels), title in zip(blocks, titles):
+            if not labels or not block_labels:
+                continue
+            overlap = len(labels & block_labels) / len(labels | block_labels)
+            if overlap > score:
+                best, score = title, overlap
+        found.append(best if score >= STATEMENT_TITLE_OVERLAP else "")
+    return found
+
+
 def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]]:
     """Lift each table out of an Item as a table, not as flattened prose.
 
@@ -420,6 +675,7 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
     records: list[TableRecord] = []
     failures: list[TableFailure] = []
     data_tables = 0
+    statement_titles = _statement_titles(section)
     for index, table in enumerate(section.tables()):
         try:
             frame = table.to_dataframe()
@@ -588,6 +844,7 @@ def _extract_tables(section) -> tuple[list[TableRecord], int, list[TableFailure]
                 # would return the wrong table, or raise.
                 table_index=len(records),
                 caption=caption,
+                statement_title=statement_titles[index] if index < len(statement_titles) else "",
                 headers=header,
                 rows=grid,
                 n_rows=len(grid),

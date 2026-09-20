@@ -231,3 +231,40 @@ TABLE_MAX_ROWS_PER_CHUNK = 30
 # schedule of three years' figures is three; parse keeps a table like that
 # anyway when it plainly holds figures, rather than discarding it as layout.
 TABLE_MIN_CELLS = 4
+
+# How far above a table its statement title may sit (#88). A financial
+# statement is headed by its name, then the company and the scale line, and the
+# table follows: "CONSOLIDATED BALANCE SHEETS", "(In millions ...)", the grid.
+# Eight non-empty lines clears that run without reaching the heading of the
+# statement before it, which would label a note as a balance sheet.
+STATEMENT_TITLE_LINES = 8
+
+# How much of a table's row labels must appear in a markdown block before the
+# block is taken to be that table. Both are built from the same filing, so a
+# real pairing overlaps almost completely; this only rejects the coincidental
+# ones, where a note repeats a statement's labels.
+STATEMENT_TITLE_OVERLAP = 0.5
+
+# How many lines of a wrapped row may break a markdown table in two before the
+# pieces are read as separate tables (#88). A long row label wraps onto its own
+# line, which holds no pipe and so ends the run of table lines: Adobe's cash
+# flow statement breaks at "Changes in operating assets and liabilities, net of
+# acquired". Rejoining across a gap this short puts the search for the heading
+# back at the top of the table, where the heading is. A real statement heading
+# in the gap ends the table whatever its length, so two statements never merge.
+STATEMENT_TITLE_GAP = 3
+
+# How many rows into a table its own heading may sit (#88). A filer that sets
+# the heading as a row of the table puts it first (Intuit) or after a spacer
+# row or two (Palo Alto). Three covers both without reaching the row labels,
+# which start immediately after.
+STATEMENT_TITLE_ROWS = 3
+
+# What share of filings may be missing a titled statement before the verify
+# gate fails. Not zero: a filer that heads its statements in a way the parser
+# cannot read has none to carry, and one such filing should not stop a corpus
+# of fifteen companies from being used. Measured at 1 of 75 after #88 landed,
+# ServiceNow's FY2025 filing, whose Item 8 holds no heading above its
+# statements at all. 5% leaves room for three more such filings and fails on a
+# fourth, which would mean a layout worth handling rather than an oddity.
+STATEMENT_TITLE_TOLERANCE = 0.05

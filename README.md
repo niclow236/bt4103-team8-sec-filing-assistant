@@ -406,6 +406,7 @@ Eight checks, cheapest first:
 | chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
 | no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage, unless the chunker dropped it as a flattened copy of a table it rebuilt |
 | passage sizes | any table passage, or more than 0.5% of prose passages, past the 512 tokens bge reads, counted with the model's own tokenizer over the passage and its context header |
+| statement titles | a filing whose balance sheet, income statement or cash flow statement carries no title a question could name it by |
 | matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
 | XBRL figures findable | a figure the filing reported to EDGAR that appears in no indexed passage |
 
@@ -574,6 +575,15 @@ passages there:
   Using" above Total and Levels 1 to 3 -- is stated once, above the row labels,
   instead of inside every column label. Repeated, it took a median of a third of
   each table passage and cut many tables into one-row pieces.
+- Every passage cut from a financial statement names that statement. The title
+  comes from the filing's own heading above the table, read from the Item's
+  markdown, and opens each part: "CONSOLIDATED BALANCE SHEETS (part 2 of 3)"
+  where the passage holding Apple's "Total assets | $364,980" used to open
+  "Financial Statements (part 2 of 3)" with an empty caption. Nothing in that
+  passage said "balance sheet", so a question naming the statement could not
+  match it, and neither a retriever nor the model could tell which statement
+  the figures belonged to. A table with no heading above it, which is every
+  note and schedule, keeps the caption it had.
 - A table passage identical to another in the same Item is kept once. Filers do
   print a table twice, and in one Item the two would be the same vector indexed
   twice. Repeated prose keeps each occurrence's heading and source position,
@@ -727,6 +737,17 @@ gets its top k from that filing rather than from whatever survives a
 corpus-wide top k. This matters more here than in most corpora: fifteen peers
 across five years write near-identical risk factors, and semantic similarity
 alone would happily return the right paragraph from the wrong year.
+
+A question that asks for a figure is fused with its own weights,
+`FIGURE_FUSION_WEIGHTS`, which `rag/query.py` selects by setting
+`Query.wants_figures`. Equal weights reward the passage both retrievers
+returned, and BM25 rarely returns a financial statement table: it names neither
+the company nor the fiscal year, and writes the year as "December 31, 2025". So
+a table only the dense retriever ranked highly lost to prose the two agreed on.
+Meta's FY2025 total assets sat at dense rank 4 and hybrid rank 14; Apple's
+FY2022 accounts payable at 8 and 20. `notebooks/retrieval/fusion_weight_sweep.py`
+measures the pair on the 48 test questions, figure and prose questions apart,
+and the shipped values are the ones it justified.
 
 `table_boost` leans a query toward table passages without excluding prose, by
 raising a table passage's score before the cut to k. It is off by default and is

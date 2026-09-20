@@ -156,6 +156,10 @@ RRF_K = 60
 # value with the sweep beside it.
 FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
 
+# The same weights for a question that asks for a figure (#86). Placeholder
+# until the sweep below is run; the shipped pair and its measurement go here.
+FIGURE_FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
+
 # --- reranking --------------------------------------------------------------
 # A cross-encoder reads the question and the passage together and scores the
 # pair, which is what lets it catch relevance a bi-encoder misses -- at a cost
@@ -246,7 +250,7 @@ __all__ = [
     "CONTEXT_HEADER",
     "BM25_K1", "BM25_B",
     "CANDIDATE_K", "FINAL_K",
-    "RRF_K", "FUSION_WEIGHTS",
+    "RRF_K", "FUSION_WEIGHTS", "FIGURE_FUSION_WEIGHTS",
     "RERANK_MODEL", "RERANK_BATCH_SIZE", "RERANK_MAX_TOKENS",
     "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE", "MIN_RERANK_SCORE",
     "PREFILTER_FIELDS", "TABLE_BOOST",

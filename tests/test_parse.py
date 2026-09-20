@@ -239,3 +239,129 @@ def test_a_layout_table_is_still_not_a_table():
     records, _, failures = _extract_tables(section_of(frame))
     assert records == []
     assert [failure.kind for failure in failures] == ["too few cells after dropping empty columns"]
+
+
+# --- statement titles (#88) -----------------------------------------------------
+
+def statement_section(markdown: str, *tables, name="part_ii_item_8"):
+    """A section whose tables carry their rows, as the real parser's do."""
+    nodes = [
+        SimpleNamespace(
+            to_dataframe=lambda rows=rows: pd.DataFrame(
+                [row[1:] for row in rows],
+                index=pd.Index([row[0] for row in rows], name="Caption"),
+                columns=["2024", "2023"],
+            ),
+            caption=None, rows=rows, html=lambda: "<table></table>",
+            row_count=len(rows), col_count=3,
+        )
+        for rows in tables
+    ]
+    return SimpleNamespace(name=name, tables=lambda: nodes, markdown=markdown)
+
+
+BALANCE_SHEET = [["Total current assets", "152,987", "143,566"],
+                 ["Total assets", "364,980", "352,583"],
+                 ["Total liabilities", "308,030", "290,437"]]
+SEGMENTS = [["Americas", "167,045", "162,560"],
+            ["Europe", "101,328", "94,294"],
+            ["Greater China", "66,952", "72,559"]]
+
+
+def markdown_for(*blocks: str) -> str:
+    return NEWLINE.join(blocks)
+
+
+NEWLINE = chr(10)
+
+
+def rows_markdown(rows) -> str:
+    return NEWLINE.join("| " + " | ".join(row) + " |" for row in rows)
+
+
+def test_a_statement_table_takes_the_filing_own_heading():
+    markdown = markdown_for(
+        "**Apple Inc.**", "", "**CONSOLIDATED BALANCE SHEETS**", "",
+        "(In millions, except par value)", "", rows_markdown(BALANCE_SHEET),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "CONSOLIDATED BALANCE SHEETS"
+
+
+def test_a_note_below_a_statement_does_not_inherit_its_title():
+    markdown = markdown_for(
+        "**CONSOLIDATED BALANCE SHEETS**", "", rows_markdown(BALANCE_SHEET), "",
+        "Segment information is reported below.", "", "Products and services", "",
+        "The Company reports segments as follows.", "", "Reportable segments", "",
+        "Revenue by segment follows.", "", "Segment detail", "", "More prose here.", "",
+        rows_markdown(SEGMENTS),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET, SEGMENTS))
+    assert [record.statement_title for record in records] == ["CONSOLIDATED BALANCE SHEETS", ""]
+
+
+def test_a_section_without_markdown_leaves_every_title_empty():
+    records, _, _ = _extract_tables(section_of(working_capital()))
+    assert records[0].statement_title == ""
+
+
+def test_a_heading_written_the_other_way_round_is_read():
+    """Microsoft heads the same statements "INCOME STATEMENTS", "BALANCE SHEETS"."""
+    markdown = markdown_for("**BALANCE SHEETS**", "", "(In millions)", "",
+                            rows_markdown(BALANCE_SHEET))
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "BALANCE SHEETS"
+
+
+def test_a_heading_set_as_the_table_own_first_row_is_read():
+    """Intuit's heading is a row of the table: "... OPERATIONS | | | | |"."""
+    markdown = markdown_for("| CONSOLIDATED BALANCE SHEETS |  |  |", rows_markdown(BALANCE_SHEET))
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "CONSOLIDATED BALANCE SHEETS"
+
+
+def test_a_row_that_wraps_does_not_hide_the_heading():
+    """A row too long for one line ends the run of table lines (Adobe)."""
+    head, tail = BALANCE_SHEET[:1], BALANCE_SHEET[1:]
+    markdown = markdown_for(
+        "**CONSOLIDATED BALANCE SHEETS**", "", "(In millions)", "",
+        rows_markdown(head), "",
+        "Adjustments to reconcile net income to net cash provided by operating", "",
+        rows_markdown(tail),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "CONSOLIDATED BALANCE SHEETS"
+
+
+def test_a_heading_below_a_long_gap_does_not_reach_the_next_table():
+    prose = ["Some prose about the segment results."] * 10
+    markdown = markdown_for("**CONSOLIDATED BALANCE SHEETS**", "", *prose, "",
+                            rows_markdown(SEGMENTS))
+    records, _, _ = _extract_tables(statement_section(markdown, SEGMENTS))
+    assert records[0].statement_title == ""
+
+
+def test_a_heading_set_with_letter_spacing_is_read_and_repaired():
+    """Microsoft: "CASH FLOWS S TATEMENTS" is one heading, spaced out."""
+    markdown = markdown_for("**CASH FLOWS S TATEMENTS**", "", rows_markdown(BALANCE_SHEET))
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "CASH FLOWS STATEMENTS"
+
+
+def test_the_index_of_statements_is_not_itself_a_statement():
+    """The Item opens with a table listing every statement and its page."""
+    index = [["Consolidated Balance Sheets", "66", ""],
+             ["Consolidated Statements of Operations", "67", ""],
+             ["Consolidated Statements of Cash Flows", "68", ""]]
+    markdown = markdown_for(rows_markdown(index), "", "**CONSOLIDATED BALANCE SHEETS**", "",
+                            rows_markdown(BALANCE_SHEET))
+    records, _, _ = _extract_tables(statement_section(markdown, index, BALANCE_SHEET))
+    assert [record.statement_title for record in records] == ["", "CONSOLIDATED BALANCE SHEETS"]
+
+
+def test_a_heading_two_rows_into_the_table_is_read():
+    """Palo Alto opens the table with spacer rows, then the heading."""
+    markdown = markdown_for("|  |  |  |", "| CONSOLIDATED BALANCE SHEETS |  |  |",
+                            rows_markdown(BALANCE_SHEET))
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "CONSOLIDATED BALANCE SHEETS"
