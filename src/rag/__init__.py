@@ -42,7 +42,10 @@ from .records import (
     GenerationConfig,
     GroundedAnswer,
     SentenceCitations,
+    VerificationCheck,
+    VerificationResult,
 )
+from .verify import record_verification, verify_answer
 
 __all__ = [
     "Answer",
@@ -55,14 +58,18 @@ __all__ = [
     "ParsedQuestion",
     "ProviderUnavailable",
     "SentenceCitations",
+    "VerificationCheck",
+    "VerificationResult",
     "build_prompt",
     "build_query",
     "chat_model",
     "config_from_env",
     "generate",
     "parse_question",
+    "record_verification",
     "render_citation",
     "render_source",
     "resolve_citations",
     "stream",
+    "verify_answer",
 ]

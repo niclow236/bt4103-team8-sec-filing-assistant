@@ -334,6 +334,67 @@ class SentenceCitations:
 
 
 @dataclass(frozen=True)
+class VerificationCheck:
+    """One auditable check; unknown evidence is never counted as support."""
+
+    kind: str
+    status: str
+    sentence_index: int | None
+    claim: str
+    reason: str
+    figure: str | None = None
+    value: str | None = None
+    unit: str | None = None
+    evidence: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"passage", "fact", "groundedness", "output"}:
+            raise ValueError(f"Unknown verification kind: {self.kind}")
+        if self.status not in {"supported", "mismatch", "unverified", "not_applicable"}:
+            raise ValueError(f"Unknown verification status: {self.status}")
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self) | {"evidence": list(self.evidence)}
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """Per-question checks, with explicit denominators for evaluation.
+
+    The numeric support rate is a consistency proxy, not semantic faithfulness.
+    Unverified checks remain in its denominator; abstentions have no score.
+    """
+
+    question_type: str
+    checks: tuple[VerificationCheck, ...]
+    version: str = "numeric-grounding-v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "checks", tuple(self.checks))
+
+    @property
+    def warnings(self) -> tuple[VerificationCheck, ...]:
+        return tuple(c for c in self.checks if c.status in {"mismatch", "unverified"})
+
+    @property
+    def numeric_support_rate(self) -> float | None:
+        checks = [c for c in self.checks if c.kind in {"passage", "fact"}
+                  and c.status != "not_applicable"]
+        return sum(c.status == "supported" for c in checks) / len(checks) if checks else None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "question_type": self.question_type,
+            "checks": [c.to_dict() for c in self.checks],
+            "counts": {s: sum(c.status == s for c in self.checks) for s in
+                       ("supported", "mismatch", "unverified", "not_applicable")},
+            "numeric_support_rate": self.numeric_support_rate,
+        }
+
+
+@dataclass(frozen=True)
 class Answer:
     """One answered question, with everything needed to show, check and score it.
 
@@ -366,6 +427,8 @@ class Answer:
     sentences: tuple[SentenceCitations, ...] = ()
     parse_error: str | None = None
     truncated: bool = False
+
+    verification: VerificationResult | None = None
 
     def __post_init__(self) -> None:
         # Tuples rather than lists, so a caller that built them as lists gets
@@ -402,6 +465,10 @@ class Answer:
     def flagged_sentences(self) -> tuple[SentenceCitations, ...]:
         """Sentences with missing, unresolved, invalid or incomplete citations."""
         return tuple(sentence for sentence in self.sentences if sentence.flagged)
+
+    @property
+    def verification_warnings(self) -> tuple[VerificationCheck, ...]:
+        return () if self.verification is None else self.verification.warnings
 
     @property
     def cited_passages(self) -> tuple[RetrievedPassage, ...]:
@@ -441,6 +508,7 @@ class Answer:
             "config": self.config.to_dict(),
             "latency_ms": self.latency_ms,
             "sentences": [sentence.to_dict() for sentence in self.sentences],
+            "verification": None if self.verification is None else self.verification.to_dict(),
             "parse_error": self.parse_error,
             "truncated": self.truncated,
         }
