@@ -1,10 +1,12 @@
 """Tests for the benchmark contract and JSONL loader."""
 
 import json
+from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from src.evaluation.benchmark import load_questions
+from src.evaluation.benchmark import generate_xbrl_questions, load_questions
 from src.evaluation.records import BenchmarkValidationError, RunResult
 
 
@@ -171,3 +173,76 @@ def test_run_result_is_hashable_and_copies_inputs():
     assert result.to_dict()["retrieved_scores"] == [3.5]
     assert result.config == {"k": 10}
     assert isinstance(hash(result), int)
+
+
+def test_generate_xbrl_questions_uses_real_chunk_ids_and_xbrl_source(tmp_path):
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    (processed_dir / "AAPL").mkdir()
+    (processed_dir / "AAPL" / "filing.json").write_text(
+        json.dumps({
+            "ticker": "AAPL",
+            "company": "Apple",
+            "cik": 1,
+            "form": "10-K",
+            "filing_date": "2025-02-01",
+            "accession_no": "0000000001-25-000001",
+            "url": "https://example.com/filing",
+            "source_path": "raw/filing.html",
+            "chunks": [
+                {
+                    "chunk_id": "0000000001-25-000001_part_ii_item_7_000",
+                    "section_id": "part_ii_item_7",
+                    "part": "II",
+                    "item": "7",
+                    "title": "Management's Discussion",
+                    "heading": "Revenue",
+                    "text": "Revenue was $100 million.",
+                    "n_chars": 30,
+                    "chunk_index": 0,
+                    "is_key_section": True,
+                    "incorporated_into": [],
+                    "content_type": "prose",
+                    "table_index": None,
+                    "table_caption": "",
+                }
+            ],
+            "period_of_report": "2024-12-31",
+        }), encoding="utf-8",
+    )
+
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        {
+            "ticker": "AAPL",
+            "cik": 1,
+            "company": "Apple",
+            "accession": "0000000001-25-000001",
+            "concept": "Revenue",
+            "label": "Revenue",
+            "value": 100.0,
+            "raw_value": "100",
+            "unit": "USD",
+            "scale": None,
+            "fiscal_year": 2024,
+            "fiscal_period": "FY",
+            "period_of_report": "2024-12-31",
+            "period_start": "2024-01-01",
+            "period_end": "2024-12-31",
+            "period_type": "duration",
+            "statement_type": "",
+            "is_audited": True,
+            "is_current_year": True,
+        }
+    ]).to_parquet(facts_file, index=False)
+
+    output = tmp_path / "generated.jsonl"
+    questions = generate_xbrl_questions(facts_file, processed_dir=processed_dir, output_path=output)
+
+    assert len(questions) == 1
+    question = questions[0]
+    assert question.source == "xbrl"
+    assert question.question_type == "numeric"
+    assert question.supporting_chunk_ids == ("0000000001-25-000001_part_ii_item_7_000",)
+    assert output.exists()
+    assert json.loads(output.read_text(encoding="utf-8").strip())["source"] == "xbrl"

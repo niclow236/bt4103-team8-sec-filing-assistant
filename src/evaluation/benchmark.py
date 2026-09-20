@@ -1,18 +1,23 @@
-"""Load and validate the hand-written benchmark questions."""
+"""Load and validate the benchmark questions, and generate the XBRL benchmark."""
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from src.config import PROJECT_ROOT, PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
+from src.retrieval.facts import FACTS_FILE, load_facts
 
 from .records import BenchmarkQuestion, BenchmarkValidationError
 
 DEFAULT_QUESTIONS_PATH = PROJECT_ROOT / "benchmark" / "questions.jsonl"
+DEFAULT_GENERATED_QUESTIONS_PATH = PROJECT_ROOT / "benchmark" / "generated.jsonl"
 
 
 def _available_chunk_ids(
@@ -31,6 +36,106 @@ def _available_chunk_ids(
         item if isinstance(item, str) else item["chunk_id"]
         for item in chunk_ids
     }
+
+
+def _normalise_xbrl_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "figure"
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(".") or "figure"
+
+
+def _format_expected_answer(row: Mapping[str, Any]) -> str:
+    raw = row.get("raw_value")
+    if raw not in (None, ""):
+        return str(raw).strip()
+    value = row.get("value")
+    if value is None or pd.isna(value):
+        return "unknown"
+    return str(value).strip()
+
+
+def _supporting_chunk_ids_for(
+    accession_no: str,
+    *,
+    tickers: Iterable[str] | None = None,
+    processed_dir: Path = PROCESSED_DIR,
+) -> list[str]:
+    available = []
+    for chunk in iter_chunks(processed_dir=processed_dir, tickers=list(tickers) if tickers else None):
+        if chunk.get("accession_no") == accession_no:
+            available.append(chunk["chunk_id"])
+    return sorted(available)
+
+
+def generate_xbrl_questions(
+    facts_file: Path = FACTS_FILE,
+    *,
+    processed_dir: Path = PROCESSED_DIR,
+    output_path: Path = DEFAULT_GENERATED_QUESTIONS_PATH,
+) -> list[BenchmarkQuestion]:
+    """Generate the mechanical XBRL benchmark from the current facts store.
+
+    Each fact becomes one numeric benchmark question. A supporting chunk is any
+    real processed passage from the same filing, and the generated JSONL is
+    written to ``benchmark/generated.jsonl`` by default. The output follows the
+    same schema as the hand-written benchmark and sets ``source`` to ``xbrl``.
+    """
+    frame = load_facts(facts_file)
+    current = frame[frame["is_current_year"].fillna(False)]
+    if current.empty:
+        raise ValueError(f"No current-year facts found in {facts_file}")
+
+    available_chunk_ids = {
+        chunk["chunk_id"]
+        for chunk in iter_chunks(processed_dir=processed_dir)
+    }
+    questions: list[BenchmarkQuestion] = []
+
+    for row in current.to_dict("records"):
+        accession = str(row.get("accession", "")).strip()
+        if not accession:
+            continue
+        supporting = _supporting_chunk_ids_for(accession, processed_dir=processed_dir)
+        if not supporting:
+            continue
+
+        ticker = str(row.get("ticker", "")).strip().upper()
+        fiscal_year = row.get("fiscal_year")
+        label = _normalise_xbrl_label(row.get("concept", "figure"))
+        question_id = (
+            f"xbrl-{ticker.lower()}-{int(fiscal_year)}-"
+            f"{re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-')}-"
+            f"{accession}"
+        )
+        question = BenchmarkQuestion(
+            question_id=question_id,
+            question=f"What was {label} for {ticker} in FY{int(fiscal_year)}?",
+            expected_answer=_format_expected_answer(row),
+            supporting_chunk_ids=tuple(supporting[:3]),
+            hard_negative_chunk_ids=(),
+            ticker=ticker,
+            fiscal_year=int(fiscal_year),
+            question_type="numeric",
+            difficulty="mechanical",
+            source="xbrl",
+        )
+
+        unresolved = set(question.supporting_chunk_ids) - available_chunk_ids
+        if unresolved:
+            raise BenchmarkValidationError(
+                f"generated question {question.question_id!r} references unknown chunk IDs: "
+                f"{', '.join(sorted(unresolved))}"
+            )
+        questions.append(question)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as stream:
+        for question in questions:
+            stream.write(json.dumps(question.to_dict(), ensure_ascii=False, allow_nan=False) + "\n")
+
+    return questions
 
 
 def load_questions(
