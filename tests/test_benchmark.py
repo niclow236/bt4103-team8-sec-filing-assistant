@@ -5,7 +5,14 @@ import json
 import pytest
 
 from src.evaluation.benchmark import load_questions
-from src.evaluation.records import BenchmarkValidationError, RunResult
+from src.evaluation.metrics import (
+    hard_negative_accuracy,
+    mrr,
+    ndcg_at_k,
+    recall_at_k,
+    score_question,
+)
+from src.evaluation.records import BenchmarkQuestion, BenchmarkValidationError, RunResult
 
 
 def _question(**overrides):
