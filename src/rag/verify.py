@@ -320,10 +320,17 @@ def verify_answer(
                     for candidate, year in _passage_values(passage, metric):
                         if year in years and _matches(figure, candidate.value, candidate.unit):
                             matches.append(passage.chunk_id)
-            status = "unverified" if ambiguous or not cited else "supported" if matches else "mismatch"
-            reason = {"supported": "The figure occurs in cited evidence at the displayed precision.",
-                      "unverified": "Cited evidence or a unique company, year and metric scope is missing.",
-                      "mismatch": "No matching figure and unit in the cited evidence for this scope."}[status]
+            # Most table chunks carry no "(in millions)" caption, so their
+            # figures are in an unknown scale: a miss there is unknown, not wrong.
+            unscaled = bool(cited) and not matches and not ambiguous and any(
+                p.content_type == "table" and not _TABLE_SCALE.search(p.text) for p in cited)
+            status = ("unverified" if ambiguous or not cited or unscaled
+                      else "supported" if matches else "mismatch")
+            reason = ("A cited table declares no scale, so its figures cannot be compared."
+                      if unscaled else
+                      {"supported": "The figure occurs in cited evidence at the displayed precision.",
+                       "unverified": "Cited evidence or a unique company, year and metric scope is missing.",
+                       "mismatch": "No matching figure and unit in the cited evidence for this scope."}[status])
             checks.append(_check("passage", status, index, claim, reason, figure, dict.fromkeys(matches)))
             if numeric:
                 checks.append(_fact_check(frame, facts_error, figure, metric, tickers, years, cited, index, claim, answer.question))
