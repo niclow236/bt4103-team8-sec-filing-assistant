@@ -796,12 +796,15 @@ Resolve the completed generation before showing final citations. Pass the
 prompt's numbered passages, since `build_prompt` may reorder retrieval results:
 
 ```python
-from src.rag import render_citation, resolve_citations
+from src.rag import render_citation, resolve_citations, verify_answer
 
 answer = resolve_citations(question, generation, prompt.passages)
+answer = verify_answer(answer, parsed=parsed)
 print(answer.text)  # unresolvable markers have been removed
 for sentence in answer.flagged_sentences:
     print("Citation warning:", sentence.warning_text)
+for check in answer.verification_warnings:
+    print("Verification warning:", check.status, check.claim, check.reason)
 for citation in answer.citations:
     print(render_citation(citation, answer.passages))
 ```
@@ -817,8 +820,58 @@ Invented markers remain in `answer.citations` with `resolved=False` and
 an invented marker or no marker is flagged; a valid marker elsewhere does not
 clear that warning. `answer.sentences` stores the original and cleaned text,
 its citations, and its `flagged` status, all included in `answer.to_dict()`.
-Resolution establishes source identity; checking the claim against the source
-is the separate verification stage (#32).
+Resolution establishes source identity; `verify_answer` then checks the figures
+against each sentence's cited evidence and, for questions requesting figures,
+the local facts store. It returns a new `Answer` with immutable checks under
+`answer.verification`; the model's answer text is preserved.
+
+### Verifying and reviewing an answer
+
+Build the facts store once with `python -m src.retrieval facts`. Verification
+reads it locally and never downloads data. A missing or unreadable store is a
+visible `unverified` result. Company, fiscal year, annual period, financial
+concept and unit must agree; a matching value from a different company,
+quarter or concept cannot validate a claim. Figures use decimal arithmetic,
+including currency scales, percentages, basis points and accounting negatives.
+Rounded claims are compared at the precision they display. Markdown table
+checks use the row's metric, year column and declared scale.
+
+The verifier confirms extractive wording but marks paraphrases for review.
+Numeric consistency is a proxy for faithfulness, not proof of semantic
+entailment. The initial financial-concept aliases cover revenue, net income,
+operating income, total assets, total liabilities, cash and cash equivalents,
+basic/diluted EPS and operating cash flow. Unknown concepts, ambiguous
+multi-company or multi-year sentences, calculations and unsupported number
+notation need review; they are not silently marked supported. Comparative
+answers can use one company and year per sentence for an unambiguous check.
+
+Save a result for each question and configuration, then show the browser UI:
+
+```python
+from pathlib import Path
+from src.rag import record_verification
+from src.app.answers import write_answer_page
+
+record_verification(
+    answer, Path("logs/verification.jsonl"),
+    question_id="q001", run_id="hybrid-llama3.2-baseline",
+)
+write_answer_page([answer], Path("logs/answers.html"))
+```
+
+Open `logs/answers.html` in a browser. Warnings appear above the answer, with
+expandable check details and source passages. To review an entire saved run:
+
+```bash
+python -m src.app.answers logs/verification.jsonl --output logs/answers.html
+```
+
+Every JSONL row retains the question/run IDs, generation configuration,
+answer, sources and individual checks. `numeric_support_rate` is the supported
+numeric checks divided by all applicable passage/fact checks; unverified checks
+stay in the denominator. Abstentions have no numeric score (`null`). Keep the
+groundedness checks separate when evaluating semantic faithfulness. Use one
+writer per results file; recording errors propagate to the caller.
 
 An abstention has no sentence warnings. Malformed or truncated output keeps
 its `parse_error` and `truncated` status. When structured sentence boundaries
