@@ -138,3 +138,67 @@ def test_enough_bad_filings_fail_the_gate():
 def test_an_untitled_note_does_not_fail_a_filing_that_named_its_statements():
     corpus = filing_passages("acc0", *ALL_THREE, "Segment detail", None, None)
     assert check_statement_titles(corpus).passed
+
+
+def test_a_corpus_with_no_table_passages_fails_loudly():
+    """No tables at all is the case the gate should be loudest about."""
+    check = check_statement_titles([passage("some prose")])
+    assert not check.passed
+    assert "no table passages" in check.detail
+
+
+def test_a_standalone_comprehensive_income_statement_is_not_the_income_statement():
+    """A filer that sets comprehensive income apart still owes an income statement."""
+    corpus = filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS",
+        "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME",
+        "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    check = check_statement_titles(corpus)
+    assert not check.passed
+    assert "income statement" in check.failures[0]
+
+
+def test_a_heading_combining_operations_and_comprehensive_income_counts():
+    """The combined heading is an income statement, and must still satisfy the gate."""
+    corpus = filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS",
+        "CONSOLIDATED STATEMENTS OF OPERATIONS AND COMPREHENSIVE INCOME",
+        "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    assert check_statement_titles(corpus).passed
+
+
+def test_a_comprehensive_income_statement_that_is_the_income_statement_counts():
+    """ServiceNow presents one statement, which ASC 220 allows: its rows say so."""
+    combined = {
+        **table_passage("acc0", "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME"),
+        "text": "\n".join([
+            "| Total revenues | 10,984 |",
+            "| Gross profit | 8,600 |",
+            "| Income from operations | 1,340 |",
+            "| Net income per share - basic | 6.12 |",
+            "| Other comprehensive income (loss): |  |",
+        ]),
+    }
+    corpus = [combined] + filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS", "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    assert check_statement_titles(corpus).passed
+
+
+def test_a_pension_row_does_not_make_an_oci_statement_an_income_statement():
+    """"Prior service cost of defined benefit plans" is an OCI row (TXN)."""
+    oci = {
+        **table_passage("acc0", "Consolidated Statements of Comprehensive Income"),
+        "text": "\n".join([
+            "| Net income | 4,075 |",
+            "| Prior service cost of defined benefit plans: |  |",
+            "| Foreign currency translation adjustments | 12 |",
+        ]),
+    }
+    corpus = [oci] + filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS", "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    check = check_statement_titles(corpus)
+    assert not check.passed and "income statement" in check.failures[0]

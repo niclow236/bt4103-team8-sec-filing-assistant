@@ -400,6 +400,15 @@ def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[st
     return labels, trapped, spanning
 
 
+# The statements a filer names, written once because a heading may combine
+# two of them: "Consolidated Statements of Operations and Comprehensive
+# Income (Loss)" is one heading covering the income statement.
+_STATEMENT_NAMES = (
+    r"operations|comprehensive\s+income|comprehensive\s+loss|income|earnings"
+    r"|cash\s+flows?|shareholders.{0,3}\s*equity|stockholders.{0,3}\s*equity"
+    r"|equity|financial\s+position"
+)
+
 # The heading a filer puts above a financial statement, with the emphasis and
 # escaping markdown adds already taken off: "CONSOLIDATED BALANCE SHEETS",
 # "Consolidated Statements of Cash Flows", "Balance sheets as of December 31,
@@ -410,12 +419,9 @@ def _level_split(tuples: list[tuple[str, ...]]) -> tuple[list[str], list[list[st
 # "(In millions)", "as of December 31, 2024", "for the years ended".
 _STATEMENT_TITLE = re.compile(
     r"^(?:consolidated\s+|combined\s+|condensed\s+)?(?:"
-    r"statements?\s+of\s+(?:operations|income|earnings|comprehensive\s+income"
-    r"|comprehensive\s+loss|cash\s+flows?|shareholders.{0,3}\s*equity"
-    r"|stockholders.{0,3}\s*equity|equity|financial\s+position)"
-    r"|(?:operations|income|earnings|comprehensive\s+income|comprehensive\s+loss"
-    r"|cash\s+flows?|shareholders.{0,3}\s*equity|stockholders.{0,3}\s*equity)"
-    r"\s+statements?"
+    rf"statements?\s+of\s+(?:{_STATEMENT_NAMES})(?:\s*\(loss\))?"
+    rf"(?:\s+and\s+(?:{_STATEMENT_NAMES})(?:\s*\(loss\))?)*"
+    rf"|(?:{_STATEMENT_NAMES})\s+statements?"
     r"|balance\s+sheets?)"
     r"(?:\s*[(\[].*)?(?:\s+(?:as\s+of|for\s+the)\s.*)?[.:]?$",
     re.IGNORECASE,
@@ -442,9 +448,28 @@ _COMPANY_PREFIX = re.compile(
 )
 
 
+# The characters markdown puts around a heading: emphasis, the escapes it
+# adds before punctuation, and the hashes that mark a heading.
+_MARKDOWN_NOISE = re.compile(r"[*\\#]")
+
+
+def _is_bulleted(line: str) -> bool:
+    """Whether this line opens with a bullet glyph rather than a word.
+
+    Filers bullet a statement's heading, so one bullet is not disqualifying;
+    a run of them is an index, which the caller uses this to spot. A table row
+    is not a bullet however it opens, since its cells are read by
+    ``_title_candidate`` instead.
+    """
+    text = _MARKDOWN_NOISE.sub("", line).strip()
+    if text.startswith("|"):
+        return False
+    return bool(text) and not (text[0].isalnum() or text[0] == "(")
+
+
 def _markdown_text(line: str) -> str:
     """One markdown line as its words: emphasis, escapes and spacing removed."""
-    text = " ".join(re.sub(r"[*\\#]", "", line).split()).strip()
+    text = " ".join(_MARKDOWN_NOISE.sub("", line).split()).strip()
     # Filers bullet a statement's heading, and the bullet arrives as a glyph
     # the encoding lost: "� Balance sheets as of December 31, 2024".
     return re.sub(r"^[^0-9A-Za-z(]+", "", text)
@@ -554,8 +579,28 @@ def _rejoins(lines: list[str], end: int, start: int) -> bool:
     between = [_title_candidate(line) for line in lines[end:start]]
     written = [text for text in between if text]
     return len(written) <= STATEMENT_TITLE_GAP and not any(
-        _STATEMENT_TITLE.match(text) for text in written
+        names_a_statement(text) for text in written
     )
+
+
+def _lists_the_statements(lines: list[str], index: int) -> bool:
+    """Whether the heading on this line is one entry of an index, not a heading.
+
+    Texas Instruments announces "List of financial statements:" and bullets all
+    six of them above the tables, so the nearest heading above a block is an
+    index entry rather than that block's own name. Only its balance sheet
+    bullet reads as a heading, since "balance sheets" stands alone in
+    ``_STATEMENT_TITLE`` while the others want the word "statements", so
+    counting the headings would not catch it: the run of bullets is what does.
+    One bullet is a heading a filer wrote that way, several in a row are a list.
+
+    The Item's index set as a table is rejected by its rows instead, where
+    every row names a different statement.
+    """
+    if not _is_bulleted(lines[index]):
+        return False
+    window = lines[max(0, index - STATEMENT_TITLE_LINES):index + STATEMENT_TITLE_LINES]
+    return sum(1 for line in window if _is_bulleted(line)) > 1
 
 
 def _statement_titles(section) -> list[str]:
@@ -609,19 +654,21 @@ def _statement_titles(section) -> list[str]:
         # row of its own. Read those rows before looking above the table.
         title = ""
         # The Item opens with an index listing every statement and its page.
-        # Each of its rows names a statement, so a table with more than one
-        # such row is that index, not a statement, and takes no title.
-        block_titles = sum(
-            1 for line in lines[start:last]
+        # Each of its rows names a different statement, so a block naming more
+        # than one is that index, not a statement, and takes no title. Counted
+        # as distinct titles: a running header that repeats one heading at
+        # every page break still names a single statement.
+        block_titles = {
+            _clean_title(_title_candidate(line)).casefold()
+            for line in lines[start:last]
             if names_a_statement(_title_candidate(line))
-        )
-        for index in range(start, min(start + STATEMENT_TITLE_ROWS, len(lines))):
-            if block_titles > 1:
-                break
-            candidate = _title_candidate(lines[index])
-            if candidate and names_a_statement(candidate):
-                title = _clean_title(candidate)
-                break
+        }
+        if len(block_titles) <= 1:
+            for index in range(start, min(start + STATEMENT_TITLE_ROWS, last)):
+                candidate = _title_candidate(lines[index])
+                if candidate and names_a_statement(candidate):
+                    title = _clean_title(candidate)
+                    break
         seen = 0
         for index in range(start - 1, -1, -1):
             if title:
@@ -630,6 +677,8 @@ def _statement_titles(section) -> list[str]:
             if not candidate:
                 continue
             if names_a_statement(candidate):
+                if _lists_the_statements(lines, index):
+                    break
                 title = _clean_title(candidate)
                 break
             seen += 1
@@ -644,7 +693,12 @@ def _statement_titles(section) -> list[str]:
         for (_, block_labels), title in zip(blocks, titles):
             if not labels or not block_labels:
                 continue
-            overlap = len(labels & block_labels) / len(labels | block_labels)
+            # Divided by the smaller of the two, because a statement and a
+            # markdown block correspond neither one to one nor in one
+            # direction: Adobe lays one statement out over three blocks, and
+            # Intuit's cash flow statement arrives as two tables from one
+            # block. The union would penalise both.
+            overlap = len(labels & block_labels) / min(len(labels), len(block_labels))
             if overlap > score:
                 best, score = title, overlap
         found.append(best if score >= STATEMENT_TITLE_OVERLAP else "")

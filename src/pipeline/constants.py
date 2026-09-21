@@ -263,8 +263,8 @@ STATEMENT_TITLE_ROWS = 3
 # What share of filings may be missing a titled statement before the verify
 # gate fails. Not zero: a filer that heads its statements in a way the parser
 # cannot read has none to carry, and one such filing should not stop a corpus
-# of fifteen companies from being used. Measured at 1 of 75 after #88 landed,
-# ServiceNow's FY2025 filing, whose Item 8 holds no heading above its
-# statements at all. 5% leaves room for three more such filings and fails on a
-# fourth, which would mean a layout worth handling rather than an oddity.
+# of fifteen companies from being used. Measured at 0 of 75, so the tolerance
+# is headroom rather than a filing it is currently excusing. 5% leaves room
+# for three such filings and fails on a fourth, which would mean a layout
+# worth handling rather than an oddity.
 STATEMENT_TITLE_TOLERANCE = 0.05

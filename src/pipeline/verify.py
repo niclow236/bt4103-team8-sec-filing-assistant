@@ -561,6 +561,42 @@ STATEMENT_KINDS = {
 }
 
 
+# The rows an income statement is built from. None of them appear in a
+# statement holding only other comprehensive income, which opens at net income
+# and runs through translation, pension and derivative adjustments. A bare
+# "cost of" is deliberately not among them: "Prior service cost of defined
+# benefit plans" is an other-comprehensive-income row, and it is the one thing
+# that made this rule misread Texas Instruments.
+INCOME_STATEMENT_ROWS = (
+    "revenue", "net sales", "gross profit", "operating expenses",
+    "income from operations", "operating income", "per share",
+)
+
+
+def _holds_an_income_statement(passage: dict) -> bool:
+    """Whether this passage's own row labels are an income statement's.
+
+    A heading naming comprehensive income is two different statements. It is
+    either the filing's income statement with other comprehensive income
+    appended, which ASC 220 permits and which is how ServiceNow files, or a
+    separate statement holding only other comprehensive income, beside a
+    "Statements of Operations" of its own. The heading reads the same either
+    way, so the rows are what tell them apart.
+
+    Only the first cell of each row is read, because the rest is figures: on
+    this corpus that separates ServiceNow's 5 filings from the 70 whose
+    comprehensive income statement is its own thing, with no overlap.
+    """
+    for line in str(passage.get("text") or "").splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = line.strip().strip("|").split("|")
+        label = (cells[0] if cells else "").casefold()
+        if any(row in label for row in INCOME_STATEMENT_ROWS):
+            return True
+    return False
+
+
 def check_statement_titles(corpus: list[dict]) -> Check:
     """Each filing's statements say which statement they are.
 
@@ -587,6 +623,9 @@ def check_statement_titles(corpus: list[dict]) -> Check:
         return Check("statement titles", False, "no passages found", ["data/processed/ is empty"])
 
     tables = [passage for passage in corpus if passage.get("content_type") == "table"]
+    if not tables:
+        return Check("statement titles", False, "no table passages found",
+                     ["the corpus holds no table passages, so no statement can carry a title"])
     titled = [passage for passage in tables if names_a_statement(passage.get("heading"))]
     filings: dict[str, set[str]] = {
         passage["chunk_id"].split("_")[0]: set()
@@ -594,6 +633,15 @@ def check_statement_titles(corpus: list[dict]) -> Check:
     }
     for passage in titled:
         heading = str(passage.get("heading") or "").casefold()
+        # A filer that sets comprehensive income as a statement of its own
+        # heads it "Statements of Comprehensive Income", which the bare word
+        # "income" would otherwise count as the income statement, passing a
+        # filing whose real income statement lost its title. Taking the phrase
+        # out leaves a combined "Operations and Comprehensive Income" heading
+        # matching on "operations", as it should. It is kept where the rows say
+        # this statement is the income statement, which is ServiceNow.
+        if "comprehensive income" in heading and not _holds_an_income_statement(passage):
+            heading = heading.replace("comprehensive income", "")
         for kind, words in STATEMENT_KINDS.items():
             if any(word in heading for word in words):
                 filings[passage["chunk_id"].split("_")[0]].add(kind)

@@ -375,7 +375,7 @@ Measured on the fifteen-company corpus, 75 filings, over a home connection, with
 | download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
 | parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
 | chunk | 15s | pure text processing over the parsed Items |
-| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then eight checks over 28,000 passages |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then nine checks over 28,000 passages |
 | **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
 
 Parse is quoted as a range because it is CPU-bound and single-threaded: the same
@@ -396,7 +396,7 @@ and exits non-zero when it cannot. It is the last thing to run before handing th
 corpus to retrieval, and it takes no options: a gate you can narrow is one that
 gets narrowed until it passes.
 
-Eight checks, cheapest first:
+Nine checks, cheapest first:
 
 | Check | What would fail it |
 |---|---|
@@ -423,7 +423,7 @@ source, and a filing can be amended after you fetch it.
 A check that finds the corpus incomplete skips the per-file checks below it,
 since each would report the same missing filing once per filing. Those are listed
 as `SKIP` rather than left out, so a run that checked four things cannot be
-mistaken for a clean bill of health on eight.
+mistaken for a clean bill of health on nine.
 
 What verify does **not** fail on is imperfection the pipeline already handles: 6
 of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one

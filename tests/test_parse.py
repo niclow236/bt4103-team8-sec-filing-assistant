@@ -365,3 +365,94 @@ def test_a_heading_two_rows_into_the_table_is_read():
                             rows_markdown(BALANCE_SHEET))
     records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
     assert records[0].statement_title == "CONSOLIDATED BALANCE SHEETS"
+
+
+def test_a_company_prefixed_heading_in_a_gap_still_ends_the_table():
+    """The gap between two runs of rows is a new table when a heading sits in it.
+
+    ServiceNow heads each statement with its own name in front, and the gap
+    check used to test the bare pattern, which does not know that form. The
+    two runs were rejoined and the cash flow rows took the balance sheet's
+    title.
+    """
+    markdown = markdown_for(
+        "**CONSOLIDATED BALANCE SHEETS**", "", rows_markdown(BALANCE_SHEET), "",
+        "ServiceNow, Inc. Consolidated Statements of Cash Flows", "",
+        rows_markdown(SEGMENTS),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET, SEGMENTS))
+    assert [record.statement_title for record in records] == [
+        "CONSOLIDATED BALANCE SHEETS", "Consolidated Statements of Cash Flows",
+    ]
+
+
+def test_a_heading_combining_two_statements_is_read():
+    """A good number of filers head the income statement with both names."""
+    markdown = markdown_for(
+        "**Consolidated Statements of Operations and Comprehensive Income (Loss)**", "",
+        "(In millions)", "", rows_markdown(BALANCE_SHEET),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == (
+        "Consolidated Statements of Operations and Comprehensive Income (Loss)"
+    )
+
+
+def test_a_short_block_does_not_read_the_heading_below_it():
+    """A block shorter than STATEMENT_TITLE_ROWS must not scan past its own end."""
+    note = [["Deferred tax assets", "1,200", "1,100"],
+            ["Deferred tax liabilities", "300", "250"]]
+    markdown = markdown_for(
+        rows_markdown(note), "**CONSOLIDATED BALANCE SHEETS**", "",
+        rows_markdown(BALANCE_SHEET),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, note, BALANCE_SHEET))
+    assert [record.statement_title for record in records] == [
+        "", "CONSOLIDATED BALANCE SHEETS",
+    ]
+
+
+def test_a_running_header_repeated_at_each_page_break_is_not_the_index():
+    """ServiceNow repeats the heading in the header opening every page."""
+    header = "| Table of Contents | Part II | Consolidated Balance Sheets | (in millions) |"
+    head, tail = BALANCE_SHEET[:2], BALANCE_SHEET[2:]
+    markdown = markdown_for(header, rows_markdown(head), header, rows_markdown(tail))
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "Consolidated Balance Sheets"
+
+
+def test_a_statement_broken_over_three_page_blocks_keeps_its_title():
+    """Each block holds a third of the rows, so pairing must not divide by the union."""
+    rows = [[f"Line item {i}", f"{i}00", f"{i}50"] for i in range(9)]
+    blocks = [rows_markdown(rows[i:i + 3]) for i in (0, 3, 6)]
+    markdown = markdown_for(
+        "**CONSOLIDATED BALANCE SHEETS**", "", blocks[0], "",
+        "**CONSOLIDATED BALANCE SHEETS**", "", blocks[1], "",
+        "**CONSOLIDATED BALANCE SHEETS**", "", blocks[2],
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, rows))
+    assert records[0].statement_title == "CONSOLIDATED BALANCE SHEETS"
+
+
+def test_a_single_bulleted_heading_is_still_read():
+    """A filer may bullet the heading, and the bullet arrives as a lost glyph."""
+    markdown = markdown_for(
+        "\ufffd Balance sheets as of December 31, 2025 and 2024.", "",
+        rows_markdown(BALANCE_SHEET),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == "Balance sheets as of December 31, 2025 and 2024"
+
+
+def test_a_run_of_bulleted_statements_is_an_index_not_a_heading():
+    """Texas Instruments bullets all six statements under a list heading."""
+    markdown = markdown_for(
+        "List of financial statements:", "",
+        "\ufffd Income for each of the three years ended December 31, 2025.", "",
+        "\ufffd Comprehensive income for each of the three years ended December 31, 2025.", "",
+        "\ufffd Balance sheets as of December 31, 2025 and 2024.", "",
+        "\ufffd Cash flows for each of the three years ended December 31, 2025.", "",
+        rows_markdown(BALANCE_SHEET),
+    )
+    records, _, _ = _extract_tables(statement_section(markdown, BALANCE_SHEET))
+    assert records[0].statement_title == ""
