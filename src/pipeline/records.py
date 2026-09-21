@@ -66,6 +66,12 @@ class TableRecord:
     rows: list[list[str]]
     n_rows: int
     n_cols: int
+    # The financial statement this table is part of, where the filing headed it
+    # with one: "CONSOLIDATED BALANCE SHEETS" (#88). Empty for a note or a
+    # schedule, which no statement heading introduces. A statement split over
+    # several passages would otherwise leave every part but the first with
+    # nothing saying which statement it is.
+    statement_title: str = ""
 
 
 @dataclass(frozen=True)

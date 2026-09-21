@@ -156,6 +156,33 @@ RRF_K = 60
 # value with the sweep beside it.
 FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
 
+# The weights for a question that asks for a figure, which reaches fusion as
+# Query.wants_figures (#86). Equal, like the pair above, and that is the
+# measurement's answer rather than an untouched default.
+#
+# The hypothesis was that equal weights bury a statement table only the dense
+# retriever finds, since BM25 rarely returned one: the table names neither the
+# company nor the fiscal year, and writes the year as "December 31, 2025".
+# Meta's FY2025 total assets sat at dense rank 4 and hybrid rank 14.
+#
+# Swept on the 48 test questions with dense held at 1.0
+# (notebooks/retrieval/fusion_weight_sweep.py), after #88 put each statement's
+# title into its passages:
+#
+#   BM25 weight      1.0    0.7    0.5    0.3    0.0
+#   figure in top 8   20     19     18     18     13   (of 28)
+#   median rank        6      6      5      4      9
+#   prose terms    0.978  0.978  0.978  0.984  0.990   (of 1.0, 20 questions)
+#   right section     45     44     44     44     44   (of 48)
+#
+# Quieting BM25 costs figure questions rather than helping them, and dense
+# alone loses seven of them. #88 is why: a statement table now carries
+# "CONSOLIDATED BALANCE SHEETS" in its own text, so BM25 finds the passage it
+# used to miss, and the agreement equal weights reward is now agreement worth
+# having. The knob stays because the sweep is cheap to re-run when the corpus
+# or the reranker (#21) changes; it is set to the pair that measured best.
+FIGURE_FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
+
 # --- reranking --------------------------------------------------------------
 # A cross-encoder reads the question and the passage together and scores the
 # pair, which is what lets it catch relevance a bi-encoder misses -- at a cost
@@ -246,7 +273,7 @@ __all__ = [
     "CONTEXT_HEADER",
     "BM25_K1", "BM25_B",
     "CANDIDATE_K", "FINAL_K",
-    "RRF_K", "FUSION_WEIGHTS",
+    "RRF_K", "FUSION_WEIGHTS", "FIGURE_FUSION_WEIGHTS",
     "RERANK_MODEL", "RERANK_BATCH_SIZE", "RERANK_MAX_TOKENS",
     "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE", "MIN_RERANK_SCORE",
     "PREFILTER_FIELDS", "TABLE_BOOST",

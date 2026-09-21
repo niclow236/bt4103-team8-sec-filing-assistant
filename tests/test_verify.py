@@ -7,7 +7,12 @@ import pytest
 from src.pipeline.chunk import chunk_tables
 from src.pipeline.constants import CHUNK_CHAR_BUDGET
 from src.pipeline.records import SectionRecord, TableRecord
-from src.pipeline.verify import OVERRUN_TOLERANCE, bge_token_counter, check_passage_sizes
+from src.pipeline.verify import (
+    OVERRUN_TOLERANCE,
+    bge_token_counter,
+    check_passage_sizes,
+    check_statement_titles,
+)
 
 FILING = {"ticker": "AAA", "company": "Alpha Corp", "fiscal_year": 2024, "form": "10-K"}
 
@@ -81,3 +86,119 @@ def test_reverting_the_table_budget_fails_the_gate():
                                      table_budget=CHUNK_CHAR_BUDGET))
     assert check_passage_sizes(cut_right, count_tokens=counter).passed
     assert not check_passage_sizes(cut_wrong, count_tokens=counter).passed
+
+
+# --- statement titles (#88) -----------------------------------------------------
+
+def table_passage(accession: str, heading: str | None, item: str = "8") -> dict:
+    text = "| Total assets | $364,980 |"
+    return {"chunk_id": f"{accession}_part_ii_item_{item}_t000_00", "content_type": "table",
+            "heading": heading, "item": item, "text": text, "n_chars": len(text)}
+
+
+def filing_passages(accession: str, *headings: str | None, item: str = "8") -> list[dict]:
+    return [table_passage(accession, heading, item) for heading in headings]
+
+
+ALL_THREE = ("CONSOLIDATED BALANCE SHEETS", "CONSOLIDATED STATEMENTS OF OPERATIONS",
+             "CONSOLIDATED STATEMENTS OF CASH FLOWS")
+
+
+def test_a_filing_naming_all_three_statements_passes():
+    assert check_statement_titles(filing_passages("acc0", *ALL_THREE, None)).passed
+
+
+def test_a_filing_missing_a_statement_is_named_with_what_it_lacks():
+    corpus = filing_passages("acc0", "CONSOLIDATED BALANCE SHEETS")
+    check = check_statement_titles(corpus)
+    assert not check.passed
+    assert "acc0" in check.failures[0]
+    assert "cash flow statement" in check.failures[0] and "income statement" in check.failures[0]
+
+
+def test_statements_outside_item_8_still_count():
+    """Oracle's Item 8 is a cross-reference: its statements are under Item 15."""
+    assert check_statement_titles(filing_passages("acc0", *ALL_THREE, item="15")).passed
+
+
+def test_one_bad_filing_among_many_stays_inside_the_tolerance():
+    """One filer whose layout has no readable heading is not a corpus failure."""
+    corpus = [p for i in range(39) for p in filing_passages(f"acc{i:02d}", *ALL_THREE)]
+    corpus += filing_passages("bad", "Financial Statements")
+    check = check_statement_titles(corpus)
+    assert check.passed and "39 of 40" in check.detail
+
+
+def test_enough_bad_filings_fail_the_gate():
+    corpus = [p for i in range(17) for p in filing_passages(f"acc{i:02d}", *ALL_THREE)]
+    corpus += [p for i in range(3) for p in filing_passages(f"bad{i}", "Financial Statements")]
+    assert not check_statement_titles(corpus).passed
+
+
+def test_an_untitled_note_does_not_fail_a_filing_that_named_its_statements():
+    corpus = filing_passages("acc0", *ALL_THREE, "Segment detail", None, None)
+    assert check_statement_titles(corpus).passed
+
+
+def test_a_corpus_with_no_table_passages_fails_loudly():
+    """No tables at all is the case the gate should be loudest about."""
+    check = check_statement_titles([passage("some prose")])
+    assert not check.passed
+    assert "no table passages" in check.detail
+
+
+def test_a_standalone_comprehensive_income_statement_is_not_the_income_statement():
+    """A filer that sets comprehensive income apart still owes an income statement."""
+    corpus = filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS",
+        "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME",
+        "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    check = check_statement_titles(corpus)
+    assert not check.passed
+    assert "income statement" in check.failures[0]
+
+
+def test_a_heading_combining_operations_and_comprehensive_income_counts():
+    """The combined heading is an income statement, and must still satisfy the gate."""
+    corpus = filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS",
+        "CONSOLIDATED STATEMENTS OF OPERATIONS AND COMPREHENSIVE INCOME",
+        "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    assert check_statement_titles(corpus).passed
+
+
+def test_a_comprehensive_income_statement_that_is_the_income_statement_counts():
+    """ServiceNow presents one statement, which ASC 220 allows: its rows say so."""
+    combined = {
+        **table_passage("acc0", "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME"),
+        "text": "\n".join([
+            "| Total revenues | 10,984 |",
+            "| Gross profit | 8,600 |",
+            "| Income from operations | 1,340 |",
+            "| Net income per share - basic | 6.12 |",
+            "| Other comprehensive income (loss): |  |",
+        ]),
+    }
+    corpus = [combined] + filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS", "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    assert check_statement_titles(corpus).passed
+
+
+def test_a_pension_row_does_not_make_an_oci_statement_an_income_statement():
+    """"Prior service cost of defined benefit plans" is an OCI row (TXN)."""
+    oci = {
+        **table_passage("acc0", "Consolidated Statements of Comprehensive Income"),
+        "text": "\n".join([
+            "| Net income | 4,075 |",
+            "| Prior service cost of defined benefit plans: |  |",
+            "| Foreign currency translation adjustments | 12 |",
+        ]),
+    }
+    corpus = [oci] + filing_passages(
+        "acc0", "CONSOLIDATED BALANCE SHEETS", "CONSOLIDATED STATEMENTS OF CASH FLOWS",
+    )
+    check = check_statement_titles(corpus)
+    assert not check.passed and "income statement" in check.failures[0]
