@@ -375,7 +375,7 @@ Measured on the fifteen-company corpus, 75 filings, over a home connection, with
 | download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
 | parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
 | chunk | 15s | pure text processing over the parsed Items |
-| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then eight checks over 28,000 passages |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then nine checks over 28,000 passages |
 | **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
 
 Parse is quoted as a range because it is CPU-bound and single-threaded: the same
@@ -396,7 +396,7 @@ and exits non-zero when it cannot. It is the last thing to run before handing th
 corpus to retrieval, and it takes no options: a gate you can narrow is one that
 gets narrowed until it passes.
 
-Eight checks, cheapest first:
+Nine checks, cheapest first:
 
 | Check | What would fail it |
 |---|---|
@@ -406,6 +406,7 @@ Eight checks, cheapest first:
 | chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
 | no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage, unless the chunker dropped it as a flattened copy of a table it rebuilt |
 | passage sizes | any table passage, or more than 0.5% of prose passages, past the 512 tokens bge reads, counted with the model's own tokenizer over the passage and its context header |
+| statement titles | a filing whose balance sheet, income statement or cash flow statement carries no title a question could name it by |
 | matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
 | XBRL figures findable | a figure the filing reported to EDGAR that appears in no indexed passage |
 
@@ -422,7 +423,7 @@ source, and a filing can be amended after you fetch it.
 A check that finds the corpus incomplete skips the per-file checks below it,
 since each would report the same missing filing once per filing. Those are listed
 as `SKIP` rather than left out, so a run that checked four things cannot be
-mistaken for a clean bill of health on eight.
+mistaken for a clean bill of health on nine.
 
 What verify does **not** fail on is imperfection the pipeline already handles: 6
 of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one
@@ -574,6 +575,15 @@ passages there:
   Using" above Total and Levels 1 to 3 -- is stated once, above the row labels,
   instead of inside every column label. Repeated, it took a median of a third of
   each table passage and cut many tables into one-row pieces.
+- Every passage cut from a financial statement names that statement. The title
+  comes from the filing's own heading above the table, read from the Item's
+  markdown, and opens each part: "CONSOLIDATED BALANCE SHEETS (part 2 of 3)"
+  where the passage holding Apple's "Total assets | $364,980" used to open
+  "Financial Statements (part 2 of 3)" with an empty caption. Nothing in that
+  passage said "balance sheet", so a question naming the statement could not
+  match it, and neither a retriever nor the model could tell which statement
+  the figures belonged to. A table with no heading above it, which is every
+  note and schedule, keeps the caption it had.
 - A table passage identical to another in the same Item is kept once. Filers do
   print a table twice, and in one Item the two would be the same vector indexed
   twice. Repeated prose keeps each occurrence's heading and source position,
@@ -727,6 +737,25 @@ gets its top k from that filing rather than from whatever survives a
 corpus-wide top k. This matters more here than in most corpora: fifteen peers
 across five years write near-identical risk factors, and semantic similarity
 alone would happily return the right paragraph from the wrong year.
+
+A question that asks for a figure is fused with its own weights,
+`FIGURE_FUSION_WEIGHTS`, which `rag/query.py` selects by setting
+`Query.wants_figures`. They are equal today, and that is a measurement rather
+than an untouched default. The concern was that equal weights reward the
+passage both retrievers returned, and BM25 rarely returned a financial
+statement table: it names neither the company nor the fiscal year, and writes
+the year as "December 31, 2025", so a table only the dense retriever ranked
+highly lost to prose the two agreed on. Meta's FY2025 total assets sat at
+dense rank 4 and hybrid rank 14.
+
+`python notebooks/retrieval/fusion_weight_sweep.py` swept BM25's weight over
+the 48 test questions with dense held at 1.0. Quieting BM25 costs figure
+questions rather than helping: the expected figure reached the top 8 for 20 of
+28 questions at equal weights, 18 at 0.3, and 13 with dense alone, while prose
+barely moved. Carrying each statement's title into its passages (#88) is what
+changed it: a balance sheet passage now holds the words "CONSOLIDATED BALANCE
+SHEETS", so BM25 finds the table it used to miss. The sweep is worth re-running
+when the corpus changes or the reranker (#21) lands.
 
 `table_boost` leans a query toward table passages without excluding prose, by
 raising a table passage's score before the cut to k. It is off by default and is
