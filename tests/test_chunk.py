@@ -196,3 +196,30 @@ def test_identical_prose_under_different_headings_keeps_both_occurrences():
     assert len({chunk.chunk_id for chunk in occurrences}) == 2
     # Preserve source positions and all other prose metadata as well as text.
     assert chunks == chunk_section(item, accession_no="acc")
+
+
+# --- statement titles (#88) -----------------------------------------------------
+
+def statement_table(caption: str = "ASSETS:") -> TableRecord:
+    headers = ["(In millions)", "2024", "2023"]
+    rows = [[f"Line item number {i}", f"{1000 + i:,}", f"{900 + i:,}"] for i in range(60)]
+    return TableRecord(table_index=0, caption=caption, headers=headers, rows=rows,
+                       n_rows=len(rows), n_cols=len(headers),
+                       statement_title="CONSOLIDATED BALANCE SHEETS")
+
+
+def test_every_part_of_a_split_statement_names_the_statement():
+    passages = chunk_tables(section_with(statement_table()), accession_no="acc")
+    assert len(passages) > 1
+    assert all(p.text.startswith("CONSOLIDATED BALANCE SHEETS") for p in passages)
+    assert all(p.heading == "CONSOLIDATED BALANCE SHEETS" for p in passages)
+
+
+def test_the_row_label_caption_is_kept_beside_the_statement_title():
+    passage = chunk_tables(section_with(statement_table()), accession_no="acc")[0]
+    assert passage.text.startswith("CONSOLIDATED BALANCE SHEETS: ASSETS:")
+
+
+def test_a_table_with_no_statement_title_is_unchanged():
+    passages = chunk_tables(section_with(long_table("Operations")), accession_no="acc")
+    assert all(p.text.startswith("Operations") for p in passages)

@@ -848,7 +848,16 @@ def chunk_tables(
         # its own width. The part suffix is reserved at its widest, because how
         # many parts there are is not known until the splitting it would change
         # has been done.
-        label = table.caption or section.title or f"Item {section.item}"
+        # Every part of a split statement names the statement (#88). Apple's
+        # FY2024 balance sheet opened "Financial Statements (part 2 of 3)" with
+        # an empty caption, so nothing in the passage holding "Total assets"
+        # said "balance sheet" and no retriever could match a question that did.
+        # The caption, a row label such as "ASSETS:", is kept beside it.
+        label = table.statement_title or table.caption or section.title or f"Item {section.item}"
+        if table.statement_title and table.caption and (
+            table.caption.casefold() not in table.statement_title.casefold()
+        ):
+            label = f"{table.statement_title}: {table.caption}"
         # Never below half the budget: a caption long enough to take more would
         # otherwise shatter its table into one-row pieces, which is worse than
         # letting that one caption overrun.
@@ -879,7 +888,7 @@ def chunk_tables(
                     part=section.part,
                     item=section.item,
                     title=section.title,
-                    heading=table.caption or None,
+                    heading=table.statement_title or table.caption or None,
                     text=text,
                     n_chars=len(text),
                     chunk_index=part_number,
