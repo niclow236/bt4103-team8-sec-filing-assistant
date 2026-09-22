@@ -174,6 +174,7 @@ class RunResult:
         ``retriever`` is passed in rather than read off the passages, because a
         retriever that finds nothing returns no passages to read it from.
         """
+        passages = sorted(passages, key=lambda passage: passage.rank)
         if any(passage.retriever != retriever for passage in passages):
             raise ValueError(f"all passages in a RunResult must come from retriever {retriever!r}")
         return cls(

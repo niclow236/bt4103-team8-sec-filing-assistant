@@ -1027,6 +1027,19 @@ abstain from.
 
 `RunResult` in `src/evaluation/records.py` is what the harness will record per
 question and retriever: the chunk ids returned, their scores and the latency.
+Pass a result and its benchmark question to `score_question` for the shared
+retrieval metrics used across retrievers:
+
+```python
+from src.evaluation import score_question
+
+metrics = score_question(question, result, k=10)
+```
+
+The returned row contains Recall@k, nDCG@k, reciprocal rank, hard-negative
+accuracy, the cutoff, question type, retriever, and latency. Unanswerable
+questions leave the supporting-chunk metrics unset and are evaluated through
+their hard-negative accuracy instead.
 
 ## Team and course
 
