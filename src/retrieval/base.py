@@ -99,6 +99,16 @@ class Retriever(Protocol):
         ...
 
 
+def has_candidates(retriever: Retriever, query: Query) -> bool | None:
+    """Whether the index admits any rows before scoring, if it can report it.
+
+    Optional for third-party retrievers: absence means unknown, never that
+    filters excluded everything. Built-in retrievers inspect their own index.
+    """
+    check = getattr(retriever, "has_candidates", None)
+    return check(query) if check is not None else None
+
+
 def resolve_k(query: Query, k: int | None = None) -> int:
     """How many passages this call should return.
 
@@ -346,6 +356,9 @@ class WrappingRetriever(ABC):
             table_boost=query.table_boost,
         )
 
+    def has_candidates(self, query: Query) -> bool | None:
+        return has_candidates(self.inner, query)
+
     @abstractmethod
     def score(self, query: Query, passages: Sequence[RetrievedPassage]) -> Sequence[float]:
         """Score each candidate against the query, in the order given.
@@ -361,6 +374,7 @@ __all__ = [
     "Retriever",
     "WrappingRetriever",
     "candidates",
+    "has_candidates",
     "matches",
     "rank",
     "reorder",

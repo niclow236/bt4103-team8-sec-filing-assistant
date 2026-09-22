@@ -272,7 +272,7 @@ def verify_answer(
                              "Generation was malformed or truncated; review the available output."))
     if answer.abstained:
         checks.append(_check("output", "not_applicable", None, answer.text,
-                             "The model abstained; there are no claims to verify."))
+                             "The assistant abstained; there are no claims to verify."))
         return replace(answer, verification=VerificationResult(parsed.question_type, tuple(checks)))
 
     numeric = parsed.wants_figures or parsed.question_type == "numeric"

@@ -173,6 +173,10 @@ class BM25Retriever:
 
         return cls(payload["chunks"], manifest=manifest)
 
+    def has_candidates(self, query: Query) -> bool:
+        """Check metadata without applying a relevance threshold."""
+        return any(matches(chunk, query) for chunk in self.chunks)
+
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         """Return the highest-scoring passages matching the query filters.
 

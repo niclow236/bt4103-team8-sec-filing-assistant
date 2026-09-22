@@ -803,7 +803,7 @@ Three settings in `.env` change how generation runs. None is required:
 ### From a question to an answer
 
 ```python
-from src.rag import build_prompt, config_from_env, generate, parse_question
+from src.rag import answer_question, config_from_env, parse_question
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.constants import FINAL_K
 from src.retrieval.dense import DenseRetriever
@@ -813,21 +813,20 @@ hybrid = HybridRetriever(BM25Retriever.load(), DenseRetriever.load())
 
 question = "What supply chain risks did Apple describe in its FY2024 10-K?"
 parsed = parse_question(question)            # AAPL, FY2024, a factual question
-passages = hybrid.search(parsed.to_query(top_k=FINAL_K))
-prompt = build_prompt(question, passages)    # the passages as sources [1] to [8]
-
-generation = generate(prompt, config_from_env(), on_token=lambda t: print(t, end=""))
-generation.answer.sentences    # each sentence with the source numbers it cites
-generation.text                # the same answer as prose, with [n] markers
+answer = answer_question(
+    question, hybrid, config_from_env(), query=parsed.to_query(top_k=FINAL_K),
+    on_token=lambda t: print(t, end=""),
+)
+answer.text                    # resolved prose with [n] markers, or an abstention
+answer.abstention_reason        # why no answer was given, or None
 ```
 
-Resolve the completed generation before showing final citations. Pass the
-prompt's numbered passages, since `build_prompt` may reorder retrieval results:
+The shared entry point resolves citations before returning the answer. Verify
+the completed answer before showing its final citations and checks:
 
 ```python
-from src.rag import render_citation, resolve_citations, verify_answer
+from src.rag import render_citation, verify_answer
 
-answer = resolve_citations(question, generation, prompt.passages)
 answer = verify_answer(answer, parsed=parsed)
 print(answer.text)  # unresolvable markers have been removed
 for sentence in answer.flagged_sentences:
@@ -935,6 +934,37 @@ it arrives. Joined, what it yields is `generation.text`.
 
 ### What keeps the answer on the sources
 
+`answer_question` checks retrieval before building a prompt or contacting
+Ollama. If there are no usable passages, it returns the fixed sentence
+"The filings do not answer this question." with `Answer.abstained=True`, no
+citations, and an `abstention_reason` that the browser viewer displays:
+
+- `filters_excluded_all`: the selected metadata filters exclude every indexed
+  passage. Candidate checks inspect the actual index before score thresholds.
+- `below_threshold`: matching passages exist, but none meet the score floor.
+- `no_evidence`: the index is empty, returned evidence is unusable, or a custom
+  retriever cannot report why it returned nothing.
+- `model_declined`: passages reached the model, but it declined to answer.
+
+Pass `min_score=<calibrated value>` to `answer_question` to add an inclusive
+floor on the selected retriever's final scores. Its internal thresholds also
+remain in force. `None` adds no floor; the existing defaults remain unset
+pending benchmark calibration (#26). BM25, cosine similarity, fused ranks and
+reranker scores have different scales and must not share an arbitrary cutoff.
+The gate prevents generation on empty evidence; score alone does not prove
+that a nonempty set answers the question, so the model can still abstain.
+
+Built-in BM25, dense, hybrid and wrapping retrievers support candidate checks.
+Custom retrievers can add `has_candidates(query)` to report metadata matches;
+without it, an empty search still abstains but uses `no_evidence`. Index and
+provider errors propagate instead of being counted as abstentions. A zero
+`top_k` is rejected as a configuration error. Stream callbacks receive the
+fixed abstention sentence immediately when retrieval cannot supply evidence.
+
+The lower-level `build_prompt`, `generate` and `resolve_citations` functions
+remain available for experiments with known evidence. Use `answer_question`
+for the full retrieval path; `build_prompt` deliberately rejects empty sources.
+
 The model does not write free text. `GroundedAnswer` in `src/rag/records.py` is
 a Pydantic model: whether the sources answer the question at all, then the
 answer as a list of sentences, each with the numbers of the sources it draws on.
@@ -1027,6 +1057,26 @@ abstain from.
 
 `RunResult` in `src/evaluation/records.py` is what the harness will record per
 question and retriever: the chunk ids returned, their scores and the latency.
+
+The answer evaluation harness runs the same `answer_question` path and reports
+abstentions divided by all completed questions, both overall and separately
+for answerable and unanswerable questions. Each summary includes its total,
+abstention count, rate and counts by reason. Empty subsets have a `null` rate,
+and errors stop the run instead of inflating the abstention count. A high rate
+on answerable questions indicates lost coverage, not better answer quality.
+
+```bash
+python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl
+python -m src.app.answers logs/evaluation-answers.jsonl --output logs/evaluation-answers.html
+```
+
+Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
+or `--model` to select an installed Ollama model. The JSON report records these
+settings, individual answers and aggregate rates. The command needs a populated
+benchmark and built indexes. Programmatic runs use
+`src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`.
+Evaluation rows include citation checks; run `verify_answer` separately when
+numeric verification is also needed.
 
 ## Team and course
 

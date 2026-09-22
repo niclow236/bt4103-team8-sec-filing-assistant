@@ -117,6 +117,7 @@ def resolve_citations(
         citations=tuple(citations[n] for n in sorted(citations)),
         passages=shown,
         abstained=abstained,
+        abstention_reason="model_declined" if abstained else None,
         config=generation.config,
         latency_ms=generation.latency_ms,
         sentences=sentences,
