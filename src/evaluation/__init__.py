@@ -1,4 +1,4 @@
-"""Benchmark records and loaders for retrieval evaluation."""
+"""Benchmark records, loaders, and ranking metrics for retrieval evaluation."""
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .metrics import hard_negative_accuracy, mrr, ndcg_at_k, recall_at_k, score_question
