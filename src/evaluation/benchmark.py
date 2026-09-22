@@ -44,12 +44,12 @@ def _normalise_xbrl_label(value: Any) -> str:
 
 def _format_expected_answer(row: Mapping[str, Any]) -> str:
     raw = row.get("raw_value")
-    if raw not in (None, ""):
-        return str(raw).strip()
-    value = row.get("value")
-    if value is None or pd.isna(value):
-        return "unknown"
-    return str(value).strip()
+    if raw in (None, ""):
+        raw = row.get("value")
+        if raw is None or pd.isna(raw):
+            return "unknown"
+    unit = str(row.get("unit") or "").strip()
+    return f"{str(raw).strip()} {unit}".strip()
 
 
 def _value_needles(raw: Any) -> set[str]:
@@ -95,6 +95,7 @@ def generate_xbrl_questions(
         chunks_by_accession.setdefault(chunk["accession_no"], []).append(chunk)
 
     questions: list[BenchmarkQuestion] = []
+    seen_ids: set[str] = set()
     for row in current.to_dict("records"):
         accession = str(row.get("accession", "")).strip()
         if not accession:
@@ -105,7 +106,10 @@ def generate_xbrl_questions(
 
         ticker = str(row.get("ticker", "")).strip().upper()
         fiscal_year = row.get("fiscal_year")
-        label = _normalise_xbrl_label(row.get("concept", "figure"))
+        raw_label = row.get("label")
+        if raw_label is None or (isinstance(raw_label, float) and pd.isna(raw_label)):
+            raw_label = row.get("concept", "figure")
+        label = _normalise_xbrl_label(raw_label)
         question_id = (
             f"xbrl-{ticker.lower()}-{int(fiscal_year)}-"
             f"{re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-')}-"
@@ -123,6 +127,11 @@ def generate_xbrl_questions(
             difficulty="mechanical",
             source="xbrl",
         )
+        if question.question_id in seen_ids:
+            raise BenchmarkValidationError(
+                f"generated duplicate question_id {question.question_id!r}"
+            )
+        seen_ids.add(question.question_id)
         questions.append(BenchmarkQuestion.from_mapping(question.to_dict()))
 
     if not questions:

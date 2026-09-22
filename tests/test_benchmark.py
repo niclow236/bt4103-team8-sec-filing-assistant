@@ -243,6 +243,7 @@ def test_generate_xbrl_questions_uses_real_chunk_ids_and_xbrl_source(tmp_path):
     question = questions[0]
     assert question.source == "xbrl"
     assert question.question_type == "numeric"
+    assert question.expected_answer == "100 USD"
     assert question.supporting_chunk_ids == ("0000000001-25-000001_part_ii_item_7_000",)
     assert output.exists()
     assert json.loads(output.read_text(encoding="utf-8").strip())["source"] == "xbrl"
