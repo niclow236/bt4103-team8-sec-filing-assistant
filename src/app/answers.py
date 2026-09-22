@@ -17,6 +17,8 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from src.rag.records import ABSTENTION_MESSAGES
+
 
 def _text(value) -> str:
     return escape(str(value), quote=True)
@@ -32,10 +34,10 @@ def _answer_data(value) -> tuple[Mapping, str | None, str | None]:
 
 def _status(data: Mapping) -> tuple[str, str]:
     verification = data.get("verification")
-    if verification is None:
-        return "unchecked", "Not checked"
     if data.get("abstained"):
         return "abstained", "Abstained"
+    if verification is None:
+        return "unchecked", "Not checked"
     statuses = {check.get("status") for check in verification.get("checks", [])}
     if "mismatch" in statuses:
         return "mismatch", "Mismatch found"
@@ -76,7 +78,13 @@ def render_answer(value) -> str:
     if badges:
         parts.append('<div class="badges">' + "".join(badges) + "</div>")
 
-    if verification is None:
+    if data.get("abstained"):
+        reason = ABSTENTION_MESSAGES.get(data.get("abstention_reason"),
+                                         "No factual claims were produced or scored.")
+        parts.append('<section class="notice neutral"><span class="notice-icon">&#8212;</span>'
+                     '<div><strong>The assistant abstained</strong>'
+                     f'<p>{_text(reason)}</p></div></section>')
+    elif verification is None:
         parts.append('<section class="notice review" role="alert"><span class="notice-icon">?</span>'
                      '<div><strong>This answer has not been verified.</strong>'
                      '<p>Run verification before relying on its claims.</p></div></section>')
@@ -91,10 +99,6 @@ def render_answer(value) -> str:
                          f'<strong>{_text(figure)}</strong><p>{_text(check["reason"])}</p>'
                          f'<blockquote>{_text(check["claim"])}</blockquote></li>')
         parts.append("</ul></div></section>")
-    elif data.get("abstained"):
-        parts.append('<section class="notice neutral"><span class="notice-icon">—</span>'
-                     '<div><strong>The model abstained</strong>'
-                     '<p>No factual claims were produced or scored.</p></div></section>')
     else:
         parts.append('<section class="notice success"><span class="notice-icon">✓</span>'
                      '<div><strong>Completed checks found no mismatch</strong>'
