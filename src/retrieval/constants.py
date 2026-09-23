@@ -125,11 +125,72 @@ BM25_B = 0.75
 # passage that answers the question is often outside a first-stage top-8 and
 # only a reranker that has seen it can pull it up.
 #
-# 50 and 8 are the architecture's numbers (§3, §5). FINAL_K is also a context
-# budget: 8 passages at up to ~1,800 characters each is roughly 14k characters
-# before the prompt, which is what makes 8 rather than 20 the ceiling.
+# 50 and 8 were the architecture's numbers (§3, §5). FINAL_K was also a context
+# budget, because a laptop's Ollama could not read a larger prompt; a hosted
+# model removes that limit, so #85 measured the cap instead of assuming it.
+#
+# `notebooks/retrieval/final_k_sweep.py` swept 8, 12, 16 and 20 over two
+# question sets on the corpus of 2026-09-23. Each question was searched once at
+# 20 and the ranking sliced, which is exact here: hybrid fuses at
+# max(CANDIDATE_K, k), so the order does not depend on k.
+#
+#                                    top 8   top 12   top 16   top 20
+#   XBRL benchmark (1,884 questions), #24 and #25
+#     supporting chunk in the prompt  63.0%    72.3%    76.2%    78.6%
+#     Recall, mean                    0.534    0.629    0.672    0.700
+#     nDCG, mean                      0.341    0.371    0.383    0.390
+#     reciprocal rank, mean           0.316    0.325    0.327    0.329
+#   48 hand-written questions
+#     expected figure in the prompt   18/28    21/28    22/28    23/28
+#     prose terms found, mean         0.978    0.984    0.994    0.994
+#   prompt tokens (llama3.2), median  2,889    4,023    5,230    6,449
+#   prompt tokens, largest seen       3,529    4,857    6,215    7,610
+#
+# 16 is the value, for two measured reasons.
+#
+# It takes most of what is available. Going 8 to 12 finds the supporting chunk
+# for 9.3% more of the benchmark, 12 to 16 another 3.9%, and 16 to 20 another
+# 2.4%: the curve has flattened by 16, which holds 84% of everything 20 buys.
+# Note which numbers move. Recall and "in the prompt" climb while reciprocal
+# rank barely does (0.316 to 0.329), so a larger K is not ranking better, it is
+# cutting the answer off less often -- exactly the failure #85 was opened for,
+# where the table holding the figure sat at rank 12 to 23.
+#
+# And 20 does not fit. Every prompt measured is inside Ollama's NUM_CTX of
+# 8,192, but the answer has to fit beside it: at 20 the largest prompt plus
+# MAX_OUTPUT_TOKENS is 8,634, over the window, while at 16 it is 7,239. So 16
+# is the largest K both paths can run, and no separate LOCAL_FINAL_K is needed
+# -- the condition #85 set for one ("if the prompt no longer fits NUM_CTX")
+# does not fire.
+#
+# The open risk was that a longer prompt distracts a model as much as it
+# informs it, which retrieval numbers cannot answer. It does not. The 48
+# hand-written questions were run end to end through both hosted models at 8
+# and at 16 on 2026-09-23 (the two 20260923 files in notebooks/mistral/results/):
+#
+#                                  Ministral 3 14B     Ministral 3 8B
+#                                   k=8     k=16       k=8     k=16
+#   figure in the passages         18/28    22/28     18/28    22/28
+#   figure stated, rounding ok     18/28    22/28     18/28    22/28
+#   figure stated, exact digits    13/28    17/28     16/28    20/28
+#   abstained                          7        4         5        2
+#   expected prose terms, mean       90%      92%       93%      93%
+#   valid answer JSON              48/48    48/48     48/48    48/48
+#   prompt tokens, median          3,139    5,751     3,139    5,751
+#   end to end, median              2.0s     2.2s      2.2s     2.2s
+#
+# Both models stated every figure they were given, at both cutoffs, so
+# retrieval was the whole of the gap rather than part of it. Prose did not
+# regress, nothing failed to parse, and the extra ~2,600 prompt tokens cost
+# about 0.2s. Abstentions fell because the evidence arrived, which is the
+# direction this was meant to move.
+#
+# Local answers still pay for the extra passages in time rather than in window.
+# Reading the prompt dominates a laptop's minutes and is roughly linear in its
+# length, so an Ollama answer should take about twice as long. That has not
+# been re-timed.
 CANDIDATE_K = 50
-FINAL_K = 8
+FINAL_K = 16
 
 # Note for the retrievers: Query.top_k in records.py defaults to 10, which is
 # neither of these. A retriever should read k from the Query it was handed and

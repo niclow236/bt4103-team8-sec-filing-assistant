@@ -229,6 +229,10 @@ data/processed/
 data/diagnostics/
 # Built search indexes: rebuilt from data/processed/, and large.
 data/index/
+# The mechanical XBRL benchmark: regenerated from the facts store by
+# `python -m src.retrieval benchmark`, and every chunk id in it is invalidated
+# by a re-chunk. The hand-written benchmark beside it is committed.
+benchmark/generated.jsonl
 *.zip
 *.gz
 

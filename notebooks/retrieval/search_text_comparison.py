@@ -14,10 +14,14 @@ No model is called. The checks are the Mistral evaluation's, so the numbers
 line up with ``docs/mistral-free-tier-evaluation.md``:
 
 - figure questions: whether a passage holding every expected figure is in the
-  top 8, and the rank of the first one in the top 50.
-- prose questions: the share of the expected answer's items the top-8
+  top FINAL_K, and the rank of the first one in the top 50.
+- prose questions: the share of the expected answer's items the top FINAL_K
   passages mention.
-- every question: whether the top 8 include the expected Item.
+- every question: whether the top FINAL_K include the expected Item.
+
+FINAL_K was 8 when the committed CSV was measured and is 16 since #85, so a
+re-run reports a deeper cut than that file does. Pass ``k=8`` to ``measure``
+to reproduce the older numbers.
 
 Run from the project root:
 
@@ -116,8 +120,13 @@ def first_rank(passages, test):
     return next((rank for rank, p in enumerate(passages, start=1) if test(p)), None)
 
 
-def measure(q, passages):
-    top = passages[:FINAL_K]
+def measure(q, passages, k=FINAL_K):
+    """The checks over the top ``k`` of ``passages``; ``figure_rank`` spans them all.
+
+    ``k`` is a parameter rather than FINAL_K directly so that #85's sweep can
+    ask the same questions of a top 12, 16 or 20 and get comparable columns.
+    """
+    top = passages[:k]
     right_item = lambda p: (p.ticker == q["ticker"] and p.fiscal_year == q["fiscal_year"]
                             and (q["item"] is None or p.item == q["item"]))
     figure_rank = (first_rank(passages, lambda p: figure_in_text(q["expected"], p.text))

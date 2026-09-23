@@ -10,8 +10,9 @@ Apple's FY2022 accounts payable, 8 and 20; Meta's FY2022 total liabilities,
 
 This runs the 48 test questions through hybrid retrieval at each candidate
 weight pair, and reports the same measures as ``search_text_comparison.py``:
-whether the expected figure reached the top 8, where it ranked, how much of a
-prose answer's wording the top 8 held, and whether the right Item was in it.
+whether the expected figure reached the top FINAL_K, where it ranked, how much
+of a prose answer's wording that top held, and whether the right Item was in
+it. FINAL_K was 8 when the committed results were measured and is 16 since #85.
 Dense keeps weight 1.0 throughout and BM25's is the swept value, since only
 their ratio matters to the ranking.
 
