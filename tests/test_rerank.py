@@ -40,3 +40,24 @@ def test_reranker_scores_candidates_and_returns_top_k():
     assert [result.chunk_id for result in results] == ["second"]
     assert results[0].retriever == "rerank"
     assert results[0].sources == ("hybrid",)
+
+
+def test_the_model_loads_once_however_load_model_is_called(monkeypatch):
+    import sentence_transformers
+
+    from src.retrieval import rerank
+    from src.retrieval.constants import RERANK_MODEL
+
+    built = []
+    monkeypatch.setattr(
+        sentence_transformers, "CrossEncoder", lambda *a, **kw: built.append(a) or object()
+    )
+    rerank._load_model.cache_clear()
+    try:
+        first = rerank.load_model()
+        assert rerank.load_model(RERANK_MODEL) is first
+        assert rerank.load_model(model_name=RERANK_MODEL) is first
+        assert CrossEncoderReranker(Inner()).model is first
+        assert len(built) == 1
+    finally:
+        rerank._load_model.cache_clear()
