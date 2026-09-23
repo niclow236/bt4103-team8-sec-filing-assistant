@@ -52,12 +52,23 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..retrieval.records import RetrievedPassage
 from .constants import ABSTAIN_PHRASE
+
+
+AbstentionReason = Literal[
+    "below_threshold", "filters_excluded_all", "no_evidence", "model_declined"
+]
+ABSTENTION_MESSAGES = {
+    "below_threshold": "No evidence met the retrieval score threshold.",
+    "filters_excluded_all": "The selected filters excluded every indexed passage.",
+    "no_evidence": "Retrieval returned no usable evidence.",
+    "model_declined": "The retrieved evidence does not support an answer to this question.",
+}
 
 
 @dataclass(frozen=True)
@@ -412,9 +423,10 @@ class Answer:
     record cannot show ``[1]`` with source 3's metadata, claim support from a
     source the model was never shown, or flag a real source as unsupported.
 
-    ``abstained`` is True when the model declined to answer from the passages
-    it was given. An abstention is an answer, not an error: the harness counts
-    it, and on a question the corpus cannot answer it is the correct output.
+    ``abstained`` is True when retrieval supplied no usable evidence or the
+    model declined to answer. ``abstention_reason`` records which happened.
+    An abstention is an answer, not an error: the harness counts it, and on a
+    question the corpus cannot answer it is the correct output.
     """
 
     question: str
@@ -429,8 +441,14 @@ class Answer:
     truncated: bool = False
 
     verification: VerificationResult | None = None
+    abstention_reason: AbstentionReason | None = None
 
     def __post_init__(self) -> None:
+        if self.abstention_reason is not None:
+            if self.abstention_reason not in ABSTENTION_MESSAGES:
+                raise ValueError(f"Unknown abstention reason: {self.abstention_reason}")
+            if not self.abstained:
+                raise ValueError("an abstention_reason requires abstained=True")
         # Tuples rather than lists, so a caller that built them as lists gets
         # the same immutable record as one that did not.
         object.__setattr__(self, "citations", tuple(self.citations))
@@ -505,6 +523,7 @@ class Answer:
                 for passage in self.passages
             ],
             "abstained": self.abstained,
+            "abstention_reason": self.abstention_reason,
             "config": self.config.to_dict(),
             "latency_ms": self.latency_ms,
             "sentences": [sentence.to_dict() for sentence in self.sentences],

@@ -107,12 +107,14 @@ def generate_xbrl_questions(
         ticker = str(row.get("ticker", "")).strip().upper()
         fiscal_year = row.get("fiscal_year")
         raw_label = row.get("label")
-        if raw_label is None or (isinstance(raw_label, float) and pd.isna(raw_label)):
+        if raw_label is None or pd.isna(raw_label) or not str(raw_label).strip():
             raw_label = row.get("concept", "figure")
         label = _normalise_xbrl_label(raw_label)
+        unit = str(row.get("unit") or "").strip().lower()
         question_id = (
             f"xbrl-{ticker.lower()}-{int(fiscal_year)}-"
             f"{re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-')}-"
+            f"{re.sub(r'[^a-z0-9]+', '-', unit).strip('-')}-"
             f"{accession}"
         )
         question = BenchmarkQuestion(

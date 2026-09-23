@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
-from .base import Retriever, resolve_k
+from .base import Retriever, has_candidates, resolve_k
 from .constants import (
     BM25,
     CANDIDATE_K,
@@ -37,6 +37,12 @@ class HybridRetriever:
         # the constants, so the shipped settings are the recorded ones.
         self.weights = dict(weights or FUSION_WEIGHTS)
         self.figure_weights = dict(figure_weights or FIGURE_FUSION_WEIGHTS)
+
+    def has_candidates(self, query: Query) -> bool | None:
+        available = [has_candidates(self.bm25, query), has_candidates(self.dense, query)]
+        if any(value is True for value in available):
+            return True
+        return None if None in available else False
 
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         wanted = resolve_k(query, k)

@@ -24,6 +24,7 @@ removes invented markers from displayed text, and attaches sentence warnings.
 It renders citation labels exclusively from the passages' stored metadata.
 """
 
+from .answer import answer_question
 from .citations import render_citation, resolve_citations
 from .generate import (
     ProviderUnavailable,
@@ -61,6 +62,7 @@ __all__ = [
     "VerificationCheck",
     "VerificationResult",
     "build_prompt",
+    "answer_question",
     "build_query",
     "chat_model",
     "config_from_env",

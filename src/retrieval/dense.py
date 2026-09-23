@@ -146,6 +146,13 @@ class DenseRetriever:
             min_score=min_score,
         )
 
+    def has_candidates(self, query: Query) -> bool:
+        """Check the indexed metadata without encoding or scoring a question."""
+        where = where_for(query)
+        if where is None:
+            return self.collection.count() > 0
+        return bool(self.collection.get(where=where, limit=1, include=[])["ids"])
+
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         """The passages closest to the query, best first, inside its filters.
 

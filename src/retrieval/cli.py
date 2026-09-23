@@ -30,6 +30,7 @@ import argparse
 import logging
 
 from ..utils import start_run_log
+from ..evaluation import benchmark as benchmark_stage
 from . import bm25 as bm25_stage
 from . import embed as embed_stage
 from . import facts as facts_stage
@@ -187,6 +188,15 @@ def _add_check(subparsers) -> None:
     parser.set_defaults(run=run_check)
 
 
+def _add_benchmark(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "benchmark",
+        help="Generate the mechanical XBRL benchmark.",
+        description="Generate benchmark/generated.jsonl from the XBRL facts store.",
+    )
+    parser.set_defaults(run=run_benchmark)
+
+
 # --- commands ---------------------------------------------------------------
 
 
@@ -245,6 +255,13 @@ def run_check(args) -> None:
         raise SystemExit(1)
 
 
+def run_benchmark(args) -> None:
+        """Generate benchmark/generated.jsonl from the XBRL facts store."""
+        questions = benchmark_stage.generate_xbrl_questions()
+        print(f"benchmark: {len(questions):,} questions written to "
+                    f"{benchmark_stage.DEFAULT_GENERATED_QUESTIONS_PATH}")
+
+
 # --- dispatch ---------------------------------------------------------------
 
 
@@ -255,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build and search the retrieval indexes.",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
-    for add in (_add_embed, _add_bm25, _add_facts, _add_check):
+    for add in (_add_embed, _add_bm25, _add_facts, _add_check, _add_benchmark):
         add(subparsers)
     return parser
 
