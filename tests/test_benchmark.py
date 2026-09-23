@@ -2,9 +2,10 @@
 
 import json
 
+import pandas as pd
 import pytest
 
-from src.evaluation.benchmark import load_questions
+from src.evaluation.benchmark import generate_xbrl_questions, load_questions
 from src.evaluation.records import BenchmarkValidationError, RunResult
 
 
@@ -27,6 +28,43 @@ def _question(**overrides):
 
 def _write_question(path, question):
     path.write_text(json.dumps(question) + "\n", encoding="utf-8")
+
+
+def _write_xbrl_corpus(processed_dir, texts):
+    (processed_dir / "AAPL").mkdir(parents=True, exist_ok=True)
+    (processed_dir / "AAPL" / "filing.json").write_text(
+        json.dumps({
+            "ticker": "AAPL", "company": "Apple", "cik": 1, "form": "10-K",
+            "filing_date": "2025-02-01", "accession_no": "0000000001-25-000001",
+            "url": "https://example.com/filing", "source_path": "raw/filing.html",
+            "period_of_report": "2024-12-31",
+            "chunks": [
+                {
+                    "chunk_id": f"0000000001-25-000001_part_ii_item_8_{i:03d}",
+                    "section_id": "part_ii_item_8", "part": "II", "item": "8",
+                    "title": "Financial Statements", "heading": "Balance Sheet",
+                    "text": text, "n_chars": len(text), "chunk_index": i,
+                    "is_key_section": True, "incorporated_into": [],
+                    "content_type": "table", "table_index": None, "table_caption": "",
+                }
+                for i, text in enumerate(texts)
+            ],
+        }), encoding="utf-8",
+    )
+
+
+def _xbrl_fact(**overrides):
+    row = {
+        "ticker": "AAPL", "cik": 1, "company": "Apple",
+        "accession": "0000000001-25-000001", "concept": "us-gaap:Revenues",
+        "label": "Revenue", "value": 100.0, "raw_value": "100", "unit": "USD",
+        "scale": None, "fiscal_year": 2024, "fiscal_period": "FY",
+        "period_of_report": "2024-12-31", "period_start": "2024-01-01",
+        "period_end": "2024-12-31", "period_type": "duration", "statement_type": "",
+        "is_audited": True, "is_current_year": True,
+    }
+    row.update(overrides)
+    return row
 
 
 def test_loader_validates_and_normalises_question(tmp_path):
@@ -171,3 +209,126 @@ def test_run_result_is_hashable_and_copies_inputs():
     assert result.to_dict()["retrieved_scores"] == [3.5]
     assert result.config == {"k": 10}
     assert isinstance(hash(result), int)
+
+
+def test_generate_xbrl_questions_uses_real_chunk_ids_and_xbrl_source(tmp_path):
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    (processed_dir / "AAPL").mkdir()
+    (processed_dir / "AAPL" / "filing.json").write_text(
+        json.dumps({
+            "ticker": "AAPL",
+            "company": "Apple",
+            "cik": 1,
+            "form": "10-K",
+            "filing_date": "2025-02-01",
+            "accession_no": "0000000001-25-000001",
+            "url": "https://example.com/filing",
+            "source_path": "raw/filing.html",
+            "chunks": [
+                {
+                    "chunk_id": "0000000001-25-000001_part_ii_item_7_000",
+                    "section_id": "part_ii_item_7",
+                    "part": "II",
+                    "item": "7",
+                    "title": "Management's Discussion",
+                    "heading": "Revenue",
+                    "text": "Revenue was $100 million.",
+                    "n_chars": 30,
+                    "chunk_index": 0,
+                    "is_key_section": True,
+                    "incorporated_into": [],
+                    "content_type": "prose",
+                    "table_index": None,
+                    "table_caption": "",
+                }
+            ],
+            "period_of_report": "2024-12-31",
+        }), encoding="utf-8",
+    )
+
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        {
+            "ticker": "AAPL",
+            "cik": 1,
+            "company": "Apple",
+            "accession": "0000000001-25-000001",
+            "concept": "Revenue",
+            "label": "Revenue",
+            "value": 100.0,
+            "raw_value": "100",
+            "unit": "USD",
+            "scale": None,
+            "fiscal_year": 2024,
+            "fiscal_period": "FY",
+            "period_of_report": "2024-12-31",
+            "period_start": "2024-01-01",
+            "period_end": "2024-12-31",
+            "period_type": "duration",
+            "statement_type": "",
+            "is_audited": True,
+            "is_current_year": True,
+        }
+    ]).to_parquet(facts_file, index=False)
+
+    output = tmp_path / "generated.jsonl"
+    questions = generate_xbrl_questions(facts_file, processed_dir=processed_dir, output_path=output)
+
+    assert len(questions) == 1
+    question = questions[0]
+    assert question.source == "xbrl"
+    assert question.question_type == "numeric"
+    assert question.expected_answer == "100 USD"
+    assert question.supporting_chunk_ids == ("0000000001-25-000001_part_ii_item_7_000",)
+    assert output.exists()
+    assert json.loads(output.read_text(encoding="utf-8").strip())["source"] == "xbrl"
+
+
+def test_blank_labels_fall_back_to_concepts_and_keep_ids_unique(tmp_path):
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, ["Revenue was 100 and tax was 250."])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        _xbrl_fact(concept="us-gaap:FdiiAmount", label="", raw_value="100"),
+        _xbrl_fact(concept="us-gaap:InterestExpenseNonoperating", label="", raw_value="250"),
+    ]).to_parquet(facts_file, index=False)
+
+    questions = generate_xbrl_questions(
+        facts_file, processed_dir=processed_dir, output_path=tmp_path / "generated.jsonl"
+    )
+
+    assert len(questions) == 2
+    assert not any("figure" in question.question for question in questions)
+    assert len({question.question_id for question in questions}) == 2
+
+
+def test_same_label_in_two_units_keeps_both_rows(tmp_path):
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, ["Revenue was 100 on 200 shares."])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        _xbrl_fact(raw_value="100", unit="USD"),
+        _xbrl_fact(raw_value="200", unit="shares"),
+    ]).to_parquet(facts_file, index=False)
+
+    questions = generate_xbrl_questions(
+        facts_file, processed_dir=processed_dir, output_path=tmp_path / "generated.jsonl"
+    )
+
+    assert len({question.question_id for question in questions}) == 2
+    assert {question.expected_answer for question in questions} == {"100 USD", "200 shares"}
+
+
+def test_empty_generation_leaves_existing_output_untouched(tmp_path):
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, ["No figures appear in this passage."])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([_xbrl_fact(raw_value="999999")]).to_parquet(facts_file, index=False)
+    output = tmp_path / "generated.jsonl"
+    output.write_text("previous benchmark\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="No benchmark questions generated"):
+        generate_xbrl_questions(facts_file, processed_dir=processed_dir, output_path=output)
+
+    assert output.read_text(encoding="utf-8") == "previous benchmark\n"

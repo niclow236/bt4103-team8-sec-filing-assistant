@@ -19,9 +19,9 @@ def test_positive_rejects_everything_else(value):
         _positive(value)
 
 
-def test_the_four_commands_exist():
+def test_retrieval_commands_exist():
     commands = build_parser()._subparsers._group_actions[0].choices
-    assert set(commands) == {"embed", "bm25", "facts", "check"}
+    assert set(commands) == {"embed", "bm25", "facts", "check", "benchmark"}
 
 
 def test_embed_takes_no_chunker_settings():
