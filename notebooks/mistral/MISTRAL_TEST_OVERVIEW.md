@@ -19,6 +19,7 @@ The test ran on 18 September 2026 on Mistral's free plan, with all 48 questions 
 - **Ministral 3 14B ranks first.** The two are tied on these checks. 14B is the larger model and never took more than 10 s. 8B allows 188 requests a minute on the free plan against 30 for 14B, so it's the better choice if the app needs more throughput.
 - **Voxtral Small and Codestral answer fast but invent figures** when the passages don't hold them. For example, Amazon's FY2025 net sales came out as "$514 billion" (really $716,924 million). Codestral is also tuned for code, and its licence restricts commercial use.
 - **Retrieval, not the model, now limits accuracy.** The figure was in the retrieved passages for only 12 of 28 figure questions. Issues #85–#89 cover the fixes.
+- **These are automatic checks.** Hand grading in the `manual_correct` column is still to do.
 
 ### 23 September 2026: `FINAL_K` at 8 against 16 (#85)
 
@@ -35,7 +36,6 @@ Both Ministral models were re-run over the same 48 questions at the old `FINAL_K
 | End to end, median | 2.0 s | 2.2 s | 2.2 s | 2.2 s |
 
 The first two rows agree at both cutoffs: each model stated every figure it was given, so the deeper cut is the whole of the gain and a longer prompt did not distract either model. Prose did not regress, all 96 answers parsed, and the extra 2,600 prompt tokens cost about two tenths of a second. The figure in the passages rose from 12 of 28 in September to 18 at the same `FINAL_K` of 8, because #86, #87 and #88 landed in between.
-- **These are automatic checks.** Hand grading in the `manual_correct` column is still to do.
 
 ## Running it
 

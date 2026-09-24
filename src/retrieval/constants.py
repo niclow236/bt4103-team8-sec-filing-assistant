@@ -135,33 +135,40 @@ BM25_B = 0.75
 # max(CANDIDATE_K, k), so the order does not depend on k.
 #
 #                                    top 8   top 12   top 16   top 20
-#   XBRL benchmark (1,884 questions), #24 and #25
+#   XBRL benchmark (#24, #25), 20 questions from each of the 75 filings
+#     supporting chunk in the prompt  56.2%    63.6%    68.1%    71.3%
+#     Recall, mean                    0.415    0.484    0.531    0.567
+#     nDCG, mean                      0.268    0.291    0.305    0.315
+#     reciprocal rank, mean           0.269    0.277    0.280    0.282
+#   the same, AAPL and AMZN only (1,884 questions)
 #     supporting chunk in the prompt  63.0%    72.3%    76.2%    78.6%
-#     Recall, mean                    0.534    0.629    0.672    0.700
-#     nDCG, mean                      0.341    0.371    0.383    0.390
-#     reciprocal rank, mean           0.316    0.325    0.327    0.329
 #   48 hand-written questions
 #     expected figure in the prompt   18/28    21/28    22/28    23/28
 #     prose terms found, mean         0.978    0.984    0.994    0.994
 #   prompt tokens (llama3.2), median  2,889    4,023    5,230    6,449
-#   prompt tokens, largest seen       3,529    4,857    6,215    7,610
+#   prompt tokens, largest seen       3,550    4,984    6,306    7,703
 #
 # 16 is the value, for two measured reasons.
 #
 # It takes most of what is available. Going 8 to 12 finds the supporting chunk
-# for 9.3% more of the benchmark, 12 to 16 another 3.9%, and 16 to 20 another
-# 2.4%: the curve has flattened by 16, which holds 84% of everything 20 buys.
+# for 7.4% more of the benchmark, 12 to 16 another 4.4%, and 16 to 20 another
+# 3.3%: the curve has flattened by 16, which holds 78% of everything 20 buys.
+# AAPL and AMZN, easier than most filings, show the same shape higher up.
 # Note which numbers move. Recall and "in the prompt" climb while reciprocal
-# rank barely does (0.316 to 0.329), so a larger K is not ranking better, it is
+# rank barely does (0.269 to 0.282), so a larger K is not ranking better, it is
 # cutting the answer off less often -- exactly the failure #85 was opened for,
 # where the table holding the figure sat at rank 12 to 23.
 #
-# And 20 does not fit. Every prompt measured is inside Ollama's NUM_CTX of
-# 8,192, but the answer has to fit beside it: at 20 the largest prompt plus
-# MAX_OUTPUT_TOKENS is 8,634, over the window, while at 16 it is 7,239. So 16
-# is the largest K both paths can run, and no separate LOCAL_FINAL_K is needed
-# -- the condition #85 set for one ("if the prompt no longer fits NUM_CTX")
-# does not fire.
+# And 20 does not fit. The answer has to fit in NUM_CTX (8,192) beside the
+# prompt: at 20 the largest prompt measured plus MAX_OUTPUT_TOKENS is 8,727,
+# over the window, while at 16 it is 7,330. That is measured, not a bound. The
+# 16 largest passages of one filing can render to 7,561 tokens (ORCL FY2022),
+# and 27 of the 75 filings can pass 7,168, where the ceiling no longer fits
+# beside the prompt. None can pass the window itself at 16, so the prompt is
+# never cut, and an answer keeps at least ~600 tokens, twice the longest local
+# answer measured (309). So 16 is the largest K both paths can run, and
+# no separate LOCAL_FINAL_K is needed: the condition #85 set for one ("if the
+# prompt no longer fits NUM_CTX") does not fire.
 #
 # The open risk was that a longer prompt distracts a model as much as it
 # informs it, which retrieval numbers cannot answer. It does not. The 48
@@ -187,8 +194,11 @@ BM25_B = 0.75
 #
 # Local answers still pay for the extra passages in time rather than in window.
 # Reading the prompt dominates a laptop's minutes and is roughly linear in its
-# length, so an Ollama answer should take about twice as long. That has not
-# been re-timed.
+# length. Re-timed on the README's laptop (llama3.2:3b on the CPU, the model
+# reloaded before each answer), two questions took 4.1 and 4.3 minutes at 16
+# against 2.0 and 2.4 at 8. The local model also gains less than the hosted
+# ones: of the four questions 16 newly brings the figure for, llama3.2:3b
+# stated one, where both Ministral models stated all four.
 CANDIDATE_K = 50
 FINAL_K = 16
 

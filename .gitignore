@@ -231,7 +231,7 @@ data/diagnostics/
 data/index/
 # The mechanical XBRL benchmark: regenerated from the facts store by
 # `python -m src.retrieval benchmark`, and every chunk id in it is invalidated
-# by a re-chunk. The hand-written benchmark beside it is committed.
+# by a re-chunk. benchmark/questions.jsonl, for hand-written questions, is not ignored.
 benchmark/generated.jsonl
 *.zip
 *.gz

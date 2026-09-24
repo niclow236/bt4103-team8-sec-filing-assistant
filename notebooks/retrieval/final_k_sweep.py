@@ -60,7 +60,7 @@ from src.evaluation.benchmark import (  # noqa: E402
 )
 from src.evaluation.metrics import score_question  # noqa: E402
 from src.evaluation.records import RunResult  # noqa: E402
-from src.rag.constants import NUM_CTX  # noqa: E402
+from src.rag.constants import MAX_OUTPUT_TOKENS, NUM_CTX  # noqa: E402
 from src.rag.prompt import build_prompt  # noqa: E402
 from src.rag.query import parse_question  # noqa: E402
 from src.retrieval.bm25 import BM25Retriever  # noqa: E402
@@ -218,12 +218,13 @@ def summarize_generated(table):
 
 
 def summarize_context(table):
-    """How close each K comes to Ollama's window, which is what caps the local path."""
+    """How close each K comes to Ollama's window once the answer's ceiling is beside it."""
+    budget = NUM_CTX - MAX_OUTPUT_TOKENS
     out = {}
     for k, rows in table.groupby("k"):
-        over = rows.prompt_tokens.gt(NUM_CTX)
+        over = rows.prompt_tokens.gt(budget)
         out[f"top {k}"] = {
-            f"Prompts over NUM_CTX ({NUM_CTX:,}) (of {len(rows):,})": int(over.sum()),
+            f"Prompts over NUM_CTX - MAX_OUTPUT_TOKENS ({budget:,}) (of {len(rows):,})": int(over.sum()),
             "Largest prompt as a share of the window": round(
                 rows.prompt_tokens.max() / NUM_CTX, 3),
         }

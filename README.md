@@ -129,7 +129,7 @@ bt4103-team8-sec-filing-assistant/
 ├── notebooks/               # exploration and experiments
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
-│   ├── questions.jsonl      #   hand-written questions
+│   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 └── docs/                    # reports, minutes, references
 ```
@@ -808,25 +808,26 @@ checks that against real searches before it trusts it.
 
 | | top 8 | top 12 | top 16 | top 20 |
 |---|---|---|---|---|
-| Supporting chunk in the prompt, XBRL benchmark (1,884) | 63.0% | 72.3% | 76.2% | 78.6% |
-| Recall, mean | 0.534 | 0.629 | 0.672 | 0.700 |
-| nDCG, mean | 0.341 | 0.371 | 0.383 | 0.390 |
-| Reciprocal rank, mean | 0.316 | 0.325 | 0.327 | 0.329 |
+| Supporting chunk in the prompt, XBRL benchmark (20 from each of the 75 filings) | 56.2% | 63.6% | 68.1% | 71.3% |
+| Recall, mean | 0.415 | 0.484 | 0.531 | 0.567 |
+| nDCG, mean | 0.268 | 0.291 | 0.305 | 0.315 |
+| Reciprocal rank, mean | 0.269 | 0.277 | 0.280 | 0.282 |
+| Supporting chunk in the prompt, AAPL and AMZN only (1,884) | 63.0% | 72.3% | 76.2% | 78.6% |
 | Expected figure in the prompt, hand-written (28) | 18 | 21 | 22 | 23 |
 | Prose: expected terms found, mean (20) | 0.978 | 0.984 | 0.994 | 0.994 |
 | Prompt tokens, median | 2,889 | 4,023 | 5,230 | 6,449 |
-| Prompt tokens, largest seen | 3,529 | 4,857 | 6,215 | 7,610 |
+| Prompt tokens, largest seen | 3,550 | 4,984 | 6,306 | 7,703 |
 
 Two things decide it. The curve flattens: 8 to 12 finds the supporting chunk
-for another 9.3% of the benchmark, 12 to 16 another 3.9%, and 16 to 20 another
-2.4%, so 16 holds 84% of everything 20 buys. And 20 does not fit locally.
+for another 7.4% of the benchmark, 12 to 16 another 4.4%, and 16 to 20 another
+3.3%, so 16 holds 78% of everything 20 buys. And 20 does not fit locally.
 Every prompt measured is inside Ollama's 8,192-token window, but the answer
 has to fit beside it: at 20 the largest prompt plus `MAX_OUTPUT_TOKENS` comes
-to 8,634, over the window, against 7,239 at 16. So 16 is the largest value both
+to 8,727, over the window, against 7,330 at 16. So 16 is the largest value both
 paths can run, and no separate local cap is needed.
 
 Worth reading the columns against each other. Recall and "in the prompt" climb
-while reciprocal rank barely moves, from 0.316 to 0.329. A larger `FINAL_K` is
+while reciprocal rank barely moves, from 0.269 to 0.282. A larger `FINAL_K` is
 not ranking better; it is cutting the answer off less often. That is the
 failure this was opened for: in the September evaluation the table holding the
 expected figure was often found and then dropped, at rank 12 to 23.
@@ -1086,14 +1087,18 @@ tokens, dropping the rules and the first sources, and the model answered a
 question about revenue with a paragraph about hiring.
 
 So the window is what caps `FINAL_K`, and #85 measured the fit rather than
-assuming it. Counted with llama3.2's own tokenizer over 1,932 questions, a
-prompt over 16 passages runs to a median of about 5,200 tokens and 6,215 at its
-largest, which leaves room for `MAX_OUTPUT_TOKENS` beside it, 7,239 in the worst
-case against a window of 8,192. Twenty passages would not: 7,610 plus the
-output ceiling is 8,634. An eight-passage prompt, the earlier setting, ran 2,700
-to 3,400 tokens. Ollama's own default depends on the GPU's memory and is 4,096
-tokens on a laptop, which is why `NUM_CTX` is set explicitly on every request
-rather than left to it.
+assuming it. Counted with llama3.2's own tokenizer over the XBRL benchmark
+across all 75 filings and the 48 hand-written questions, a prompt over 16
+passages runs to a median of about 5,200 tokens and 6,306 at its largest,
+which leaves room for `MAX_OUTPUT_TOKENS` beside it, 7,330 against a window of
+8,192. That is the largest seen, not a bound: the 16 largest passages of one
+filing can reach 7,561 tokens, where the ceiling no longer fits beside the
+prompt for 27 of the 75 filings, but none can pass the window itself, so the
+prompt is never cut. Twenty passages do not fit: 7,703 plus the output ceiling
+is 8,727, and every filing's 20 largest passages pass the window itself. An
+eight-passage prompt, the earlier setting, ran 2,700 to 3,400 tokens. Ollama's
+own default depends on the GPU's memory and is 4,096 tokens on a laptop, which
+is why `NUM_CTX` is set explicitly on every request rather than left to it.
 
 A server that is not running, a model that has not been pulled, or a response
 that times out raises `ProviderUnavailable` with the command that fixes it.
@@ -1119,11 +1124,13 @@ before it writes anything; the answers themselves ran from 13 to 151 tokens.
 questions, against 3.2 for the 3B model, which is why the smaller model is the
 default. Comparing models properly is #46's job.
 
-These times were measured at the old `FINAL_K` of 8. Since reading the prompt
-is nearly all of the wait and runs at a roughly constant tokens per second, a
-16-passage prompt should cost about twice as long on the same laptop, which is
-the local price of the retrieval gain #85 measured. It has not been re-timed.
-Three things follow.
+These times were measured at the old `FINAL_K` of 8. Re-timed at 16 on the
+same laptop, with the model reloaded before each answer so nothing was cached,
+two questions took 4.1 and 4.3 minutes against 2.0 and 2.4 at 8: about twice
+as long, as reading the prompt at a roughly constant rate predicts, and the
+local price of the retrieval gain #85 measured. That gain is smaller locally:
+of the four questions 16 newly brings the figure for, `llama3.2:3b` stated one,
+where both hosted Ministral models stated all four. Three things follow.
 
 - Stream the answer (#42), and show the passages first. On this hardware they
   arrive minutes before the first word of the answer.
@@ -1156,7 +1163,7 @@ python -m src.retrieval benchmark      # benchmark/generated.jsonl, from data/in
 
 Every current-year fact whose value can be found in a passage of the filing it
 came from becomes one question, with those passages as its supporting chunks:
-1,884 of them on today's corpus, all `numeric` and all `mechanical`. They are
+12,579 of them on today's corpus with a full facts store, all `numeric` and all `mechanical`. They are
 narrow and repetitive by construction, and that is the point -- they are far
 too many to write by hand, so they say whether a retrieval change holds across
 the corpus or only on the questions someone chose. It needs no network, only
