@@ -15,6 +15,8 @@ thing in one place, and changes by getting a new id.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 # --- companies --------------------------------------------------------------
 # The names a question might use for each company in config/companies.txt,
 # keyed by ticker. Matched case-insensitively as whole words, so "apple" and
@@ -380,3 +382,72 @@ MAX_OUTPUT_TOKENS = 1024
 # This is a read timeout, not a limit on the whole answer, and the longest wait
 # is the first one: nothing streams back until the whole prompt has been read.
 GENERATION_TIMEOUT_S = 600.0
+
+# --- financial metrics ------------------------------------------------------
+# The line items a question can name, the XBRL concepts a filer tags them with,
+# and the unit each is reported in. One table, read from two directions:
+# ``numeric.py`` reads a question's words to find the metric and then looks the
+# figure up (#34), and ``verify.py`` reads an answer's words to find the metric
+# and then checks the figure against the same store (#32). Two tables would
+# drift, and an answer routed on one vocabulary and checked against another
+# would be flagged for asking a question its own checker could not.
+#
+# Aliases are deliberately narrow, and a question matching two metrics is
+# treated as matching none: extend this from the benchmark rather than by
+# guessing, since a wrong concept answers confidently with the wrong figure.
+# ``concepts`` are matched on the part after the taxonomy prefix, so
+# "us-gaap:Revenues" matches "Revenues".
+
+
+class Metric(NamedTuple):
+    """One line item: what a question calls it, how a filer tags it, its unit."""
+
+    aliases: tuple[str, ...]
+    concepts: tuple[str, ...]
+    unit: str
+
+
+FINANCIAL_METRICS: dict[str, Metric] = {
+    "revenue": Metric(("total revenue", "revenues", "revenue", "net sales"),
+                      ("Revenues", "Revenue", "RevenueFromContractWithCustomerExcludingAssessedTax",
+                       "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"), "USD"),
+    "net_income": Metric(("net income", "net earnings", "net loss"),
+                         ("NetIncomeLoss", "ProfitLoss"), "USD"),
+    "operating_income": Metric(("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
+    "assets": Metric(("total assets",), ("Assets",), "USD"),
+    "liabilities": Metric(("total liabilities",), ("Liabilities",), "USD"),
+    "cash": Metric(("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
+    "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
+                          ("EarningsPerShareDiluted",), "USD/shares"),
+    "basic_eps": Metric(("basic earnings per share", "basic eps"),
+                        ("EarningsPerShareBasic",), "USD/shares"),
+    "operating_cash": Metric(("cash from operations", "operating cash flow"),
+                             ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
+}
+
+# How the facts store writes a unit, and what this project calls it. The store
+# carries the XBRL unit; ``FINANCIAL_METRICS`` and the figure parser in
+# ``verify.py`` use these names.
+UNIT_ALIASES = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares"}
+
+# --- answering from the facts store -----------------------------------------
+# A numeric question is answered by looking the figure up rather than by asking
+# a model to read it out of a passage (#34). The answer is then this project's
+# own sentence, not a model's, so it records what produced it the way a
+# generated answer does -- the harness reads ``GenerationConfig`` to attribute
+# a result, and "facts" is the truthful thing for it to read here.
+FACTS_PROVIDER = "facts"
+FACTS_SOURCE = "xbrl"
+FACTS_TEMPLATE_ID = "facts_v1"
+
+# The sentence a looked-up figure is rendered as. The company, the metric as
+# the filing labels it, the figure, and the period it covers -- everything a
+# reader needs to check the citation against the filing, and nothing a model
+# chose. The source marker is appended by ``render_sentence``.
+FACTS_SENTENCE = "{company} reported {label} of {figure} for {period}."
+
+# How many passages to look through for the one that prints the figure. Wider
+# than FINAL_K because this is not a ranked answer set: the figure is in one
+# specific table of one specific filing, and the search is already narrowed to
+# that filing, so the cost of looking further down is a few string comparisons.
+FACT_PASSAGE_K = 20

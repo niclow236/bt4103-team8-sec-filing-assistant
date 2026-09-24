@@ -21,6 +21,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from ..retrieval.facts import FACTS_FILE, current_year, load_facts
+from .constants import FINANCIAL_METRICS, UNIT_ALIASES
 from .query import ParsedQuestion, parse_question
 from .records import Answer, SentenceCitations, VerificationCheck, VerificationResult
 
@@ -45,23 +46,13 @@ _FACT_SCOPE_UNSUPPORTED = re.compile(
     r"(?:increased?|decreased?|grew|fell) by)\b", re.I,
 )
 
-# Aliases are intentionally narrow. Extend using the benchmark; do not let an
-# unrelated concept validate a claim just because the value happens to match.
-_METRICS = {
-    "revenue": (("total revenue", "revenues", "revenue", "net sales"),
-                ("Revenues", "Revenue", "RevenueFromContractWithCustomerExcludingAssessedTax",
-                 "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"), "USD"),
-    "net_income": (("net income", "net earnings", "net loss"),
-                   ("NetIncomeLoss", "ProfitLoss"), "USD"),
-    "operating_income": (("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
-    "assets": (("total assets",), ("Assets",), "USD"),
-    "liabilities": (("total liabilities",), ("Liabilities",), "USD"),
-    "cash": (("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
-    "diluted_eps": (("diluted earnings per share", "diluted eps"), ("EarningsPerShareDiluted",), "USD/shares"),
-    "basic_eps": (("basic earnings per share", "basic eps"), ("EarningsPerShareBasic",), "USD/shares"),
-    "operating_cash": (("cash from operations", "operating cash flow",),
-                       ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
-}
+# The aliases, concepts and units live in constants.py, because #34 routes a
+# numeric question on the same table that this module checks the answer
+# against: a question answered from a concept its checker did not know would
+# be flagged for having been answered at all. Aliases are intentionally
+# narrow. Extend using the benchmark; do not let an unrelated concept validate
+# a claim just because the value happens to match.
+_METRICS = FINANCIAL_METRICS
 
 
 def _metrics(text: str) -> set[str]:
@@ -224,8 +215,7 @@ def _fact_check(frame, error, figure, metric, tickers, years, passages, index, c
         rows = rows[rows["accession"].isin(accessions)]
     candidates = []
     for row in rows.to_dict("records"):
-        unit = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares"}.get(
-            str(row["unit"]).lower(), str(row["unit"]))
+        unit = UNIT_ALIASES.get(str(row["unit"]).lower(), str(row["unit"]))
         if unit != figure.unit:
             continue
         try:

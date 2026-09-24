@@ -118,6 +118,10 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
 │   │   ├── generate.py      #   runs the prompt through a local model on Ollama, streaming
+│   │   ├── numeric.py       #   answers a numeric question from the facts store, citing the table
+│   │   ├── citations.py     #   resolves [n] markers back to the passages they were shown as
+│   │   ├── verify.py        #   checks an answer's figures against the facts store
+│   │   ├── answer.py        #   the entry point: route, retrieve, abstain or answer
 │   │   ├── constants.py     #   company aliases, cue words, the prompt template, generation settings
 │   │   └── records.py       #   GroundedAnswer, Generation, Answer, Citation and GenerationConfig
 │   ├── evaluation/          # benchmark and metrics

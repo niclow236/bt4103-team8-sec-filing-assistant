@@ -282,6 +282,37 @@ def build(
     return facts_file
 
 
+def printed_forms(raw_value) -> set[str]:
+    """The strings a stored figure could appear as in a filing's own text.
+
+    A filing prints its statements in thousands, millions or units, while the
+    store keeps the figure in base units, so 391035000000 is printed as
+    "391,035" in a table headed "in millions". Each scale is offered with and
+    without separators, and only where the division comes out whole: a figure
+    that is not a round number of millions was not printed in millions.
+
+    Anything shorter than three characters is dropped, since a one or two
+    digit needle matches a year, a note number or a page number somewhere in
+    every filing. Used to find the passage that shows a figure (#34) and to
+    find the passage that supports a generated benchmark question (#24), which
+    are the same question asked twice.
+    """
+    text = str(raw_value or "").strip()
+    if not text:
+        return set()
+    try:
+        value = float(text)
+    except ValueError:
+        return {text}
+    needles = set()
+    for divisor in (1, 1_000, 1_000_000):
+        scaled = value / divisor
+        if abs(scaled - round(scaled)) < 1e-9:
+            whole = abs(int(round(scaled)))
+            needles.update({str(whole), f"{whole:,}"})
+    return {needle for needle in needles if len(needle) >= 3}
+
+
 def current_year(frame):
     """Only the facts describing the year their filing reports on.
 
