@@ -151,8 +151,8 @@ BM25_B = 0.75
 # 16 is the value, for two measured reasons.
 #
 # It takes most of what is available. Going 8 to 12 finds the supporting chunk
-# for 7.4% more of the benchmark, 12 to 16 another 4.4%, and 16 to 20 another
-# 3.3%: the curve has flattened by 16, which holds 78% of everything 20 buys.
+# for 7.4% more of the benchmark, 12 to 16 another 4.5%, and 16 to 20 another
+# 3.2%: the curve has flattened by 16, which holds 79% of everything 20 buys.
 # AAPL and AMZN, easier than most filings, show the same shape higher up.
 # Note which numbers move. Recall and "in the prompt" climb while reciprocal
 # rank barely does (0.269 to 0.282), so a larger K is not ranking better, it is

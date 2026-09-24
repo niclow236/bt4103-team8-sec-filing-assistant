@@ -819,8 +819,8 @@ checks that against real searches before it trusts it.
 | Prompt tokens, largest seen | 3,550 | 4,984 | 6,306 | 7,703 |
 
 Two things decide it. The curve flattens: 8 to 12 finds the supporting chunk
-for another 7.4% of the benchmark, 12 to 16 another 4.4%, and 16 to 20 another
-3.3%, so 16 holds 78% of everything 20 buys. And 20 does not fit locally.
+for another 7.4% of the benchmark, 12 to 16 another 4.5%, and 16 to 20 another
+3.2%, so 16 holds 79% of everything 20 buys. And 20 does not fit locally.
 Every prompt measured is inside Ollama's 8,192-token window, but the answer
 has to fit beside it: at 20 the largest prompt plus `MAX_OUTPUT_TOKENS` comes
 to 8,727, over the window, against 7,330 at 16. So 16 is the largest value both
