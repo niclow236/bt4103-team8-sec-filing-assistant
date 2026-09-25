@@ -812,11 +812,17 @@ checks that against real searches before it trusts it.
 | Recall, mean | 0.415 | 0.484 | 0.531 | 0.567 |
 | nDCG, mean | 0.268 | 0.291 | 0.305 | 0.315 |
 | Reciprocal rank, mean | 0.269 | 0.277 | 0.280 | 0.282 |
-| Supporting chunk in the prompt, AAPL and AMZN only (1,884) | 63.0% | 72.3% | 76.2% | 78.6% |
-| Expected figure in the prompt, hand-written (28) | 18 | 21 | 22 | 23 |
+| Supporting chunk in the prompt, AAPL and AMZN only (1,884), local build | 63.0% | 72.3% | 76.2% | 78.6% |
+| Expected figure in the prompt, hand-written (28) | 20 | 22 | 23 | 24 |
 | Prose: expected terms found, mean (20) | 0.978 | 0.984 | 0.994 | 0.994 |
-| Prompt tokens, median | 2,889 | 4,023 | 5,230 | 6,449 |
+| Prompt tokens, median | 2,884 | 4,005 | 5,220 | 6,475 |
 | Prompt tokens, largest seen | 3,550 | 4,984 | 6,306 | 7,703 |
+
+The rows are on the corpus `search_text_comparison.csv` was measured on, except
+the AAPL and AMZN row. That row, the committed `final_k_sweep.csv` and the
+hosted runs below come from a local build that ranks the expected figure
+differently for 14 of the 28 figure questions; on it the figure reached the
+prompt for 18, 21, 22 and 23 of the 28.
 
 Two things decide it. The curve flattens: 8 to 12 finds the supporting chunk
 for another 7.4% of the benchmark, 12 to 16 another 4.5%, and 16 to 20 another
@@ -857,8 +863,10 @@ move.
 
 Local answers still pay for the extra passages in time rather than in window.
 Reading the prompt dominates a laptop's minutes and is roughly linear in its
-length, so an Ollama answer should take about twice as long. That has not been
-re-timed.
+length, so an Ollama answer takes about twice as long: re-timed on the team
+laptop, two questions took 4.1 and 4.3 minutes at 16 against 2.0 and 2.4 at 8.
+[How long an answer takes](#how-long-an-answer-takes) has the details, and
+what `llama3.2:3b` makes of the extra passages.
 
 Loading both retrievers takes about 15 seconds, and the first search about 30
 more while the embedding model loads. After that a hybrid search takes around
@@ -1129,8 +1137,9 @@ same laptop, with the model reloaded before each answer so nothing was cached,
 two questions took 4.1 and 4.3 minutes against 2.0 and 2.4 at 8: about twice
 as long, as reading the prompt at a roughly constant rate predicts, and the
 local price of the retrieval gain #85 measured. That gain is smaller locally:
-of the four questions 16 newly brings the figure for, `llama3.2:3b` stated one,
-where both hosted Ministral models stated all four. Three things follow.
+of the three questions 16 newly brings the figure for (Q35, Q38 and Q40),
+`llama3.2:3b` stated none, where both hosted Ministral models stated all three.
+Three things follow.
 
 - Stream the answer (#42), and show the passages first. On this hardware they
   arrive minutes before the first word of the answer.

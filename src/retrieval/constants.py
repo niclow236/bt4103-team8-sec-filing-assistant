@@ -130,9 +130,10 @@ BM25_B = 0.75
 # model removes that limit, so #85 measured the cap instead of assuming it.
 #
 # `notebooks/retrieval/final_k_sweep.py` swept 8, 12, 16 and 20 over two
-# question sets on the corpus of 2026-09-23. Each question was searched once at
-# 20 and the ranking sliced, which is exact here: hybrid fuses at
-# max(CANDIDATE_K, k), so the order does not depend on k.
+# question sets, on the corpus search_text_comparison.csv was measured on
+# unless a row says otherwise. Each question was searched once at 20 and the
+# ranking sliced, which is exact here: hybrid fuses at max(CANDIDATE_K, k), so
+# the order does not depend on k.
 #
 #                                    top 8   top 12   top 16   top 20
 #   XBRL benchmark (#24, #25), 20 questions from each of the 75 filings
@@ -140,13 +141,18 @@ BM25_B = 0.75
 #     Recall, mean                    0.415    0.484    0.531    0.567
 #     nDCG, mean                      0.268    0.291    0.305    0.315
 #     reciprocal rank, mean           0.269    0.277    0.280    0.282
-#   the same, AAPL and AMZN only (1,884 questions)
+#   the same, AAPL and AMZN only (1,884 questions), on the local build below
 #     supporting chunk in the prompt  63.0%    72.3%    76.2%    78.6%
 #   48 hand-written questions
-#     expected figure in the prompt   18/28    21/28    22/28    23/28
+#     expected figure in the prompt   20/28    22/28    23/28    24/28
 #     prose terms found, mean         0.978    0.984    0.994    0.994
-#   prompt tokens (llama3.2), median  2,889    4,023    5,230    6,449
+#   prompt tokens (llama3.2), median  2,884    4,005    5,220    6,475
 #   prompt tokens, largest seen       3,550    4,984    6,306    7,703
+#
+# The committed final_k_sweep.csv and the hosted runs further down come from a
+# local build of the corpus that ranks the expected figure differently for 14
+# of the 28 figure questions. On it the figure reached the prompt for 18, 21,
+# 22 and 23 of the 28.
 #
 # 16 is the value, for two measured reasons.
 #
@@ -197,8 +203,8 @@ BM25_B = 0.75
 # length. Re-timed on the README's laptop (llama3.2:3b on the CPU, the model
 # reloaded before each answer), two questions took 4.1 and 4.3 minutes at 16
 # against 2.0 and 2.4 at 8. The local model also gains less than the hosted
-# ones: of the four questions 16 newly brings the figure for, llama3.2:3b
-# stated one, where both Ministral models stated all four.
+# ones: of the three questions 16 newly brings the figure for (Q35, Q38 and
+# Q40), llama3.2:3b stated none, where both Ministral models stated all three.
 CANDIDATE_K = 50
 FINAL_K = 16
 
