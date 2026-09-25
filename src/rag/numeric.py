@@ -38,26 +38,32 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from ..retrieval.facts import FACTS_FILE, current_year, load_facts, printed_forms
+from ..retrieval.facts import FACTS_FILE, current_year, load_facts, printed_forms_by_scale
 from ..retrieval.records import Query, RetrievedPassage
 from .constants import (
+    ACCESSION_PATTERN,
     FACT_PASSAGE_K,
+    FACT_SCOPE_UNSUPPORTED,
     FACTS_PROVIDER,
     FACTS_SENTENCE,
     FACTS_SOURCE,
     FACTS_TEMPLATE_ID,
     FINANCIAL_METRICS,
+    TABLE_SCALE,
     UNIT_ALIASES,
 )
 from .records import Answer, Citation, GenerationConfig, SentenceCitations, render_sentence
 
-# The accession number that opens every chunk_id, which is how a passage is
-# matched to the filing a fact came from. The same form verify.py reads.
-_ACCESSION = re.compile(r"\d{10}-\d{2}-\d{6}")
+# The word a table uses for each scale, so a figure divided by a million is
+# only accepted where the passage says it is in millions.
+_SCALE_WORDS = {1_000: ("thousand", "thousands"),
+                1_000_000: ("million", "millions"),
+                1_000_000_000: ("billion", "billions")}
 
 
 @dataclass(frozen=True)
@@ -66,7 +72,12 @@ class Fact:
 
     metric: str            # the key in FINANCIAL_METRICS the question asked for
     concept: str           # the XBRL concept the filer tagged it with
-    label: str             # the filer's own words for the line item
+    # What to call the line item in the answer. The metric's first alias, not
+    # the store's ``label``: that column holds the taxonomy's standard label,
+    # so revenue reads "Revenue from Contract with Customer, Excluding
+    # Assessed Tax", which is neither what the filing prints nor what a
+    # keyword search for the table should be given.
+    label: str
     value: Decimal         # the figure, in base units
     unit: str              # "USD", "USD/shares", ...; this project's name for it
     ticker: str
@@ -98,7 +109,10 @@ def format_figure(value: Decimal, unit: str) -> str:
     """
     magnitude = abs(value)
     whole = magnitude == magnitude.to_integral_value()
-    digits = f"{magnitude.to_integral_value():,}" if whole else f"{magnitude:,f}"
+    # Fixed-point on both branches: a Decimal keeps its exponent through
+    # to_integral_value, and "," alone would print 3.91035E+11 back out as
+    # itself -- a figure neither a reader nor verify.py's parser can read.
+    digits = f"{magnitude.to_integral_value() if whole else magnitude:,f}"
     # The sign goes outside the currency symbol, as a filing writes it: a loss
     # is -$1,500,000, never $-1,500,000.
     sign = "-" if value < 0 else ""
@@ -111,6 +125,20 @@ def format_figure(value: Decimal, unit: str) -> str:
     return f"{sign}{digits} {unit}".strip()
 
 
+@lru_cache(maxsize=2)
+def _cached_facts(path: Path, mtime_ns: int):
+    """The facts store, read once per file per change.
+
+    Keyed on the modification time as well as the path, so a rebuilt store is
+    picked up rather than served stale. Every caller only ever filters the
+    frame, never writes to it, so one copy is safe to share -- and reading it
+    per question meant a full parquet read and a ``to_datetime`` over every
+    row for each question in a benchmark run, including the ones that then
+    fall through to retrieval.
+    """
+    return load_facts(path)
+
+
 def find_metric(question: str) -> str | None:
     """The one metric a question names, or None where it names none or several.
 
@@ -118,7 +146,16 @@ def find_metric(question: str) -> str | None:
     ``verify.py`` checks an answer against. Several is None on purpose: "how
     did revenue and net income move" is two lookups and one sentence joining
     them, which this route does not write.
+
+    An alias can also appear inside something the store's annual figure is not
+    the answer to -- "cost of revenue", "deferred revenue", "iPhone revenue",
+    "revenue in Q4", "percentage of revenue" -- so the scope guard runs first.
+    It is the same guard ``verify.py`` marks an answer unverified by, because a
+    question this route answers and that checker cannot check is the one
+    combination neither should allow.
     """
+    if FACT_SCOPE_UNSUPPORTED.search(question):
+        return None
     found = {
         key for key, metric in FINANCIAL_METRICS.items()
         if any(re.search(r"\b" + re.escape(alias) + r"\b", question, re.I)
@@ -150,7 +187,8 @@ def lookup_fact(
 
     if frame is None:
         try:
-            frame = load_facts(Path(facts_file))
+            path = Path(facts_file)
+            frame = _cached_facts(path, path.stat().st_mtime_ns)
         except (OSError, ValueError, KeyError, ImportError):
             return None
     required = {"ticker", "fiscal_year", "concept", "unit", "value", "accession",
@@ -183,7 +221,7 @@ def lookup_fact(
         candidates.append(Fact(
             metric=metric,
             concept=str(row["concept"]).split(":")[-1],
-            label=str(row.get("label") or "").strip() or wanted.aliases[0],
+            label=wanted.aliases[0],
             value=value,
             unit=wanted.unit,
             ticker=ticker,
@@ -203,6 +241,36 @@ def lookup_fact(
     return candidates[0]
 
 
+def prints_figure(text: str, by_scale: dict[int, set[str]]) -> bool:
+    """Whether a passage prints the figure, rather than merely containing its digits.
+
+    Two things a bare substring search gets wrong, and both put a figure next
+    to a citation that does not show it. "391,035" is inside "1,391,035" and
+    "7,000" is inside "17,000", so a match has to begin and end at a number
+    boundary. And a needle is a figure divided by a thousand or a million, so
+    "100" stands for $100,000,000 only where the passage says it is in
+    millions -- in a heading, as a statement table gives it, or beside the
+    figure as prose does ("$391,035 million"). Unscaled digits need neither.
+    """
+    heading = TABLE_SCALE.search(text)
+    for divisor, needles in by_scale.items():
+        words = _SCALE_WORDS.get(divisor, ())
+        declared = divisor == 1 or (
+            bool(words) and heading is not None and heading[1].lower() in words
+        )
+        for needle in needles:
+            for match in re.finditer(
+                rf"(?<![\d.,]){re.escape(needle)}(?![\d,%]|\.\d)", text
+            ):
+                if declared:
+                    return True
+                if words and re.match(
+                    rf"\s*(?:{'|'.join(words)})\b", text[match.end():], re.I
+                ):
+                    return True
+    return False
+
+
 def supporting_passage(
     fact: Fact,
     retriever: Any,
@@ -211,35 +279,45 @@ def supporting_passage(
 ) -> RetrievedPassage | None:
     """A passage from the fact's own filing that prints the fact's figure.
 
-    Tables first, because a statement table is where a figure sits under the
-    label and year that give it meaning, and because a table passage keeps
-    those headers. Where no table prints it, prose is accepted on the same
-    terms -- it has to contain the figure -- since a citation that shows the
-    number is what is being looked for, not a particular kind of passage.
+    One search over both kinds of passage, preferring a table among whatever
+    prints the figure: a statement table is where a figure sits under the
+    label and year that give it meaning, and a table passage keeps those
+    headers. Prose is accepted on the same terms -- it has to print the figure
+    -- since what is wanted is a citation showing the number, not a particular
+    kind of passage. Searching tables and then everything would have run two
+    searches to look through the same passages twice, on top of the one
+    ``answer_question`` runs when this finds nothing.
 
     The passage must come from the filing the fact was reported in, which the
     chunk_id carries: a FY2023 filing prints FY2023's revenue too, and citing
     it for the FY2024 figure would point the reader at the wrong number on the
     right subject.
     """
-    needles = printed_forms(fact.value)
-    if not needles:
+    by_scale = printed_forms_by_scale(fact.value)
+    if not by_scale:
         return None
-    base = {
-        "text": f"{fact.label} {fact.ticker} FY{fact.fiscal_year}",
-        "tickers": (fact.ticker,),
-        "fiscal_years": (fact.fiscal_year,),
-        "top_k": top_k,
-        "wants_figures": True,
-    }
-    for content_type in ("table", None):
-        query = Query(**base, content_type=content_type)
-        for passage in retriever.search(query):
-            match = _ACCESSION.match(passage.chunk_id)
-            if match is None or match[0] != fact.accession:
-                continue
-            if any(needle in passage.text for needle in needles):
-                return passage
+    query = Query(
+        text=f"{fact.label} {fact.ticker} FY{fact.fiscal_year}",
+        # The line item alone for keyword search. The ticker and the year are
+        # already hard filters, and #87 measured that leaving them in the
+        # keyword text buries the statement tables under the prose repeating
+        # them.
+        keyword_text=fact.label,
+        tickers=(fact.ticker,),
+        fiscal_years=(fact.fiscal_year,),
+        top_k=top_k,
+        wants_figures=True,
+    )
+    matches = [
+        passage for passage in retriever.search(query)
+        if (found := ACCESSION_PATTERN.match(passage.chunk_id))
+        and found[0] == fact.accession
+        and prints_figure(passage.text, by_scale)
+    ]
+    tables = [passage for passage in matches if passage.content_type == "table"]
+    for preferred in (tables, matches):
+        if preferred:
+            return preferred[0]
     return None
 
 
@@ -298,5 +376,6 @@ __all__ = [
     "find_metric",
     "format_figure",
     "lookup_fact",
+    "prints_figure",
     "supporting_passage",
 ]

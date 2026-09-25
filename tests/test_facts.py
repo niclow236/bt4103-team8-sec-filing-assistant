@@ -163,3 +163,38 @@ def test_load_recomputes_the_flag_for_an_older_store(tmp_path, offline):
     stale.to_parquet(store, index=False)
     alpha = facts.load_facts(store).query("ticker == 'AAA'").sort_values("value")
     assert alpha["is_current_year"].tolist() == [False, True]
+
+
+# --- how a stored figure appears in a filing's own text -----------------------
+
+def test_a_whole_figure_is_offered_at_each_scale_it_could_be_printed_in():
+    # 391035000000 is printed "391,035" in a table headed "in millions".
+    by_scale = facts.printed_forms_by_scale("391035000000")
+    assert by_scale[1] == {"391035000000", "391,035,000,000"}
+    assert by_scale[1_000] == {"391035000", "391,035,000"}
+    assert by_scale[1_000_000] == {"391035", "391,035"}
+
+
+def test_a_figure_that_is_not_round_at_any_scale_is_offered_as_a_decimal():
+    # Earnings per share: no scale divides it, and it is printed to the cent.
+    assert facts.printed_forms_by_scale("6.08") == {1: {"6.08"}}
+    assert facts.printed_forms("-1.5") == {"1.5", "1.50"}
+
+
+def test_a_figure_below_half_a_cent_is_not_offered_as_zero():
+    # "0.00" would match the blank cell of every table in the filing.
+    assert "0.00" not in facts.printed_forms("1e-05")
+
+
+def test_a_one_or_two_digit_needle_is_dropped():
+    # "12" matches a year, a note number or a page number in every filing.
+    assert facts.printed_forms("12") == set()
+
+
+def test_printed_forms_pools_every_scale():
+    value = "391035000000"
+    assert facts.printed_forms(value) == {
+        needle
+        for needles in facts.printed_forms_by_scale(value).values()
+        for needle in needles
+    }

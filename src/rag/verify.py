@@ -21,7 +21,13 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from ..retrieval.facts import FACTS_FILE, current_year, load_facts
-from .constants import FINANCIAL_METRICS, UNIT_ALIASES
+from .constants import (
+    ACCESSION_PATTERN,
+    FACT_SCOPE_UNSUPPORTED,
+    FINANCIAL_METRICS,
+    TABLE_SCALE,
+    UNIT_ALIASES,
+)
 from .query import ParsedQuestion, parse_question
 from .records import Answer, SentenceCitations, VerificationCheck, VerificationResult
 
@@ -38,13 +44,12 @@ _NUMBER = re.compile(
 _SCALES = {"thousand": Decimal("1e3"), "million": Decimal("1e6"),
            "mn": Decimal("1e6"), "billion": Decimal("1e9"),
            "bn": Decimal("1e9"), "trillion": Decimal("1e12")}
-_TABLE_SCALE = re.compile(r"\bin\s+(thousands|millions|billions)\b", re.I)
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
-_FACT_SCOPE_UNSUPPORTED = re.compile(
-    r"\b(?:segment|iphone|ipad|aws|azure|google cloud|product revenue|services revenue|"
-    r"quarter|quarterly|q[1-4]|combined|sum|average|difference|ratio|margin|"
-    r"(?:increased?|decreased?|grew|fell) by)\b", re.I,
-)
+# Both of these now live in constants.py, so that #34's router and this
+# checker cannot disagree about which scopes a stored figure can answer, or
+# about which filing a passage belongs to.
+_TABLE_SCALE = TABLE_SCALE
+_FACT_SCOPE_UNSUPPORTED = FACT_SCOPE_UNSUPPORTED
 
 # The aliases, concepts and units live in constants.py, because #34 routes a
 # numeric question on the same table that this module checks the answer
@@ -210,7 +215,7 @@ def _fact_check(frame, error, figure, metric, tickers, years, passages, index, c
     rows = rows[(rows["ticker"].str.upper() == ticker) & (rows["fiscal_year"] == year)
                 & rows["concept"].str.split(":").str[-1].isin(concepts)]
     accessions = {m[0] for p in passages
-                  if (m := re.match(r"\d{10}-\d{2}-\d{6}", p.chunk_id))}
+                  if (m := ACCESSION_PATTERN.match(p.chunk_id))}
     if accessions:
         rows = rows[rows["accession"].isin(accessions)]
     candidates = []

@@ -19,6 +19,7 @@ from src.rag.numeric import (
     find_metric,
     format_figure,
     lookup_fact,
+    prints_figure,
     supporting_passage,
 )
 from src.rag.records import GenerationConfig
@@ -106,6 +107,36 @@ def test_a_question_naming_two_metrics_is_not_a_lookup():
     assert find_metric("How did revenue and net income compare in FY2024?") is None
 
 
+@pytest.mark.parametrize("question", [
+    # An alias inside a line item the annual figure does not answer. Each of
+    # these was answered with total annual net sales, cited.
+    "What was Apple's cost of revenue in FY2024?",
+    "What was Microsoft's deferred revenue in FY2024?",
+    "What was iPhone revenue for Apple in FY2024?",
+    "What was Apple's revenue in Q4 of FY2024?",
+    "What percentage of revenue did Apple spend on R&D in FY2024?",
+    "What was Apple's non-operating income in FY2024?",
+    "What was Apple's net income per diluted share in FY2024?",
+    # Scopes the store's annual figures cannot answer at all.
+    "What was AWS operating income in FY2024?",
+    "What was Apple's operating margin in FY2024?",
+    "What was Apple's revenue by segment in FY2024?",
+    "How much did Apple's revenue increase by in FY2024?",
+])
+def test_a_qualifier_on_the_line_item_is_not_a_lookup(question):
+    # The guard verify.py marks an answer unverified by: a question this route
+    # answers and that checker cannot check is what neither should allow.
+    assert find_metric(question) is None
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("What was Apple's diluted earnings per share in FY2024?", "diluted_eps"),
+    ("What was Apple's basic EPS in FY2024?", "basic_eps"),
+])
+def test_the_scope_guard_does_not_block_the_per_share_metrics(question, expected):
+    assert find_metric(question) == expected
+
+
 # --- writing the figure ---------------------------------------------------------
 
 @pytest.mark.parametrize("value, unit, expected", [
@@ -126,6 +157,19 @@ def test_the_figure_is_never_rounded_to_a_friendlier_scale():
     assert "billion" not in format_figure(Decimal(REVENUE), "USD")
 
 
+@pytest.mark.parametrize("value, expected", [
+    # The store holds exponent-form raw_value strings, and str(float) goes
+    # exponential from 1e16. Printed back as itself, neither a reader nor
+    # verify.py's parser can read the figure.
+    (Decimal("3.91035E+11"), "$391,035,000,000"),
+    (Decimal("1E+16"), "$10,000,000,000,000,000"),
+    (Decimal("1e-05"), "$0.00001"),
+    (Decimal("5.00"), "$5"),
+])
+def test_format_figure_never_prints_scientific_notation(value, expected):
+    assert format_figure(value, "USD") == expected
+
+
 # --- the lookup -------------------------------------------------------------------
 
 def test_lookup_finds_the_figure_for_one_company_and_year(store):
@@ -133,7 +177,9 @@ def test_lookup_finds_the_figure_for_one_company_and_year(store):
     assert isinstance(fact, Fact)
     assert fact.value == Decimal(REVENUE)
     assert (fact.metric, fact.unit) == ("revenue", "USD")
-    assert fact.label == "Total net sales"
+    # The metric's own words, not the store's label column: that holds the
+    # taxonomy's "Revenue from Contract with Customer, Excluding Assessed Tax".
+    assert fact.label == "total revenue"
     assert (fact.ticker, fact.company, fact.fiscal_year) == ("AAPL", "Apple Inc.", 2024)
     assert fact.accession == ACCESSION
     assert fact.figure == "$391,035,000,000"
@@ -206,8 +252,9 @@ def test_lookup_reads_a_frame_already_in_memory(store, tmp_path):
 
 # --- finding the passage that prints it ---------------------------------------------
 
+# label is the metric's first alias, as lookup_fact builds it.
 FACT = Fact(metric="revenue", concept="RevenueFromContractWithCustomerExcludingAssessedTax",
-            label="Total net sales", value=Decimal(REVENUE), unit="USD", ticker="AAPL",
+            label="total revenue", value=Decimal(REVENUE), unit="USD", ticker="AAPL",
             company="Apple Inc.", fiscal_year=2024, accession=ACCESSION,
             period_end="2024-09-28")
 
@@ -217,12 +264,24 @@ def test_the_supporting_passage_is_the_table_that_prints_the_figure():
     assert found is not None and "391,035" in found.text
 
 
-def test_tables_are_searched_before_prose():
+def test_one_search_covers_both_kinds_of_passage():
+    # Searching tables and then everything looked through the same passages
+    # twice, on top of the search answer_question runs when this finds nothing.
     retriever = StubRetriever(_passage())
     supporting_passage(FACT, retriever)
-    assert retriever.queries[0].content_type == "table"
-    assert retriever.queries[0].tickers == ("AAPL",)
-    assert retriever.queries[0].fiscal_years == (2024,)
+    query, = retriever.queries
+    assert query.content_type is None
+    assert (query.tickers, query.fiscal_years) == (("AAPL",), (2024,))
+    # The line item alone for keyword search: the ticker and year are already
+    # hard filters, and #87 measured that repeating them buries the tables.
+    assert query.keyword_text == "total revenue"
+
+
+def test_a_table_is_preferred_over_prose_that_also_prints_the_figure():
+    prose = _passage(text="Total net sales were $391,035 million in 2024.",
+                     chunk_id=f"{ACCESSION}_part_ii_item_7_0", content_type="prose")
+    found = supporting_passage(FACT, StubRetriever(prose, _passage()))
+    assert found.content_type == "table"
 
 
 def test_prose_is_accepted_when_no_table_prints_the_figure():
@@ -247,6 +306,31 @@ def test_nothing_retrieved_is_no_passage():
     assert supporting_passage(FACT, StubRetriever()) is None
 
 
+@pytest.mark.parametrize("text", [
+    # The needle is inside a longer number, so the passage prints a different
+    # figure: 391,035 lives in 1,391,035, and a scaled needle in 17,000.
+    "STATEMENTS (in millions)\n\n| Total net sales | 1,391,035 |",
+    "STATEMENTS (in millions)\n\n| Total net sales | 391,0351 |",
+])
+def test_digits_inside_a_longer_number_are_not_the_figure(text):
+    assert prints_figure(text, {1_000_000: {"391,035"}}) is False
+
+
+def test_a_scaled_figure_needs_the_passage_to_say_which_scale():
+    by_scale = {1_000_000: {"391,035"}}
+    # A bare 391,035 with no scale anywhere could be 391,035 dollars.
+    assert prints_figure("| Total net sales | 391,035 |", by_scale) is False
+    assert prints_figure("STATEMENTS (in millions)\n| net sales | 391,035 |", by_scale) is True
+    # Prose names the scale beside the figure rather than in a heading.
+    assert prints_figure("Net sales were $391,035 million.", by_scale) is True
+    # The wrong scale is still the wrong figure.
+    assert prints_figure("STATEMENTS (in thousands)\n| 391,035 |", by_scale) is False
+
+
+def test_an_unscaled_figure_needs_no_heading():
+    assert prints_figure("Diluted earnings per share were $6.08.", {1: {"6.08"}}) is True
+
+
 # --- the answer -----------------------------------------------------------------------
 
 def test_the_answer_states_the_figure_and_cites_the_passage(store):
@@ -254,7 +338,7 @@ def test_the_answer_states_the_figure_and_cites_the_passage(store):
                                facts_file=store())
     assert answer is not None
     assert answer.text == (
-        "Apple Inc. reported Total net sales of $391,035,000,000 for fiscal year 2024, "
+        "Apple Inc. reported total revenue of $391,035,000,000 for fiscal year 2024, "
         "ended 2024-09-28. [1]"
     )
     assert answer.abstained is False
@@ -337,6 +421,75 @@ def test_use_facts_false_turns_the_route_off_for_the_ablation(store, monkeypatch
     with pytest.raises(RuntimeError, match="generated"):
         answer_question(QUESTION, StubRetriever(_passage()), facts_file=store(),
                         use_facts=False)
+
+
+def test_earnings_per_share_is_answered_with_the_strings_the_real_store_holds(store):
+    # Two gaps this covers, both invisible to a synthetic frame: the store
+    # writes the unit "USD per share", not "usd/shares"; and a per-share figure
+    # is a round number at no scale, so it needs a decimal needle.
+    eps = _fact_row(
+        concept="us-gaap:EarningsPerShareDiluted",
+        label="Earnings Per Share, Diluted", unit="USD per share",
+        value=6.08, raw_value="6.08", scale=0,
+    )
+    passage = _passage(
+        text="EARNINGS PER SHARE\n\n| | 2024 | 2023 |\n| Diluted (in dollars per share) | 6.08 | 6.13 |",
+        chunk_id=f"{ACCESSION}_part_ii_item_8_5",
+    )
+    answer = answer_from_facts("What was Apple's diluted earnings per share in FY2024?",
+                               ("AAPL",), (2024,), StubRetriever(passage),
+                               facts_file=store(eps))
+    assert answer is not None
+    assert answer.text == (
+        "Apple Inc. reported diluted earnings per share of $6.08 per share "
+        "for fiscal year 2024, ended 2024-09-28. [1]"
+    )
+    assert answer.citations[0].chunk_id == passage.chunk_id
+
+
+def test_the_store_is_read_once_however_many_questions_are_asked(store, monkeypatch):
+    # Each question re-read the parquet and reran mark_current_year over every
+    # row, including the questions that then fall through to retrieval.
+    import src.rag.numeric as numeric
+
+    path = store()
+    numeric._cached_facts.cache_clear()
+    reads = []
+    real = numeric.load_facts
+    monkeypatch.setattr(numeric, "load_facts", lambda p: reads.append(p) or real(p))
+    for _ in range(3):
+        assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=path) is not None
+    assert len(reads) == 1
+
+
+def test_a_rebuilt_store_is_not_served_stale(store):
+    import os
+
+    import src.rag.numeric as numeric
+
+    numeric._cached_facts.cache_clear()
+    path = store()
+    assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=path).value == Decimal(REVENUE)
+    # Rebuilt with a different figure. The cache is keyed on the modification
+    # time as well as the path, so the new store is read rather than served
+    # from the first call; the time is set explicitly because two writes in one
+    # test can land inside the filesystem's timestamp resolution.
+    pd.DataFrame([_fact_row(value=1.0, raw_value="1")]).to_parquet(path, index=False)
+    os.utime(path, ns=(0, 0))
+    assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=path).value == Decimal(1)
+
+
+@pytest.mark.parametrize("question", [
+    "What were Apple's net sales in fiscal 2024?",
+    "What were Apple's cash and cash equivalents in FY2024?",
+])
+def test_a_metric_named_in_the_company_s_own_words_reaches_the_store(question, store):
+    # Every FINANCIAL_METRICS alias is a numeric cue, so these are classified
+    # numeric rather than factual and take the lookup. Read as prose questions
+    # they never reached the store that holds the answer.
+    from src.rag.query import parse_question
+
+    assert parse_question(question).question_type == "numeric"
 
 
 def test_a_supplied_query_decides_which_figure_is_looked_up(store):

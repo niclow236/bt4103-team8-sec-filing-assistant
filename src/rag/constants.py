@@ -15,6 +15,7 @@ thing in one place, and changes by getting a new id.
 
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 # --- companies --------------------------------------------------------------
@@ -425,10 +426,54 @@ FINANCIAL_METRICS: dict[str, Metric] = {
                              ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
 }
 
+# Every metric that can be looked up is a numeric question by definition, so
+# the aliases above extend the cue list rather than being kept in step with it
+# by hand: "what were Apple's net sales in FY2024" asks for a figure in the
+# company's own words, and read as a prose question it never reached the store
+# that holds the answer.
+NUMERIC_CUES = NUMERIC_CUES + tuple(
+    alias
+    for metric in FINANCIAL_METRICS.values()
+    for alias in metric.aliases
+    if alias not in NUMERIC_CUES
+)
+
 # How the facts store writes a unit, and what this project calls it. The store
-# carries the XBRL unit; ``FINANCIAL_METRICS`` and the figure parser in
-# ``verify.py`` use these names.
-UNIT_ALIASES = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares"}
+# carries the XBRL unit, and writes a per-share unit as "USD per share" rather
+# than the "USD/shares" the taxonomy suggests, so both spellings are here: a
+# missing one is not a crash but an earnings-per-share question that silently
+# never matches a fact.
+UNIT_ALIASES = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares",
+                "usd per share": "USD/shares"}
+
+# The scope a stored annual figure cannot answer, however well the concept
+# matches. Three kinds: a part of the company rather than the whole of it (a
+# segment, a product line), a part of the year rather than the year (a
+# quarter), and a figure derived from others rather than reported (a margin, a
+# change, a percentage of something else). A qualifier on the line item counts
+# too: "cost of revenue" and "deferred revenue" are not revenue, and answering
+# either with total revenue is confidently wrong.
+#
+# Read from both directions, like FINANCIAL_METRICS: #34 refuses to route the
+# question, and #32 records the answer as unverified. A route that did not
+# check this would answer questions its own checker marks unverifiable. A bare
+# "per share" is deliberately absent, since it would block the EPS aliases.
+FACT_SCOPE_UNSUPPORTED = re.compile(
+    r"\b(?:segment|iphone|ipad|aws|azure|google cloud|product revenue|services revenue|"
+    r"quarter|quarterly|q[1-4]|combined|sum|average|difference|ratio|margin|percent(?:age)?|"
+    r"cost of|deferred|unearned|non-?operating|per (?:diluted|basic) share|"
+    r"(?:increased?|decreased?|grew|fell) by)\b", re.I,
+)
+
+# The accession number a chunk_id opens with, which is how a passage is matched
+# to the filing a fact came from. Shared so the router and the checker cannot
+# disagree about what counts as the same filing.
+ACCESSION_PATTERN = re.compile(r"\d{10}-\d{2}-\d{6}")
+
+# A statement's scale, as a table says it: "(in millions)". What a figure in
+# the table has to be multiplied by, and therefore what tells a passage that
+# prints "391,035" apart from one that prints a raw 391,035.
+TABLE_SCALE = re.compile(r"\bin\s+(thousands|millions|billions)\b", re.I)
 
 # --- answering from the facts store -----------------------------------------
 # A numeric question is answered by looking the figure up rather than by asking
