@@ -15,6 +15,9 @@ thing in one place, and changes by getting a new id.
 
 from __future__ import annotations
 
+import re
+from typing import NamedTuple
+
 # --- companies --------------------------------------------------------------
 # The names a question might use for each company in config/companies.txt,
 # keyed by ticker. Matched case-insensitively as whole words, so "apple" and
@@ -380,3 +383,116 @@ MAX_OUTPUT_TOKENS = 1024
 # This is a read timeout, not a limit on the whole answer, and the longest wait
 # is the first one: nothing streams back until the whole prompt has been read.
 GENERATION_TIMEOUT_S = 600.0
+
+# --- financial metrics ------------------------------------------------------
+# The line items a question can name, the XBRL concepts a filer tags them with,
+# and the unit each is reported in. One table, read from two directions:
+# ``numeric.py`` reads a question's words to find the metric and then looks the
+# figure up (#34), and ``verify.py`` reads an answer's words to find the metric
+# and then checks the figure against the same store (#32). Two tables would
+# drift, and an answer routed on one vocabulary and checked against another
+# would be flagged for asking a question its own checker could not.
+#
+# Aliases are deliberately narrow, and a question matching two metrics is
+# treated as matching none: extend this from the benchmark rather than by
+# guessing, since a wrong concept answers confidently with the wrong figure.
+# ``concepts`` are matched on the part after the taxonomy prefix, so
+# "us-gaap:Revenues" matches "Revenues".
+
+
+class Metric(NamedTuple):
+    """One line item: what a question calls it, how a filer tags it, its unit."""
+
+    aliases: tuple[str, ...]
+    concepts: tuple[str, ...]
+    unit: str
+
+
+FINANCIAL_METRICS: dict[str, Metric] = {
+    "revenue": Metric(("total revenue", "revenues", "revenue", "net sales"),
+                      ("Revenues", "Revenue", "RevenueFromContractWithCustomerExcludingAssessedTax",
+                       "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"), "USD"),
+    "net_income": Metric(("net income", "net earnings", "net loss"),
+                         ("NetIncomeLoss", "ProfitLoss"), "USD"),
+    "operating_income": Metric(("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
+    "assets": Metric(("total assets",), ("Assets",), "USD"),
+    "liabilities": Metric(("total liabilities",), ("Liabilities",), "USD"),
+    "cash": Metric(("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
+    "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
+                          ("EarningsPerShareDiluted",), "USD/shares"),
+    "basic_eps": Metric(("basic earnings per share", "basic eps"),
+                        ("EarningsPerShareBasic",), "USD/shares"),
+    "operating_cash": Metric(("cash from operations", "operating cash flow"),
+                             ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
+}
+
+# Every metric that can be looked up is a numeric question by definition, so
+# the aliases above extend the cue list rather than being kept in step with it
+# by hand: "what were Apple's net sales in FY2024" asks for a figure in the
+# company's own words, and read as a prose question it never reached the store
+# that holds the answer.
+NUMERIC_CUES = NUMERIC_CUES + tuple(
+    alias
+    for metric in FINANCIAL_METRICS.values()
+    for alias in metric.aliases
+    if alias not in NUMERIC_CUES
+)
+
+# How the facts store writes a unit, and what this project calls it. The store
+# carries the XBRL unit, and writes a per-share unit as "USD per share" rather
+# than the "USD/shares" the taxonomy suggests, so both spellings are here: a
+# missing one is not a crash but an earnings-per-share question that silently
+# never matches a fact.
+UNIT_ALIASES = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares",
+                "usd per share": "USD/shares"}
+
+# The scope a stored annual figure cannot answer, however well the concept
+# matches. Three kinds: a part of the company rather than the whole of it (a
+# segment, a product line), a part of the year rather than the year (a
+# quarter), and a figure derived from others rather than reported (a margin, a
+# change, a percentage of something else). A qualifier on the line item counts
+# too: "cost of revenue" and "deferred revenue" are not revenue, and answering
+# either with total revenue is confidently wrong.
+#
+# Read from both directions, like FINANCIAL_METRICS: #34 refuses to route the
+# question, and #32 records the answer as unverified. A route that did not
+# check this would answer questions its own checker marks unverifiable. A bare
+# "per share" is deliberately absent, since it would block the EPS aliases.
+FACT_SCOPE_UNSUPPORTED = re.compile(
+    r"\b(?:segment|iphone|ipad|aws|azure|google cloud|product revenue|services revenue|"
+    r"quarter|quarterly|q[1-4]|combined|sum|average|difference|ratio|margin|percent(?:age)?|"
+    r"cost of|deferred|unearned|non-?operating|per (?:diluted|basic) share|"
+    r"(?:increased?|decreased?|grew|fell) by)\b", re.I,
+)
+
+# The accession number a chunk_id opens with, which is how a passage is matched
+# to the filing a fact came from. Shared so the router and the checker cannot
+# disagree about what counts as the same filing.
+ACCESSION_PATTERN = re.compile(r"\d{10}-\d{2}-\d{6}")
+
+# A statement's scale, as a table says it: "(in millions)". What a figure in
+# the table has to be multiplied by, and therefore what tells a passage that
+# prints "391,035" apart from one that prints a raw 391,035.
+TABLE_SCALE = re.compile(r"\bin\s+(thousands|millions|billions)\b", re.I)
+
+# --- answering from the facts store -----------------------------------------
+# A numeric question is answered by looking the figure up rather than by asking
+# a model to read it out of a passage (#34). The answer is then this project's
+# own sentence, not a model's, so it records what produced it the way a
+# generated answer does -- the harness reads ``GenerationConfig`` to attribute
+# a result, and "facts" is the truthful thing for it to read here.
+FACTS_PROVIDER = "facts"
+FACTS_SOURCE = "xbrl"
+FACTS_TEMPLATE_ID = "facts_v1"
+
+# The sentence a looked-up figure is rendered as. The company, the metric as
+# the filing labels it, the figure, and the period it covers -- everything a
+# reader needs to check the citation against the filing, and nothing a model
+# chose. The source marker is appended by ``render_sentence``.
+FACTS_SENTENCE = "{company} reported {label} of {figure} for {period}."
+
+# How many passages to look through for the one that prints the figure. Wider
+# than FINAL_K because this is not a ranked answer set: the figure is in one
+# specific table of one specific filing, and the search is already narrowed to
+# that filing, so the cost of looking further down is a few string comparisons.
+FACT_PASSAGE_K = 20

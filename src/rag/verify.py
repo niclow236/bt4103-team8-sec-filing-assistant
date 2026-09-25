@@ -21,6 +21,13 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from ..retrieval.facts import FACTS_FILE, current_year, load_facts
+from .constants import (
+    ACCESSION_PATTERN,
+    FACT_SCOPE_UNSUPPORTED,
+    FINANCIAL_METRICS,
+    TABLE_SCALE,
+    UNIT_ALIASES,
+)
 from .query import ParsedQuestion, parse_question
 from .records import Answer, SentenceCitations, VerificationCheck, VerificationResult
 
@@ -37,31 +44,20 @@ _NUMBER = re.compile(
 _SCALES = {"thousand": Decimal("1e3"), "million": Decimal("1e6"),
            "mn": Decimal("1e6"), "billion": Decimal("1e9"),
            "bn": Decimal("1e9"), "trillion": Decimal("1e12")}
-_TABLE_SCALE = re.compile(r"\bin\s+(thousands|millions|billions)\b", re.I)
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
-_FACT_SCOPE_UNSUPPORTED = re.compile(
-    r"\b(?:segment|iphone|ipad|aws|azure|google cloud|product revenue|services revenue|"
-    r"quarter|quarterly|q[1-4]|combined|sum|average|difference|ratio|margin|"
-    r"(?:increased?|decreased?|grew|fell) by)\b", re.I,
-)
+# Both of these now live in constants.py, so that #34's router and this
+# checker cannot disagree about which scopes a stored figure can answer, or
+# about which filing a passage belongs to.
+_TABLE_SCALE = TABLE_SCALE
+_FACT_SCOPE_UNSUPPORTED = FACT_SCOPE_UNSUPPORTED
 
-# Aliases are intentionally narrow. Extend using the benchmark; do not let an
-# unrelated concept validate a claim just because the value happens to match.
-_METRICS = {
-    "revenue": (("total revenue", "revenues", "revenue", "net sales"),
-                ("Revenues", "Revenue", "RevenueFromContractWithCustomerExcludingAssessedTax",
-                 "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"), "USD"),
-    "net_income": (("net income", "net earnings", "net loss"),
-                   ("NetIncomeLoss", "ProfitLoss"), "USD"),
-    "operating_income": (("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
-    "assets": (("total assets",), ("Assets",), "USD"),
-    "liabilities": (("total liabilities",), ("Liabilities",), "USD"),
-    "cash": (("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
-    "diluted_eps": (("diluted earnings per share", "diluted eps"), ("EarningsPerShareDiluted",), "USD/shares"),
-    "basic_eps": (("basic earnings per share", "basic eps"), ("EarningsPerShareBasic",), "USD/shares"),
-    "operating_cash": (("cash from operations", "operating cash flow",),
-                       ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
-}
+# The aliases, concepts and units live in constants.py, because #34 routes a
+# numeric question on the same table that this module checks the answer
+# against: a question answered from a concept its checker did not know would
+# be flagged for having been answered at all. Aliases are intentionally
+# narrow. Extend using the benchmark; do not let an unrelated concept validate
+# a claim just because the value happens to match.
+_METRICS = FINANCIAL_METRICS
 
 
 def _metrics(text: str) -> set[str]:
@@ -219,13 +215,12 @@ def _fact_check(frame, error, figure, metric, tickers, years, passages, index, c
     rows = rows[(rows["ticker"].str.upper() == ticker) & (rows["fiscal_year"] == year)
                 & rows["concept"].str.split(":").str[-1].isin(concepts)]
     accessions = {m[0] for p in passages
-                  if (m := re.match(r"\d{10}-\d{2}-\d{6}", p.chunk_id))}
+                  if (m := ACCESSION_PATTERN.match(p.chunk_id))}
     if accessions:
         rows = rows[rows["accession"].isin(accessions)]
     candidates = []
     for row in rows.to_dict("records"):
-        unit = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares"}.get(
-            str(row["unit"]).lower(), str(row["unit"]))
+        unit = UNIT_ALIASES.get(str(row["unit"]).lower(), str(row["unit"]))
         if unit != figure.unit:
             continue
         try:

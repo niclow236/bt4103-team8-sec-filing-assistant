@@ -163,3 +163,63 @@ def test_load_recomputes_the_flag_for_an_older_store(tmp_path, offline):
     stale.to_parquet(store, index=False)
     alpha = facts.load_facts(store).query("ticker == 'AAA'").sort_values("value")
     assert alpha["is_current_year"].tolist() == [False, True]
+
+
+# --- how a stored figure appears in a filing's own text -----------------------
+
+def test_a_whole_figure_is_offered_at_each_scale_it_could_be_printed_in():
+    # 391035000000 is printed "391,035" in a table headed "in millions".
+    by_scale = facts.printed_forms_by_scale("391035000000")
+    assert by_scale[1] == {"391035000000", "391,035,000,000"}
+    assert by_scale[1_000] == {"391035000", "391,035,000"}
+    assert by_scale[1_000_000] == {"391035", "391,035"}
+
+
+def test_a_figure_that_is_not_round_at_any_scale_is_offered_as_a_decimal():
+    # Earnings per share: no scale divides it, and it is printed to the cent.
+    assert facts.printed_forms_by_scale("6.08") == {1: {"6.08"}}
+    assert facts.printed_forms("-1.5") == {"1.5", "1.50"}
+
+
+def test_a_figure_below_half_a_cent_is_not_offered_as_zero():
+    # "0.00" would match the blank cell of every table in the filing.
+    assert "0.00" not in facts.printed_forms("1e-05")
+
+
+def test_a_one_or_two_digit_needle_is_dropped():
+    # "12" matches a year, a note number or a page number in every filing.
+    assert facts.printed_forms("12") == set()
+
+
+def test_printed_forms_pools_every_scale():
+    value = "391035000000"
+    assert facts.printed_forms(value) == {
+        needle
+        for needles in facts.printed_forms_by_scale(value).values()
+        for needle in needles
+    }
+
+
+def test_the_arithmetic_is_exact_above_the_float_limit():
+    # float() rounds 9007199254740993 to ...992 before the divisibility test,
+    # so the needle would be a different number from the one in the filing.
+    assert "9007199254740993" in facts.printed_forms("9007199254740993")
+    assert "9007199254740992" not in facts.printed_forms("9007199254740993")
+
+
+def test_a_whole_billion_is_offered_at_billion_scale():
+    # The scale words a match is checked against name billions, so the forms
+    # have to as well, or "123 billion" is the one rendering never generated.
+    assert facts.printed_forms_by_scale("123000000000")[1_000_000_000] == {"123"}
+
+
+def test_needles_carry_no_sign():
+    # A filing prints a negative as "(1,500)" as often as "-1,500", so which
+    # it is belongs to the match, not to the figure.
+    assert facts.printed_forms("-1500") == facts.printed_forms("1500")
+
+
+def test_a_figure_of_zero_has_no_printed_form():
+    # A bare "0" matches the empty cell of every table in the filing.
+    assert facts.printed_forms(0) == set()
+    assert facts.printed_forms("0") == set()

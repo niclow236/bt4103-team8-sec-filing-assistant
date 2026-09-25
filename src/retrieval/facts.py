@@ -48,6 +48,7 @@ rather than stored as a figure with nowhere to point.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from ..config import configure_edgar
@@ -280,6 +281,104 @@ def build(
         print(f"kept as stored, not refreshed: {', '.join(failed)}")
     print(f"written:  {facts_file}")
     return facts_file
+
+
+def printed_forms_by_scale(raw_value) -> dict[int, set[str]]:
+    """The strings a stored figure could appear as, grouped by the scale printed in.
+
+    A filing prints its statements in thousands, millions or units, while the
+    store keeps the figure in base units, so 391035000000 is printed as
+    "391,035" in a table headed "in millions". Each scale is offered with and
+    without separators, and only where the division comes out whole: a figure
+    that is not a round number of millions was not printed in millions.
+
+    Grouped rather than pooled because the scale is what tells a passage that
+    prints the figure apart from one that happens to contain those digits: a
+    caller matching "391,035" can require the passage to say it is in
+    millions, which #34 does. :func:`printed_forms` is the pooled view for a
+    caller that does not.
+
+    A figure that is a round number at no scale was printed as a decimal --
+    earnings per share to the cent, a rate to a few places -- and is offered
+    at scale 1 as it stands and rounded to two places, which is how a
+    statement prints it.
+
+    Digits only: the needles are unsigned, because a filing prints a negative
+    as "(1,500)" as often as "-1,500", and which one it is belongs to where
+    the figure sits rather than to the figure. A caller matching a negative
+    fact has to check the sign at the point of the match, as
+    ``rag.numeric.prints_figure`` does.
+
+    Anything shorter than three characters is dropped, since a one or two
+    digit needle matches a year, a note number or a page number somewhere in
+    every filing. A figure of zero therefore has no printed form at all,
+    which is the right answer: a bare "0" matches the empty cell of every
+    table in the filing.
+
+    The arithmetic is exact. Dividing through ``float`` would round a figure
+    above 2^53 before the test, so 9007199254740993 would offer a needle for
+    ...992 -- a different number from the one the filing prints, which is the
+    whole thing this is for.
+    """
+    text = "" if raw_value is None else str(raw_value).strip()
+    if not text:
+        return {}
+    try:
+        value = abs(Decimal(text))
+    except InvalidOperation:
+        return {1: {text}}
+
+    forms: dict[int, set[str]] = {}
+    rounds = False
+    # Thousands and millions are what a statement is printed in; billions
+    # appear in prose, and are here so that this and the scale words a match
+    # is checked against name the same set of scales.
+    for divisor in (1, 1_000, 1_000_000, 1_000_000_000):
+        scaled = value / divisor
+        if scaled == scaled.to_integral_value():
+            rounds = True
+            whole = int(scaled)
+            kept = {needle for needle in (str(whole), f"{whole:,}") if len(needle) >= 3}
+            if kept:
+                forms[divisor] = kept
+    # Only a figure that is round at no scale was printed as a decimal. Asking
+    # whether any scale divided it, rather than whether any needle survived the
+    # length filter, is what keeps a short whole number -- 12, dropped as too
+    # short to match on -- from coming back as "12.00".
+    if not rounds:
+        decimals = _decimal_forms(text)
+        if decimals:
+            forms[1] = decimals
+    return forms
+
+
+def _decimal_forms(text: str) -> set[str]:
+    """How a figure that is not whole at any scale is printed: as it is, and to the cent."""
+    try:
+        magnitude = abs(Decimal(text))
+    except InvalidOperation:
+        return set()
+    forms = {f"{magnitude:,f}"}
+    cents = f"{magnitude:.2f}"
+    # A figure below half a cent rounds to "0.00", which would match the blank
+    # cell of every table in the filing.
+    if Decimal(cents) != 0:
+        forms.update({cents, f"{Decimal(cents):,f}"})
+    return {form for form in forms if len(form) >= 3}
+
+
+def printed_forms(raw_value) -> set[str]:
+    """Every string a stored figure could appear as, whatever scale it is printed in.
+
+    The pooled form of :func:`printed_forms_by_scale`, for a caller that
+    matches on the digits alone -- the generated benchmark (#24) looks for the
+    passage supporting a question and has no scale to check against.
+    """
+    return {
+        needle
+        for needles in printed_forms_by_scale(raw_value).values()
+        for needle in needles
+    }
 
 
 def current_year(frame):

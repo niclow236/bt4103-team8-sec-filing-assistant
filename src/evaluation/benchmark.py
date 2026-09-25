@@ -12,7 +12,7 @@ import pandas as pd
 
 from src.config import PROJECT_ROOT, PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
-from src.retrieval.facts import FACTS_FILE, load_facts
+from src.retrieval.facts import FACTS_FILE, load_facts, printed_forms
 
 from .records import BenchmarkQuestion, BenchmarkValidationError
 
@@ -52,25 +52,10 @@ def _format_expected_answer(row: Mapping[str, Any]) -> str:
     return f"{str(raw).strip()} {unit}".strip()
 
 
-def _value_needles(raw: Any) -> set[str]:
-    text = str(raw or "").strip()
-    if not text:
-        return set()
-    try:
-        value = float(text)
-    except ValueError:
-        return {text}
-    needles = set()
-    for divisor in (1, 1_000, 1_000_000):
-        scaled = value / divisor
-        if abs(scaled - round(scaled)) < 1e-9:
-            whole = abs(int(round(scaled)))
-            needles.update({str(whole), f"{whole:,}"})
-    return {needle for needle in needles if len(needle) >= 3}
-
-
 def _supporting_chunk_ids_for(row: Mapping[str, Any], candidates: list[dict]) -> list[str]:
-    needles = _value_needles(row.get("raw_value"))
+    # printed_forms lives with the facts store because the RAG stage asks the
+    # same question when it looks for the passage that shows a figure (#34).
+    needles = printed_forms(row.get("raw_value"))
     return [
         chunk["chunk_id"]
         for chunk in candidates
