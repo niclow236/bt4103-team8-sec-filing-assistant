@@ -125,11 +125,88 @@ BM25_B = 0.75
 # passage that answers the question is often outside a first-stage top-8 and
 # only a reranker that has seen it can pull it up.
 #
-# 50 and 8 are the architecture's numbers (§3, §5). FINAL_K is also a context
-# budget: 8 passages at up to ~1,800 characters each is roughly 14k characters
-# before the prompt, which is what makes 8 rather than 20 the ceiling.
+# 50 and 8 were the architecture's numbers (§3, §5). FINAL_K was also a context
+# budget, because a laptop's Ollama could not read a larger prompt; a hosted
+# model removes that limit, so #85 measured the cap instead of assuming it.
+#
+# `notebooks/retrieval/final_k_sweep.py` swept 8, 12, 16 and 20 over two
+# question sets, on the corpus search_text_comparison.csv was measured on
+# unless a row says otherwise. Each question was searched once at 20 and the
+# ranking sliced, which is exact here: hybrid fuses at max(CANDIDATE_K, k), so
+# the order does not depend on k.
+#
+#                                    top 8   top 12   top 16   top 20
+#   XBRL benchmark (#24, #25), 20 questions from each of the 75 filings
+#     supporting chunk in the prompt  56.2%    63.6%    68.1%    71.3%
+#     Recall, mean                    0.415    0.484    0.531    0.567
+#     nDCG, mean                      0.268    0.291    0.305    0.315
+#     reciprocal rank, mean           0.269    0.277    0.280    0.282
+#   the same, AAPL and AMZN only (1,884 questions), on the local build below
+#     supporting chunk in the prompt  63.0%    72.3%    76.2%    78.6%
+#   48 hand-written questions
+#     expected figure in the prompt   20/28    22/28    23/28    24/28
+#     prose terms found, mean         0.978    0.984    0.994    0.994
+#   prompt tokens (llama3.2), median  2,884    4,005    5,220    6,475
+#   prompt tokens, largest seen       3,550    4,984    6,306    7,703
+#
+# The committed final_k_sweep.csv and the hosted runs further down come from a
+# local build of the corpus that ranks the expected figure differently for 14
+# of the 28 figure questions. On it the figure reached the prompt for 18, 21,
+# 22 and 23 of the 28.
+#
+# 16 is the value, for two measured reasons.
+#
+# It takes most of what is available. Going 8 to 12 finds the supporting chunk
+# for 7.4% more of the benchmark, 12 to 16 another 4.5%, and 16 to 20 another
+# 3.2%: the curve has flattened by 16, which holds 79% of everything 20 buys.
+# AAPL and AMZN, easier than most filings, show the same shape higher up.
+# Note which numbers move. Recall and "in the prompt" climb while reciprocal
+# rank barely does (0.269 to 0.282), so a larger K is not ranking better, it is
+# cutting the answer off less often -- exactly the failure #85 was opened for,
+# where the table holding the figure sat at rank 12 to 23.
+#
+# And 20 does not fit. The answer has to fit in NUM_CTX (8,192) beside the
+# prompt: at 20 the largest prompt measured plus MAX_OUTPUT_TOKENS is 8,727,
+# over the window, while at 16 it is 7,330. That is measured, not a bound. The
+# 16 largest passages of one filing can render to 7,561 tokens (ORCL FY2022),
+# and 27 of the 75 filings can pass 7,168, where the ceiling no longer fits
+# beside the prompt. None can pass the window itself at 16, so the prompt is
+# never cut, and an answer keeps at least ~600 tokens, twice the longest local
+# answer measured (309). So 16 is the largest K both paths can run, and
+# no separate LOCAL_FINAL_K is needed: the condition #85 set for one ("if the
+# prompt no longer fits NUM_CTX") does not fire.
+#
+# The open risk was that a longer prompt distracts a model as much as it
+# informs it, which retrieval numbers cannot answer. It does not. The 48
+# hand-written questions were run end to end through both hosted models at 8
+# and at 16 on 2026-09-23 (the two 20260923 files in notebooks/mistral/results/):
+#
+#                                  Ministral 3 14B     Ministral 3 8B
+#                                   k=8     k=16       k=8     k=16
+#   figure in the passages         18/28    22/28     18/28    22/28
+#   figure stated, rounding ok     18/28    22/28     18/28    22/28
+#   figure stated, exact digits    13/28    17/28     16/28    20/28
+#   abstained                          7        4         5        2
+#   expected prose terms, mean       90%      92%       93%      93%
+#   valid answer JSON              48/48    48/48     48/48    48/48
+#   prompt tokens, median          3,139    5,751     3,139    5,751
+#   end to end, median              2.0s     2.2s      2.2s     2.2s
+#
+# Both models stated every figure they were given, at both cutoffs, so
+# retrieval was the whole of the gap rather than part of it. Prose did not
+# regress, nothing failed to parse, and the extra ~2,600 prompt tokens cost
+# about 0.2s. Abstentions fell because the evidence arrived, which is the
+# direction this was meant to move.
+#
+# Local answers still pay for the extra passages in time rather than in window.
+# Reading the prompt dominates a laptop's minutes and is roughly linear in its
+# length. Re-timed on the README's laptop (llama3.2:3b on the CPU, the model
+# reloaded before each answer), two questions took 4.1 and 4.3 minutes at 16
+# against 2.0 and 2.4 at 8. The local model also gains less than the hosted
+# ones: of the three questions 16 newly brings the figure for (Q35, Q38 and
+# Q40), llama3.2:3b stated none, where both Ministral models stated all three.
 CANDIDATE_K = 50
-FINAL_K = 8
+FINAL_K = 16
 
 # Note for the retrievers: Query.top_k in records.py defaults to 10, which is
 # neither of these. A retriever should read k from the Query it was handed and

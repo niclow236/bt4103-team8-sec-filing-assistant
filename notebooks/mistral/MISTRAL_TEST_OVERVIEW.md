@@ -21,6 +21,22 @@ The test ran on 18 September 2026 on Mistral's free plan, with all 48 questions 
 - **Retrieval, not the model, now limits accuracy.** The figure was in the retrieved passages for only 12 of 28 figure questions. Issues #85–#89 cover the fixes.
 - **These are automatic checks.** Hand grading in the `manual_correct` column is still to do.
 
+### 23 September 2026: `FINAL_K` at 8 against 16 (#85)
+
+Both Ministral models were re-run over the same 48 questions at the old `FINAL_K` of 8 and at the 16 that #85 settled on. The two `20260923-*` files in `results/` are the record.
+
+| | 14B @ 8 | 14B @ 16 | 8B @ 8 | 8B @ 16 |
+|---|---|---|---|---|
+| Figure in the retrieved passages | 18/28 | 22/28 | 18/28 | 22/28 |
+| Figure stated, rounding allowed | 18/28 | 22/28 | 18/28 | 22/28 |
+| Figure stated, exact digits | 13/28 | 17/28 | 16/28 | 20/28 |
+| Abstained | 7 | 4 | 5 | 2 |
+| Expected prose terms, mean | 90% | 92% | 93% | 93% |
+| Prompt tokens, median | 3,139 | 5,751 | 3,139 | 5,751 |
+| End to end, median | 2.0 s | 2.2 s | 2.2 s | 2.2 s |
+
+The first two rows agree at both cutoffs: each model stated every figure it was given, so the deeper cut is the whole of the gain and a longer prompt did not distract either model. Prose did not regress, all 96 answers parsed, and the extra 2,600 prompt tokens cost about two tenths of a second. The figure in the passages rose from 12 of 28 in September to 18 at the same `FINAL_K` of 8, because #86, #87 and #88 landed in between.
+
 ## Running it
 
 You need:
@@ -47,7 +63,7 @@ Then:
 
 Each run adds one file to `results/`, named for its time and models, such as `20260918-1239_ministral-14b-2512_ministral-8b-2512.csv`.
 
-- **Each run file has one row per answer:** the question, the expected answer, the model's answer, its timings and the automatic checks.
+- **Each run file has one row per answer:** the question, the expected answer, the model's answer, its timings and the automatic checks. Since #85 each row also carries `final_k`, the retrieval cutoff the run used, and `input_tokens`, the prompt's length as the provider counted it. The September files predate both columns, and the summary leaves them blank rather than guessing.
 - **`manual_correct` starts empty.** Mark each answer's correctness there by hand.
 - **`comparison.csv` is rebuilt after every run.** It puts each model's latest run side by side, and it's where the table above comes from.
 

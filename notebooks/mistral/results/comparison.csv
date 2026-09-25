@@ -1,19 +1,22 @@
-﻿,Ministral 3 14B,Ministral 3 8B,Voxtral Small 24B,Codestral 25.08
+﻿,Voxtral Small 24B,Codestral 25.08,Ministral 3 14B,Ministral 3 8B
 Answered without error,48/48,48/48,48/48,48/48
 Within 30 s end to end,48/48,48/48,48/48,48/48
-Within 10 s end to end,48/48,47/48,48/48,48/48
-"End to end, median (s)",2.2,2.1,1.4,1.7
-"End to end, p90 (s)",4.8,3.4,2.7,3.8
-"End to end, slowest (s)",6.0,10.8,3.4,5.5
-"First words, median (s)",1.3,1.2,1.2,1.3
-"Output speed, median (tokens/s)",83,119,176,147
-"Answer length, median (tokens)",111,107,54,54
+Within 10 s end to end,48/48,48/48,48/48,47/48
+"End to end, median (s)",1.4,1.7,2.2,2.2
+"End to end, p90 (s)",2.7,3.8,5.1,4.5
+"End to end, slowest (s)",3.4,5.5,6.0,23.9
+"First words, median (s)",1.2,1.3,1.4,1.4
+"Output speed, median (tokens/s)",176,147,109,100
+"Answer length, median (tokens)",54,54,71,98
+"Prompt length, median (tokens)",,,5752,5752
+"Prompt length, largest (tokens)",,,6844,6844
+FINAL_K,,,16,16
 Valid answer JSON,48/48,48/48,48/48,48/48
 Cut off at the token limit,0,0,0,0
-Abstained,10,10,4,4
-Right section retrieved,44/48,44/48,44/48,44/48
-Figure in retrieved passages,12/28,12/28,12/28,12/28
-"Figure found, exact digits",9/28,11/28,9/28,9/28
-"Figure found, rounding allowed",13/28,13/28,11/28,10/28
-"Expected terms mentioned, mean",88%,88%,86%,87%
-Paraphrase pairs with the same result,5/8,6/8,5/8,6/8
+Abstained,4,4,4,2
+Right section retrieved,44/48,44/48,45/48,45/48
+Figure in retrieved passages,12/28,12/28,22/28,22/28
+"Figure found, exact digits",9/28,9/28,17/28,20/28
+"Figure found, rounding allowed",11/28,10/28,22/28,22/28
+"Expected terms mentioned, mean",86%,87%,92%,93%
+Paraphrase pairs with the same result,5/8,6/8,5/8,5/8

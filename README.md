@@ -103,9 +103,9 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── chunk.py         #   stage 3
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
-│   ├── retrieval/           # BM25, dense, hybrid
+│   ├── retrieval/           # BM25, dense, hybrid, reranking
 │   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
-│   │   ├── cli.py           #   the command line: embed, bm25, facts, check
+│   │   ├── cli.py           #   the command line: embed, bm25, facts, check, benchmark
 │   │   ├── base.py          #   the Retriever contract, the metadata pre-filter, ranking helpers
 │   │   ├── constants.py     #   models, k values and fusion constants, in one place
 │   │   ├── records.py       #   Query, RetrievedPassage, and what an index says of itself
@@ -113,6 +113,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── dense.py         #   searches the dense index
 │   │   ├── bm25.py          #   builds and searches the BM25 index
 │   │   ├── hybrid.py        #   fuses BM25 and dense results by reciprocal rank
+│   │   ├── rerank.py        #   re-scores fused candidates with a cross-encoder
 │   │   └── facts.py         #   XBRL figures from EDGAR into a table
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
@@ -121,13 +122,15 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── constants.py     #   company aliases, cue words, the prompt template, generation settings
 │   │   └── records.py       #   GroundedAnswer, Generation, Answer, Citation and GenerationConfig
 │   ├── evaluation/          # benchmark and metrics
-│   │   ├── benchmark.py     #   loads and validates benchmark/questions.jsonl
+│   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
 │   └── app/                 # Streamlit or Gradio UI
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
 ├── benchmark/               # ground-truth Q&A dataset
-│   └── schema.md            #   the fields a benchmark question must have
+│   ├── schema.md            #   the fields a benchmark question must have
+│   ├── questions.jsonl      #   hand-written questions (none written yet)
+│   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 └── docs/                    # reports, minutes, references
 ```
 
@@ -721,13 +724,38 @@ for passage in hybrid.search(query):
     passage.rank, passage.score, passage.chunk_id, passage.sources
 ```
 
-Three methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
+Four methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
 searches the bge vectors in Chroma, and `HybridRetriever` asks each of them for
 their top 50 (`CANDIDATE_K`) and fuses the two lists by reciprocal rank, so
 their scores, which are on different scales, are never compared directly. A
-fused passage records in `sources` which methods returned it. All three satisfy
-the `Retriever` protocol in `base.py`, so the evaluation harness can loop over
-them.
+fused passage records in `sources` which methods returned it. All of them
+satisfy the `Retriever` protocol in `base.py`, so the evaluation harness can
+loop over them.
+
+`CrossEncoderReranker` is the fourth, and it wraps one of the other three
+rather than replacing it:
+
+```python
+from src.retrieval.rerank import CrossEncoderReranker
+
+reranked = CrossEncoderReranker(hybrid)      # or the BM25 or dense retriever
+for passage in reranked.search(query):
+    passage.rank, passage.score, passage.sources   # sources still name the inner methods
+```
+
+It asks the retriever it wraps for `CANDIDATE_K` candidates, scores each
+question-and-passage pair with `ms-marco-MiniLM-L-6-v2`, and returns the top k
+of its own ranking. That is the broad-then-narrow shape: the passage that
+answers a question is often outside a first-stage top 8, and only a second
+stage that has seen it can pull it up. On the Apple supply-chain question it
+does, promoting two passages the fused ranking had outside its top 8. Scores
+are the cross-encoder's logits, so they are on none of the other three scales
+and `MIN_RERANK_SCORE` stays unset. Reranking 50 candidates adds about 0.3 to
+0.9 seconds once the model is loaded, and the model is loaded once per process
+however `load_model` is called.
+
+The reranker is not yet a `--retriever` choice in the evaluation harness, so an
+ablation row for it has to be built in code for now.
 
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`,
 `key_items_only`) are applied before scoring, not after, in every method. BM25
@@ -755,7 +783,11 @@ questions rather than helping: the expected figure reached the top 8 for 20 of
 barely moved. Carrying each statement's title into its passages (#88) is what
 changed it: a balance sheet passage now holds the words "CONSOLIDATED BALANCE
 SHEETS", so BM25 finds the table it used to miss. The sweep is worth re-running
-when the corpus changes or the reranker (#21) lands.
+when the corpus changes, or against a reranked ranking rather than a fused one.
+
+Those numbers, and the search-text ones further down, were measured at the
+`FINAL_K` of 8 that was in force at the time. Both scripts report at whatever
+`FINAL_K` says, so a re-run today reports a top 16 instead.
 
 `table_boost` leans a query toward table passages without excluding prose, by
 raising a table passage's score before the cut to k. It is off by default and is
@@ -764,7 +796,77 @@ set by `rag/query.py` only for questions that ask for a figure.
 XBRL benchmark (#24) gives a value measured rather than guessed.
 
 `Query.top_k` defaults to 10, which suits Recall@10 and nDCG@10. The RAG stage
-asks for `FINAL_K`, 8, since that is what goes into the prompt.
+asks for `FINAL_K`, 16, since that is what goes into the prompt.
+
+`FINAL_K` was 8 for as long as a laptop's Ollama set the ceiling. A hosted
+model with a 256K window removes that, so `python
+notebooks/retrieval/final_k_sweep.py` measured the cap rather than keeping it.
+It sweeps 8, 12, 16 and 20 over both question sets, searching each question
+once at 20 and slicing the ranking, which is exact here because hybrid fuses at
+`max(CANDIDATE_K, k)` and the order therefore does not depend on k. The script
+checks that against real searches before it trusts it.
+
+| | top 8 | top 12 | top 16 | top 20 |
+|---|---|---|---|---|
+| Supporting chunk in the prompt, XBRL benchmark (20 from each of the 75 filings) | 56.2% | 63.6% | 68.1% | 71.3% |
+| Recall, mean | 0.415 | 0.484 | 0.531 | 0.567 |
+| nDCG, mean | 0.268 | 0.291 | 0.305 | 0.315 |
+| Reciprocal rank, mean | 0.269 | 0.277 | 0.280 | 0.282 |
+| Supporting chunk in the prompt, AAPL and AMZN only (1,884), local build | 63.0% | 72.3% | 76.2% | 78.6% |
+| Expected figure in the prompt, hand-written (28) | 20 | 22 | 23 | 24 |
+| Prose: expected terms found, mean (20) | 0.978 | 0.984 | 0.994 | 0.994 |
+| Prompt tokens, median | 2,884 | 4,005 | 5,220 | 6,475 |
+| Prompt tokens, largest seen | 3,550 | 4,984 | 6,306 | 7,703 |
+
+The rows are on the corpus `search_text_comparison.csv` was measured on, except
+the AAPL and AMZN row. That row, the committed `final_k_sweep.csv` and the
+hosted runs below come from a local build that ranks the expected figure
+differently for 14 of the 28 figure questions; on it the figure reached the
+prompt for 18, 21, 22 and 23 of the 28.
+
+Two things decide it. The curve flattens: 8 to 12 finds the supporting chunk
+for another 7.4% of the benchmark, 12 to 16 another 4.5%, and 16 to 20 another
+3.2%, so 16 holds 79% of everything 20 buys. And 20 does not fit locally.
+Every prompt measured is inside Ollama's 8,192-token window, but the answer
+has to fit beside it: at 20 the largest prompt plus `MAX_OUTPUT_TOKENS` comes
+to 8,727, over the window, against 7,330 at 16. So 16 is the largest value both
+paths can run, and no separate local cap is needed.
+
+Worth reading the columns against each other. Recall and "in the prompt" climb
+while reciprocal rank barely moves, from 0.269 to 0.282. A larger `FINAL_K` is
+not ranking better; it is cutting the answer off less often. That is the
+failure this was opened for: in the September evaluation the table holding the
+expected figure was often found and then dropped, at rank 12 to 23.
+
+A retrieval sweep cannot say whether a longer prompt distracts the model, so
+the 48 hand-written questions were also run end to end through both hosted
+Ministral models at 8 and at 16, with
+`notebooks/mistral/mistral_generation_test.ipynb`:
+
+| | 14B @ 8 | 14B @ 16 | 8B @ 8 | 8B @ 16 |
+|---|---|---|---|---|
+| Figure in the retrieved passages | 18/28 | 22/28 | 18/28 | 22/28 |
+| Figure stated, rounding allowed | 18/28 | 22/28 | 18/28 | 22/28 |
+| Figure stated, exact digits | 13/28 | 17/28 | 16/28 | 20/28 |
+| Abstained | 7 | 4 | 5 | 2 |
+| Expected prose terms, mean | 90% | 92% | 93% | 93% |
+| Valid answer JSON | 48/48 | 48/48 | 48/48 | 48/48 |
+| Prompt tokens, median | 3,139 | 5,751 | 3,139 | 5,751 |
+| End to end, median | 2.0 s | 2.2 s | 2.2 s | 2.2 s |
+
+It does not distract them. Both models stated every figure they were given, at
+both cutoffs, which is why the first two rows agree: retrieval was the whole of
+the gap rather than part of it. Prose did not regress, nothing failed to parse,
+and the extra 2,600 prompt tokens cost about two tenths of a second. Abstentions
+fell because the evidence arrived, which is the direction this was meant to
+move.
+
+Local answers still pay for the extra passages in time rather than in window.
+Reading the prompt dominates a laptop's minutes and is roughly linear in its
+length, so an Ollama answer takes about twice as long: re-timed on the team
+laptop, two questions took 4.1 and 4.3 minutes at 16 against 2.0 and 2.4 at 8.
+[How long an answer takes](#how-long-an-answer-takes) has the details, and
+what `llama3.2:3b` makes of the extra passages.
 
 Loading both retrievers takes about 15 seconds, and the first search about 30
 more while the embedding model loads. After that a hybrid search takes around
@@ -986,14 +1088,25 @@ Three things follow from that.
   what arrived.
 
 The context window is set on every request, to 8,192 tokens (`NUM_CTX`). This
-matters more than it looks. A grounded prompt over eight passages ran to 2,700
-to 3,400 tokens, and when a prompt is longer than Ollama's window, Ollama cuts it
-from the front without telling the caller: the only sign is a warning in its own
-server log. Run with a 2,048-token window, it kept 1,026 of 3,205 prompt tokens,
-dropping the rules and the first sources, and the model answered a question
-about revenue with a paragraph about hiring. Ollama's own default depends on the
-GPU's memory and is 4,096 tokens on a laptop, which fits today's prompts with
-little room for the answer, and would not fit a larger `FINAL_K`.
+matters more than it looks. When a prompt is longer than Ollama's window, Ollama
+cuts it from the front without telling the caller: the only sign is a warning in
+its own server log. Run with a 2,048-token window, it kept 1,026 of 3,205 prompt
+tokens, dropping the rules and the first sources, and the model answered a
+question about revenue with a paragraph about hiring.
+
+So the window is what caps `FINAL_K`, and #85 measured the fit rather than
+assuming it. Counted with llama3.2's own tokenizer over the XBRL benchmark
+across all 75 filings and the 48 hand-written questions, a prompt over 16
+passages runs to a median of about 5,200 tokens and 6,306 at its largest,
+which leaves room for `MAX_OUTPUT_TOKENS` beside it, 7,330 against a window of
+8,192. That is the largest seen, not a bound: the 16 largest passages of one
+filing can reach 7,561 tokens, where the ceiling no longer fits beside the
+prompt for 27 of the 75 filings, but none can pass the window itself, so the
+prompt is never cut. Twenty passages do not fit: 7,703 plus the output ceiling
+is 8,727, and every filing's 20 largest passages pass the window itself. An
+eight-passage prompt, the earlier setting, ran 2,700 to 3,400 tokens. Ollama's
+own default depends on the GPU's memory and is 4,096 tokens on a laptop, which
+is why `NUM_CTX` is set explicitly on every request rather than left to it.
 
 A server that is not running, a model that has not been pulled, or a response
 that times out raises `ProviderUnavailable` with the command that fixes it.
@@ -1017,7 +1130,16 @@ Nearly all of that is the model reading the prompt, 2,700 to 3,400 tokens,
 before it writes anything; the answers themselves ran from 13 to 151 tokens.
 `llama3.1:8b` took 10.4 minutes on the same laptop for the first of these
 questions, against 3.2 for the 3B model, which is why the smaller model is the
-default. Comparing models properly is #46's job. Three things follow.
+default. Comparing models properly is #46's job.
+
+These times were measured at the old `FINAL_K` of 8. Re-timed at 16 on the
+same laptop, with the model reloaded before each answer so nothing was cached,
+two questions took 4.1 and 4.3 minutes against 2.0 and 2.4 at 8: about twice
+as long, as reading the prompt at a roughly constant rate predicts, and the
+local price of the retrieval gain #85 measured. That gain is smaller locally:
+of the three questions 16 newly brings the figure for (Q35, Q38 and Q40),
+`llama3.2:3b` stated none, where both hosted Ministral models stated all three.
+Three things follow.
 
 - Stream the answer (#42), and show the passages first. On this hardware they
   arrive minutes before the first word of the answer.
@@ -1040,6 +1162,23 @@ from src.evaluation import load_questions
 
 questions = load_questions()   # benchmark/questions.jsonl, checked against data/processed/
 ```
+
+A second, mechanical benchmark is generated from the XBRL facts store rather
+than written:
+
+```bash
+python -m src.retrieval benchmark      # benchmark/generated.jsonl, from data/index/facts.parquet
+```
+
+Every current-year fact whose value can be found in a passage of the filing it
+came from becomes one question, with those passages as its supporting chunks:
+12,579 of them on today's corpus with a full facts store, all `numeric` and all `mechanical`. They are
+narrow and repetitive by construction, and that is the point -- they are far
+too many to write by hand, so they say whether a retrieval change holds across
+the corpus or only on the questions someone chose. It needs no network, only
+the facts store and a chunked corpus, and it is regenerated rather than
+committed: re-chunking renames every chunk, and the loader rejects a benchmark
+whose chunk ids no longer exist.
 
 The loader refuses a file it cannot trust rather than skipping the bad lines:
 a missing or unknown field, a duplicate `question_id`, a `question_type` other
