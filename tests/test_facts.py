@@ -198,3 +198,28 @@ def test_printed_forms_pools_every_scale():
         for needles in facts.printed_forms_by_scale(value).values()
         for needle in needles
     }
+
+
+def test_the_arithmetic_is_exact_above_the_float_limit():
+    # float() rounds 9007199254740993 to ...992 before the divisibility test,
+    # so the needle would be a different number from the one in the filing.
+    assert "9007199254740993" in facts.printed_forms("9007199254740993")
+    assert "9007199254740992" not in facts.printed_forms("9007199254740993")
+
+
+def test_a_whole_billion_is_offered_at_billion_scale():
+    # The scale words a match is checked against name billions, so the forms
+    # have to as well, or "123 billion" is the one rendering never generated.
+    assert facts.printed_forms_by_scale("123000000000")[1_000_000_000] == {"123"}
+
+
+def test_needles_carry_no_sign():
+    # A filing prints a negative as "(1,500)" as often as "-1,500", so which
+    # it is belongs to the match, not to the figure.
+    assert facts.printed_forms("-1500") == facts.printed_forms("1500")
+
+
+def test_a_figure_of_zero_has_no_printed_form():
+    # A bare "0" matches the empty cell of every table in the filing.
+    assert facts.printed_forms(0) == set()
+    assert facts.printed_forms("0") == set()

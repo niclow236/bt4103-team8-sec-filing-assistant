@@ -39,6 +39,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
+from math import isfinite
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -64,6 +65,17 @@ from .records import Answer, Citation, GenerationConfig, SentenceCitations, rend
 _SCALE_WORDS = {1_000: ("thousand", "thousands"),
                 1_000_000: ("million", "millions"),
                 1_000_000_000: ("billion", "billions")}
+
+# A scale word straight after a figure, which is what makes "$5.2 billion"
+# a different number from a figure of 5.2.
+_SCALE_AFTER = re.compile(r"\s*(?:thousand|million|billion|trillion)s?\b", re.I)
+
+# How a filing writes a negative: a minus sign, either side of the currency
+# symbol, or the accounting form, wrapping the figure in parentheses.
+_CURRENCY = r"(?:us\$|usd|s\$|sgd|eur|gbp|jpy|[$€£¥])"
+_MINUS_BEFORE = re.compile(rf"(?:[-−]\s*{_CURRENCY}?|{_CURRENCY}\s*[-−])\s*$", re.I)
+_OPEN_BEFORE = re.compile(rf"\(\s*{_CURRENCY}?\s*$", re.I)
+_CLOSE_AFTER = re.compile(r"\s*\)")
 
 
 @dataclass(frozen=True)
@@ -189,7 +201,12 @@ def lookup_fact(
         try:
             path = Path(facts_file)
             frame = _cached_facts(path, path.stat().st_mtime_ns)
-        except (OSError, ValueError, KeyError, ImportError):
+        except Exception:
+            # Every way of failing to read the store is a miss, deliberately:
+            # a corrupt file raises whatever the parquet engine chooses to
+            # raise, and this route is a shortcut past retrieval, never a new
+            # way for a question to fail. The question goes to retrieval, which
+            # is where it would have gone if the store held nothing for it.
             return None
     required = {"ticker", "fiscal_year", "concept", "unit", "value", "accession",
                 "company", "label", "period_end", "raw_value", "is_current_year"}
@@ -241,32 +258,55 @@ def lookup_fact(
     return candidates[0]
 
 
-def prints_figure(text: str, by_scale: dict[int, set[str]]) -> bool:
+def _shown_negative(before: str, after: str) -> bool:
+    """Whether the figure printed at this position is a negative one."""
+    return bool(
+        _MINUS_BEFORE.search(before)
+        or (_OPEN_BEFORE.search(before) and _CLOSE_AFTER.match(after))
+    )
+
+
+def prints_figure(
+    text: str, by_scale: dict[int, set[str]], *, negative: bool = False
+) -> bool:
     """Whether a passage prints the figure, rather than merely containing its digits.
 
-    Two things a bare substring search gets wrong, and both put a figure next
-    to a citation that does not show it. "391,035" is inside "1,391,035" and
-    "7,000" is inside "17,000", so a match has to begin and end at a number
-    boundary. And a needle is a figure divided by a thousand or a million, so
+    Three things a bare substring search gets wrong, and each of them puts a
+    figure next to a citation that does not show it.
+
+    "391,035" is inside "1,391,035" and "7,000" is inside "17,000", so a match
+    has to begin and end at a number boundary.
+
+    A needle is a figure divided by a thousand, a million or a billion, so
     "100" stands for $100,000,000 only where the passage says it is in
     millions -- in a heading, as a statement table gives it, or beside the
-    figure as prose does ("$391,035 million"). Unscaled digits need neither.
+    figure, as prose does ("$391,035 million"). A needle at scale 1 is the
+    figure itself and needs neither, but it does have to be free of a scale
+    word of its own: "5.2" in "$5.2 billion" is not a figure of 5.2. A
+    declared heading is deliberately not applied to scale 1, because an
+    income statement headed "in millions, except per share amounts" prints
+    its earnings per share unscaled in the same table.
+
+    And the needles carry no sign, so the sign is checked here: a loss of
+    $1,500 is printed "(1,500)" or "-1,500", and a passage showing a positive
+    1,500 is a different line item. A figure whose sign disagrees with the
+    fact's is passed over rather than cited.
     """
     heading = TABLE_SCALE.search(text)
     for divisor, needles in by_scale.items():
         words = _SCALE_WORDS.get(divisor, ())
-        declared = divisor == 1 or (
-            bool(words) and heading is not None and heading[1].lower() in words
-        )
+        declared = bool(words) and heading is not None and heading[1].lower() in words
         for needle in needles:
             for match in re.finditer(
                 rf"(?<![\d.,]){re.escape(needle)}(?![\d,%]|\.\d)", text
             ):
-                if declared:
-                    return True
-                if words and re.match(
-                    rf"\s*(?:{'|'.join(words)})\b", text[match.end():], re.I
-                ):
+                before, after = text[:match.start()], text[match.end():]
+                if _shown_negative(before, after) != negative:
+                    continue
+                if divisor == 1:
+                    if _SCALE_AFTER.match(after) is None:
+                        return True
+                elif declared or re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I):
                     return True
     return False
 
@@ -276,6 +316,7 @@ def supporting_passage(
     retriever: Any,
     *,
     top_k: int = FACT_PASSAGE_K,
+    min_score: float | None = None,
 ) -> RetrievedPassage | None:
     """A passage from the fact's own filing that prints the fact's figure.
 
@@ -292,6 +333,11 @@ def supporting_passage(
     chunk_id carries: a FY2023 filing prints FY2023's revenue too, and citing
     it for the FY2024 figure would point the reader at the wrong number on the
     right subject.
+
+    A passage has to clear the same bar the retrieval path sets before it is
+    cited: a usable score and some text, and ``min_score`` where the caller
+    set one. A route that cited a passage the caller's own floor would have
+    rejected would answer where the same question, asked the same way, abstains.
     """
     by_scale = printed_forms_by_scale(fact.value)
     if not by_scale:
@@ -310,9 +356,11 @@ def supporting_passage(
     )
     matches = [
         passage for passage in retriever.search(query)
-        if (found := ACCESSION_PATTERN.match(passage.chunk_id))
+        if isfinite(passage.score) and passage.text.strip()
+        and (min_score is None or passage.score >= min_score)
+        and (found := ACCESSION_PATTERN.match(passage.chunk_id))
         and found[0] == fact.accession
-        and prints_figure(passage.text, by_scale)
+        and prints_figure(passage.text, by_scale, negative=fact.value < 0)
     ]
     tables = [passage for passage in matches if passage.content_type == "table"]
     for preferred in (tables, matches):
@@ -330,18 +378,20 @@ def answer_from_facts(
     facts_file: Path = FACTS_FILE,
     frame: Any | None = None,
     top_k: int = FACT_PASSAGE_K,
+    min_score: float | None = None,
 ) -> Answer | None:
     """The whole route: look the figure up, find the passage that prints it, state it.
 
     None where any step cannot be completed, which the caller answers by
     retrieving and generating as usual. See the module docstring for what each
-    step refuses and why.
+    step refuses and why. ``min_score`` is the caller's floor on a passage's
+    score, applied here as the retrieval path applies it.
     """
     started = perf_counter()
     fact = lookup_fact(question, tickers, fiscal_years, facts_file=facts_file, frame=frame)
     if fact is None:
         return None
-    passage = supporting_passage(fact, retriever, top_k=top_k)
+    passage = supporting_passage(fact, retriever, top_k=top_k, min_score=min_score)
     if passage is None:
         return None
 

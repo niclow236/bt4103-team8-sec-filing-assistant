@@ -45,7 +45,9 @@ def answer_question(
     looked up and the passage printing it is cited, with no model involved. The
     lookup returns nothing unless it can fully support the answer, and the
     question then takes the retrieval path below exactly as it otherwise would,
-    so this is a shortcut and never a second way to fail. ``use_facts=False``
+    so this is a shortcut and never a second way to fail. It cites a passage
+    only on the same terms this function admits one, ``min_score`` included, so
+    it cannot answer where the retrieval path would abstain. ``use_facts=False``
     turns it off, which is what the ablation matrix needs to measure it.
 
     Empty retrieval never builds a prompt or calls a model. Built-in indexes
@@ -68,7 +70,8 @@ def answer_question(
     # search by hand gets the figure for the company and year it asked about.
     if use_facts and parsed.question_type == "numeric":
         looked_up = answer_from_facts(
-            question, query.tickers, query.fiscal_years, retriever, facts_file=facts_file,
+            question, query.tickers, query.fiscal_years, retriever,
+            facts_file=facts_file, min_score=min_score,
         )
         if looked_up is not None:
             if on_token is not None:

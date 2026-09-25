@@ -303,25 +303,41 @@ def printed_forms_by_scale(raw_value) -> dict[int, set[str]]:
     at scale 1 as it stands and rounded to two places, which is how a
     statement prints it.
 
+    Digits only: the needles are unsigned, because a filing prints a negative
+    as "(1,500)" as often as "-1,500", and which one it is belongs to where
+    the figure sits rather than to the figure. A caller matching a negative
+    fact has to check the sign at the point of the match, as
+    ``rag.numeric.prints_figure`` does.
+
     Anything shorter than three characters is dropped, since a one or two
     digit needle matches a year, a note number or a page number somewhere in
-    every filing.
+    every filing. A figure of zero therefore has no printed form at all,
+    which is the right answer: a bare "0" matches the empty cell of every
+    table in the filing.
+
+    The arithmetic is exact. Dividing through ``float`` would round a figure
+    above 2^53 before the test, so 9007199254740993 would offer a needle for
+    ...992 -- a different number from the one the filing prints, which is the
+    whole thing this is for.
     """
-    text = str(raw_value or "").strip()
+    text = "" if raw_value is None else str(raw_value).strip()
     if not text:
         return {}
     try:
-        value = float(text)
-    except ValueError:
+        value = abs(Decimal(text))
+    except InvalidOperation:
         return {1: {text}}
 
     forms: dict[int, set[str]] = {}
     rounds = False
-    for divisor in (1, 1_000, 1_000_000):
+    # Thousands and millions are what a statement is printed in; billions
+    # appear in prose, and are here so that this and the scale words a match
+    # is checked against name the same set of scales.
+    for divisor in (1, 1_000, 1_000_000, 1_000_000_000):
         scaled = value / divisor
-        if abs(scaled - round(scaled)) < 1e-9:
+        if scaled == scaled.to_integral_value():
             rounds = True
-            whole = abs(int(round(scaled)))
+            whole = int(scaled)
             kept = {needle for needle in (str(whole), f"{whole:,}") if len(needle) >= 3}
             if kept:
                 forms[divisor] = kept

@@ -6,6 +6,7 @@ model. What is under test is the routing: which questions take the lookup, what
 the lookup refuses, and that a refusal reaches the retrieval path unchanged.
 """
 
+import dataclasses
 from decimal import Decimal
 
 import pandas as pd
@@ -235,6 +236,17 @@ def test_a_missing_store_is_a_miss_not_an_error(tmp_path):
     assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=tmp_path / "absent.parquet") is None
 
 
+def test_a_corrupt_store_is_a_miss_not_an_error(tmp_path):
+    # Whatever the parquet engine raises for a file that is not a parquet, the
+    # question goes to retrieval rather than failing on a route it never asked for.
+    import src.rag.numeric as numeric
+
+    numeric._cached_facts.cache_clear()
+    path = tmp_path / "facts.parquet"
+    path.write_bytes(b"not a parquet file at all")
+    assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=path) is None
+
+
 def test_a_store_without_the_needed_columns_is_a_miss(tmp_path):
     path = tmp_path / "facts.parquet"
     pd.DataFrame([{"ticker": "AAPL", "fiscal_year": 2024}]).to_parquet(path, index=False)
@@ -329,6 +341,81 @@ def test_a_scaled_figure_needs_the_passage_to_say_which_scale():
 
 def test_an_unscaled_figure_needs_no_heading():
     assert prints_figure("Diluted earnings per share were $6.08.", {1: {"6.08"}}) is True
+
+
+def test_an_unscaled_figure_is_not_the_same_figure_with_a_scale_word_after_it():
+    # A fact worth 5.2 is not the 5.2 in "$5.2 billion", which is 5,200,000,000.
+    assert prints_figure("Revenue was $5.2 billion.", {1: {"5.2"}}) is False
+    assert prints_figure("Revenue was $5.2 million.", {1: {"5.2"}}) is False
+    assert prints_figure("Diluted EPS was $5.2 for the year.", {1: {"5.2"}}) is True
+
+
+def test_a_per_share_figure_survives_a_table_headed_in_millions():
+    # An income statement says "in millions, except per share amounts" and
+    # prints its EPS row unscaled in the same table.
+    text = ("CONSOLIDATED STATEMENTS OF OPERATIONS (in millions, except per share amounts)\n\n"
+            "| Net sales | 391,035 |\n| Diluted (in dollars per share) | 6.08 |")
+    assert prints_figure(text, {1: {"6.08"}}) is True
+
+
+@pytest.mark.parametrize("text, negative", [
+    ("| Operating loss | (1,500) |", True),        # the accounting form
+    ("| Operating loss | $(1,500) |", True),
+    ("Operating loss was -1,500.", True),
+    ("Operating loss was -$1,500.", True),
+    ("Operating loss was $-1,500.", True),
+    ("| Operating income | 1,500 |", False),
+])
+def test_the_sign_printed_has_to_be_the_sign_of_the_fact(text, negative):
+    assert prints_figure(text, {1: {"1,500"}}, negative=negative) is True
+    # The same passage must not support the opposite sign: a positive 1,500 is
+    # a different line item from a loss of 1,500.
+    assert prints_figure(text, {1: {"1,500"}}, negative=not negative) is False
+
+
+def test_a_negative_fact_is_cited_only_where_the_loss_is_printed():
+    loss = dataclasses.replace(FACT, value=Decimal("-1500"), metric="operating_income",
+                               label="operating income")
+    positive = _passage(text="| Operating income | 1,500 |")
+    assert supporting_passage(loss, StubRetriever(positive)) is None
+    printed = _passage(text="| Operating income (loss) | (1,500) |")
+    assert supporting_passage(loss, StubRetriever(printed)) is printed
+
+
+# --- the same bar the retrieval path sets ------------------------------------------
+
+def test_a_passage_below_the_callers_score_floor_is_not_cited():
+    # answer_question(min_score=...) abstains rather than answer on weak
+    # evidence; citing a passage it would have rejected answers where the same
+    # question, asked the same way, abstains.
+    weak = _passage(score=0.1)
+    assert supporting_passage(FACT, StubRetriever(weak), min_score=0.5) is None
+    assert supporting_passage(FACT, StubRetriever(weak), min_score=0.05) is weak
+
+
+@pytest.mark.parametrize("passage", [
+    _passage(score=float("nan")),
+    _passage(score=float("inf")),
+    _passage(text="   "),
+])
+def test_a_passage_with_no_usable_score_or_no_text_is_not_cited(passage):
+    assert supporting_passage(FACT, StubRetriever(passage)) is None
+
+
+def test_the_score_floor_reaches_the_route_from_answer_question(store, monkeypatch):
+    monkeypatch.setattr("src.rag.answer.generate",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("generated")))
+    # Above the floor: answered from the store.
+    answered = answer_question(QUESTION, StubRetriever(_passage(score=0.9)),
+                               facts_file=store(), min_score=0.5)
+    assert answered.config.provider == FACTS_PROVIDER
+    # Below it: the route declines, and the question then abstains on the
+    # retrieval path exactly as it would have with no facts route at all.
+    abstained = answer_question(QUESTION, StubRetriever(_passage(score=0.1)),
+                                facts_file=store(), min_score=0.5)
+    assert abstained.abstained is True
+    assert abstained.abstention_reason == "below_threshold"
+    assert abstained.config.provider != FACTS_PROVIDER
 
 
 # --- the answer -----------------------------------------------------------------------
