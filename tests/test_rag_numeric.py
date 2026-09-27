@@ -535,6 +535,45 @@ def test_a_numeric_question_is_answered_from_the_store_without_a_model(store):
     assert answer.citations[0].resolved is True
 
 
+@pytest.mark.parametrize("question, ticker, year, concept, label", [
+    ("What was Apple's total value of Accounts Payable at the end of fiscal year 2022?",
+     "AAPL", 2022, "AccountsPayableCurrent", "Accounts Payable"),
+    ("What was Apple's Inventories value at the end of fiscal year 2025?",
+     "AAPL", 2025, "InventoryNet", "Inventories"),
+    ("What was Amazon's total net sales in fiscal year 2025?",
+     "AMZN", 2025, "RevenueFromContractWithCustomerExcludingAssessedTax", "Net sales"),
+])
+def test_issue_89_questions_receive_a_cited_fact_without_generation(
+    store, monkeypatch, question, ticker, year, concept, label,
+):
+    monkeypatch.setattr("src.rag.answer.generate", lambda *a, **k: pytest.fail("generated"))
+    # Synthetic figures: assert routing and exact reproduction, not live financial data.
+    path = store(_fact_row(
+        ticker=ticker, company=ticker, fiscal_year=year, concept=f"us-gaap:{concept}",
+        label=label, period_of_report=f"{year}-12-31", period_end=f"{year}-12-31",
+        period_start=None, period_type="instant", value=123_000_000.0, raw_value="123000000",
+    ))
+    passage = _passage(text=f"Statement (in millions)\n| | {year} |\n| {label} | 123 |",
+                       ticker=ticker, company=ticker, fiscal_year=year)
+    answer = answer_question(question, StubRetriever(passage), facts_file=path)
+    assert answer.config.provider == FACTS_PROVIDER
+    assert "$123,000,000" in answer.text
+    assert f"fiscal year {year}" in answer.text
+    assert answer.citations[0].resolved is True
+    assert answer.passages == (passage,)
+
+
+def test_answer_parser_uses_the_callers_label_store(store, monkeypatch):
+    seen = []
+    monkeypatch.setattr("src.rag.answer.answer_from_facts",
+                        lambda *args, **kwargs: seen.append(kwargs))
+    path = store(_fact_row(label="Marketable Securities"))
+    answer = answer_question("What was Apple's Marketable Securities in FY2024?",
+                             StubRetriever(), facts_file=path)
+    assert seen[0]["facts_file"] == path
+    assert answer.abstained is True
+
+
 def test_the_looked_up_answer_reaches_a_streaming_caller(store):
     seen = []
     answer = answer_question(QUESTION, StubRetriever(_passage()), llm=_never_called,

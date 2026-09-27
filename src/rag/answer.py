@@ -65,7 +65,7 @@ def answer_question(
         raise ValueError("question must not be blank")
     if min_score is not None and not isfinite(min_score):
         raise ValueError("min_score must be finite or None")
-    parsed = parsed if parsed is not None else parse_question(question)
+    parsed = parsed if parsed is not None else parse_question(question, facts_file=facts_file)
     query = query if query is not None else parsed.to_query(top_k=FINAL_K)
     if query.top_k < 1:
         raise ValueError("top_k must be positive when answering a question")

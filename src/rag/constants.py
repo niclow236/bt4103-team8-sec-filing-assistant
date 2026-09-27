@@ -418,6 +418,8 @@ FINANCIAL_METRICS: dict[str, Metric] = {
     "operating_income": Metric(("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
     "assets": Metric(("total assets",), ("Assets",), "USD"),
     "liabilities": Metric(("total liabilities",), ("Liabilities",), "USD"),
+    "accounts_payable": Metric(("accounts payable",), ("AccountsPayableCurrent",), "USD"),
+    "inventory": Metric(("inventories", "inventory"), ("InventoryNet",), "USD"),
     "cash": Metric(("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
     "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
                           ("EarningsPerShareDiluted",), "USD/shares"),
@@ -486,6 +488,7 @@ METRIC_QUALIFIER = re.compile(
 # "total" is here because it never narrows a line item -- it is the income
 # statement's own word for the whole-company row ("Total net sales") -- and
 # "earn" and "generate" because they are verbs of reporting like "report".
+# "value" permits "total value of Accounts Payable" and "Inventories value".
 # A possessive counts only where its owner does, so "the company's" and
 # "Oracle Corporation's" pass and "LinkedIn's" does not; see
 # ``numeric._is_scaffolding``.
@@ -498,7 +501,7 @@ QUESTION_SCAFFOLDING = frozenset("""
     the a an this that its their there total
     in for during at on of to
     fy fye fiscal year years ended ending end period periods
-    company companies group inc corp corporation plc ltd
+    company companies group inc corp corporation plc ltd value
     dollars dollar usd
 """.split())
 

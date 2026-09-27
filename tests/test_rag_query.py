@@ -8,6 +8,118 @@ from src.rag.query import ParsedQuestion, build_query, parse_question
 from src.retrieval.constants import TABLE_BOOST
 from src.retrieval.records import Query
 
+
+@pytest.mark.parametrize("question, ticker, year", [
+    ("What was Apple's total value of Accounts Payable at the end of fiscal year 2022?",
+     "AAPL", 2022),
+    ("What was Apple's Inventories value at the end of fiscal year 2025?", "AAPL", 2025),
+    ("What was Amazon's total net sales in fiscal year 2025?", "AMZN", 2025),
+])
+def test_issue_89_figure_questions(question, ticker, year, tmp_path):
+    # Everyday metric aliases work even before a teammate builds the store.
+    parsed = parse_question(question, facts_file=tmp_path / "missing.parquet")
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+    assert parsed.tickers == (ticker,)
+    assert parsed.fiscal_years == (year,)
+    assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+@pytest.mark.parametrize("owner", [
+    "Apple's", "Amazon’s", "Meta Platforms'", "Texas Instruments’", "ZZZZ's", "the",
+])
+def test_total_with_a_company_between_the_verb_and_total(owner, tmp_path):
+    parsed = parse_question(f"What was {owner} total expenditure in FY2024?",
+                            facts_file=tmp_path / "missing.parquet")
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+
+
+@pytest.fixture
+def label_store(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "facts.parquet"
+    pd.DataFrame({"label": ["Prepaid Expense, Current", "Assets Held for Sale",
+                            "Prepaid Expense, Current", None, ""]}).to_parquet(path)
+    return path
+
+
+@pytest.mark.parametrize("label", ["Prepaid Expense, Current", "PREPAID expense current",
+                                  "Prepaid\nExpense — Current", "Assets Held for Sale"])
+def test_stored_labels_extend_numeric_cues_without_a_handwritten_entry(label, label_store):
+    parsed = parse_question(f"What was Apple's {label} in FY2024?", facts_file=label_store)
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+    assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+@pytest.mark.parametrize("question", [
+    "What did Apple say about its sale process?",
+    "What was Apple's prepaid expense currently used for?",
+    "What was Apple's totality of responses?",
+])
+def test_label_fragments_and_longer_words_do_not_become_cues(question, label_store):
+    parsed = parse_question(question, facts_file=label_store)
+    assert parsed.question_type == "factual"
+    assert parsed.wants_figures is False
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("Compare Apple and Microsoft's Prepaid Expense, Current in FY2024", "comparative"),
+    ("Apple's Prepaid Expense, Current in FY2023 and FY2024", "temporal"),
+    ("What will Apple's Prepaid Expense, Current be next year?", "unanswerable"),
+    ("What was Intel's Prepaid Expense, Current in FY2024?", "unanswerable"),
+])
+def test_stored_labels_preserve_classification_priority(question, expected, label_store):
+    parsed = parse_question(question, facts_file=label_store)
+    assert parsed.question_type == expected
+    assert parsed.wants_figures is True
+
+
+def test_label_cache_reads_only_labels_and_refreshes_after_rebuild(label_store, monkeypatch):
+    import os
+    import pandas as pd
+    from src.rag.query import _fact_label_pattern
+
+    _fact_label_pattern.cache_clear()
+    read = pd.read_parquet
+    calls = []
+
+    def tracked(*args, **kwargs):
+        calls.append(kwargs)
+        return read(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", tracked)
+    question = "What was Apple's Prepaid Expense, Current?"
+    assert parse_question(question, facts_file=label_store).wants_figures
+    assert parse_question(question, facts_file=label_store).wants_figures
+    assert calls == [{"columns": ["label"]}]
+    stamp = label_store.stat().st_mtime_ns
+    pd.DataFrame({"label": ["Marketable Securities"]}).to_parquet(label_store)
+    os.utime(label_store, ns=(stamp + 1_000_000_000, stamp + 1_000_000_000))
+    assert not parse_question(question, facts_file=label_store).wants_figures
+    assert parse_question("Apple's Marketable Securities", facts_file=label_store).wants_figures
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("state", ["missing", "corrupt", "no_labels", "empty"])
+def test_unavailable_labels_leave_builtin_classification_working(tmp_path, state):
+    import pandas as pd
+
+    path = tmp_path / "facts.parquet"
+    if state == "corrupt":
+        path.write_bytes(b"not parquet")
+    elif state == "no_labels":
+        pd.DataFrame({"concept": ["Assets"]}).to_parquet(path)
+    elif state == "empty":
+        pd.DataFrame({"label": [None, "", "   "]}).to_parquet(path)
+    assert parse_question("Apple's revenue", facts_file=path).question_type == "numeric"
+    assert parse_question("Apple's supply chain", facts_file=path).question_type == "factual"
+    # A store built after an earlier miss must become available in this process.
+    pd.DataFrame({"label": ["Marketable Securities"]}).to_parquet(path)
+    assert parse_question("Apple's Marketable Securities", facts_file=path).wants_figures
+
 # The real scope, so the tests do not depend on config/companies.txt while
 # still exercising the alias table for every company in it.
 SCOPE = ("AAPL", "MSFT", "AVGO", "GOOGL", "META", "AMZN", "ORCL", "CRM", "ADBE",
