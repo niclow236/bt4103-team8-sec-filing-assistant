@@ -25,6 +25,14 @@ def test_issue_89_figure_questions(question, ticker, year, tmp_path):
     assert parsed.to_query().table_boost == TABLE_BOOST
 
 
+def test_inventory_risk_stays_a_prose_question(tmp_path):
+    # Q32 of the test questions names inventory without asking for a figure.
+    question = ("What factors did Amazon identify as creating significant inventory risk "
+                "in fiscal year 2022?")
+    parsed = parse_question(question, facts_file=tmp_path / "missing.parquet")
+    assert parsed.question_type == "factual"
+
+
 @pytest.mark.parametrize("owner", [
     "Apple's", "Amazon’s", "Meta Platforms'", "Texas Instruments’", "ZZZZ's", "the",
 ])
