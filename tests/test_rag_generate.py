@@ -1,9 +1,11 @@
-"""Generation: a local model through LangChain's ChatOllama, held to a Pydantic schema.
+"""Generation: Ollama or Mistral through LangChain, held to a Pydantic schema.
 
 Nothing here touches a real server. The chat model is a real ``ChatOllama`` whose
 HTTP client runs on ``httpx.MockTransport``, answering ``/api/chat`` with the
 newline-delimited JSON Ollama streams, so the LangChain and Ollama client code
-that parses a response runs exactly as it does against a live server. The
+that parses a response runs exactly as it does against a live server. Mistral
+is tested the same way: a real ``ChatMistralAI`` on a mock transport, answering
+``/chat/completions`` with the server-sent events Mistral's API streams. The
 model's output is fed one character at a time where streaming is under test,
 which is the harshest split of the JSON the prose renderer has to survive.
 """
@@ -14,13 +16,16 @@ import os
 
 import httpx
 import pytest
+from langchain_mistralai import ChatMistralAI
 from langchain_ollama import ChatOllama
 
 from src.rag.constants import (
     ABSTAIN_PHRASE,
+    DEFAULT_MISTRAL_MODEL,
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_URL,
     GENERATION_TIMEOUT_S,
+    HOSTED_TIMEOUT_S,
     MAX_OUTPUT_TOKENS,
     NUM_CTX,
     PROMPT_TEMPLATE_ID,
@@ -29,6 +34,7 @@ from src.rag.citations import resolve_citations
 from src.rag.generate import (
     ProviderUnavailable,
     _prose,
+    _text,
     chat_model,
     config_from_env,
     generate,
@@ -63,6 +69,10 @@ def _config(**overrides) -> GenerationConfig:
     fields = dict(provider="ollama", model="m", prompt_template_id=PROMPT_TEMPLATE_ID)
     fields.update(overrides)
     return GenerationConfig(**fields)
+
+
+def _mistral_config(**overrides) -> GenerationConfig:
+    return _config(**{"provider": "mistral", "model": DEFAULT_MISTRAL_MODEL, **overrides})
 
 
 def _ndjson(output: str, *, size: int = 1, done_reason: str = "stop",
@@ -306,7 +316,7 @@ def test_generation_refuses_negative_latency():
 
 # --- configuration -----------------------------------------------------------------------
 
-_LLM_VARS = ("LLM_MODEL", "LLM_BASE_URL", "LLM_NUM_GPU")
+_LLM_VARS = ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL", "LLM_NUM_GPU", "MISTRAL_API_KEY")
 
 
 @pytest.fixture
@@ -350,6 +360,26 @@ def test_an_argument_wins_over_the_environment():
     assert config_from_env(environ={"LLM_MODEL": "  "}).model == DEFAULT_MODEL
 
 
+def test_config_reads_the_provider_and_uses_its_default_model(tmp_path, clean_env):
+    config = config_from_env(dotenv=_dotenv(tmp_path, LLM_PROVIDER="Mistral"))
+    assert (config.provider, config.model) == ("mistral", DEFAULT_MISTRAL_MODEL)
+
+
+def test_the_model_setting_applies_to_either_provider():
+    config = config_from_env(environ={"LLM_PROVIDER": "mistral", "LLM_MODEL": "ministral-14b-2512"})
+    assert (config.provider, config.model) == ("mistral", "ministral-14b-2512")
+
+
+def test_an_argument_chooses_the_provider_over_the_environment():
+    assert config_from_env(provider="ollama", environ={"LLM_PROVIDER": "mistral"}).provider == "ollama"
+    assert config_from_env(environ={"LLM_PROVIDER": "  "}).provider == "ollama"
+
+
+def test_an_unknown_provider_setting_is_refused():
+    with pytest.raises(ValueError, match="LLM_PROVIDER must be one of ollama, mistral"):
+        config_from_env(environ={"LLM_PROVIDER": "openai"})
+
+
 def test_chat_model_is_chat_ollama_on_the_configured_server(tmp_path, clean_env):
     llm = chat_model(_config(model="llama3.2:3b"), dotenv=tmp_path / "absent.env")
     assert isinstance(llm, ChatOllama)
@@ -383,9 +413,25 @@ def test_chat_model_reads_the_server_from_the_dotenv_file(tmp_path, clean_env):
     assert chat_model(_config(), base_url="http://other:1/", dotenv=path).base_url == "http://other:1"
 
 
-def test_chat_model_refuses_a_hosted_provider():
-    with pytest.raises(ProviderUnavailable, match="no budget"):
+def test_chat_model_refuses_an_unknown_provider():
+    with pytest.raises(ProviderUnavailable, match="LLM_PROVIDER to one of ollama, mistral"):
         chat_model(_config(provider="anthropic"))
+
+
+def test_chat_model_is_chat_mistral_ai_with_the_key_from_the_dotenv_file(tmp_path, clean_env):
+    llm = chat_model(_mistral_config(), dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
+    assert isinstance(llm, ChatMistralAI)
+    assert llm.model == DEFAULT_MISTRAL_MODEL
+    assert llm.mistral_api_key.get_secret_value() == "test-key"
+    assert (llm.temperature, llm.max_tokens) == (0.0, MAX_OUTPUT_TOKENS)
+    assert (llm.max_retries, llm.timeout) == (1, HOSTED_TIMEOUT_S)
+
+
+@pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
+def test_a_missing_key_says_where_to_make_one(tmp_path, clean_env, values):
+    # An empty value is what a teammate has straight after copying .env.example.
+    with pytest.raises(ProviderUnavailable, match="console.mistral.ai"):
+        chat_model(_mistral_config(), dotenv=_dotenv(tmp_path, **values))
 
 
 # --- when Ollama cannot answer --------------------------------------------------------------
@@ -432,3 +478,165 @@ def test_an_unrelated_error_is_not_disguised():
 
     with pytest.raises(KeyError):
         generate(PROMPT, _config(), llm=Broken(model="m"))
+
+
+# --- Mistral --------------------------------------------------------------------------------
+
+MISTRAL_URL = "https://api.mistral.ai/v1"
+
+
+def _sse(output: str, *, size: int = 1, finish_reason: str = "stop",
+         prompt_tokens: int = 50, completion_tokens: int = 20, thinking: str | None = None) -> str:
+    """Mistral's streamed /chat/completions body for a model that wrote ``output``.
+
+    With ``thinking``, the model reasons before it answers and every piece comes
+    as typed blocks, which is how Mistral's reasoning models stream.
+    """
+    def piece(content):
+        return {"id": "c", "object": "chat.completion.chunk", "model": DEFAULT_MISTRAL_MODEL,
+                "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
+                             "finish_reason": None}]}
+
+    texts = [output[i:i + size] for i in range(0, len(output), size)]
+    if thinking is None:
+        chunks = [piece(text) for text in texts]
+    else:
+        chunks = [piece([{"type": "thinking", "thinking": [{"type": "text", "text": thinking}]}])]
+        chunks += [piece([{"type": "text", "text": text}]) for text in texts]
+    chunks.append({
+        "id": "c", "object": "chat.completion.chunk", "model": DEFAULT_MISTRAL_MODEL,
+        "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": finish_reason}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                  "total_tokens": prompt_tokens + completion_tokens},
+    })
+    return "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+
+
+def _mistral(handler) -> ChatMistralAI:
+    return ChatMistralAI(
+        model=DEFAULT_MISTRAL_MODEL, api_key="test-key", max_retries=1,
+        client=httpx.Client(base_url=MISTRAL_URL, transport=httpx.MockTransport(handler)),
+    )
+
+
+def _mistral_serving(output, requests=None, **sse) -> ChatMistralAI:
+    """A ChatMistralAI whose API streams ``output`` back, recording each request."""
+    body = output if isinstance(output, str) else json.dumps(output)
+
+    def handler(request):
+        if requests is not None:
+            requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              text=_sse(body, **sse))
+
+    return _mistral(handler)
+
+
+def test_a_mistral_answer_streams_and_parses_like_an_ollama_one():
+    seen, result = _drain(stream(PROMPT, _mistral_config(), llm=_mistral_serving(
+        ANSWER, prompt_tokens=1234, completion_tokens=56)))
+    assert "".join(seen) == result.text == ANSWER_TEXT
+    assert json.loads(result.raw) == ANSWER
+    assert result.parse_error is None
+    assert (result.input_tokens, result.output_tokens) == (1234, 56)
+    assert (result.stop_reason, result.truncated) == ("stop", False)
+
+
+def test_the_mistral_request_carries_the_schema_strictly_and_the_options():
+    requests = []
+    generate(PROMPT, _mistral_config(temperature=0.3), llm=_mistral_serving(ANSWER, requests),
+             max_tokens=99)
+    [request] = requests
+    assert request.method == "POST"
+    assert str(request.url) == f"{MISTRAL_URL}/chat/completions"
+    body = json.loads(request.content)
+    assert (body["model"], body["stream"]) == (DEFAULT_MISTRAL_MODEL, True)
+    assert [(m["role"], m["content"]) for m in body["messages"]] == [
+        (m["role"], m["content"]) for m in PROMPT.to_messages()
+    ]
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "GroundedAnswer", "strict": True,
+                        "schema": GroundedAnswer.for_sources(3).model_json_schema()},
+    }
+    assert (body["temperature"], body["max_tokens"]) == (0.3, 99)
+    # Ollama's fields are not sent: they mean nothing to Mistral's API.
+    assert not {"format", "options"} & set(body)
+
+
+@pytest.mark.parametrize("reason", ["length", "model_length"])
+def test_a_mistral_answer_cut_off_at_a_limit_is_truncated(reason):
+    cut = json.dumps(ANSWER)[:95]   # inside the second sentence's text
+    result = generate(PROMPT, _mistral_config(), llm=_mistral_serving(cut, finish_reason=reason))
+    assert result.truncated is True
+    assert result.answer is None
+    assert result.text.startswith("Revenue was $100. [1] It")
+
+
+def test_a_reasoning_model_s_thinking_is_not_part_of_the_answer():
+    seen, result = _drain(stream(PROMPT, _mistral_config(), llm=_mistral_serving(
+        ANSWER, thinking="The first passage gives the revenue.")))
+    assert "".join(seen) == result.text == ANSWER_TEXT
+    assert result.raw == json.dumps(ANSWER)
+
+
+def test_a_piece_sent_as_blocks_reads_as_its_text():
+    assert _text("plain") == "plain"
+    blocks = [{"type": "text", "text": "Rev"}, "enue",
+              {"type": "thinking", "thinking": [{"type": "text", "text": "hidden"}]}]
+    assert _text(blocks) == "Revenue"
+    assert _text([]) == ""
+
+
+# --- when Mistral cannot answer -------------------------------------------------------------
+
+def _refusing(status, body=None):
+    return _mistral(lambda request: httpx.Response(status, json=body) if body is not None
+                    else httpx.Response(status))
+
+
+@pytest.mark.parametrize("status, body, expected", [
+    # The body Mistral's API sent for an expired key, on 27 September 2026.
+    (401, {"detail": "Your API key expired on 2026-09-26."},
+     r"refused the API key \(HTTP 401: Your API key expired on 2026-09-26\); check MISTRAL_API_KEY"),
+    (401, {"message": "Unauthorized"}, r"refused the API key \(HTTP 401: Unauthorized\)"),
+    (403, {"message": "Model not available on your tier"}, "plan does not include"),
+    (429, {"message": "Requests rate limit exceeded"}, "rate limit"),
+    (400, {"object": "error", "message": "Invalid model: llama3.2:3b", "type": "invalid_model"},
+     "set LLM_MODEL to a Mistral model"),
+    (500, {"message": "Internal server error"}, r"\(HTTP 500: Internal server error\)$"),
+    (502, None, r"\(HTTP 502\)$"),
+])
+def test_a_refused_request_says_what_to_do(status, body, expected):
+    with pytest.raises(ProviderUnavailable, match=expected):
+        generate(PROMPT, _mistral_config(), llm=_refusing(status, body))
+
+
+@pytest.mark.parametrize("exception_type, expected", [
+    (httpx.ConnectError, "cannot reach Mistral"),
+    (httpx.ReadTimeout, "sent nothing"),
+])
+def test_no_response_from_mistral_says_what_to_do(exception_type, expected):
+    def handler(request):
+        raise exception_type("boom", request=request)
+
+    with pytest.raises(ProviderUnavailable, match=expected):
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+
+
+# --- the evaluation command -----------------------------------------------------------------
+
+@pytest.mark.parametrize("provider", ["ollama", "mistral"])
+def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, provider):
+    import src.evaluation.cli as cli
+    from src.retrieval.bm25 import BM25Retriever
+
+    seen = {}
+    monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
+    monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
+    monkeypatch.setattr(cli, "evaluate", lambda questions, retriever, config, **k:
+                        seen.update(config=config) or
+                        {"summary": {}, "by_answerability": {}, "results": []})
+    cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r", "--output",
+              str(tmp_path / "report.json"), "--provider", provider, "--model", "chosen"])
+    assert (seen["config"].provider, seen["config"].model) == (provider, "chosen")

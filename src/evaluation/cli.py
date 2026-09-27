@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.config import PROCESSED_DIR
 from src.rag import config_from_env
+from src.rag.constants import PROVIDERS
 from src.retrieval.constants import FINAL_K
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import evaluate
@@ -19,7 +20,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--retriever", choices=("bm25", "dense", "hybrid"), default="hybrid")
     parser.add_argument("--min-score", type=float, help="Additional floor on final retrieval scores")
     parser.add_argument("--top-k", type=int, default=FINAL_K)
-    parser.add_argument("--model")
+    parser.add_argument(
+        "--provider", choices=PROVIDERS,
+        help="Which provider answers: ollama, the local model, or mistral, the hosted API "
+             "with your own MISTRAL_API_KEY. Defaults to LLM_PROVIDER in .env, else ollama.",
+    )
+    parser.add_argument("--model", help="The model, as the provider names it. Defaults to LLM_MODEL "
+                                         "in .env, else the provider's default.")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output", type=Path, required=True, help="JSON report including rates and answers")
     parser.add_argument("--answers", type=Path, help="Optional answer JSONL for the browser viewer")
@@ -56,7 +63,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         retriever = HybridRetriever(BM25Retriever.load(processed_dir=args.processed_dir),
                                     DenseRetriever.load(processed_dir=args.processed_dir))
-    report = evaluate(questions, retriever, config_from_env(model=args.model),
+    report = evaluate(questions, retriever, config_from_env(model=args.model, provider=args.provider),
                       run_id=args.run_id, min_score=args.min_score, top_k=args.top_k,
                       use_facts=args.use_facts, use_decomposition=args.use_decomposition)
     args.output.parent.mkdir(parents=True, exist_ok=True)

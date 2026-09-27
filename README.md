@@ -56,19 +56,19 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language, and every model runs locally. The team has no budget for paid APIs, so nothing in the project needs an API key or a paid account: the embedding model, the search indexes and the language model all run on the machine running the code. Exact versions are pinned in `requirements.txt`.
+Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. The one hosted option is Mistral's API on its free plan, which answers in seconds rather than minutes and needs a free account and API key of your own. Exact versions are pinned in `requirements.txt`.
 
 | Layer | What it uses |
 |---|---|
 | Filings | `edgartools` for EDGAR search, download and XBRL figures |
 | Keyword search | `rank-bm25` |
 | Dense search | `sentence-transformers` running `BAAI/bge-base-en-v1.5`, vectors stored in `chromadb` |
-| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default |
-| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) |
-| Holding the answer to a shape | `pydantic`, whose JSON schema Ollama decodes against |
+| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default, or [Mistral's API](https://docs.mistral.ai), `ministral-8b-2512` by default |
+| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) and `ChatMistralAI` (`langchain-mistralai`) |
+| Holding the answer to a shape | `pydantic`, whose JSON schema either provider decodes against |
 | Tests | `pytest` |
 
-Ollama is not a Python package, so it is installed separately; see [Answering a question](#answering-a-question).
+Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral needs nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral).
 
 ## Repository structure
 
@@ -118,7 +118,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
-│   │   ├── generate.py      #   runs the prompt through a local model on Ollama, streaming
+│   │   ├── generate.py      #   runs the prompt through Ollama or Mistral, streaming
 │   │   ├── numeric.py       #   answers a numeric question from the facts store, citing the table
 │   │   ├── decompose.py     #   searches a multi-filing question once per filing, then interleaves
 │   │   ├── citations.py     #   resolves [n] markers back to the passages they were shown as
@@ -253,8 +253,9 @@ Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
 `EDGAR_IDENTITY=Jane Tan jane@example.com`. The SEC requires every automated
 request to carry a contact string and blocks traffic without one, so the
 download stops immediately with a `MissingIdentityError` if this is blank. The
-generation settings further down the file are optional and have no API keys in
-them, since answers come from a local model; they are covered under
+generation settings further down the file are optional. By default answers come
+from a local model and need no key; `MISTRAL_API_KEY` is left empty for your own
+key, if you choose to answer with Mistral's API instead. Both are covered under
 [Answering a question](#answering-a-question).
 
 Download filings from EDGAR. Edit `config/companies.txt` first if you want a
@@ -880,9 +881,25 @@ half a second.
 ## Answering a question
 
 The RAG stage turns a question into an answer that cites the passages it came
-from. The answer is written by a local model served by Ollama, since the team
-has no budget for a paid API. Nothing in this stage needs a key or a network
-connection once the model is downloaded.
+from. One of two providers writes the answer, chosen with `LLM_PROVIDER` in
+`.env`:
+
+- `ollama`, the default: a local model served by Ollama. It needs no account,
+  key or network connection once the model is downloaded, but an answer takes
+  minutes on a laptop; see [How long an answer takes](#how-long-an-answer-takes).
+- `mistral`: an open-weight Ministral model on Mistral's API, on the free plan.
+  An answer takes about two seconds, and needs an internet connection and an
+  API key from your own Mistral account.
+
+Both get the same prompt and the same answer schema, and everything before and
+after generation is the same code. Each answer records the provider and model
+that wrote it, in `answer.config`. Two settings in `.env` choose them, and
+neither is required:
+
+| Variable | Default | When to set it |
+|---|---|---|
+| `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral) |
+| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral | to use another of the chosen provider's models, named as that provider names it |
 
 ### Setting up Ollama
 
@@ -899,13 +916,62 @@ ollama pull llama3.2:3b     # 2.0 GB
 ollama list                 # it should be listed
 ```
 
-Three settings in `.env` change how generation runs. None is required:
+To use another model, `ollama pull` it first, then set `LLM_MODEL` to its name.
+Two more settings in `.env` change how Ollama runs. Neither is required:
 
 | Variable | Default | When to set it |
 |---|---|---|
-| `LLM_MODEL` | `llama3.2:3b` | to use another model; `ollama pull` it first |
 | `LLM_BASE_URL` | `http://127.0.0.1:11434`, your own computer | only if your own Ollama listens on a different port |
 | `LLM_NUM_GPU` | Ollama decides | `0` on a laptop with a small GPU, as explained below |
+
+### Setting up Mistral
+
+Only needed to answer with Mistral. Everyone uses a key from their own account.
+A key works like a password, and the free plan's rate limits are per account, so
+never share yours or use a teammate's. That includes the demo: whoever presents
+uses their own key on their own computer.
+
+1. Sign up at <https://console.mistral.ai> and choose the free plan. It needs no
+   credit card; signing up with an email address asks you to verify a phone
+   number.
+2. Turn off training on your data. On the free plan Mistral may train its
+   models on your API calls unless you opt out: in the Admin Panel, open
+   Privacy and turn off the toggle under Anonymous improvement data.
+3. Open API Keys, choose Create new key, and give it a name such as `bt4103`.
+   Set its expiry to a date after the demo, or leave it without one, since
+   Mistral refuses an expired key. Create it and copy it straight away: the
+   full key is shown only once.
+4. Put it in your own `.env`, on the `MISTRAL_API_KEY=` line that
+   `.env.example` leaves empty for it, and choose the provider:
+
+   ```
+   LLM_PROVIDER=mistral
+   MISTRAL_API_KEY=<your key>
+   ```
+
+   `.env` is git-ignored, so the key stays on your computer. Never paste it into
+   code, a notebook cell, a commit, an issue or a chat.
+5. Ask a question that needs the model, such as the one in
+   [From a question to an answer](#from-a-question-to-an-answer).
+   `answer.config.provider` should be `'mistral'`.
+
+If you use an AI coding agent in this repository, keep it out of `.env`: in
+Claude Code, add `"permissions": {"deny": ["Read(**/.env)"]}` to your own
+`.claude/settings.local.json`. If a key is ever exposed, delete it under API
+Keys and make a new one.
+
+A missing key, a key Mistral refuses, a model your plan does not include, the
+rate limit and a lost connection each raise `ProviderUnavailable` saying what to
+do. Nothing is retried, and nothing falls back to Ollama by itself: set
+`LLM_PROVIDER=ollama` to answer locally again.
+
+`ministral-8b-2512` is the default because it did best of the four suitable
+chat models the free plan serves. Voxtral Small and Codestral stated figures
+the passages did not hold. Of the two Ministral models, 8B stated more figures
+to the exact digit at `FINAL_K` 16 (20 of 28, against 17 for 14B), abstained
+less (2 against 4), and is allowed six times as many requests a minute. The
+hosted runs under [Searching the indexes](#searching-the-indexes) and
+[the evaluation](docs/mistral-free-tier-evaluation.md) have the details.
 
 ### From a question to an answer
 
@@ -1063,7 +1129,7 @@ it arrives. Joined, what it yields is `generation.text`.
 ### What keeps the answer on the sources
 
 `answer_question` checks retrieval before building a prompt or contacting
-Ollama. If there are no usable passages, it returns the fixed sentence
+the model. If there are no usable passages, it returns the fixed sentence
 "The filings do not answer this question." with `Answer.abstained=True`, no
 citations, and an `abstention_reason` that the browser viewer displays:
 
@@ -1096,7 +1162,8 @@ for the full retrieval path; `build_prompt` deliberately rejects empty sources.
 The model does not write free text. `GroundedAnswer` in `src/rag/records.py` is
 a Pydantic model: whether the sources answer the question at all, then the
 answer as a list of sentences, each with the numbers of the sources it draws on.
-Its JSON schema is sent to Ollama as the output format, which restricts the
+Its JSON schema goes with every request, as Ollama's output format or as
+Mistral's strict JSON-schema response format, and either one restricts the
 model's decoding to that shape. For a prompt with eight sources the schema only
 admits the numbers 1 to 8, so the model cannot cite a source it was not shown:
 asked outright to cite source 9 of 3, the model wrote `[2]`. The same Pydantic
@@ -1113,8 +1180,8 @@ Three things follow from that.
   then None, `parse_error` says why, `truncated` is true, and `text` still holds
   what arrived.
 
-The context window is set on every request, to 8,192 tokens (`NUM_CTX`). This
-matters more than it looks. When a prompt is longer than Ollama's window, Ollama
+With Ollama, the context window is set on every request, to 8,192 tokens
+(`NUM_CTX`). This matters more than it looks. When a prompt is longer than Ollama's window, Ollama
 cuts it from the front without telling the caller: the only sign is a warning in
 its own server log. Run with a 2,048-token window, it kept 1,026 of 3,205 prompt
 tokens, dropping the rules and the first sources, and the model answered a
@@ -1133,15 +1200,21 @@ is 8,727, and every filing's 20 largest passages pass the window itself. An
 eight-passage prompt, the earlier setting, ran 2,700 to 3,400 tokens. Ollama's
 own default depends on the GPU's memory and is 4,096 tokens on a laptop, which
 is why `NUM_CTX` is set explicitly on every request rather than left to it.
+None of this applies to Mistral, whose models have windows far larger than any
+prompt here.
 
-A server that is not running, a model that has not been pulled, or a response
-that times out raises `ProviderUnavailable` with the command that fixes it.
+With Ollama, a server that is not running, a model that has not been pulled, or
+a response that times out raises `ProviderUnavailable` with the command that
+fixes it. [Setting up Mistral](#setting-up-mistral) lists what Mistral's raise.
 
 ### How long an answer takes
 
-Minutes, on a laptop. Measured on a team laptop (Intel i5-1135G7, 16 GB of RAM,
-an NVIDIA MX450 with 2 GB), with a browser and an editor open, over real
-questions from the corpus:
+With Mistral, about two seconds: over the 48 test questions on the free plan,
+the median from question to full answer, retrieval included, was 2.2 s at
+`FINAL_K` 16. With Ollama, minutes on a laptop, and the
+rest of this section is about that. Measured on a team laptop (Intel i5-1135G7,
+16 GB of RAM, an NVIDIA MX450 with 2 GB), with a browser and an editor open,
+over real questions from the corpus:
 
 | Model | Where it ran | Reading the prompt | Writing | First words appear | Whole answer |
 |---|---|---|---|---|---|
@@ -1249,7 +1322,8 @@ python -m src.app.answers logs/evaluation-answers.jsonl --output logs/evaluation
 ```
 
 Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
-or `--model` to select an installed Ollama model. The JSON report records these
+`--provider ollama` or `--provider mistral` to override `LLM_PROVIDER`, or
+`--model` to choose one of that provider's models. The JSON report records these
 settings, individual answers and aggregate rates. The command needs a populated
 benchmark and built indexes. Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`.

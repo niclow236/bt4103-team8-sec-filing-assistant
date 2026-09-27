@@ -53,8 +53,9 @@ MANIFEST_FILE = RAW_DIR / "manifest.jsonl"
 
 
 # The local settings file .env.example describes: the EDGAR identity, and which
-# local model answers and where Ollama runs. Git-ignored, and read into the
-# environment by load_env before anything reads the environment.
+# provider and model answer, with where Ollama runs or your own Mistral key.
+# Git-ignored, and read into the environment by load_env before anything reads
+# the environment.
 ENV_FILE = PROJECT_ROOT / ".env"
 
 
