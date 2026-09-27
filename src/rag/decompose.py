@@ -2,11 +2,13 @@
 
 "How did Apple's AI risk disclosure change between FY2023 and FY2024, and how
 does it differ from Microsoft's?" is four questions wearing one coat. Asked as
-a single search it returns the eight passages that best match the wording, and
-nothing makes those eight cover four filings: the pre-filter admits all four,
-the scorer ranks across them, and whichever filing phrases the topic most like
-the question takes the whole budget. The answer then compares FY2024 with
-FY2024 and calls it a change.
+a single search it returns the ``FINAL_K`` passages that best match the
+wording, and nothing makes them cover four filings: the pre-filter admits all
+four, the scorer ranks across them, and whichever filing phrases the topic
+most like the question takes the whole budget. Measured on the corpus,
+"compare Apple and Microsoft's AI risk in FY2024" returns sixteen Microsoft
+passages and no Apple ones. The answer then compares FY2024 with FY2024 and
+calls it a change.
 
 So the question is decomposed. One sub-question per filing the question asks
 about, each a copy of the same ``Query`` narrowed to one company and one year,

@@ -538,12 +538,19 @@ FACT_PASSAGE_K = 20
 # How many company-and-year PAIRS a question may be split into (#35). It caps
 # the cross product only, not a split along one axis, and the difference is
 # what the question enumerates: a question naming five years is asking about
-# five years, and a passage from each answers it better than eight from two of
-# them, whereas the pairs of two companies and five years are ten filings
-# nobody named. The passage budget is fixed -- FINAL_K reaches the generator --
-# so at FINAL_K = 8 four pairs already means two passages per filing, and past
-# that a comparison has too little of each side to be one. A question naming
-# more pairs than this splits on companies alone and keeps its years whole.
+# five years, and a passage from each answers it better than FINAL_K from two
+# of them, whereas the pairs of two companies and five years are ten filings
+# nobody named. At FINAL_K = 16 four pairs means four passages per filing, and
+# the ten pairs above would leave one or two each, too little of each side for
+# a comparison. A question naming more pairs than this splits on companies
+# alone and keeps its years whole.
+#
+# Four rather than the eight the budget would now stretch to, because the
+# passages per filing are not the only cost: each pair is another search, and
+# each filing is another one for the model to hold together in one answer at
+# 3B on a laptop. Which of the two matters more is a thing to measure on the
+# benchmark (#26) rather than to assume here, in the way TABLE_BOOST and the
+# score floors are left at their conservative settings until measured.
 #
 # The other cap is not a constant, because it follows from the budget itself:
 # no split may leave a sub-question with no passage at all, so a split is only

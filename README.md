@@ -1243,11 +1243,13 @@ against itself.
 
 `--no-decompose` searches each question once instead of once per filing. A
 question naming more than one company or more than one year is otherwise split
-into one search per filing and the results interleaved, so the eight passages
-that reach the generator cover every filing the question asks about rather than
-whichever one phrases the topic most like the question. Each row records the
-`sub_questions` its evidence came from and the report counts the rows that were
-split, so the comparison says how many questions it could apply to at all.
+into one search per filing and the results interleaved, so the `FINAL_K`
+passages that reach the generator cover every filing the question asks about
+rather than whichever one phrases the topic most like the question. Each row
+records the `sub_questions` its evidence came from and the report counts the
+rows that were split, so the comparison says how many questions it could apply
+to at all.
+
 Evaluation rows include citation checks; run `verify_answer` separately when
 numeric verification is also needed.
 
