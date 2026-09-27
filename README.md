@@ -120,6 +120,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
 │   │   ├── generate.py      #   runs the prompt through a local model on Ollama, streaming
 │   │   ├── numeric.py       #   answers a numeric question from the facts store, citing the table
+│   │   ├── decompose.py     #   searches a multi-filing question once per filing, then interleaves
 │   │   ├── citations.py     #   resolves [n] markers back to the passages they were shown as
 │   │   ├── verify.py        #   checks an answer's figures against the facts store
 │   │   ├── answer.py        #   the entry point: route, retrieve, abstain or answer
@@ -1239,6 +1240,16 @@ counts them, so a run that mixes the two reads as what it is. Use `--no-facts`
 for `benchmark/generated.jsonl` in particular: those questions are generated
 from the same store the route answers from, so leaving it on measures the store
 against itself.
+
+`--no-decompose` searches each question once instead of once per filing. A
+question naming more than one company or more than one year is otherwise split
+into one search per filing and the results interleaved, so the `FINAL_K`
+passages that reach the generator cover every filing the question asks about
+rather than whichever one phrases the topic most like the question. Each row
+records the `sub_questions` its evidence came from and the report counts the
+rows that were split, so the comparison says how many questions it could apply
+to at all.
+
 Evaluation rows include citation checks; run `verify_answer` separately when
 numeric verification is also needed.
 

@@ -442,6 +442,11 @@ class Answer:
 
     verification: VerificationResult | None = None
     abstention_reason: AbstentionReason | None = None
+    # The filings a decomposed question was searched as, as ``decompose``
+    # labels them: ("AAPL FY2023", "AAPL FY2024", ...). Empty where the
+    # question was about one filing, or where decomposition was turned off, so
+    # a results row says which of the two it was without a second field (#35).
+    sub_questions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.abstention_reason is not None:
@@ -454,6 +459,7 @@ class Answer:
         object.__setattr__(self, "citations", tuple(self.citations))
         object.__setattr__(self, "passages", tuple(self.passages))
         object.__setattr__(self, "sentences", tuple(self.sentences))
+        object.__setattr__(self, "sub_questions", tuple(self.sub_questions))
 
         shown = [passage.chunk_id for passage in self.passages]
         if len(set(shown)) != len(shown):
@@ -530,4 +536,5 @@ class Answer:
             "verification": None if self.verification is None else self.verification.to_dict(),
             "parse_error": self.parse_error,
             "truncated": self.truncated,
+            "sub_questions": list(self.sub_questions),
         }
