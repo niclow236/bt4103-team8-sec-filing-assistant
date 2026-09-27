@@ -74,11 +74,15 @@ def test_c4_applies_question_metadata_filters(tmp_path):
     retriever = FakeRetriever()
 
     run_configuration(
-        [_question()], retriever, config_id="C4", output_dir=tmp_path / "C4"
+        [_question(question="What was revenue for AAPL in FY2024?")],
+        retriever,
+        config_id="C4",
+        output_dir=tmp_path / "C4",
     )
 
     assert retriever.queries[0].tickers == ("AAPL",)
     assert retriever.queries[0].fiscal_years == (2024,)
+    assert retriever.queries[0].keyword_text == "What was revenue for?"
 
 
 def test_run_ablation_writes_all_rows_and_summary_table(tmp_path):
@@ -97,8 +101,36 @@ def test_run_ablation_writes_all_rows_and_summary_table(tmp_path):
         assert len(list(csv.DictReader(stream))) == 5
 
 
+def test_rerunning_an_existing_run_id_is_refused(tmp_path):
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    with pytest.raises(FileExistsError, match="already holds a run"):
+        run_ablation(
+            [_question()],
+            retrievers,
+            run_id="run",
+            results_root=tmp_path,
+            configurations=("C2",),
+        )
+
+    with (tmp_path / "run" / "summary.csv").open(newline="") as stream:
+        assert len(list(csv.DictReader(stream))) == 5
+
+
 def test_run_id_and_top_k_are_validated(tmp_path):
     with pytest.raises(ValueError, match="run_id"):
         run_ablation([], {}, run_id="bad/run", results_root=tmp_path)
     with pytest.raises(ValueError, match="top_k"):
         run_configuration([], FakeRetriever(), config_id="C1", output_dir=tmp_path, top_k=0)
+
+
+def test_c0_is_not_run_on_the_section_aware_bm25_index(tmp_path):
+    with pytest.raises(ValueError, match="missing retriever for C0"):
+        run_ablation(
+            [_question()],
+            {"bm25": FakeRetriever()},
+            run_id="run",
+            results_root=tmp_path,
+            configurations=("C0",),
+        )

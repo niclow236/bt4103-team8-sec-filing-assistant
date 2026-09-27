@@ -7,11 +7,14 @@ import csv
 import json
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
 from src.config import PROCESSED_DIR, PROJECT_ROOT
+from src.pipeline.chunk import iter_chunks
+from src.pipeline.constants import CHUNK_CHAR_BUDGET
 from src.retrieval.base import Retriever
 from src.retrieval.records import Query
 
@@ -23,7 +26,7 @@ DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results"
 CONFIGURATIONS: dict[str, dict[str, Any]] = {
     "C0": {
         "name": "naive BM25",
-        "retriever": "bm25",
+        "retriever": "bm25-fixed-size",
         "chunking": "fixed-size",
         "metadata_filter": False,
     },
@@ -62,15 +65,16 @@ def _safe_run_id(run_id: str) -> str:
 
 
 def _query(question: BenchmarkQuestion, *, top_k: int, metadata_filter: bool) -> Query:
-    query = Query(question.question, top_k=top_k)
-    if metadata_filter:
-        from dataclasses import replace
+    if not metadata_filter:
+        return Query(question.question, top_k=top_k)
 
-        query = replace(
-            query,
-            tickers=() if question.ticker is None else (question.ticker,),
-            fiscal_years=() if question.fiscal_year is None else (question.fiscal_year,),
-        )
+    from src.rag.query import parse_question
+
+    query = parse_question(question.question).to_query(top_k=top_k)
+    if question.ticker is not None:
+        query = replace(query, tickers=(question.ticker,))
+    if question.fiscal_year is not None:
+        query = replace(query, fiscal_years=(question.fiscal_year,))
     return query
 
 
@@ -118,7 +122,14 @@ def run_configuration(
             retriever=retriever.name,
             config=configuration,
         )
-        metrics = score_question(question, result, k=top_k)
+        scoring_question = question
+        if config_id == "C0" and hasattr(retriever, "relevant_chunk_ids"):
+            scoring_question = replace(
+                question,
+                supporting_chunk_ids=tuple(retriever.relevant_chunk_ids(question)),
+                hard_negative_chunk_ids=tuple(retriever.relevant_chunk_ids(question, hard=True)),
+            )
+        metrics = score_question(scoring_question, result, k=top_k)
         rows.append(
             {
                 "question_id": question.question_id,
@@ -155,6 +166,8 @@ def run_ablation(
 ) -> dict[str, Any]:
     """Run selected C0-C4 rows and write ``results/<run-id>/``."""
     run_dir = results_root / _safe_run_id(run_id)
+    if run_dir.exists():
+        raise FileExistsError(f"{run_dir} already holds a run; re-run under a new --run-id")
     summaries: list[dict[str, Any]] = []
     for config_id in configurations:
         if config_id not in CONFIGURATIONS:
@@ -190,6 +203,58 @@ def run_ablation(
     return manifest
 
 
+class FixedSizeBM25Retriever:
+    """BM25 over filing-wide fixed-size windows for the naive C0 baseline."""
+
+    name = "bm25-fixed-size"
+
+    def __init__(self, processed_dir: Path, budget: int = CHUNK_CHAR_BUDGET) -> None:
+        from src.retrieval.bm25 import BM25Retriever
+
+        source_chunks = list(iter_chunks(processed_dir=processed_dir))
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for chunk in source_chunks:
+            grouped.setdefault(chunk["accession_no"], []).append(chunk)
+
+        fixed_chunks: list[dict[str, Any]] = []
+        self._source_ids: dict[str, set[str]] = {}
+        for accession, chunks in grouped.items():
+            text = "\n".join(chunk["text"] for chunk in chunks)
+            for start in range(0, len(text), budget):
+                fixed_id = f"fixed-{accession}-{start:08d}"
+                window = text[start:start + budget]
+                source_ids = {
+                    chunk["chunk_id"]
+                    for chunk in chunks
+                    if chunk["text"] in window or chunk["text"][:80] in window
+                }
+                template = chunks[0]
+                fixed_chunks.append({**template, "chunk_id": fixed_id, "text": window})
+                self._source_ids[fixed_id] = source_ids
+        self._retriever = BM25Retriever(fixed_chunks)
+
+    def search(self, query: Query, k: int | None = None):
+        return [
+            replace(passage, retriever=self.name)
+            for passage in self._retriever.search(query, k=k)
+        ]
+
+    def relevant_chunk_ids(
+        self,
+        question: BenchmarkQuestion,
+        *,
+        hard: bool = False,
+    ) -> list[str]:
+        source_ids = (
+            question.hard_negative_chunk_ids if hard else question.supporting_chunk_ids
+        )
+        return [
+            fixed_id
+            for fixed_id, origins in self._source_ids.items()
+            if origins.intersection(source_ids)
+        ]
+
+
 def _load_retrievers(processed_dir: Path) -> dict[str, Retriever]:
     from src.retrieval.bm25 import BM25Retriever
     from src.retrieval.dense import DenseRetriever
@@ -197,7 +262,12 @@ def _load_retrievers(processed_dir: Path) -> dict[str, Retriever]:
 
     bm25 = BM25Retriever.load(processed_dir=processed_dir)
     dense = DenseRetriever.load(processed_dir=processed_dir)
-    return {"bm25": bm25, "dense": dense, "hybrid": HybridRetriever(bm25, dense)}
+    return {
+        "bm25-fixed-size": FixedSizeBM25Retriever(processed_dir),
+        "bm25": bm25,
+        "dense": dense,
+        "hybrid": HybridRetriever(bm25, dense),
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
