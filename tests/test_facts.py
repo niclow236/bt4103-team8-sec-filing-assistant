@@ -186,9 +186,14 @@ def test_a_figure_below_half_a_cent_is_not_offered_as_zero():
     assert "0.00" not in facts.printed_forms("1e-05")
 
 
-def test_a_one_or_two_digit_needle_is_dropped():
-    # "12" matches a year, a note number or a page number in every filing.
-    assert facts.printed_forms("12") == set()
+def test_a_one_or_two_digit_needle_is_dropped_but_the_cent_form_is_kept():
+    # A bare "12" matches a year, a note number or a page number in every
+    # filing. "12.00" is what the statement prints and is specific enough to
+    # look for, which is what makes a short figure -- EPS of 6.0, a loss of 2
+    # -- findable at all.
+    assert facts.printed_forms("12") == {"12.00"}
+    assert facts.printed_forms("6.0") == {"6.0", "6.00"}
+    assert facts.printed_forms("-2") == {"2.00"}
 
 
 def test_printed_forms_pools_every_scale():
@@ -223,3 +228,16 @@ def test_a_figure_of_zero_has_no_printed_form():
     # A bare "0" matches the empty cell of every table in the filing.
     assert facts.printed_forms(0) == set()
     assert facts.printed_forms("0") == set()
+
+
+def test_the_generated_benchmark_keeps_to_whole_figures():
+    # Apple's FY2021 statutory tax rate is stored as 0.21, and its exhibit
+    # index prints exhibit "10.21", which a substring match took as support.
+    from src.evaluation.benchmark import _supporting_chunk_ids_for
+
+    exhibit = {"chunk_id": "exhibits", "text": "| 10-K | 10.21 | 9/30/17 |"}
+    statement = {"chunk_id": "statement", "text": "| Total net sales | $391,035 | $383,285 |"}
+    assert _supporting_chunk_ids_for({"raw_value": "0.21"}, [exhibit]) == []
+    assert _supporting_chunk_ids_for({"raw_value": "6.08"}, [{"chunk_id": "x", "text": "| $6.08 |"}]) == []
+    assert _supporting_chunk_ids_for({"raw_value": "123000000000"}, [{"chunk_id": "y", "text": "Note 123"}]) == []
+    assert _supporting_chunk_ids_for({"raw_value": "391035000000"}, [exhibit, statement]) == ["statement"]

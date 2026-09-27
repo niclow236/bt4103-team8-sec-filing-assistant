@@ -17,7 +17,7 @@ from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS
 from .generate import config_from_env, generate
 from .numeric import answer_from_facts
 from .prompt import build_prompt
-from .query import parse_question
+from .query import ParsedQuestion, parse_question
 from .records import Answer, AbstentionReason, GenerationConfig
 
 
@@ -33,6 +33,7 @@ def answer_question(
     on_token: Callable[[str], None] | None = None,
     facts_file: Path = FACTS_FILE,
     use_facts: bool = True,
+    parsed: ParsedQuestion | None = None,
 ) -> Answer:
     """The shared entry point for the app and evaluation harness.
 
@@ -50,6 +51,10 @@ def answer_question(
     it cannot answer where the retrieval path would abstain. ``use_facts=False``
     turns it off, which is what the ablation matrix needs to measure it.
 
+    ``parsed`` is the question already read, for a caller that has one -- the
+    harness builds its Query from one -- so that reading it twice is a choice
+    rather than the only option.
+
     Empty retrieval never builds a prompt or calls a model. Built-in indexes
     distinguish empty filters from rejected scores using metadata, without
     relaxing the actual search. A custom retriever may implement
@@ -60,7 +65,7 @@ def answer_question(
         raise ValueError("question must not be blank")
     if min_score is not None and not isfinite(min_score):
         raise ValueError("min_score must be finite or None")
-    parsed = parse_question(question)
+    parsed = parsed if parsed is not None else parse_question(question)
     query = query if query is not None else parsed.to_query(top_k=FINAL_K)
     if query.top_k < 1:
         raise ValueError("top_k must be positive when answering a question")

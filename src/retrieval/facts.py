@@ -341,11 +341,12 @@ def printed_forms_by_scale(raw_value) -> dict[int, set[str]]:
             kept = {needle for needle in (str(whole), f"{whole:,}") if len(needle) >= 3}
             if kept:
                 forms[divisor] = kept
-    # Only a figure that is round at no scale was printed as a decimal. Asking
-    # whether any scale divided it, rather than whether any needle survived the
-    # length filter, is what keeps a short whole number -- 12, dropped as too
-    # short to match on -- from coming back as "12.00".
-    if not rounds:
+    # A figure with no needle yet was either round at no scale, or round only
+    # at a scale whose digits were too short to match on: earnings per share
+    # of 6.0, a loss of 2. Both are printed to the cent on the statement --
+    # "6.00", "(2.00)" -- and a form with a decimal point in it is specific
+    # enough to look for where a bare "6" or "2" was not.
+    if not forms:
         decimals = _decimal_forms(text)
         if decimals:
             forms[1] = decimals

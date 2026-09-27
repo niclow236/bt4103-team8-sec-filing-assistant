@@ -138,6 +138,57 @@ def test_the_scope_guard_does_not_block_the_per_share_metrics(question, expected
     assert find_metric(question) == expected
 
 
+@pytest.mark.parametrize("question", [
+    # A segment, a product line, a geography: the question asks for a part of
+    # the company, and the whole-company figure is not a narrower answer to it.
+    "What were Apple's Services net sales in FY2024?",
+    "What were Amazon's North America net sales in FY2024?",
+    "What was Microsoft's Intelligent Cloud revenue in FY2024?",
+    "What was Alphabet's advertising revenue in FY2024?",
+    "What was Apple's revenue in Greater China in FY2024?",
+    "What was Meta's net loss in Reality Labs in FY2023?",
+    # A second line item, or a narrower one sharing the words.
+    "What was Apple's net income per share in FY2024?",
+    "What was Apple's net income attributable to noncontrolling interests in FY2024?",
+    "What were Apple's total liabilities and shareholders' equity in FY2024?",
+    # A question about prose that happens to name a line item.
+    "How does Apple recognise revenue in FY2024?",
+    "How does Apple recognize revenue in FY2024?",
+    "What drove Apple's net sales in FY2024?",
+    "Explain Meta's net loss in FY2023",
+])
+def test_a_question_asking_for_something_narrower_is_not_a_lookup(question):
+    # A blocklist would have to grow one segment name at a time; the test is
+    # positive instead -- what is left after the metric's own words, the
+    # company and the year has to be nothing but question scaffolding.
+    assert find_metric(question) is None
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("What was Apple's total revenue in FY2024?", "revenue"),
+    ("What were Apple's net sales in fiscal 2024?", "revenue"),
+    ("How much net income did Microsoft report in FY2023?", "net_income"),
+    ("What was Oracle's operating income?", "operating_income"),
+    ("What were total assets?", "assets"),
+    ("What was cash from operations for AAPL in FY2024?", "operating_cash"),
+    ("In FY2024, what was Apple revenue?", "revenue"),
+    ("MSFT total revenue FY2024", "revenue"),
+])
+def test_a_question_asking_only_for_the_line_item_is_a_lookup(question, expected):
+    assert find_metric(question) == expected
+
+
+def test_metrics_in_reads_a_claim_without_judging_what_it_asks_for():
+    # verify.py reads an answer's claims with this: "revenue was $391,035
+    # million" is a claim about revenue however it is phrased, so the
+    # positive test find_metric applies to a question must not apply here.
+    from src.rag.numeric import metrics_in
+
+    assert metrics_in("Revenue was $391,035 million, up 2 percent.") == {"revenue"}
+    assert metrics_in("Services net sales grew.") == {"revenue"}
+    assert metrics_in("Apple sells phones.") == set()
+
+
 # --- writing the figure ---------------------------------------------------------
 
 @pytest.mark.parametrize("value, unit, expected", [
@@ -589,3 +640,67 @@ def test_a_supplied_query_decides_which_figure_is_looked_up(store):
     answer = answer_from_facts(QUESTION, narrowed.tickers, narrowed.fiscal_years,
                                StubRetriever(_passage()), facts_file=store())
     assert answer is None
+
+
+def test_a_scaled_figure_is_cited_from_a_row_that_names_the_metric():
+    # Apple's FY2024 income statement as the corpus holds it: the "(In
+    # millions)" caption is not in the passage, as for 73% of table passages.
+    from src.rag.constants import FINANCIAL_METRICS
+    from src.retrieval.facts import printed_forms_by_scale
+
+    text = ("CONSOLIDATED STATEMENTS OF OPERATIONS (part 1 of 3)\n\n"
+            "| Years ended | September 28, 2024 | September 30, 2023 |\n"
+            "| --- | --- | --- |\n"
+            "| Total net sales | 391,035 | 383,285 |\n"
+            "| Research and development | 31,370 | 29,915 |\n")
+    revenue = FINANCIAL_METRICS["revenue"].aliases
+    by_scale = printed_forms_by_scale(Decimal("391035000000"))
+    assert prints_figure(text, by_scale, labels=revenue)
+    assert not prints_figure(text, by_scale)
+    assert not prints_figure(text.replace("Total net sales", "Deferred items"), by_scale,
+                             labels=revenue)
+    assert not prints_figure("(In thousands)\n" + text, by_scale, labels=revenue)
+    loss = "| Net income (loss) | $ | 21,331 | $ | 33,364 | $(2,722) |\n"
+    assert prints_figure(loss, printed_forms_by_scale(Decimal("-2722000000")), negative=True,
+                         labels=FINANCIAL_METRICS["net_income"].aliases)
+
+
+def test_a_figure_outside_a_table_row_still_needs_its_scale_named():
+    # The row check is a table rule: prose that merely mentions the line item
+    # near the digits says nothing about what scale they are in.
+    from src.rag.constants import FINANCIAL_METRICS
+    from src.retrieval.facts import printed_forms_by_scale
+
+    revenue = FINANCIAL_METRICS["revenue"].aliases
+    by_scale = printed_forms_by_scale(Decimal("391035000000"))
+    assert not prints_figure("Total net sales of 391,035 were reported.", by_scale, labels=revenue)
+    assert prints_figure("Total net sales of $391,035 million were reported.", by_scale,
+                         labels=revenue)
+
+
+def test_the_supporting_search_carries_the_table_boost():
+    # Every other numeric query gets it through ParsedQuestion.to_query; without
+    # it prose repeating the line item can push the table out of the top k.
+    from src.retrieval.constants import TABLE_BOOST
+
+    retriever = StubRetriever(_passage())
+    supporting_passage(FACT, retriever)
+    assert retriever.queries[0].table_boost == TABLE_BOOST
+
+
+def test_the_answer_records_the_route_for_the_harness(store):
+    # evaluate() reads Answer.config.provider to count which route answered.
+    answer = answer_from_facts(QUESTION, ("AAPL",), (2024,), StubRetriever(_passage()),
+                               facts_file=store())
+    assert answer.config.provider == FACTS_PROVIDER
+
+
+def test_a_supplied_parse_is_not_read_again(store, monkeypatch):
+    from src.rag.query import parse_question
+
+    parsed = parse_question(QUESTION)
+    monkeypatch.setattr("src.rag.answer.parse_question",
+                        lambda *a, **k: pytest.fail("the question was read twice"))
+    answer = answer_question(QUESTION, StubRetriever(_passage()), facts_file=store(),
+                             parsed=parsed)
+    assert answer.config.provider == FACTS_PROVIDER

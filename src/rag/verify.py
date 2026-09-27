@@ -28,6 +28,7 @@ from .constants import (
     TABLE_SCALE,
     UNIT_ALIASES,
 )
+from .numeric import metrics_in
 from .query import ParsedQuestion, parse_question
 from .records import Answer, SentenceCitations, VerificationCheck, VerificationResult
 
@@ -51,18 +52,16 @@ _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 _TABLE_SCALE = TABLE_SCALE
 _FACT_SCOPE_UNSUPPORTED = FACT_SCOPE_UNSUPPORTED
 
-# The aliases, concepts and units live in constants.py, because #34 routes a
-# numeric question on the same table that this module checks the answer
-# against: a question answered from a concept its checker did not know would
-# be flagged for having been answered at all. Aliases are intentionally
-# narrow. Extend using the benchmark; do not let an unrelated concept validate
-# a claim just because the value happens to match.
+# The aliases, concepts and units live in constants.py, and the code that
+# reads them in numeric.py, because #34 routes a numeric question on the same
+# table this module checks the answer against: a question answered from a
+# concept its checker did not know would be flagged for having been answered
+# at all. Aliases are intentionally narrow. Extend using the benchmark; do not
+# let an unrelated concept validate a claim just because the value happens to
+# match. What this module refuses to check is FACT_SCOPE_UNSUPPORTED; the
+# router refuses a superset of it, which is the safe direction.
 _METRICS = FINANCIAL_METRICS
-
-
-def _metrics(text: str) -> set[str]:
-    return {key for key, (aliases, _, _) in _METRICS.items()
-            if any(re.search(r"\b" + re.escape(alias) + r"\b", text, re.I) for alias in aliases)}
+_metrics = metrics_in
 
 
 def _plain(text: str) -> str:

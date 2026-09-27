@@ -46,8 +46,10 @@ from typing import Any
 
 from ..retrieval.facts import FACTS_FILE, current_year, load_facts, printed_forms_by_scale
 from ..retrieval.records import Query, RetrievedPassage
+from ..retrieval.constants import TABLE_BOOST
 from .constants import (
     ACCESSION_PATTERN,
+    COMPANY_ALIASES,
     FACT_PASSAGE_K,
     FACT_SCOPE_UNSUPPORTED,
     FACTS_PROVIDER,
@@ -55,6 +57,10 @@ from .constants import (
     FACTS_SOURCE,
     FACTS_TEMPLATE_ID,
     FINANCIAL_METRICS,
+    METRIC_QUALIFIER,
+    OUT_OF_SCOPE_ALIASES,
+    QUESTION_SCAFFOLDING,
+    SEGMENT_ALIASES,
     TABLE_SCALE,
     UNIT_ALIASES,
 )
@@ -76,6 +82,27 @@ _CURRENCY = r"(?:us\$|usd|s\$|sgd|eur|gbp|jpy|[$€£¥])"
 _MINUS_BEFORE = re.compile(rf"(?:[-−]\s*{_CURRENCY}?|{_CURRENCY}\s*[-−])\s*$", re.I)
 _OPEN_BEFORE = re.compile(rf"\(\s*{_CURRENCY}?\s*$", re.I)
 _CLOSE_AFTER = re.compile(r"\s*\)")
+
+# The company names and tickers a question is scoped by, which carry no line
+# item and so are taken out before what is left is weighed. A segment alias is
+# deliberately not here: "AWS" names a part of Amazon, so a question using it
+# is asking for something the whole-company figure does not answer, and it has
+# to survive to be counted against the question.
+_ENTITY_NAMES = re.compile(
+    r"\b(?:" + "|".join(
+        re.escape(name).replace(r"\ ", r"\s+")
+        for name in sorted(
+            (
+                {alias for aliases in COMPANY_ALIASES.values() for alias in aliases}
+                - set(SEGMENT_ALIASES)
+                | {alias for aliases in OUT_OF_SCOPE_ALIASES.values() for alias in aliases}
+                | set(COMPANY_ALIASES)
+            ),
+            key=len, reverse=True,
+        )
+    ) + r")\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -151,29 +178,81 @@ def _cached_facts(path: Path, mtime_ns: int):
     return load_facts(path)
 
 
-def find_metric(question: str) -> str | None:
-    """The one metric a question names, or None where it names none or several.
+def metrics_in(text: str) -> set[str]:
+    """Every metric whose words appear in the text, by whole-word match.
 
-    Whole-word matching against ``FINANCIAL_METRICS``, the same table
-    ``verify.py`` checks an answer against. Several is None on purpose: "how
-    did revenue and net income move" is two lookups and one sentence joining
-    them, which this route does not write.
-
-    An alias can also appear inside something the store's annual figure is not
-    the answer to -- "cost of revenue", "deferred revenue", "iPhone revenue",
-    "revenue in Q4", "percentage of revenue" -- so the scope guard runs first.
-    It is the same guard ``verify.py`` marks an answer unverified by, because a
-    question this route answers and that checker cannot check is the one
-    combination neither should allow.
+    The plain reading, with no judgement about what the text is asking for:
+    ``verify.py`` reads a claim this way, because "revenue was $391,035
+    million" is a claim about revenue however it is phrased.
+    :func:`find_metric` adds the judgement a question needs. One definition
+    rather than two, so a change to how an alias is matched cannot land on one
+    side only and leave the router answering what the checker will not check.
     """
-    if FACT_SCOPE_UNSUPPORTED.search(question):
-        return None
-    found = {
+    return {
         key for key, metric in FINANCIAL_METRICS.items()
-        if any(re.search(r"\b" + re.escape(alias) + r"\b", question, re.I)
+        if any(re.search(r"\b" + re.escape(alias) + r"\b", text, re.I)
                for alias in metric.aliases)
     }
-    return found.pop() if len(found) == 1 else None
+
+
+def _longest_alias(metric: str, question: str) -> str:
+    """The longest of the metric's aliases that the question actually uses."""
+    matched = [
+        alias for alias in FINANCIAL_METRICS[metric].aliases
+        if re.search(r"\b" + re.escape(alias) + r"\b", question, re.I)
+    ]
+    return max(matched, key=len)
+
+
+def _asks_only_for(question: str, alias: str) -> bool:
+    """Whether the question asks for this line item and nothing narrower.
+
+    Take the metric's own words out, take out the company and the year the
+    question is scoped by, and what is left has to be scaffolding: the frame
+    of a question and the verbs of reporting. Anything else is the question
+    asking about something the whole-company annual figure is not --
+    "**Services** net sales", "revenue in **Greater China**", "net income
+    **per share**", "total liabilities **and** shareholders' equity", "how
+    does Apple **recognise** revenue", "what **drove** net sales".
+
+    This is positive evidence, which is what the route needs: a blocklist of
+    segment names would have to grow one name at a time across fifteen
+    companies and would still be a list of the ones somebody thought of.
+    """
+    rest = re.sub(r"\b" + re.escape(alias) + r"\b", " ", question, flags=re.I)
+    rest = _ENTITY_NAMES.sub(" ", rest)
+    words = re.findall(r"[A-Za-z0-9']+", rest)
+    return all(_is_scaffolding(word) for word in words)
+
+
+def _is_scaffolding(word: str) -> bool:
+    """Whether one leftover word carries no line item of its own."""
+    plain = word.lower()
+    if plain in QUESTION_SCAFFOLDING or plain.endswith("'s"):
+        return True
+    # A year in any of the forms a question writes one, and a bare possessive
+    # left behind where a company name was taken out.
+    return bool(re.fullmatch(r"(?:fye?|fiscal)?'?\d{2,4}|'s?", plain))
+
+
+def find_metric(question: str) -> str | None:
+    """The one metric a question asks for, or None where it asks for something else.
+
+    Three tests, and a question has to pass all of them. It must name exactly
+    one metric -- "how did revenue and net income move" is two lookups and a
+    sentence joining them, which this route does not write. It must not name a
+    scope a stored annual figure cannot answer, nor a qualifier that makes the
+    line item a different one; see ``constants.FACT_SCOPE_UNSUPPORTED`` and
+    ``METRIC_QUALIFIER``. And it must ask for that line item and nothing
+    narrower, which :func:`_asks_only_for` is the positive test for.
+    """
+    if FACT_SCOPE_UNSUPPORTED.search(question) or METRIC_QUALIFIER.search(question):
+        return None
+    found = metrics_in(question)
+    if len(found) != 1:
+        return None
+    metric = found.pop()
+    return metric if _asks_only_for(question, _longest_alias(metric, question)) else None
 
 
 def lookup_fact(
@@ -266,8 +345,20 @@ def _shown_negative(before: str, after: str) -> bool:
     )
 
 
+def _row_names(before: str, labels: tuple[str, ...]) -> bool:
+    """Whether the figure sits in a table row labelled with one of the metric's names."""
+    row = before[before.rfind("\n") + 1:]
+    return row.lstrip().startswith("|") and any(
+        re.search(rf"\b{re.escape(label)}\b", row, re.I) for label in labels
+    )
+
+
 def prints_figure(
-    text: str, by_scale: dict[int, set[str]], *, negative: bool = False
+    text: str,
+    by_scale: dict[int, set[str]],
+    *,
+    negative: bool = False,
+    labels: tuple[str, ...] = (),
 ) -> bool:
     """Whether a passage prints the figure, rather than merely containing its digits.
 
@@ -286,6 +377,14 @@ def prints_figure(
     declared heading is deliberately not applied to scale 1, because an
     income statement headed "in millions, except per share amounts" prints
     its earnings per share unscaled in the same table.
+
+    Most statement passages never name their scale, though: the "(In
+    millions ...)" caption sits outside the table the chunker keeps, and 73%
+    of the corpus's table passages carry no scale word at all. Where a passage
+    declares none, a scaled figure is accepted in a table row that names the
+    metric (``labels``), which is how a reader knows "| Total net sales |
+    391,035 |" is revenue in millions. A passage that declares a different
+    scale is still refused.
 
     And the needles carry no sign, so the sign is checked here: a loss of
     $1,500 is printed "(1,500)" or "-1,500", and a passage showing a positive
@@ -306,7 +405,9 @@ def prints_figure(
                 if divisor == 1:
                     if _SCALE_AFTER.match(after) is None:
                         return True
-                elif declared or re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I):
+                elif (declared
+                      or re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I)
+                      or (heading is None and _row_names(before, labels))):
                     return True
     return False
 
@@ -353,6 +454,10 @@ def supporting_passage(
         fiscal_years=(fact.fiscal_year,),
         top_k=top_k,
         wants_figures=True,
+        # The same boost every other numeric query carries, since the passage
+        # wanted here is a statement table: without it prose that repeats the
+        # line item can push the table out of the top top_k entirely.
+        table_boost=TABLE_BOOST,
     )
     matches = [
         passage for passage in retriever.search(query)
@@ -360,7 +465,8 @@ def supporting_passage(
         and (min_score is None or passage.score >= min_score)
         and (found := ACCESSION_PATTERN.match(passage.chunk_id))
         and found[0] == fact.accession
-        and prints_figure(passage.text, by_scale, negative=fact.value < 0)
+        and prints_figure(passage.text, by_scale, negative=fact.value < 0,
+                          labels=FINANCIAL_METRICS[fact.metric].aliases)
     ]
     tables = [passage for passage in matches if passage.content_type == "table"]
     for preferred in (tables, matches):

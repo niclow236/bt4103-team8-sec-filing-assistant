@@ -450,20 +450,49 @@ UNIT_ALIASES = {"pure": "ratio", "usd": "USD", "usd/shares": "USD/shares",
 # matches. Three kinds: a part of the company rather than the whole of it (a
 # segment, a product line), a part of the year rather than the year (a
 # quarter), and a figure derived from others rather than reported (a margin, a
-# change, a percentage of something else). A qualifier on the line item counts
-# too: "cost of revenue" and "deferred revenue" are not revenue, and answering
-# either with total revenue is confidently wrong.
-#
-# Read from both directions, like FINANCIAL_METRICS: #34 refuses to route the
-# question, and #32 records the answer as unverified. A route that did not
-# check this would answer questions its own checker marks unverifiable. A bare
-# "per share" is deliberately absent, since it would block the EPS aliases.
+# change). Read from both directions, like FINANCIAL_METRICS: #34 refuses to
+# route the question, and #32 records the answer as unverified.
 FACT_SCOPE_UNSUPPORTED = re.compile(
     r"\b(?:segment|iphone|ipad|aws|azure|google cloud|product revenue|services revenue|"
-    r"quarter|quarterly|q[1-4]|combined|sum|average|difference|ratio|margin|percent(?:age)?|"
-    r"cost of|deferred|unearned|non-?operating|per (?:diluted|basic) share|"
+    r"quarter|quarterly|q[1-4]|combined|sum|average|difference|ratio|margin|"
     r"(?:increased?|decreased?|grew|fell) by)\b", re.I,
 )
+
+# What the router refuses on top of that, so that the two directions are not
+# the same set. A qualifier turns a line item into a different one: "cost of
+# revenue" and "deferred revenue" are not revenue, and "net income per diluted
+# share" is not net income, so answering any of them with the whole-company
+# figure is confidently wrong. The checker does NOT read this: a claim saying
+# revenue was "up 2 percent" is a claim about revenue and stays checkable. The
+# router refusing a superset of what the checker refuses is the safe
+# direction; the reverse would answer what nothing can check. A bare "per
+# share" is deliberately absent, since it would block the EPS aliases.
+METRIC_QUALIFIER = re.compile(
+    r"\b(?:cost of|deferred|unearned|non-?operating|percent(?:age)?|"
+    r"per (?:diluted|basic) share)\b", re.I,
+)
+
+# The words a question can hold besides the line item it asks for: the frame
+# of the question, the scaffolding around a company and a year, and the verbs
+# of reporting. A question asking for a stored figure is made of nothing else,
+# so anything left over after the metric's own words are removed -- a segment
+# ("Services net sales"), a place ("revenue in Greater China"), a second line
+# item ("total liabilities and shareholders' equity"), or a verb that asks for
+# prose rather than a figure ("how does Apple recognise revenue", "what drove
+# net sales") -- means the question is asking for something the whole-company
+# annual figure does not answer. See ``numeric.find_metric``.
+#
+# This is the positive half of the test. A blocklist alone has to grow by one
+# segment name at a time, and the corpus has fifteen companies' worth of them.
+QUESTION_SCAFFOLDING = frozenset("""
+    what which was were is are be been how much many
+    did do does report reported reports say says
+    the a an this that its their there
+    in for during at on of to
+    fy fye fiscal year years ended ending end period periods
+    company companies group inc corp corporation plc ltd
+    dollars dollar usd
+""".split())
 
 # The accession number a chunk_id opens with, which is how a passage is matched
 # to the filing a fact came from. Shared so the router and the checker cannot
