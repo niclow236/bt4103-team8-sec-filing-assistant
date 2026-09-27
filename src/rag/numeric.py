@@ -228,9 +228,16 @@ def _asks_only_for(question: str, alias: str) -> bool:
 def _is_scaffolding(word: str) -> bool:
     """Whether one leftover word carries no line item of its own."""
     plain = word.lower()
-    if plain in QUESTION_SCAFFOLDING or plain.endswith("'s"):
+    if plain in QUESTION_SCAFFOLDING:
         return True
-    # A year in any of the forms a question writes one, and a bare possessive
+    # A possessive is scaffolding only where its owner is: "the company's",
+    # "this year's". "LinkedIn's revenue" asks for a part of Microsoft, and
+    # the company's own name has already been taken out by _ENTITY_NAMES,
+    # leaving a bare "'s" -- so a possessive that still has an owner here is
+    # one that names something other than the company being asked about.
+    if plain.endswith("'s") and len(plain) > 2:
+        return _is_scaffolding(plain[:-2])
+    # A year in any of the forms a question writes one, and the bare possessive
     # left behind where a company name was taken out.
     return bool(re.fullmatch(r"(?:fye?|fiscal)?'?\d{2,4}|'s?", plain))
 

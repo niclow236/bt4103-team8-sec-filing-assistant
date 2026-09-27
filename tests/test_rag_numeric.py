@@ -156,6 +156,13 @@ def test_the_scope_guard_does_not_block_the_per_share_metrics(question, expected
     "How does Apple recognize revenue in FY2024?",
     "What drove Apple's net sales in FY2024?",
     "Explain Meta's net loss in FY2023",
+    # A part of the company named with a possessive, which reads like the
+    # company's own.
+    "What was LinkedIn's revenue at Microsoft in fiscal 2024?",
+    "What was VMware's revenue for Broadcom in fiscal 2024?",
+    "What was YouTube's revenue for Alphabet in FY2024?",
+    "What were Europe's net sales for Apple in FY2024?",
+    "What was Microsoft's LinkedIn's revenue in fiscal 2024?",
 ])
 def test_a_question_asking_for_something_narrower_is_not_a_lookup(question):
     # A blocklist would have to grow one segment name at a time; the test is
@@ -173,6 +180,16 @@ def test_a_question_asking_for_something_narrower_is_not_a_lookup(question):
     ("What was cash from operations for AAPL in FY2024?", "operating_cash"),
     ("In FY2024, what was Apple revenue?", "revenue"),
     ("MSFT total revenue FY2024", "revenue"),
+    # A possessive the scaffolding owns, which the rule above must not refuse.
+    ("What was Oracle Corporation's total revenue in fiscal 2024?", "revenue"),
+    ("What was the company's total revenue in FY2024?", "revenue"),
+    # "total" is the statement's own word for the whole-company row, and
+    # "generate" is a verb of reporting: refusing either lost questions asking
+    # for exactly the figure the store holds.
+    ("What was Microsoft's total net income in fiscal year 2023?", "net_income"),
+    ("What were Oracle's total revenues in fiscal year 2024?", "revenue"),
+    ("How much did Amazon generate in net sales during fiscal year 2025?", "revenue"),
+    ("What were Apple's total net sales in FY2024?", "revenue"),
 ])
 def test_a_question_asking_only_for_the_line_item_is_a_lookup(question, expected):
     assert find_metric(question) == expected
@@ -704,3 +721,33 @@ def test_a_supplied_parse_is_not_read_again(store, monkeypatch):
     answer = answer_question(QUESTION, StubRetriever(_passage()), facts_file=store(),
                              parsed=parsed)
     assert answer.config.provider == FACTS_PROVIDER
+
+
+def test_the_evaluation_command_can_turn_the_route_off(monkeypatch, tmp_path):
+    # The ablation has to be runnable from the command line, not only from
+    # evaluate()'s signature.
+    import src.evaluation.cli as cli
+    from src.retrieval.bm25 import BM25Retriever
+
+    seen = {}
+    monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
+    monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
+    monkeypatch.setattr(cli, "evaluate", lambda *a, **k: seen.update(k) or
+                        {"summary": {}, "by_answerability": {}, "results": []})
+    cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r",
+              "--output", str(tmp_path / "report.json"), "--no-facts"])
+    assert seen["use_facts"] is False
+
+
+def test_the_evaluation_command_uses_the_route_by_default(monkeypatch, tmp_path):
+    import src.evaluation.cli as cli
+    from src.retrieval.bm25 import BM25Retriever
+
+    seen = {}
+    monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
+    monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
+    monkeypatch.setattr(cli, "evaluate", lambda *a, **k: seen.update(k) or
+                        {"summary": {}, "by_answerability": {}, "results": []})
+    cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r",
+              "--output", str(tmp_path / "report.json")])
+    assert seen["use_facts"] is True

@@ -1092,6 +1092,14 @@ or `--model` to select an installed Ollama model. The JSON report records these
 settings, individual answers and aggregate rates. The command needs a populated
 benchmark and built indexes. Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`.
+
+`--no-facts` sends every question to retrieval and generation instead of looking
+a numeric one up in the XBRL facts store first, which is the without half of
+that comparison. Each row records the `route` that answered it and the report
+counts them, so a run that mixes the two reads as what it is. Use `--no-facts`
+for `benchmark/generated.jsonl` in particular: those questions are generated
+from the same store the route answers from, so leaving it on measures the store
+against itself.
 Evaluation rows include citation checks; run `verify_answer` separately when
 numeric verification is also needed.
 

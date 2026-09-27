@@ -482,12 +482,19 @@ METRIC_QUALIFIER = re.compile(
 # net sales") -- means the question is asking for something the whole-company
 # annual figure does not answer. See ``numeric.find_metric``.
 #
+# "total" is here because it never narrows a line item -- it is the income
+# statement's own word for the whole-company row ("Total net sales") -- and
+# "earn" and "generate" because they are verbs of reporting like "report".
+# A possessive counts only where its owner does, so "the company's" and
+# "Oracle Corporation's" pass and "LinkedIn's" does not; see
+# ``numeric._is_scaffolding``.
+#
 # This is the positive half of the test. A blocklist alone has to grow by one
 # segment name at a time, and the corpus has fifteen companies' worth of them.
 QUESTION_SCAFFOLDING = frozenset("""
     what which was were is are be been how much many
-    did do does report reported reports say says
-    the a an this that its their there
+    did do does report reported reports say says earn earned generate generated
+    the a an this that its their there total
     in for during at on of to
     fy fye fiscal year years ended ending end period periods
     company companies group inc corp corporation plc ltd
