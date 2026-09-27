@@ -25,6 +25,7 @@ from .constants import (
     ACCESSION_PATTERN,
     FACT_SCOPE_UNSUPPORTED,
     FINANCIAL_METRICS,
+    FACT_METRIC_QUALIFIER,
     TABLE_SCALE,
     UNIT_ALIASES,
 )
@@ -58,8 +59,8 @@ _FACT_SCOPE_UNSUPPORTED = FACT_SCOPE_UNSUPPORTED
 # concept its checker did not know would be flagged for having been answered
 # at all. Aliases are intentionally narrow. Extend using the benchmark; do not
 # let an unrelated concept validate a claim just because the value happens to
-# match. What this module refuses to check is FACT_SCOPE_UNSUPPORTED; the
-# router refuses a superset of it, which is the safe direction.
+# match. FACT_SCOPE_UNSUPPORTED and FACT_METRIC_QUALIFIER reject figures
+# needing a narrower concept; the router additionally rejects percentage requests.
 _METRICS = FINANCIAL_METRICS
 _metrics = metrics_in
 
@@ -132,7 +133,8 @@ def _years(text: str) -> set[int]:
 
 
 def _scope(text: str, parsed: ParsedQuestion, passages) -> tuple[set[str], set[int]]:
-    local = parse_question(text) if text.strip() else parsed
+    # Sentence scope only needs entities; avoid label-store I/O for every claim.
+    local = parse_question(text, facts_file=None) if text.strip() else parsed
     if local.unresolved or parsed.unresolved:
         return set(), set()
     tickers = set(local.tickers or parsed.tickers or tuple(p.ticker for p in passages))
@@ -205,6 +207,9 @@ def _fact_check(frame, error, figure, metric, tickers, years, passages, index, c
     if _FACT_SCOPE_UNSUPPORTED.search(claim + " " + question):
         return _check("fact", "unverified", index, claim,
                       "Segment, quarterly and derived figures need a more specific facts lookup.", figure)
+    if FACT_METRIC_QUALIFIER.search(claim + " " + question):
+        return _check("fact", "unverified", index, claim,
+                      "A qualified line item needs a more specific financial concept.", figure)
     if metric is None or len(tickers) != 1 or len(years) != 1:
         return _check("fact", "unverified", index, claim,
                       "A unique company, fiscal year and supported financial concept are required.", figure)
@@ -256,7 +261,7 @@ def verify_answer(
     Call after resolve_citations and before displaying or recording an answer.
     Passing the original ParsedQuestion preserves any caller-selected scope.
     """
-    parsed = parsed or parse_question(answer.question)
+    parsed = parsed or parse_question(answer.question, facts_file=facts_file)
     # parse_question strips, so an untrimmed question would fail its own default.
     if parsed.question != answer.question.strip():
         raise ValueError("parsed question must match Answer.question")

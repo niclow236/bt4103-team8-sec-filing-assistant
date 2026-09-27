@@ -13,7 +13,8 @@ The reading is rule-based on purpose. The scope is fifteen named companies
 and five fiscal years, which is small enough to match exactly and not a thing
 to guess at: a model that resolved "Meta" to Microsoft one time in fifty would
 pass the filter check and return the right answer for the wrong company. The
-rules are lists in ``constants.py``, so extending them is editing a table.
+rules use the lists in ``constants.py`` and the local facts store's XBRL labels
+for additional financial line items.
 
 An entity the rules see but cannot resolve -- NVIDIA, which was dropped from
 the scope, or FY2015, which is before it -- never raises. The filter for it is
@@ -29,11 +30,13 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from ..config import read_tickers
 from ..pipeline.constants import DEFAULT_FISCAL_YEARS
 from ..retrieval.constants import TABLE_BOOST
+from ..retrieval.facts import FACTS_FILE
 from ..retrieval.records import Query
 from .constants import (
     ADVICE_CUES,
@@ -43,12 +46,14 @@ from .constants import (
     COUNT_AFTER,
     CURRENCY_BEFORE,
     FUTURE_CUES,
+    FIGURE_METRIC_CUES,
     MAGNITUDE_AFTER,
     NUMERIC_CUES,
     OUT_OF_SCOPE_ALIASES,
     PREDICTION_VERBS,
     QUANTITY_BEFORE,
     QUESTION_TYPES,
+    QUESTION_SCAFFOLDING,
     REPORTING_VERBS,
     SEGMENT_ALIASES,
     TEMPORAL_CUES,
@@ -138,6 +143,18 @@ _DESCRIBED_BEFORE = re.compile(
     r"(?:['’]s|\b(?:is|are|be|been|its|their|the|an?))\s+$", re.IGNORECASE
 )
 _DESCRIBING_FORMS = frozenset({"expected", "anticipated"})
+
+# Applied after recognised company names and possessives have been removed.
+# Arbitrary words before "total" could swallow "the rationale behind Apple’s".
+_ASKS_TOTAL = re.compile(
+    r"\bwhat\s+(?:was|were|is|are)\s+"
+    r"(?:(?:the|its|their)\s+)?total\b",
+    re.IGNORECASE,
+)
+
+_FIGURE_SCAFFOLDING = QUESTION_SCAFFOLDING | frozenset(
+    "compare and between from through over since change changed will next last as".split()
+)
 
 
 @dataclass(frozen=True)
@@ -246,12 +263,16 @@ def parse_question(
     *,
     known_tickers: Iterable[str] | None = None,
     fiscal_years: tuple[int, int] = DEFAULT_FISCAL_YEARS,
+    facts_file: Path | None = FACTS_FILE,
 ) -> ParsedQuestion:
     """Read one question into a ParsedQuestion.
 
     ``known_tickers`` is the scope the companies resolve against, defaulting to
     config/companies.txt; a test passes its own. ``fiscal_years`` is the
     inclusive range a year has to fall in to become a filter.
+    ``facts_file`` supplies additional numeric cues from its XBRL labels.
+    A missing or unreadable store leaves the built-in cues available.
+    ``None`` disables label lookup, for callers that only need entity filters.
     """
     if not question or not question.strip():
         raise ValueError("question must not be blank")
@@ -259,7 +280,13 @@ def parse_question(
 
     tickers, out_of_scope = _companies(question, scope)
     years, bad_years = _years(question, fiscal_years)
-    wants_figures = _any_cue(question, NUMERIC_CUES)
+    figure_text = _figure_text(question, scope)
+    wants_figures = bool(
+        _any_cue(question, NUMERIC_CUES)
+        or _ASKS_TOTAL.search(figure_text)
+        or _asks_for_label(figure_text, _FIGURE_METRIC_PATTERN)
+        or (facts_file is not None and _mentions_fact_label(figure_text, facts_file))
+    )
 
     question_type = _classify(
         question,
@@ -511,6 +538,70 @@ def _past_possessive(text: str, end: int) -> int:
 
 
 # --- classification ---------------------------------------------------------
+
+def _label_words(text: str) -> str:
+    """Normalise punctuation and spacing without matching parts of words."""
+    return " ".join(re.findall(r"\w+", text.casefold()))
+
+
+@lru_cache(maxsize=4)
+def _figure_entities(scope: frozenset[str]) -> re.Pattern[str]:
+    names = scope | frozenset(COMPANY_ALIASES) | {
+        alias for group in (COMPANY_ALIASES, OUT_OF_SCOPE_ALIASES)
+        for aliases in group.values() for alias in aliases
+    }
+    pattern = _alias_pattern(names)
+    return re.compile(pattern.pattern + r"(?:['’]s\b|['’](?!\w))?", re.I)
+
+
+def _figure_text(question: str, scope: frozenset[str]) -> str:
+    """Remove only named entities and dates before checking a figure request."""
+    text = _figure_entities(scope).sub(" ", question)
+    return " ".join(_YEAR.sub(" ", _SHORT_RANGE.sub(r"\1\2 \3 \1\4", text)).split())
+
+
+_FIGURE_METRIC_PATTERN = _alias_pattern(FIGURE_METRIC_CUES)
+
+
+def _asks_for_label(text: str, pattern: re.Pattern[str]) -> bool:
+    """A full line item plus figure-question scaffolding, with no prose topic.
+
+    Even two-word labels can name a topic: "commercial paper program" asks
+    about a program, whereas "what was commercial paper" asks for its balance.
+    Keep the legacy cues separate so their existing classifications stay put.
+    """
+    normal = _label_words(text)
+    if not pattern.search(normal):
+        return False
+    return set(pattern.sub(" ", normal).split()).issubset(_FIGURE_SCAFFOLDING)
+
+
+@lru_cache(maxsize=4)
+def _fact_label_pattern(path: Path, mtime_ns: int, size: int) -> re.Pattern[str] | None:
+    """Read only the label column and compile once per successful store revision.
+
+    Full labels are cues, not their individual words: "Assets Held for Sale"
+    must not turn every mention of "sale" into a request for a figure. The
+    metric aliases in constants cover everyday names such as "net sales".
+    """
+    import pandas as pd
+
+    labels = pd.read_parquet(path, columns=["label"])["label"].dropna().unique()
+    cues = {_label_words(label) for label in labels if isinstance(label, str)} - {""}
+    return _alias_pattern(cues) if cues else None
+
+
+def _mentions_fact_label(question: str, facts_file: Path) -> bool:
+    try:
+        path = Path(facts_file).absolute()
+        stat = path.stat()
+        pattern = _fact_label_pattern(path, stat.st_mtime_ns, stat.st_size)
+    except Exception:
+        # Failure is deliberately outside the cached function: a temporary
+        # read failure must be retried even if the file's timestamp is unchanged.
+        return False
+    return pattern is not None and _asks_for_label(question, pattern)
+
 
 def _any_cue(question: str, cues: Iterable[str]) -> bool:
     """Whether any cue appears as a whole word or phrase, ignoring case.

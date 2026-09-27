@@ -8,18 +8,214 @@ from src.rag.query import ParsedQuestion, build_query, parse_question
 from src.retrieval.constants import TABLE_BOOST
 from src.retrieval.records import Query
 
-# The real scope, so the tests do not depend on config/companies.txt while
-# still exercising the alias table for every company in it.
+# Keep classification independent of the local corpus and built facts store.
 SCOPE = ("AAPL", "MSFT", "AVGO", "GOOGL", "META", "AMZN", "ORCL", "CRM", "ADBE",
          "CSCO", "TXN", "MU", "INTU", "NOW", "PANW")
 YEARS = (2021, 2025)
 
 
 def _parse(question: str, **overrides) -> ParsedQuestion:
-    options = dict(known_tickers=SCOPE, fiscal_years=YEARS)
+    options = dict(known_tickers=SCOPE, fiscal_years=YEARS, facts_file=None)
     options.update(overrides)
     return parse_question(question, **options)
 
+
+@pytest.mark.parametrize("question, ticker, year", [
+    ("What was Apple's total value of Accounts Payable at the end of fiscal year 2022?",
+     "AAPL", 2022),
+    ("What was Apple's Inventories value at the end of fiscal year 2025?", "AAPL", 2025),
+    ("What was Amazon's total net sales in fiscal year 2025?", "AMZN", 2025),
+])
+def test_issue_89_figure_questions(question, ticker, year, tmp_path):
+    # Everyday metric aliases work even before a teammate builds the store.
+    parsed = _parse(question, facts_file=tmp_path / "missing.parquet")
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+    assert parsed.tickers == (ticker,)
+    assert parsed.fiscal_years == (year,)
+    assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+def test_inventory_risk_stays_a_prose_question(tmp_path):
+    # Q32 of the test questions names inventory without asking for a figure.
+    question = ("What factors did Amazon identify as creating significant inventory risk "
+                "in fiscal year 2022?")
+    parsed = _parse(question, facts_file=tmp_path / "missing.parquet")
+    assert parsed.question_type == "factual"
+
+
+@pytest.fixture
+def broad_label_store(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "broad.parquet"
+    # Short labels observed by both reviewers in their real stores.
+    pd.DataFrame({"label": ["Assets", "Liabilities", "Depreciation", "Goodwill",
+                            "Commercial Paper", "Lease, Cost", "Marketing Expense",
+                            "Investments", "Cash", "Inventory", "Inventories",
+                            "Accounts Payable"]}).to_parquet(path)
+    return path
+
+
+@pytest.mark.parametrize("question", [
+    "What did Apple say about risks to its assets?",
+    "How does Microsoft account for depreciation?",
+    "What is Apple's commercial paper program?",
+    "Why did Apple's liabilities matter to its strategy?",
+    "What does Microsoft say about its investments in AI in FY2024?",
+    "How does Apple manage cash and liquidity in FY2024?",
+    "What does Meta say about depreciation of its servers in FY2023?",
+    "What factors did Amazon identify as creating significant inventory risk in fiscal year 2022?",
+    "What does Apple say about inventory management?",
+    "What does Apple say about inventories management?",
+    "How does Apple manage accounts payable?",
+    "What was the rationale behind Apple's total restructuring?",
+])
+def test_review_prose_questions_stay_factual_with_or_without_labels(question, broad_label_store):
+    for path in (None, broad_label_store):
+        parsed = _parse(question, facts_file=path)
+        assert parsed.question_type == "factual"
+        assert parsed.wants_figures is False
+        assert parsed.to_query().table_boost == 1.0
+
+
+@pytest.mark.parametrize("label", ["Assets", "Liabilities", "Depreciation", "Commercial Paper",
+                                  "Lease Cost", "Marketing Expense", "Investments", "Cash"])
+def test_short_labels_still_recognise_requests_for_balances(label, broad_label_store):
+    parsed = _parse(f"What was Apple's {label} in FY2024?", facts_file=broad_label_store)
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+
+
+def test_total_frame_cannot_swallow_arbitrary_words():
+    from src.rag.query import _ASKS_TOTAL, _figure_text
+
+    for question in ("What was the rationale behind Apple's total restructuring?",
+                     "What is the reason for Apple's total debt increase?"):
+        assert not _ASKS_TOTAL.search(_figure_text(question, frozenset(SCOPE)))
+
+
+def test_disabled_labels_never_touch_the_store(monkeypatch):
+    monkeypatch.setattr("src.rag.query._mentions_fact_label",
+                        lambda *a: pytest.fail("unexpected facts-store lookup"))
+    assert _parse("Apple's Marketable Securities").question_type == "factual"
+
+
+@pytest.mark.parametrize("owner", [
+    "Apple's", "Amazon’s", "Meta Platforms'", "Texas Instruments’", "ZZZZ's", "the",
+])
+def test_total_with_a_company_between_the_verb_and_total(owner, tmp_path):
+    parsed = _parse(f"What was {owner} total expenditure in FY2024?",
+                    known_tickers=(*SCOPE, "ZZZZ"), facts_file=tmp_path / "missing.parquet")
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+
+
+@pytest.fixture
+def label_store(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "facts.parquet"
+    pd.DataFrame({"label": ["Prepaid Expense, Current", "Assets Held for Sale",
+                            "Prepaid Expense, Current", None, ""]}).to_parquet(path)
+    return path
+
+
+@pytest.mark.parametrize("label", ["Prepaid Expense, Current", "PREPAID expense current",
+                                  "Prepaid\nExpense — Current", "Assets Held for Sale"])
+def test_stored_labels_extend_numeric_cues_without_a_handwritten_entry(label, label_store):
+    parsed = _parse(f"What was Apple's {label} in FY2024?", facts_file=label_store)
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+    assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+@pytest.mark.parametrize("question", [
+    "What did Apple say about its sale process?",
+    "What was Apple's prepaid expense currently used for?",
+    "What was Apple's totality of responses?",
+])
+def test_label_fragments_and_longer_words_do_not_become_cues(question, label_store):
+    parsed = _parse(question, facts_file=label_store)
+    assert parsed.question_type == "factual"
+    assert parsed.wants_figures is False
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("Compare Apple and Microsoft's Prepaid Expense, Current in FY2024", "comparative"),
+    ("Apple's Prepaid Expense, Current in FY2023 and FY2024", "temporal"),
+    ("What will Apple's Prepaid Expense, Current be next year?", "unanswerable"),
+    ("What was Intel's Prepaid Expense, Current in FY2024?", "unanswerable"),
+])
+def test_stored_labels_preserve_classification_priority(question, expected, label_store):
+    parsed = _parse(question, facts_file=label_store)
+    assert parsed.question_type == expected
+    assert parsed.wants_figures is True
+
+
+def test_label_cache_reads_only_labels_and_refreshes_after_rebuild(label_store, monkeypatch):
+    import os
+    import pandas as pd
+    from src.rag.query import _fact_label_pattern
+
+    _fact_label_pattern.cache_clear()
+    read = pd.read_parquet
+    calls = []
+
+    def tracked(*args, **kwargs):
+        calls.append(kwargs)
+        return read(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", tracked)
+    question = "What was Apple's Prepaid Expense, Current?"
+    assert _parse(question, facts_file=label_store).wants_figures
+    assert _parse(question, facts_file=label_store).wants_figures
+    assert calls == [{"columns": ["label"]}]
+    stamp = label_store.stat().st_mtime_ns
+    pd.DataFrame({"label": ["Marketable Securities"]}).to_parquet(label_store)
+    os.utime(label_store, ns=(stamp + 1_000_000_000, stamp + 1_000_000_000))
+    assert not _parse(question, facts_file=label_store).wants_figures
+    assert _parse("Apple's Marketable Securities", facts_file=label_store).wants_figures
+    assert len(calls) == 2
+
+
+def test_failed_label_reads_are_retried_without_a_file_change(label_store, monkeypatch):
+    import pandas as pd
+    from src.rag.query import _fact_label_pattern
+
+    _fact_label_pattern.cache_clear()
+    read = pd.read_parquet
+    calls = []
+
+    def transient_failure(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("store being replaced")
+        return read(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", transient_failure)
+    question = "What was Apple's Prepaid Expense, Current?"
+    assert not _parse(question, facts_file=label_store).wants_figures
+    assert _parse(question, facts_file=label_store).wants_figures
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("state", ["missing", "corrupt", "no_labels", "empty"])
+def test_unavailable_labels_leave_builtin_classification_working(tmp_path, state):
+    import pandas as pd
+
+    path = tmp_path / "facts.parquet"
+    if state == "corrupt":
+        path.write_bytes(b"not parquet")
+    elif state == "no_labels":
+        pd.DataFrame({"concept": ["Assets"]}).to_parquet(path)
+    elif state == "empty":
+        pd.DataFrame({"label": [None, "", "   "]}).to_parquet(path)
+    assert _parse("Apple's revenue", facts_file=path).question_type == "numeric"
+    assert _parse("Apple's supply chain", facts_file=path).question_type == "factual"
+    # A store built after an earlier miss must become available in this process.
+    pd.DataFrame({"label": ["Marketable Securities"]}).to_parquet(path)
+    assert _parse("Apple's Marketable Securities", facts_file=path).wants_figures
 
 # --- tickers -----------------------------------------------------------------
 
@@ -84,7 +280,7 @@ def test_a_ticker_in_scope_without_aliases_is_found_by_ticker():
 
 def test_default_scope_is_the_companies_file():
     # No known_tickers: resolves against config/companies.txt, which holds AAPL.
-    assert parse_question("What was Apple's revenue in FY2024?").tickers == ("AAPL",)
+    assert parse_question("What was Apple's revenue in FY2024?", facts_file=None).tickers == ("AAPL",)
 
 
 # --- fiscal years --------------------------------------------------------------
@@ -392,7 +588,8 @@ def test_describe_says_when_nothing_is_filtered():
 
 
 def test_build_query_is_the_short_form():
-    query = build_query("Apple's revenue in FY2024", top_k=5, known_tickers=SCOPE)
+    query = build_query("Apple's revenue in FY2024", top_k=5, known_tickers=SCOPE,
+                        fiscal_years=YEARS, facts_file=None)
     assert query.tickers == ("AAPL",)
     assert query.fiscal_years == (2024,)
     assert query.top_k == 5

@@ -418,6 +418,8 @@ FINANCIAL_METRICS: dict[str, Metric] = {
     "operating_income": Metric(("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
     "assets": Metric(("total assets",), ("Assets",), "USD"),
     "liabilities": Metric(("total liabilities",), ("Liabilities",), "USD"),
+    "accounts_payable": Metric(("accounts payable",), ("AccountsPayableCurrent",), "USD"),
+    "inventory": Metric(("inventories",), ("InventoryNet",), "USD"),
     "cash": Metric(("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
     "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
                           ("EarningsPerShareDiluted",), "USD/shares"),
@@ -427,16 +429,21 @@ FINANCIAL_METRICS: dict[str, Metric] = {
                              ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
 }
 
-# Every metric that can be looked up is a numeric question by definition, so
-# the aliases above extend the cue list rather than being kept in step with it
-# by hand: "what were Apple's net sales in FY2024" asks for a figure in the
-# company's own words, and read as a prose question it never reached the store
-# that holds the answer.
+# Preserve the established numeric aliases. Newly supported balance-sheet
+# items below need a figure request so prose about them keeps its old reading.
 NUMERIC_CUES = NUMERIC_CUES + tuple(
     alias
-    for metric in FINANCIAL_METRICS.values()
+    for key, metric in FINANCIAL_METRICS.items()
+    if key not in {"accounts_payable", "inventory"}
     for alias in metric.aliases
     if alias not in NUMERIC_CUES
+)
+
+# These newly supported balance-sheet items also occur in prose about risk
+# and accounting. Like stored labels, they need a request for a figure.
+FIGURE_METRIC_CUES = tuple(
+    alias for key in ("accounts_payable", "inventory")
+    for alias in FINANCIAL_METRICS[key].aliases
 )
 
 # How the facts store writes a unit, and what this project calls it. The store
@@ -463,14 +470,20 @@ FACT_SCOPE_UNSUPPORTED = re.compile(
 # the same set. A qualifier turns a line item into a different one: "cost of
 # revenue" and "deferred revenue" are not revenue, and "net income per diluted
 # share" is not net income, so answering any of them with the whole-company
-# figure is confidently wrong. The checker does NOT read this: a claim saying
+# figure is confidently wrong. Both routes reject these concept qualifiers;
+# the router additionally rejects a percentage request. A claim saying
 # revenue was "up 2 percent" is a claim about revenue and stays checkable. The
 # router refusing a superset of what the checker refuses is the safe
 # direction; the reverse would answer what nothing can check. A bare "per
 # share" is deliberately absent, since it would block the EPS aliases.
+FACT_METRIC_QUALIFIER = re.compile(
+    r"\b(?:cost of|deferred|unearned|non-?operating|"
+    r"per (?:diluted|basic) share|purchase obligations?|reserves?|write[-\s]?downs?)\b", re.I,
+)
+# A percentage may describe a valid claim about revenue, while a question
+# asking for a percentage cannot be answered with the stored annual total.
 METRIC_QUALIFIER = re.compile(
-    r"\b(?:cost of|deferred|unearned|non-?operating|percent(?:age)?|"
-    r"per (?:diluted|basic) share)\b", re.I,
+    FACT_METRIC_QUALIFIER.pattern + r"|\bpercent(?:age)?\b", re.I,
 )
 
 # The words a question can hold besides the line item it asks for: the frame
@@ -486,6 +499,7 @@ METRIC_QUALIFIER = re.compile(
 # "total" is here because it never narrows a line item -- it is the income
 # statement's own word for the whole-company row ("Total net sales") -- and
 # "earn" and "generate" because they are verbs of reporting like "report".
+# "value" permits "total value of Accounts Payable" and "Inventories value".
 # A possessive counts only where its owner does, so "the company's" and
 # "Oracle Corporation's" pass and "LinkedIn's" does not; see
 # ``numeric._is_scaffolding``.
@@ -498,7 +512,7 @@ QUESTION_SCAFFOLDING = frozenset("""
     the a an this that its their there total
     in for during at on of to
     fy fye fiscal year years ended ending end period periods
-    company companies group inc corp corporation plc ltd
+    company companies group inc corp corporation plc ltd value
     dollars dollar usd
 """.split())
 
