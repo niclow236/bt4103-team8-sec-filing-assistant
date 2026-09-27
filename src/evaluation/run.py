@@ -219,14 +219,20 @@ class FixedSizeBM25Retriever:
         fixed_chunks: list[dict[str, Any]] = []
         self._source_ids: dict[str, set[str]] = {}
         for accession, chunks in grouped.items():
+            spans: list[tuple[int, int, str]] = []
+            offset = 0
+            for chunk in chunks:
+                spans.append((offset, offset + len(chunk["text"]), chunk["chunk_id"]))
+                offset += len(chunk["text"]) + 1
             text = "\n".join(chunk["text"] for chunk in chunks)
             for start in range(0, len(text), budget):
+                end = start + budget
                 fixed_id = f"fixed-{accession}-{start:08d}"
-                window = text[start:start + budget]
+                window = text[start:end]
                 source_ids = {
-                    chunk["chunk_id"]
-                    for chunk in chunks
-                    if chunk["text"] in window or chunk["text"][:80] in window
+                    chunk_id
+                    for first, last, chunk_id in spans
+                    if first < end and last > start
                 }
                 template = chunks[0]
                 fixed_chunks.append({**template, "chunk_id": fixed_id, "text": window})

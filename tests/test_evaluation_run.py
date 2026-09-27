@@ -134,3 +134,38 @@ def test_c0_is_not_run_on_the_section_aware_bm25_index(tmp_path):
             results_root=tmp_path,
             configurations=("C0",),
         )
+
+
+def test_c0_labels_every_window_a_passage_overlaps(monkeypatch):
+    from pathlib import Path
+
+    from src.evaluation.run import FixedSizeBM25Retriever
+
+    opening = "Total net sales by category were as follows for fiscal 2024 and 2023, in million"
+    first = "Sales. " + opening
+    second = opening + ": iPhone 201,183; total 391,035."
+    metadata = {
+        "accession_no": "acc",
+        "ticker": "AAPL",
+        "company": "Apple",
+        "fiscal_year": 2024,
+        "item": "7",
+        "title": "MD&A",
+        "url": "https://example.com/filing",
+        "content_type": "prose",
+    }
+    monkeypatch.setattr(
+        "src.evaluation.run.iter_chunks",
+        lambda processed_dir: [
+            dict(metadata, chunk_id="a", text=first),
+            dict(metadata, chunk_id="b", text=second),
+        ],
+    )
+
+    c0 = FixedSizeBM25Retriever(Path("unused"), budget=100)
+    question = _question(supporting_chunk_ids=("b",), hard_negative_chunk_ids=())
+
+    assert c0.relevant_chunk_ids(question) == [
+        "fixed-acc-00000000",
+        "fixed-acc-00000100",
+    ]
