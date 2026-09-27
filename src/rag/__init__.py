@@ -27,10 +27,16 @@ It renders citation labels exclusively from the passages' stored metadata.
 looking the figure up and citing the passage that prints it, with no model in
 between. ``answer.py`` offers every numeric question to it first and falls
 back to retrieval and generation whenever it cannot fully support an answer.
+
+``decompose.py`` splits a question that names several companies or years into
+one search per filing and interleaves the results, so the passage budget is
+shared between the filings rather than won by whichever one phrases the topic
+most like the question, and records which sub-question found each passage.
 """
 
 from .answer import answer_question
 from .citations import render_citation, resolve_citations
+from .decompose import Decomposition, SubQuestion, decompose, search_decomposed
 from .numeric import Fact, answer_from_facts, find_metric, lookup_fact
 from .generate import (
     ProviderUnavailable,
@@ -58,6 +64,7 @@ __all__ = [
     "Answer",
     "Citation",
     "CitedSentence",
+    "Decomposition",
     "Fact",
     "Generation",
     "GenerationConfig",
@@ -68,9 +75,12 @@ __all__ = [
     "SentenceCitations",
     "VerificationCheck",
     "VerificationResult",
+    "SubQuestion",
     "answer_from_facts",
     "answer_question",
     "build_prompt",
+    "decompose",
+    "search_decomposed",
     "build_query",
     "chat_model",
     "config_from_env",

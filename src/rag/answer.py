@@ -14,6 +14,7 @@ from ..retrieval.facts import FACTS_FILE
 from ..retrieval.records import Query
 from .citations import resolve_citations
 from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS
+from .decompose import search_decomposed
 from .generate import config_from_env, generate
 from .numeric import answer_from_facts
 from .prompt import build_prompt
@@ -33,6 +34,7 @@ def answer_question(
     on_token: Callable[[str], None] | None = None,
     facts_file: Path = FACTS_FILE,
     use_facts: bool = True,
+    use_decomposition: bool = True,
     parsed: ParsedQuestion | None = None,
 ) -> Answer:
     """The shared entry point for the app and evaluation harness.
@@ -50,6 +52,13 @@ def answer_question(
     only on the same terms this function admits one, ``min_score`` included, so
     it cannot answer where the retrieval path would abstain. ``use_facts=False``
     turns it off, which is what the ablation matrix needs to measure it.
+
+    A question naming more than one company or more than one year is searched
+    once per filing and the results interleaved (#35), so the passage budget is
+    shared between the filings rather than won by whichever one phrases the
+    topic most like the question. ``Answer.sub_questions`` records what it was
+    split into, and is empty where it was not.
+    ``use_decomposition=False`` is the without half of that ablation.
 
     ``parsed`` is the question already read, for a caller that has one -- the
     harness builds its Query from one -- so that reading it twice is a choice
@@ -83,7 +92,9 @@ def answer_question(
                 on_token(looked_up.text)
             return looked_up
 
-    found = retriever.search(query)
+    decomposition = search_decomposed(query, retriever) if use_decomposition else None
+    found = list(decomposition.passages) if decomposition is not None else retriever.search(query)
+    sub_questions = decomposition.labels if decomposition is not None else ()
     passages = [p for p in found if isfinite(p.score) and p.text.strip()
                 and (min_score is None or p.score >= min_score)]
     if not passages:
@@ -104,11 +115,12 @@ def answer_question(
                     reason = "filters_excluded_all"
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(),
                         passages=(), abstained=True, config=config, latency_ms=0.0,
-                        abstention_reason=reason)
+                        abstention_reason=reason, sub_questions=sub_questions)
         if on_token is not None:
             on_token(answer.text)
         return answer
 
     prompt = build_prompt(question, passages)
     generation = generate(prompt, config, llm=llm, max_tokens=max_tokens, on_token=on_token)
-    return resolve_citations(question, generation, prompt.passages)
+    answered = resolve_citations(question, generation, prompt.passages)
+    return replace(answered, sub_questions=sub_questions) if sub_questions else answered

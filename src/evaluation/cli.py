@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> None:
              "#34 ablation, and the honest setting for the generated XBRL benchmark, "
              "whose questions come from that same store.",
     )
+    parser.add_argument(
+        "--no-decompose", dest="use_decomposition", action="store_false",
+        help="Search each question once, instead of once per filing for a question "
+             "naming several companies or years. The without half of the #35 ablation.",
+    )
     args = parser.parse_args(argv)
     if args.top_k < 1:
         parser.error("--top-k must be positive")
@@ -53,7 +58,7 @@ def main(argv: list[str] | None = None) -> None:
                                     DenseRetriever.load(processed_dir=args.processed_dir))
     report = evaluate(questions, retriever, config_from_env(model=args.model),
                       run_id=args.run_id, min_score=args.min_score, top_k=args.top_k,
-                      use_facts=args.use_facts)
+                      use_facts=args.use_facts, use_decomposition=args.use_decomposition)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if args.answers:

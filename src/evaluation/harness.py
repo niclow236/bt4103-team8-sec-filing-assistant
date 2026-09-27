@@ -37,6 +37,7 @@ def evaluate(
     top_k: int = FINAL_K,
     llm: Any | None = None,
     use_facts: bool = True,
+    use_decomposition: bool = True,
 ) -> dict[str, Any]:
     """One configuration per run; count every completed question exactly once.
 
@@ -53,6 +54,12 @@ def evaluate(
     route on measures the store against itself. Each row records which route
     answered it, and ``routes`` counts them, so a run that mixes the two is
     read as what it is rather than as one number.
+
+    ``use_decomposition`` is the same for #35: False searches every question
+    once, instead of once per filing for a question naming several. Each row
+    records the sub-questions its evidence came from, and ``decomposed`` counts
+    the rows that were split, so a run says how many questions the row it is
+    measuring could even apply to.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -74,13 +81,15 @@ def evaluate(
             query = replace(query, fiscal_years=(question.fiscal_year,))
         answer = answer_question(question.question, retriever, config, query=query,
                                  min_score=min_score, llm=llm, use_facts=use_facts,
-                                 parsed=parsed)
+                                 use_decomposition=use_decomposition, parsed=parsed)
         rows.append({"question_id": question.question_id, "run_id": run_id,
                      "question_type": question.question_type,
                      # Which route answered it. The Answer records the provider
                      # that produced it, and a looked-up answer says "facts"
                      # rather than naming the model that was never asked.
                      "route": answer.config.provider,
+                     # What it was split into, empty where it was not (#35).
+                     "sub_questions": list(answer.sub_questions),
                      "answer": answer.to_dict()})
     return {
         "run_id": run_id,
@@ -89,7 +98,9 @@ def evaluate(
         "min_score": min_score,
         "top_k": top_k,
         "use_facts": use_facts,
+        "use_decomposition": use_decomposition,
         "routes": dict(sorted(Counter(row["route"] for row in rows).items())),
+        "decomposed": sum(1 for row in rows if row["sub_questions"]),
         "summary": _rates(rows),
         "by_answerability": {
             "unanswerable": _rates([r for r in rows if r["question_type"] == UNANSWERABLE]),

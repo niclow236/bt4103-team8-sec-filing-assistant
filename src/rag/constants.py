@@ -533,3 +533,20 @@ FACTS_SENTENCE = "{company} reported {label} of {figure} for {period}."
 # specific table of one specific filing, and the search is already narrowed to
 # that filing, so the cost of looking further down is a few string comparisons.
 FACT_PASSAGE_K = 20
+
+# --- decomposing a question -------------------------------------------------
+# How many company-and-year PAIRS a question may be split into (#35). It caps
+# the cross product only, not a split along one axis, and the difference is
+# what the question enumerates: a question naming five years is asking about
+# five years, and a passage from each answers it better than eight from two of
+# them, whereas the pairs of two companies and five years are ten filings
+# nobody named. The passage budget is fixed -- FINAL_K reaches the generator --
+# so at FINAL_K = 8 four pairs already means two passages per filing, and past
+# that a comparison has too little of each side to be one. A question naming
+# more pairs than this splits on companies alone and keeps its years whole.
+#
+# The other cap is not a constant, because it follows from the budget itself:
+# no split may leave a sub-question with no passage at all, so a split is only
+# made where there are at least as many passages to give out as filings to give
+# them to. See ``decompose.decompose``.
+MAX_CROSS_SPLIT = 4
