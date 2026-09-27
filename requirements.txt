@@ -59,3 +59,10 @@ openpyxl==3.1.5
 
 # Tests: python -m pytest
 pytest==9.1.1
+
+# Test coverage: python -m pytest --cov, with the settings in .coveragerc.
+# pytest-cov runs coverage inside pytest. coverage is pinned as well, because
+# .coveragerc is its configuration and everyone's report should come from the
+# same version.
+pytest-cov==7.1.0
+coverage==7.16.2
