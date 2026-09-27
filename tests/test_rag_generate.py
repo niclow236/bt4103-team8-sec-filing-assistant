@@ -606,10 +606,37 @@ def _refusing(status, body=None):
      "set LLM_MODEL to a Mistral model"),
     (500, {"message": "Internal server error"}, r"\(HTTP 500: Internal server error\)$"),
     (502, None, r"\(HTTP 502\)$"),
+    # A validation error lists its problems rather than giving a message, so
+    # the body itself is quoted.
+    (422, {"detail": [{"loc": ["body", "temperature"], "type": "less_than_equal",
+                       "msg": "Input should be less than or equal to 1.5"}]},
+     r"\(HTTP 422: .*less than or equal to 1\.5"),
 ])
 def test_a_refused_request_says_what_to_do(status, body, expected):
     with pytest.raises(ProviderUnavailable, match=expected):
         generate(PROMPT, _mistral_config(), llm=_refusing(status, body))
+
+
+def test_a_refusal_whose_body_was_never_read_still_says_what_to_do():
+    request = httpx.Request("POST", f"{MISTRAL_URL}/chat/completions")
+    unread = httpx.Response(401, stream=httpx.ByteStream(b'{"detail": "expired"}'), request=request)
+
+    class Refusing(ChatMistralAI):
+        def stream(self, *args, **kwargs):
+            raise httpx.HTTPStatusError("refused", request=request, response=unread)
+
+    llm = Refusing(model=DEFAULT_MISTRAL_MODEL, api_key="test-key")
+    with pytest.raises(ProviderUnavailable, match=r"refused the API key \(HTTP 401\)"):
+        generate(PROMPT, _mistral_config(), llm=llm)
+
+
+def test_an_unrelated_error_from_mistral_is_not_disguised():
+    class Broken(ChatMistralAI):
+        def stream(self, *args, **kwargs):
+            raise KeyError("a bug, not an outage")
+
+    with pytest.raises(KeyError):
+        generate(PROMPT, _mistral_config(), llm=Broken(model=DEFAULT_MISTRAL_MODEL, api_key="test-key"))
 
 
 @pytest.mark.parametrize("exception_type, expected", [
