@@ -66,7 +66,7 @@ Python is the primary language, and every model runs locally. The team has no bu
 | Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default |
 | Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) |
 | Holding the answer to a shape | `pydantic`, whose JSON schema Ollama decodes against |
-| Tests | `pytest` |
+| Tests | `pytest`, with `pytest-cov` to measure coverage |
 
 Ollama is not a Python package, so it is installed separately; see [Answering a question](#answering-a-question).
 
@@ -242,6 +242,23 @@ its own small corpus in a temporary directory, and the dense-index tests replace
 the embedding model with a deterministic stand-in, so the suite runs in seconds.
 One test counts tokens with the real bge tokenizer and is skipped if that cannot
 be downloaded.
+
+To see which code the tests reach, run them with coverage:
+
+```bash
+python -m pytest --cov
+```
+
+After the test results it prints a table of the files under `src/`, least
+covered first, with the lines the tests never ran listed beside each. The
+settings are in `.coveragerc`, so everyone measures the same code the same way,
+branches included. `--cov-report=html` writes a browsable version to
+`htmlcov/` instead, which git ignores. Coverage says which lines ran, not
+whether a test checked what they did, so it shows where tests are missing
+rather than proving the ones that exist are good. On 27 September 2026 it
+measured 73% across `src/`: the RAG stage at 96 to 100%, and the pipeline least
+covered, with its command line and passage reader at 0%, the downloader at 11%
+and the verifier at 25% (#49).
 
 Set up environment variables:
 
