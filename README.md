@@ -1021,18 +1021,25 @@ rather than silently ignored. `build_prompt` numbers the passages as sources,
 puts the rules above them, and never shows the model a URL.
 
 Numeric cues include the metric aliases used by the facts router and the XBRL
-labels in `data/index/facts.parquet`. The parser reads only the label column,
-caches it until the file changes, and keeps the built-in cues when the store
-is missing or unreadable. Pass `facts_file=...` to `parse_question` or
-`build_query` to use another store; `answer_question` passes its store through
-automatically. Possessive questions such as "What was Apple's total ..." also
-request figures. Comparative, temporal and unanswerable classifications keep
+labels in `data/index/facts.parquet`. Newly supported labels need a request
+for a figure: "What was Apple's commercial paper?" is numeric, while
+"What is Apple's commercial paper program?" remains factual. The parser reads
+only the label column and caches successful reads until the file changes;
+failed reads are retried. Built-in cues remain available without a store.
+Pass `facts_file=...` to `parse_question` or `build_query` to use another store;
+both `answer_question` and `verify_answer` pass their store through automatically.
+Use `facts_file=None` to disable label lookup, as verification does when it
+only needs sentence-level entities. Possessive total questions match recognised
+company names. Comparative, temporal and unanswerable classifications keep
 their existing priority over numeric cues.
 
 Accounts payable, inventories and net sales questions can use the facts route
 when a matching figure and supporting passage exist. Recognising another
 stored label enables numeric retrieval, but a direct facts answer still needs
 an unambiguous metric mapping and citation; otherwise it falls back to retrieval.
+The supporting search uses the question's metric alias, so "net sales" searches
+for that wording in the filing. Inventory purchase obligations, reserves and
+write-downs require different concepts and cannot be checked against `InventoryNet`.
 
 `parsed.to_query()` gives BM25 a different text from dense search. Once the
 filters confine the search to Meta's FY2025 filing, "Meta's" and "fiscal year

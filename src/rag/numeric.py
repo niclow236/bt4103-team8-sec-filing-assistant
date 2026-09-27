@@ -425,8 +425,12 @@ def supporting_passage(
     *,
     top_k: int = FACT_PASSAGE_K,
     min_score: float | None = None,
+    search_text: str | None = None,
 ) -> RetrievedPassage | None:
     """A passage from the fact's own filing that prints the fact's figure.
+
+    ``search_text`` is the metric alias the question used, when available:
+    Amazon's statement says "net sales", not the canonical "total revenue".
 
     One search over both kinds of passage, preferring a table among whatever
     prints the figure: a statement table is where a figure sits under the
@@ -450,13 +454,14 @@ def supporting_passage(
     by_scale = printed_forms_by_scale(fact.value)
     if not by_scale:
         return None
+    label = search_text if search_text is not None else fact.label
     query = Query(
-        text=f"{fact.label} {fact.ticker} FY{fact.fiscal_year}",
+        text=f"{label} {fact.ticker} FY{fact.fiscal_year}",
         # The line item alone for keyword search. The ticker and the year are
         # already hard filters, and #87 measured that leaving them in the
         # keyword text buries the statement tables under the prose repeating
         # them.
-        keyword_text=fact.label,
+        keyword_text=label,
         tickers=(fact.ticker,),
         fiscal_years=(fact.fiscal_year,),
         top_k=top_k,
@@ -504,7 +509,10 @@ def answer_from_facts(
     fact = lookup_fact(question, tickers, fiscal_years, facts_file=facts_file, frame=frame)
     if fact is None:
         return None
-    passage = supporting_passage(fact, retriever, top_k=top_k, min_score=min_score)
+    passage = supporting_passage(
+        fact, retriever, top_k=top_k, min_score=min_score,
+        search_text=_longest_alias(fact.metric, question),
+    )
     if passage is None:
         return None
 

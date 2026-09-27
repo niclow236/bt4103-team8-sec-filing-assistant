@@ -574,6 +574,36 @@ def test_answer_parser_uses_the_callers_label_store(store, monkeypatch):
     assert answer.abstained is True
 
 
+def test_net_sales_finds_the_statement_beyond_revenue_distractors(store, monkeypatch):
+    from src.retrieval.bm25 import BM25Retriever
+
+    question = "What was Amazon's total net sales in fiscal year 2025?"
+    value = 716_924_000_000
+    path = store(_fact_row(ticker="AMZN", company="Amazon", fiscal_year=2025,
+                           value=float(value), raw_value=str(value),
+                           period_of_report="2025-12-31", period_end="2025-12-31",
+                           period_start="2025-01-01"))
+    table = _passage("Statement (in millions)\n| | 2025 |\n| Total net sales | 716,924 |",
+                     ticker="AMZN", company="Amazon", fiscal_year=2025)
+    chunks = [dataclasses.asdict(table)]
+    for index in range(80):
+        text = ("Total revenue discussion about annual performance and future business prospects."
+                if index < 25 else "Employees technology operations research strategy competition.")
+        chunks.append(dataclasses.asdict(_passage(
+            text=text, chunk_id=f"{ACCESSION}_item7_{index}", ticker="AMZN", company="Amazon",
+            fiscal_year=2025, content_type="prose")))
+    retriever = BM25Retriever(chunks)
+    fact = lookup_fact(question, ("AMZN",), (2025,), facts_file=path)
+    assert fact is not None
+    # The old canonical search loses the statement below its top-20 cutoff.
+    assert supporting_passage(fact, retriever) is None
+    monkeypatch.setattr("src.rag.answer.generate", lambda *a, **k: pytest.fail("generated"))
+    result = answer_question(question, retriever, facts_file=path)
+    assert result.config.provider == FACTS_PROVIDER
+    assert "$716,924,000,000" in result.text
+    assert result.citations[0].chunk_id == table.chunk_id
+
+
 def test_the_looked_up_answer_reaches_a_streaming_caller(store):
     seen = []
     answer = answer_question(QUESTION, StubRetriever(_passage()), llm=_never_called,

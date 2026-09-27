@@ -46,12 +46,14 @@ from .constants import (
     COUNT_AFTER,
     CURRENCY_BEFORE,
     FUTURE_CUES,
+    FIGURE_METRIC_CUES,
     MAGNITUDE_AFTER,
     NUMERIC_CUES,
     OUT_OF_SCOPE_ALIASES,
     PREDICTION_VERBS,
     QUANTITY_BEFORE,
     QUESTION_TYPES,
+    QUESTION_SCAFFOLDING,
     REPORTING_VERBS,
     SEGMENT_ALIASES,
     TEMPORAL_CUES,
@@ -142,12 +144,16 @@ _DESCRIBED_BEFORE = re.compile(
 )
 _DESCRIBING_FORMS = frozenset({"expected", "anticipated"})
 
-# A total still asks for a figure when a possessive company name sits between
-# the verb and "total". Keep word boundaries: "totality" is not a total.
+# Applied after recognised company names and possessives have been removed.
+# Arbitrary words before "total" could swallow "the rationale behind Apple’s".
 _ASKS_TOTAL = re.compile(
     r"\bwhat\s+(?:was|were|is|are)\s+"
-    r"(?:(?:the|its|their)\s+|(?:[\w&.-]+\s+){0,5}[\w&.-]+['’]s?\s+)?total\b",
+    r"(?:(?:the|its|their)\s+)?total\b",
     re.IGNORECASE,
+)
+
+_FIGURE_SCAFFOLDING = QUESTION_SCAFFOLDING | frozenset(
+    "compare and between from through over since change changed will next last as".split()
 )
 
 
@@ -257,7 +263,7 @@ def parse_question(
     *,
     known_tickers: Iterable[str] | None = None,
     fiscal_years: tuple[int, int] = DEFAULT_FISCAL_YEARS,
-    facts_file: Path = FACTS_FILE,
+    facts_file: Path | None = FACTS_FILE,
 ) -> ParsedQuestion:
     """Read one question into a ParsedQuestion.
 
@@ -266,6 +272,7 @@ def parse_question(
     inclusive range a year has to fall in to become a filter.
     ``facts_file`` supplies additional numeric cues from its XBRL labels.
     A missing or unreadable store leaves the built-in cues available.
+    ``None`` disables label lookup, for callers that only need entity filters.
     """
     if not question or not question.strip():
         raise ValueError("question must not be blank")
@@ -273,10 +280,12 @@ def parse_question(
 
     tickers, out_of_scope = _companies(question, scope)
     years, bad_years = _years(question, fiscal_years)
+    figure_text = _figure_text(question, scope)
     wants_figures = bool(
         _any_cue(question, NUMERIC_CUES)
-        or _ASKS_TOTAL.search(question)
-        or _mentions_fact_label(question, facts_file)
+        or _ASKS_TOTAL.search(figure_text)
+        or _asks_for_label(figure_text, _FIGURE_METRIC_PATTERN)
+        or (facts_file is not None and _mentions_fact_label(figure_text, facts_file))
     )
 
     question_type = _classify(
@@ -536,33 +545,62 @@ def _label_words(text: str) -> str:
 
 
 @lru_cache(maxsize=4)
+def _figure_entities(scope: frozenset[str]) -> re.Pattern[str]:
+    names = scope | frozenset(COMPANY_ALIASES) | {
+        alias for group in (COMPANY_ALIASES, OUT_OF_SCOPE_ALIASES)
+        for aliases in group.values() for alias in aliases
+    }
+    pattern = _alias_pattern(names)
+    return re.compile(pattern.pattern + r"(?:['’]s\b|['’](?!\w))?", re.I)
+
+
+def _figure_text(question: str, scope: frozenset[str]) -> str:
+    """Remove only named entities and dates before checking a figure request."""
+    text = _figure_entities(scope).sub(" ", question)
+    return " ".join(_YEAR.sub(" ", _SHORT_RANGE.sub(r"\1\2 \3 \1\4", text)).split())
+
+
+_FIGURE_METRIC_PATTERN = _alias_pattern(FIGURE_METRIC_CUES)
+
+
+def _asks_for_label(text: str, pattern: re.Pattern[str]) -> bool:
+    """A full line item plus figure-question scaffolding, with no prose topic.
+
+    Even two-word labels can name a topic: "commercial paper program" asks
+    about a program, whereas "what was commercial paper" asks for its balance.
+    Keep the legacy cues separate so their existing classifications stay put.
+    """
+    normal = _label_words(text)
+    if not pattern.search(normal):
+        return False
+    return set(pattern.sub(" ", normal).split()).issubset(_FIGURE_SCAFFOLDING)
+
+
+@lru_cache(maxsize=4)
 def _fact_label_pattern(path: Path, mtime_ns: int, size: int) -> re.Pattern[str] | None:
-    """Read only the label column, once per store revision, including failed reads.
+    """Read only the label column and compile once per successful store revision.
 
     Full labels are cues, not their individual words: "Assets Held for Sale"
     must not turn every mention of "sale" into a request for a figure. The
     metric aliases in constants cover everyday names such as "net sales".
     """
-    try:
-        import pandas as pd
+    import pandas as pd
 
-        labels = pd.read_parquet(path, columns=["label"])["label"].dropna().unique()
-        cues = {_label_words(label) for label in labels if isinstance(label, str)} - {""}
-        return _alias_pattern(cues) if cues else None
-    except Exception:
-        # Like the facts route, this optional store must not prevent retrieval
-        # on a fresh clone or while the parquet is unavailable.
-        return None
+    labels = pd.read_parquet(path, columns=["label"])["label"].dropna().unique()
+    cues = {_label_words(label) for label in labels if isinstance(label, str)} - {""}
+    return _alias_pattern(cues) if cues else None
 
 
 def _mentions_fact_label(question: str, facts_file: Path) -> bool:
     try:
-        path = Path(facts_file).resolve()
+        path = Path(facts_file).absolute()
         stat = path.stat()
-    except OSError:
+        pattern = _fact_label_pattern(path, stat.st_mtime_ns, stat.st_size)
+    except Exception:
+        # Failure is deliberately outside the cached function: a temporary
+        # read failure must be retried even if the file's timestamp is unchanged.
         return False
-    pattern = _fact_label_pattern(path, stat.st_mtime_ns, stat.st_size)
-    return pattern is not None and pattern.search(_label_words(question)) is not None
+    return pattern is not None and _asks_for_label(question, pattern)
 
 
 def _any_cue(question: str, cues: Iterable[str]) -> bool:

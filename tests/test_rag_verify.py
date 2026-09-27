@@ -320,6 +320,71 @@ def test_an_untrimmed_question_still_verifies(store):
     assert result.verification is not None
 
 
+def test_verification_uses_custom_labels_but_sentence_scope_does_not(store, monkeypatch):
+    import src.rag.query as query_module
+
+    pd.DataFrame([fact() | {"label": "Marketable Securities"}]).to_parquet(store)
+    seen = []
+    read = query_module._mentions_fact_label
+
+    def tracked(text, path):
+        seen.append(path)
+        return read(text, path)
+
+    monkeypatch.setattr(query_module, "_mentions_fact_label", tracked)
+    question = "What was Apple's Marketable Securities in FY2024?"
+    structured = GroundedAnswer(answerable=True, sentences=(
+        CitedSentence(text="Apple held securities of $5.2 billion.", sources=(1,)),
+        CitedSentence(text="Apple held securities of $5.2 billion in FY2024.", sources=(1,)),
+    ))
+    generation = Generation(text=structured.render(), answer=structured, raw=structured.model_dump_json(),
+                            config=CONFIG, latency_ms=1.0, input_tokens=10, output_tokens=10,
+                            stop_reason="stop")
+    original = resolve_citations(question, generation, [passage()])
+    result = verify_answer(original, facts_file=store)
+    assert result.verification.question_type == "numeric"
+    assert len(checks(result, "fact")) == 2
+    assert seen == [store]
+
+
+@pytest.mark.parametrize("question, label", [
+    ("What did Apple say about risks to its assets?", "Assets"),
+    ("What is Apple's commercial paper program?", "Commercial Paper"),
+    ("What does Apple say about inventories management?", "Inventories"),
+])
+def test_label_topics_do_not_create_spurious_fact_checks(question, label, store):
+    pd.DataFrame([fact() | {"label": label}]).to_parquet(store)
+    claim = "The company describes its financing policies."
+    result = verify_answer(answer(claim, question=question, passages=[passage(claim)]), facts_file=store)
+    assert result.verification.question_type == "factual"
+    assert checks(result, "fact") == []
+
+
+@pytest.mark.parametrize("item", [
+    "inventory purchase obligations", "inventories purchase obligations",
+    "inventory reserves", "inventories reserves", "inventory write-downs", "inventories write-downs",
+    "write-downs of inventories",
+])
+@pytest.mark.parametrize("value", [5_200_000_000, 30_000_000_000])
+def test_qualified_inventory_figures_never_use_inventory_net(item, value, store):
+    # A different balance must neither contradict nor validate this claim.
+    pd.DataFrame([fact() | {"concept": "InventoryNet", "label": "Inventories", "value": value}]).to_parquet(store)
+    claim = f"Apple's {item} were $30 billion."
+    result = verify_answer(answer(claim, question="What was Apple's inventories value in FY2024?",
+                                  passages=[passage(claim)]), facts_file=store)
+    check, = checks(result, "fact")
+    assert check.status == "unverified"
+    assert "qualified line item" in check.reason
+
+
+def test_unqualified_inventories_still_verify_against_inventory_net(store):
+    pd.DataFrame([fact() | {"concept": "InventoryNet", "label": "Inventories"}]).to_parquet(store)
+    claim = "Apple's inventories were $5.2 billion."
+    result = verify_answer(answer(claim, question="What was Apple's inventories value in FY2024?",
+                                  passages=[passage(claim)]), facts_file=store)
+    assert checks(result, "fact")[0].status == "supported"
+
+
 def test_a_table_without_a_declared_scale_is_unverified_not_mismatch(store):
     table = passage("| Total assets | $364,980 | $352,583 |", content_type="table")
     scaled = passage("In millions" + chr(10) * 2 + "| Total assets | $364,980 | $352,583 |",

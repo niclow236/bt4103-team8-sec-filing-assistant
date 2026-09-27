@@ -429,16 +429,21 @@ FINANCIAL_METRICS: dict[str, Metric] = {
                              ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
 }
 
-# Every metric that can be looked up is a numeric question by definition, so
-# the aliases above extend the cue list rather than being kept in step with it
-# by hand: "what were Apple's net sales in FY2024" asks for a figure in the
-# company's own words, and read as a prose question it never reached the store
-# that holds the answer.
+# Preserve the established numeric aliases. Newly supported balance-sheet
+# items below need a figure request so prose about them keeps its old reading.
 NUMERIC_CUES = NUMERIC_CUES + tuple(
     alias
-    for metric in FINANCIAL_METRICS.values()
+    for key, metric in FINANCIAL_METRICS.items()
+    if key not in {"accounts_payable", "inventory"}
     for alias in metric.aliases
     if alias not in NUMERIC_CUES
+)
+
+# These newly supported balance-sheet items also occur in prose about risk
+# and accounting. Like stored labels, they need a request for a figure.
+FIGURE_METRIC_CUES = tuple(
+    alias for key in ("accounts_payable", "inventory")
+    for alias in FINANCIAL_METRICS[key].aliases
 )
 
 # How the facts store writes a unit, and what this project calls it. The store
@@ -465,14 +470,20 @@ FACT_SCOPE_UNSUPPORTED = re.compile(
 # the same set. A qualifier turns a line item into a different one: "cost of
 # revenue" and "deferred revenue" are not revenue, and "net income per diluted
 # share" is not net income, so answering any of them with the whole-company
-# figure is confidently wrong. The checker does NOT read this: a claim saying
+# figure is confidently wrong. Both routes reject these concept qualifiers;
+# the router additionally rejects a percentage request. A claim saying
 # revenue was "up 2 percent" is a claim about revenue and stays checkable. The
 # router refusing a superset of what the checker refuses is the safe
 # direction; the reverse would answer what nothing can check. A bare "per
 # share" is deliberately absent, since it would block the EPS aliases.
+FACT_METRIC_QUALIFIER = re.compile(
+    r"\b(?:cost of|deferred|unearned|non-?operating|"
+    r"per (?:diluted|basic) share|purchase obligations?|reserves?|write[-\s]?downs?)\b", re.I,
+)
+# A percentage may describe a valid claim about revenue, while a question
+# asking for a percentage cannot be answered with the stored annual total.
 METRIC_QUALIFIER = re.compile(
-    r"\b(?:cost of|deferred|unearned|non-?operating|percent(?:age)?|"
-    r"per (?:diluted|basic) share)\b", re.I,
+    FACT_METRIC_QUALIFIER.pattern + r"|\bpercent(?:age)?\b", re.I,
 )
 
 # The words a question can hold besides the line item it asks for: the frame
