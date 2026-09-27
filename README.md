@@ -79,12 +79,14 @@ bt4103-team8-sec-filing-assistant/
 ├── README.md
 ├── GIT_WORKFLOW.md          # branching workflow and Git setup
 ├── requirements.txt
+├── pytest.ini               # test settings: python -m pytest from the project root
+├── .coveragerc              # coverage settings for python -m pytest --cov
 ├── .gitignore
 ├── .env.example             # template for local settings (copy to .env)
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
-│   ├── sample/              # small committed sample
+│   ├── sample/              # for a small committed sample (none yet)
 │   ├── raw/                 # full filings (git-ignored)
 │   ├── interim/             # parsed sections (git-ignored)
 │   ├── processed/           # chunks ready for indexing (git-ignored)
@@ -126,17 +128,29 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── answer.py        #   the entry point: route, retrieve, abstain or answer
 │   │   ├── constants.py     #   company aliases, cue words, the prompt template, generation settings
 │   │   └── records.py       #   GroundedAnswer, Generation, Answer, Citation and GenerationConfig
-│   ├── evaluation/          # benchmark and metrics
+│   ├── evaluation/          # benchmark, metrics and the two evaluation commands
+│   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
+│   │   ├── cli.py           #   python -m src.evaluation: answers a benchmark, reports abstentions
+│   │   ├── harness.py       #   evaluate(): one configuration end to end through answer_question
+│   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
+│   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
-│   └── app/                 # Streamlit or Gradio UI
+│   └── app/                 # the app; so far the viewer for saved answers
+│       └── answers.py       #   renders evaluation answers as an HTML page to review
+├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
+│   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text
+│   └── test_data/           #   the team's 48 test questions
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
+├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id
 └── docs/                    # reports, minutes, references
+    └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
 ```
 
 ### How the pipeline is put together
