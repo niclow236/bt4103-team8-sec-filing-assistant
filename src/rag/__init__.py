@@ -22,10 +22,16 @@ answer, the latency and the token counts.
 ``citations.py`` resolves a completed generation against ``prompt.passages``,
 removes invented markers from displayed text, and attaches sentence warnings.
 It renders citation labels exclusively from the passages' stored metadata.
+
+``numeric.py`` answers a numeric question from the XBRL facts store instead,
+looking the figure up and citing the passage that prints it, with no model in
+between. ``answer.py`` offers every numeric question to it first and falls
+back to retrieval and generation whenever it cannot fully support an answer.
 """
 
 from .answer import answer_question
 from .citations import render_citation, resolve_citations
+from .numeric import Fact, answer_from_facts, find_metric, lookup_fact
 from .generate import (
     ProviderUnavailable,
     chat_model,
@@ -52,6 +58,7 @@ __all__ = [
     "Answer",
     "Citation",
     "CitedSentence",
+    "Fact",
     "Generation",
     "GenerationConfig",
     "GroundedAnswer",
@@ -61,12 +68,15 @@ __all__ = [
     "SentenceCitations",
     "VerificationCheck",
     "VerificationResult",
-    "build_prompt",
+    "answer_from_facts",
     "answer_question",
+    "build_prompt",
     "build_query",
     "chat_model",
     "config_from_env",
+    "find_metric",
     "generate",
+    "lookup_fact",
     "parse_question",
     "record_verification",
     "render_citation",

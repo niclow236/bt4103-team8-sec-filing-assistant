@@ -23,6 +23,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output", type=Path, required=True, help="JSON report including rates and answers")
     parser.add_argument("--answers", type=Path, help="Optional answer JSONL for the browser viewer")
+    parser.add_argument(
+        "--no-facts", dest="use_facts", action="store_false",
+        help="Send every question to retrieval and generation, instead of looking a "
+             "numeric one up in the XBRL facts store first. The without half of the "
+             "#34 ablation, and the honest setting for the generated XBRL benchmark, "
+             "whose questions come from that same store.",
+    )
     args = parser.parse_args(argv)
     if args.top_k < 1:
         parser.error("--top-k must be positive")
@@ -45,7 +52,8 @@ def main(argv: list[str] | None = None) -> None:
         retriever = HybridRetriever(BM25Retriever.load(processed_dir=args.processed_dir),
                                     DenseRetriever.load(processed_dir=args.processed_dir))
     report = evaluate(questions, retriever, config_from_env(model=args.model),
-                      run_id=args.run_id, min_score=args.min_score, top_k=args.top_k)
+                      run_id=args.run_id, min_score=args.min_score, top_k=args.top_k,
+                      use_facts=args.use_facts)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if args.answers:

@@ -36,6 +36,7 @@ def evaluate(
     min_score: float | None = None,
     top_k: int = FINAL_K,
     llm: Any | None = None,
+    use_facts: bool = True,
 ) -> dict[str, Any]:
     """One configuration per run; count every completed question exactly once.
 
@@ -44,6 +45,14 @@ def evaluate(
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
+
+    ``use_facts`` is the with/without half of the numeric-routing ablation
+    (#34): False sends every question to retrieval and generation. It matters
+    for the generated XBRL benchmark in particular, whose questions are built
+    from the same ``facts.parquet`` the route answers from, so a run with the
+    route on measures the store against itself. Each row records which route
+    answered it, and ``routes`` counts them, so a run that mixes the two is
+    read as what it is rather than as one number.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -57,21 +66,30 @@ def evaluate(
     config = config if config is not None else config_from_env()
     rows = []
     for question in questions:
-        query = parse_question(question.question).to_query(top_k=top_k)
+        parsed = parse_question(question.question)
+        query = parsed.to_query(top_k=top_k)
         if question.ticker is not None:
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
         answer = answer_question(question.question, retriever, config, query=query,
-                                 min_score=min_score, llm=llm)
+                                 min_score=min_score, llm=llm, use_facts=use_facts,
+                                 parsed=parsed)
         rows.append({"question_id": question.question_id, "run_id": run_id,
-                     "question_type": question.question_type, "answer": answer.to_dict()})
+                     "question_type": question.question_type,
+                     # Which route answered it. The Answer records the provider
+                     # that produced it, and a looked-up answer says "facts"
+                     # rather than naming the model that was never asked.
+                     "route": answer.config.provider,
+                     "answer": answer.to_dict()})
     return {
         "run_id": run_id,
         "retriever": retriever.name,
         "config": config.to_dict(),
         "min_score": min_score,
         "top_k": top_k,
+        "use_facts": use_facts,
+        "routes": dict(sorted(Counter(row["route"] for row in rows).items())),
         "summary": _rates(rows),
         "by_answerability": {
             "unanswerable": _rates([r for r in rows if r["question_type"] == UNANSWERABLE]),
