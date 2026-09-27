@@ -419,7 +419,7 @@ FINANCIAL_METRICS: dict[str, Metric] = {
     "assets": Metric(("total assets",), ("Assets",), "USD"),
     "liabilities": Metric(("total liabilities",), ("Liabilities",), "USD"),
     "accounts_payable": Metric(("accounts payable",), ("AccountsPayableCurrent",), "USD"),
-    "inventory": Metric(("inventories", "inventory"), ("InventoryNet",), "USD"),
+    "inventory": Metric(("inventories",), ("InventoryNet",), "USD"),
     "cash": Metric(("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
     "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
                           ("EarningsPerShareDiluted",), "USD/shares"),
