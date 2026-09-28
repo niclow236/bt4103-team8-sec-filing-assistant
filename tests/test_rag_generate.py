@@ -385,6 +385,9 @@ def test_a_provider_chosen_over_the_environment_uses_its_own_default_model(provi
 def test_an_argument_chooses_the_provider_over_the_environment():
     assert config_from_env(provider="ollama", environ={"LLM_PROVIDER": "mistral"}).provider == "ollama"
     assert config_from_env(environ={"LLM_PROVIDER": "  "}).provider == "ollama"
+    # A typo in .env does not block choosing a provider with the argument.
+    config = config_from_env(provider="ollama", environ={"LLM_PROVIDER": "mistrl", "LLM_MODEL": "x"})
+    assert (config.provider, config.model) == ("ollama", DEFAULT_MODEL)
 
 
 def test_an_unknown_provider_setting_is_refused():

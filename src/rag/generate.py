@@ -68,6 +68,7 @@ from .constants import (
     MAX_OUTPUT_TOKENS,
     MISTRAL,
     MISTRAL_API_KEY_ENV,
+    MISTRAL_BASE_URL_ENV,
     MISTRAL_CONSOLE,
     NUM_CTX,
     OLLAMA,
@@ -266,8 +267,10 @@ def config_from_env(
     .env) loaded into it first; ``environ`` replaces both, for a test.
     """
     env = _environment(environ, dotenv)
-    configured = _provider_name(env.get(LLM_PROVIDER_ENV))
-    chosen_provider = _provider_name(provider) if (provider or "").strip() else configured
+    # Checked only when it is the one used, so a typo in .env does not block
+    # choosing a provider with the argument.
+    configured = (env.get(LLM_PROVIDER_ENV) or "").strip().lower() or DEFAULT_PROVIDER
+    chosen_provider = _provider_name(provider if (provider or "").strip() else configured)
     default = DEFAULT_MISTRAL_MODEL if chosen_provider == MISTRAL else DEFAULT_MODEL
     configured_model = env.get(LLM_MODEL_ENV) if chosen_provider == configured else None
     chosen = (model or configured_model or "").strip() or default
@@ -347,7 +350,7 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, dotenv: Path)
             f"'Setting up Mistral' in the README says, or set {LLM_PROVIDER_ENV}={OLLAMA} "
             f"to answer locally"
         )
-    return _mistral_client(config.model, key, os.environ.get("MISTRAL_BASE_URL"))
+    return _mistral_client(config.model, key, os.environ.get(MISTRAL_BASE_URL_ENV))
 
 
 @lru_cache(maxsize=8)
