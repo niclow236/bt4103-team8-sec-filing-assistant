@@ -362,10 +362,16 @@ DEFAULT_MISTRAL_MODEL = "ministral-8b-2512"
 # is passed in. All are read from the environment, with the project's .env loaded
 # into it first.
 LLM_PROVIDER_ENV = "LLM_PROVIDER"
+# The model for the provider LLM_PROVIDER names. A provider chosen over it, with
+# ``--provider``, uses its own default instead: an Ollama model name means
+# nothing to Mistral's API, and the reverse.
 LLM_MODEL_ENV = "LLM_MODEL"
 LLM_BASE_URL_ENV = "LLM_BASE_URL"
 # The Mistral key: each teammate's own, from their own account, never a shared one.
 MISTRAL_API_KEY_ENV = "MISTRAL_API_KEY"
+# Where a teammate makes their own Mistral key, named in every message that asks
+# for one.
+MISTRAL_CONSOLE = "https://console.mistral.ai"
 # Ollama's own default address, which is always the computer the code runs on:
 # every member runs their own Ollama. 127.0.0.1 rather than localhost, which
 # Windows can resolve to ::1 first, where Ollama is not listening.

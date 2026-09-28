@@ -899,7 +899,7 @@ neither is required:
 | Variable | Default | When to set it |
 |---|---|---|
 | `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral) |
-| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral | to use another of the chosen provider's models, named as that provider names it |
+| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks the other one with `--provider` uses that provider's default |
 
 ### Setting up Ollama
 
@@ -961,8 +961,8 @@ Claude Code, add `"permissions": {"deny": ["Read(**/.env)"]}` to your own
 Keys and make a new one.
 
 A missing key, a key Mistral refuses, a model your plan does not include, the
-rate limit and a lost connection each raise `ProviderUnavailable` saying what to
-do. Nothing is retried, and nothing falls back to Ollama by itself: set
+rate limit, a lost connection and an answer the API ends on an error each raise
+`ProviderUnavailable` saying what to do. Nothing is retried, and nothing falls back to Ollama by itself: set
 `LLM_PROVIDER=ollama` to answer locally again.
 
 `ministral-8b-2512` is the default because it did best of the four suitable
@@ -1323,7 +1323,8 @@ python -m src.app.answers logs/evaluation-answers.jsonl --output logs/evaluation
 
 Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
 `--provider ollama` or `--provider mistral` to override `LLM_PROVIDER`, or
-`--model` to choose one of that provider's models. The JSON report records these
+`--model` to choose one of that provider's models. A `--provider` other than
+`LLM_PROVIDER` uses its own default model rather than `LLM_MODEL`. The JSON report records these
 settings, individual answers and aggregate rates. The command needs a populated
 benchmark and built indexes. Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`.

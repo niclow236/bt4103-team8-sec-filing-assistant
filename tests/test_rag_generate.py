@@ -370,6 +370,18 @@ def test_the_model_setting_applies_to_either_provider():
     assert (config.provider, config.model) == ("mistral", "ministral-14b-2512")
 
 
+@pytest.mark.parametrize("provider, environ, expected", [
+    # A teammate's .env set up for Ollama, running the evaluation with --provider mistral.
+    ("mistral", {"LLM_MODEL": "llama3.1:8b"}, DEFAULT_MISTRAL_MODEL),
+    ("ollama", {"LLM_PROVIDER": "mistral", "LLM_MODEL": "ministral-14b-2512"}, DEFAULT_MODEL),
+    # The provider .env already names: its model still applies.
+    ("mistral", {"LLM_PROVIDER": "mistral", "LLM_MODEL": "ministral-14b-2512"}, "ministral-14b-2512"),
+    ("Ollama ", {"LLM_MODEL": "llama3.1:8b"}, "llama3.1:8b"),
+])
+def test_a_provider_chosen_over_the_environment_uses_its_own_default_model(provider, environ, expected):
+    assert config_from_env(provider=provider, environ=environ).model == expected
+
+
 def test_an_argument_chooses_the_provider_over_the_environment():
     assert config_from_env(provider="ollama", environ={"LLM_PROVIDER": "mistral"}).provider == "ollama"
     assert config_from_env(environ={"LLM_PROVIDER": "  "}).provider == "ollama"
@@ -423,8 +435,23 @@ def test_chat_model_is_chat_mistral_ai_with_the_key_from_the_dotenv_file(tmp_pat
     assert isinstance(llm, ChatMistralAI)
     assert llm.model == DEFAULT_MISTRAL_MODEL
     assert llm.mistral_api_key.get_secret_value() == "test-key"
-    assert (llm.temperature, llm.max_tokens) == (0.0, MAX_OUTPUT_TOKENS)
     assert (llm.max_retries, llm.timeout) == (1, HOSTED_TIMEOUT_S)
+
+
+def test_a_temperature_the_api_accepts_is_not_refused_when_the_model_is_built(tmp_path, clean_env):
+    # ChatMistralAI's own check stops at 1; Mistral's API took 1.2 on 28 September
+    # 2026 and refuses above 1.5 with a 422, which the error handling reads.
+    chat_model(_mistral_config(temperature=1.2), dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
+
+
+def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path, clean_env):
+    config = _mistral_config()
+    first = chat_model(config, dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
+    assert chat_model(config, dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key")) is first
+    os.environ.pop("MISTRAL_API_KEY")
+    other = chat_model(config, dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="another-key"))
+    assert other is not first
+    assert other.mistral_api_key.get_secret_value() == "another-key"
 
 
 @pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
@@ -602,15 +629,26 @@ def _refusing(status, body=None):
     (401, {"message": "Unauthorized"}, r"refused the API key \(HTTP 401: Unauthorized\)"),
     (403, {"message": "Model not available on your tier"}, "plan does not include"),
     (429, {"message": "Requests rate limit exceeded"}, "rate limit"),
-    (400, {"object": "error", "message": "Invalid model: llama3.2:3b", "type": "invalid_model"},
+    # The body Mistral's API sent for an Ollama model name, on 28 September 2026.
+    (400, {"object": "error", "message": "Invalid model: llama3.1:8b", "type": "invalid_model",
+           "param": None, "code": "1500"},
      "set LLM_MODEL to a Mistral model"),
+    # A refusal that mentions a model without the model being wrong is not read
+    # as one: the advice would name the model already in use.
+    (400, {"object": "error", "type": "invalid_request_error",
+           "message": "Prompt contains 140000 tokens, too large for model with 131072 maximum "
+                      "context length"},
+     r"^Mistral's API refused the request \(HTTP 400: Prompt contains 140000 tokens"),
     (500, {"message": "Internal server error"}, r"\(HTTP 500: Internal server error\)$"),
     (502, None, r"\(HTTP 502\)$"),
-    # A validation error lists its problems rather than giving a message, so
-    # the body itself is quoted.
-    (422, {"detail": [{"loc": ["body", "temperature"], "type": "less_than_equal",
-                       "msg": "Input should be less than or equal to 1.5"}]},
-     r"\(HTTP 422: .*less than or equal to 1\.5"),
+    # The body Mistral's API sent for temperature 2, on 28 September 2026: the
+    # message is a list of problems, each read as where it is and what is wrong.
+    (422, {"object": "error", "type": "invalid_request_error", "param": None, "code": None,
+           "message": {"detail": [{"type": "less_than_equal", "loc": ["body", "temperature"],
+                                   "msg": "Input should be less than or equal to 1.5",
+                                   "input": 2, "ctx": {"le": 1.5}}]}},
+     r"^Mistral's API refused the request \(HTTP 422: body\.temperature: Input should be less "
+     r"than or equal to 1\.5\)$"),
 ])
 def test_a_refused_request_says_what_to_do(status, body, expected):
     with pytest.raises(ProviderUnavailable, match=expected):
@@ -649,6 +687,37 @@ def test_no_response_from_mistral_says_what_to_do(exception_type, expected):
 
     with pytest.raises(ProviderUnavailable, match=expected):
         generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+
+
+def test_a_connection_dropped_part_way_through_an_answer_says_what_to_do():
+    class Dropped(httpx.SyncByteStream):
+        def __iter__(self):
+            yield _sse(json.dumps(ANSWER)).split("data: [DONE]")[0][:200].encode()
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body")
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Dropped())
+
+    with pytest.raises(ProviderUnavailable, match="connection to Mistral's API at .* broke off "
+                                                  r"\(RemoteProtocolError"):
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+
+
+def test_an_answer_mistral_ended_on_an_error_is_not_handed_on_as_one():
+    half = json.dumps(ANSWER)[:95]
+    with pytest.raises(ProviderUnavailable, match="stopped 'ministral-8b-2512' part-way with an error"):
+        generate(PROMPT, _mistral_config(), llm=_mistral_serving(half, finish_reason="error"))
+
+
+def test_a_chat_model_for_the_other_provider_is_refused():
+    def never(request):
+        raise AssertionError("no request should be sent")
+
+    with pytest.raises(ValueError, match="ChatOllama but the config records the provider 'mistral'"):
+        generate(PROMPT, _mistral_config(), llm=_ollama(never, model=DEFAULT_MISTRAL_MODEL))
+    with pytest.raises(ValueError, match="ChatMistralAI but the config records the provider 'ollama'"):
+        generate(PROMPT, _config(model=DEFAULT_MISTRAL_MODEL), llm=_mistral(never))
 
 
 # --- the evaluation command -----------------------------------------------------------------

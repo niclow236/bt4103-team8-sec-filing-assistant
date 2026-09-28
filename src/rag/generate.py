@@ -13,8 +13,9 @@ LangChain is the client: ``ChatOllama`` for Ollama, ``ChatMistralAI`` for
 Mistral. Each streams and reports the token counts, and both implement the
 chat-model interface every LangChain model shares. That interface is the
 provider interface here: :func:`generate` takes any chat model, so a test passes
-a fake one, and the two providers differ only in how a request is sent and how a
-failure reads, both kept in this module.
+a fake one. What differs between the two providers (how the client is built, how
+a request is sent, how a failure and a stop read) is kept in one ``_Provider``
+each, at the end of this module.
 
 Pydantic fixes the shape of the answer. The JSON schema of
 ``GroundedAnswer.for_sources(n)`` is sent with every request, as Ollama's output
@@ -42,6 +43,8 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Generator, Mapping
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -65,6 +68,7 @@ from .constants import (
     MAX_OUTPUT_TOKENS,
     MISTRAL,
     MISTRAL_API_KEY_ENV,
+    MISTRAL_CONSOLE,
     NUM_CTX,
     OLLAMA,
     PROMPT_TEMPLATE_ID,
@@ -72,11 +76,6 @@ from .constants import (
 )
 from .prompt import GroundedPrompt
 from .records import Generation, GenerationConfig, GroundedAnswer, render_sentence
-
-# Where a teammate makes their own Mistral key, named in every message that asks
-# for one.
-MISTRAL_CONSOLE = "https://console.mistral.ai"
-MISTRAL_API_URL = "https://api.mistral.ai/v1"
 
 
 class ProviderUnavailable(RuntimeError):
@@ -135,15 +134,22 @@ def stream(
             f"prompt was rendered from template {prompt.template_id!r} but the config "
             f"records {config.prompt_template_id!r}; the results row would lie"
         )
+    provider = _provider(config)
     model = llm if llm is not None else chat_model(config)
     served = getattr(model, "model", None)
     if served is not None and served != config.model:
         raise ValueError(
             f"the chat model serves {served!r} but the config records {config.model!r}"
         )
+    client = _client_package(model)
+    if client is not None and client != provider.package:
+        raise ValueError(
+            f"the chat model is a {type(model).__name__} but the config records the "
+            f"provider {config.provider!r}"
+        )
 
     schema = GroundedAnswer.for_sources(prompt.n_sources)
-    request = _request(config, model, schema, max_tokens)
+    request = provider.request(config, model, schema, max_tokens)
 
     started = perf_counter()
     raw = ""
@@ -161,11 +167,13 @@ def stream(
                 yield prose[len(shown):]
                 shown = prose
     except Exception as error:
-        unavailable = _unavailable(error, model, config)
+        unavailable = provider.unavailable(error, model, config)
         if unavailable is None:
             raise
         raise unavailable from error
     latency_ms = (perf_counter() - started) * 1000.0
+    metadata = getattr(merged, "response_metadata", None) or {}
+    stop_reason = provider.stop_reason(metadata, config)
 
     answer, parse_error = _validate(raw, schema)
     if answer is not None:
@@ -180,7 +188,6 @@ def stream(
         yield text[len(shown):]
 
     usage = getattr(merged, "usage_metadata", None) or {}
-    metadata = getattr(merged, "response_metadata", None) or {}
     return Generation(
         text=text,
         answer=answer,
@@ -189,45 +196,23 @@ def stream(
         latency_ms=latency_ms,
         input_tokens=usage.get("input_tokens"),
         output_tokens=usage.get("output_tokens"),
-        # Ollama calls it done_reason and Mistral finish_reason; both say
-        # "length" for an answer cut off at the output ceiling.
-        stop_reason=metadata.get("done_reason") or metadata.get("finish_reason"),
+        stop_reason=stop_reason,
         parse_error=parse_error,
     )
 
 
-def _request(
-    config: GenerationConfig, model: Any, schema: type[GroundedAnswer], max_tokens: int
-) -> dict[str, Any]:
-    """What goes to the chat model with the messages: the schema and the settings.
+def _client_package(model: Any) -> str | None:
+    """The LangChain package a chat model's client comes from, or None for a fake.
 
-    The same schema and settings for both providers, in the form each API takes.
-    Ollama constrains decoding to the schema given as its output ``format``, and
-    takes the settings as ``options``, the context window among them, since its
-    own default window is smaller than the prompt. Mistral takes the schema as a
-    strict JSON-schema response format and the settings as named fields; its
-    window is the model's own.
+    Read from the class and its bases, so a subclass of ``ChatOllama`` counts as
+    Ollama's. :func:`stream` refuses a model whose package is not the config's
+    provider's, since the request it would send is the other API's.
     """
-    if config.provider == MISTRAL:
-        return {
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "GroundedAnswer",
-                    "schema": schema.model_json_schema(),
-                    "strict": True,
-                },
-            },
-            "temperature": config.temperature,
-            "max_tokens": max_tokens,
-        }
-    options = {"temperature": config.temperature, "num_ctx": NUM_CTX, "num_predict": max_tokens}
-    # Per-request options replace the chat model's own, so the one setting that
-    # belongs to the machine rather than to the config is carried across.
-    num_gpu = getattr(model, "num_gpu", None)
-    if num_gpu is not None:
-        options["num_gpu"] = num_gpu
-    return {"format": schema.model_json_schema(), "options": options}
+    for cls in type(model).__mro__:
+        package = cls.__module__.split(".")[0]
+        if package in _PACKAGES:
+            return package
+    return None
 
 
 def _text(content: Any) -> str:
@@ -272,25 +257,35 @@ def config_from_env(
     """The ``GenerationConfig`` the environment asks for.
 
     Provider: the argument, else ``LLM_PROVIDER``, else ``DEFAULT_PROVIDER``
-    (Ollama). Model: the argument, else ``LLM_MODEL``, else that provider's
-    default, ``DEFAULT_MODEL`` for Ollama and ``DEFAULT_MISTRAL_MODEL`` for
-    Mistral. The environment is the process's, with ``dotenv`` (the project's
+    (Ollama). Model: the argument, else ``LLM_MODEL`` when the provider is the
+    one the environment names, else that provider's default, ``DEFAULT_MODEL``
+    for Ollama and ``DEFAULT_MISTRAL_MODEL`` for Mistral. ``LLM_MODEL`` is set
+    for the provider in .env, so ``--provider mistral`` beside an Ollama
+    ``LLM_MODEL`` asks Mistral for its default rather than for a model it does
+    not serve. The environment is the process's, with ``dotenv`` (the project's
     .env) loaded into it first; ``environ`` replaces both, for a test.
     """
     env = _environment(environ, dotenv)
-    chosen_provider = (provider or env.get(LLM_PROVIDER_ENV) or "").strip().lower() or DEFAULT_PROVIDER
-    if chosen_provider not in PROVIDERS:
-        raise ValueError(
-            f"{LLM_PROVIDER_ENV} must be one of {', '.join(PROVIDERS)}, got {chosen_provider!r}"
-        )
+    configured = _provider_name(env.get(LLM_PROVIDER_ENV))
+    chosen_provider = _provider_name(provider) if (provider or "").strip() else configured
     default = DEFAULT_MISTRAL_MODEL if chosen_provider == MISTRAL else DEFAULT_MODEL
-    chosen = (model or env.get(LLM_MODEL_ENV) or "").strip() or default
+    configured_model = env.get(LLM_MODEL_ENV) if chosen_provider == configured else None
+    chosen = (model or configured_model or "").strip() or default
     return GenerationConfig(
         provider=chosen_provider,
         model=chosen,
         prompt_template_id=PROMPT_TEMPLATE_ID,
         temperature=temperature,
     )
+
+
+def _provider_name(value: str | None) -> str:
+    """A provider setting as one of ``PROVIDERS``: blank is the default, and an
+    unknown name is refused where the config is built."""
+    name = (value or "").strip().lower() or DEFAULT_PROVIDER
+    if name not in PROVIDERS:
+        raise ValueError(f"{LLM_PROVIDER_ENV} must be one of {', '.join(PROVIDERS)}, got {name!r}")
+    return name
 
 
 def chat_model(
@@ -312,13 +307,11 @@ def chat_model(
     because it takes seconds to import, and code that only parses a question
     or renders a prompt should not pay for it.
     """
-    if config.provider == MISTRAL:
-        return _mistral_model(config, dotenv)
-    if config.provider != OLLAMA:
-        raise ProviderUnavailable(
-            f"unknown provider {config.provider!r}: set {LLM_PROVIDER_ENV} to one of "
-            f"{', '.join(PROVIDERS)}"
-        )
+    return _provider(config).build(config, base_url, dotenv)
+
+
+def _ollama_model(config: GenerationConfig, base_url: str | None, dotenv: Path) -> Any:
+    """``ChatOllama`` for the config, on the server :func:`chat_model` describes."""
     from langchain_ollama import ChatOllama
 
     load_env(dotenv)
@@ -335,16 +328,16 @@ def chat_model(
     )
 
 
-def _mistral_model(config: GenerationConfig, dotenv: Path) -> Any:
+def _mistral_model(config: GenerationConfig, base_url: str | None, dotenv: Path) -> Any:
     """``ChatMistralAI`` for the config, with the key from the environment or .env.
 
     The key is each teammate's own, from their own Mistral account, so a missing
     one is refused here, with where to make one, rather than on the first request,
-    where the API would only answer 401. One attempt per request, as for Ollama:
-    the client's own retries would hide an outage behind minutes of waiting.
+    where the API would only answer 401. The same model, key and address get the
+    same client back, so a run of questions reuses one connection to the API
+    rather than opening two new HTTP clients, and a new TLS handshake inside the
+    measured latency, for every question.
     """
-    from langchain_mistralai import ChatMistralAI
-
     load_env(dotenv)
     key = (os.environ.get(MISTRAL_API_KEY_ENV) or "").strip()
     if not key:
@@ -354,11 +347,26 @@ def _mistral_model(config: GenerationConfig, dotenv: Path) -> Any:
             f"'Setting up Mistral' in the README says, or set {LLM_PROVIDER_ENV}={OLLAMA} "
             f"to answer locally"
         )
+    return _mistral_client(config.model, key, os.environ.get("MISTRAL_BASE_URL"))
+
+
+@lru_cache(maxsize=8)
+def _mistral_client(model: str, key: str, base_url: str | None) -> Any:
+    """One ``ChatMistralAI`` per model, key and address, built on first use.
+
+    The temperature and the output ceiling are not set here: :func:`stream`
+    sends them with every request, as it does for Ollama. Set here as well,
+    they would only add ChatMistralAI's own check that the temperature is
+    within 0 to 1, stricter than the API's 1.5 and raised outside the error
+    handling. One attempt per request, as for Ollama: the client's own retries
+    would hide an outage behind minutes of waiting.
+    """
+    from langchain_mistralai import ChatMistralAI
+
     return ChatMistralAI(
-        model=config.model,
+        model=model,
         api_key=key,
-        temperature=config.temperature,
-        max_tokens=MAX_OUTPUT_TOKENS,
+        base_url=base_url,
         max_retries=1,
         timeout=HOSTED_TIMEOUT_S,
     )
@@ -436,8 +444,10 @@ def _validate(
     return GroundedAnswer.model_validate(parsed.model_dump()), None
 
 
-def _unavailable(error: Exception, model: Any, config: GenerationConfig) -> ProviderUnavailable | None:
-    """The error to raise in place of one from the client, or None to let it through.
+def _ollama_unavailable(
+    error: Exception, model: Any, config: GenerationConfig
+) -> ProviderUnavailable | None:
+    """The error to raise in place of one from Ollama's client, or None to let it through.
 
     The Ollama client does not wrap every failure the same way on a streamed
     request: a refused connection arrives as httpx's ``ConnectError``, not
@@ -445,8 +455,6 @@ def _unavailable(error: Exception, model: Any, config: GenerationConfig) -> Prov
     as a ``ResponseError`` with status 404. Each becomes a message that says
     what to run.
     """
-    if config.provider == MISTRAL:
-        return _mistral_unavailable(error, model, config)
     import httpx
     from ollama import ResponseError
 
@@ -477,14 +485,15 @@ def _mistral_unavailable(
     """The error to raise in place of one from Mistral's client, or None.
 
     The client raises httpx's own errors: ``HTTPStatusError`` for a response the
-    API refused, with its body already read, and a timeout or network error when
-    no response came. Each becomes a message that says what to do.
+    API refused, with its body already read, and a transport error when no
+    response came or the connection broke off part-way. Each becomes a message
+    that says what to do.
     """
     import httpx
 
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
-        detail = _error_detail(error.response)
+        detail, kind = _error_detail(error.response)
         # What the API said, where it said anything: "Your API key expired on
         # 2026-09-26" tells a teammate more than any status code.
         said = f"HTTP {status}: {detail}" if detail else f"HTTP {status}"
@@ -503,44 +512,170 @@ def _mistral_unavailable(
                 f"Mistral's rate limit for {config.model!r} was reached ({said}); wait a minute "
                 f"and ask again, since the limits are per account"
             )
-        if status in (400, 404, 422) and "model" in detail.lower():
+        # Mistral's own name for the error, since a message can mention a model
+        # for other reasons: "too large for model with 131072 maximum context".
+        if kind == "invalid_model":
             return ProviderUnavailable(
                 f"Mistral could not run {config.model!r} ({said}); set {LLM_MODEL_ENV} to a "
                 f"Mistral model, such as {DEFAULT_MISTRAL_MODEL}, or unset it"
             )
         return ProviderUnavailable(f"Mistral's API refused the request ({said})")
-    url = getattr(model, "endpoint", None) or MISTRAL_API_URL
+    # ChatMistralAI always sets its endpoint; a fake chat model has none.
+    url = getattr(model, "endpoint", None)
+    api = f"Mistral's API at {url}" if url else "Mistral's API"
     if isinstance(error, httpx.TimeoutException):
         return ProviderUnavailable(
-            f"Mistral's API at {url} sent nothing for {HOSTED_TIMEOUT_S}s while running "
+            f"{api} sent nothing for {HOSTED_TIMEOUT_S}s while running "
             f"{config.model!r}: ask again, or set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
         )
-    if isinstance(error, (httpx.NetworkError, ConnectionError)):
+    if isinstance(error, (httpx.ConnectError, ConnectionError)):
         return ProviderUnavailable(
-            f"cannot reach Mistral's API at {url}: check the internet connection, or set "
+            f"cannot reach {api}: check the internet connection, or set "
             f"{LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+        )
+    # Every other transport failure: a connection dropped part-way through an
+    # answer arrives as RemoteProtocolError, which is not a NetworkError.
+    if isinstance(error, httpx.TransportError):
+        return ProviderUnavailable(
+            f"the connection to {api} broke off ({type(error).__name__}: {error}): ask "
+            f"again, or set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
         )
     return None
 
 
-def _error_detail(response: Any) -> str:
-    """What an error response said, shortly: its message field where it has one.
+def _ollama_stop_reason(metadata: Mapping[str, Any], config: GenerationConfig) -> str | None:
+    """Why Ollama stopped, as its ``done_reason`` says: "length" at the output ceiling."""
+    return metadata.get("done_reason")
 
-    Mistral's API puts it in ``message`` for most errors and in ``detail`` for a
-    refused key. The closing full stop is dropped, since the text is quoted
-    inside a longer message.
+
+def _mistral_stop_reason(metadata: Mapping[str, Any], config: GenerationConfig) -> str | None:
+    """Why Mistral stopped, as its ``finish_reason`` says, or the error it stopped on.
+
+    "length" and "model_length" are an answer cut off at a limit, which the
+    ``Generation`` records as truncated. "error" is the API failing part-way
+    through an answer, which is an outage rather than an answer, so it raises
+    like one instead of handing on the half that arrived.
     """
+    reason = metadata.get("finish_reason")
+    if reason == "error":
+        raise ProviderUnavailable(
+            f"Mistral's API stopped {config.model!r} part-way with an error: ask again, or "
+            f"set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+        )
+    return reason
+
+
+def _error_detail(response: Any) -> tuple[str, str]:
+    """What an error response said, shortly, and Mistral's ``type`` for the error.
+
+    Mistral's API puts the text in ``message`` for most errors and in ``detail``
+    for a refused key. A request that fails validation (422) has a ``message``
+    holding a list of problems, each read as where it is and what is wrong. The
+    closing full stop is dropped, since the text is quoted inside a longer
+    message. The type is "" where the body gives none.
+    """
+    def short(value: str) -> str:
+        return value.strip()[:300].rstrip(".")
+
     try:
         text = response.text
     except Exception:
-        return ""
+        return "", ""
     try:
         body = json.loads(text)
     except ValueError:
-        return text.strip()[:300].rstrip(".")
-    if isinstance(body, dict):
-        for field in ("message", "detail", "error"):
-            value = body.get(field)
-            if isinstance(value, str) and value.strip():
-                return value.strip()[:300].rstrip(".")
-    return text.strip()[:300].rstrip(".")
+        return short(text), ""
+    if not isinstance(body, dict):
+        return short(text), ""
+    kind = body["type"] if isinstance(body.get("type"), str) else ""
+    for field in ("message", "detail", "error"):
+        value = body.get(field)
+        if isinstance(value, str) and value.strip():
+            return short(value), kind
+        if isinstance(value, dict) and isinstance(value.get("detail"), list):
+            problems = [
+                f"{'.'.join(str(part) for part in problem.get('loc', ()))}: {problem['msg']}"
+                for problem in value["detail"]
+                if isinstance(problem, dict) and isinstance(problem.get("msg"), str)
+            ]
+            if problems:
+                return short("; ".join(problems[:3])), kind
+    return short(text), kind
+
+
+# --- the providers ---------------------------------------------------------------
+
+def _ollama_request(
+    config: GenerationConfig, model: Any, schema: type[GroundedAnswer], max_tokens: int
+) -> dict[str, Any]:
+    """What goes to Ollama with the messages: the schema and the settings.
+
+    Ollama constrains decoding to the schema given as its output ``format``, and
+    takes the settings as ``options``, the context window among them, since its
+    own default window is smaller than the prompt.
+    """
+    options = {"temperature": config.temperature, "num_ctx": NUM_CTX, "num_predict": max_tokens}
+    # Per-request options replace the chat model's own, so the one setting that
+    # belongs to the machine rather than to the config is carried across.
+    num_gpu = getattr(model, "num_gpu", None)
+    if num_gpu is not None:
+        options["num_gpu"] = num_gpu
+    return {"format": schema.model_json_schema(), "options": options}
+
+
+def _mistral_request(
+    config: GenerationConfig, model: Any, schema: type[GroundedAnswer], max_tokens: int
+) -> dict[str, Any]:
+    """What goes to Mistral with the messages: the same schema and settings as
+    for Ollama, the schema as a strict JSON-schema response format and the
+    settings as named fields. Its context window is the model's own."""
+    return {
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "GroundedAnswer",
+                "schema": schema.model_json_schema(),
+                "strict": True,
+            },
+        },
+        "temperature": config.temperature,
+        "max_tokens": max_tokens,
+    }
+
+
+@dataclass(frozen=True)
+class _Provider:
+    """Everything that differs between the providers, for one of them.
+
+    ``package`` is the LangChain package its chat model comes from; ``build``
+    makes that model for a config; ``request`` is what goes with the messages;
+    ``unavailable`` turns the client's error into a ``ProviderUnavailable``, or
+    None to let it through; ``stop_reason`` reads why the answer ended, and
+    raises where the provider says it ended on an error.
+    """
+
+    package: str
+    build: Callable[[GenerationConfig, str | None, Path], Any]
+    request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
+    unavailable: Callable[[Exception, Any, GenerationConfig], ProviderUnavailable | None]
+    stop_reason: Callable[[Mapping[str, Any], GenerationConfig], str | None]
+
+
+_PROVIDERS = {
+    OLLAMA: _Provider("langchain_ollama", _ollama_model, _ollama_request,
+                      _ollama_unavailable, _ollama_stop_reason),
+    MISTRAL: _Provider("langchain_mistralai", _mistral_model, _mistral_request,
+                       _mistral_unavailable, _mistral_stop_reason),
+}
+_PACKAGES = frozenset(provider.package for provider in _PROVIDERS.values())
+
+
+def _provider(config: GenerationConfig) -> _Provider:
+    """The provider a config records, refused with what to set if it is unknown."""
+    try:
+        return _PROVIDERS[config.provider]
+    except KeyError:
+        raise ProviderUnavailable(
+            f"unknown provider {config.provider!r}: set {LLM_PROVIDER_ENV} to one of "
+            f"{', '.join(PROVIDERS)}"
+        ) from None
