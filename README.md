@@ -67,6 +67,10 @@ Python is the primary language. The team has no budget for paid APIs, so nothing
 | Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) and `ChatMistralAI` (`langchain-mistralai`) |
 | Holding the answer to a shape | `pydantic`, whose JSON schema either provider decodes against |
 | Tests | `pytest` |
+| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default |
+| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) |
+| Holding the answer to a shape | `pydantic`, whose JSON schema Ollama decodes against |
+| Tests | `pytest`, with `pytest-cov` to measure coverage |
 
 Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral needs nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral).
 
@@ -79,12 +83,14 @@ bt4103-team8-sec-filing-assistant/
 ├── README.md
 ├── GIT_WORKFLOW.md          # branching workflow and Git setup
 ├── requirements.txt
+├── pytest.ini               # test settings: python -m pytest from the project root
+├── .coveragerc              # coverage settings for python -m pytest --cov
 ├── .gitignore
 ├── .env.example             # template for local settings (copy to .env)
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
-│   ├── sample/              # small committed sample
+│   ├── sample/              # for a small committed sample (none yet)
 │   ├── raw/                 # full filings (git-ignored)
 │   ├── interim/             # parsed sections (git-ignored)
 │   ├── processed/           # chunks ready for indexing (git-ignored)
@@ -126,17 +132,29 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── answer.py        #   the entry point: route, retrieve, abstain or answer
 │   │   ├── constants.py     #   company aliases, cue words, the prompt template, generation settings
 │   │   └── records.py       #   GroundedAnswer, Generation, Answer, Citation and GenerationConfig
-│   ├── evaluation/          # benchmark and metrics
+│   ├── evaluation/          # benchmark, metrics and the two evaluation commands
+│   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
+│   │   ├── cli.py           #   python -m src.evaluation: answers a benchmark, reports abstentions
+│   │   ├── harness.py       #   evaluate(): one configuration end to end through answer_question
+│   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
+│   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
-│   └── app/                 # Streamlit or Gradio UI
+│   └── app/                 # the app; so far the viewer for saved answers
+│       └── answers.py       #   renders evaluation answers as an HTML page to review
+├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
+│   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text
+│   └── test_data/           #   the team's 48 test questions
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
+├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id
 └── docs/                    # reports, minutes, references
+    └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
 ```
 
 ### How the pipeline is put together
@@ -242,6 +260,23 @@ its own small corpus in a temporary directory, and the dense-index tests replace
 the embedding model with a deterministic stand-in, so the suite runs in seconds.
 One test counts tokens with the real bge tokenizer and is skipped if that cannot
 be downloaded.
+
+To see which code the tests reach, run them with coverage:
+
+```bash
+python -m pytest --cov
+```
+
+After the test results it prints a table of the files under `src/`, least
+covered first, with the lines the tests never ran listed beside each. The
+settings are in `.coveragerc`, so everyone measures the same code the same way,
+branches included. `--cov-report=html` writes a browsable version to
+`htmlcov/` instead, which git ignores. Coverage says which lines ran, not
+whether a test checked what they did, so it shows where tests are missing
+rather than proving the ones that exist are good. On 27 September 2026 it
+measured 73% across `src/`: the RAG stage at 96 to 100%, and the pipeline least
+covered, with its command line and passage reader at 0%, the downloader at 11%
+and the verifier at 25% (#49).
 
 Set up environment variables:
 

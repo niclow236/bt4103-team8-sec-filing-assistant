@@ -1,0 +1,15 @@
+# Settings for python -m pytest --cov, so every teammate's report measures the
+# same code the same way. See "Run the tests" in the README.
+
+[run]
+# The project's code, not the tests or the notebooks.
+source = src
+# Count both sides of every if, not just the lines: a line that runs is not the
+# same as a condition whose other branch the tests never reach.
+branch = True
+
+[report]
+# List the lines the tests never ran beside each file, least covered first.
+show_missing = True
+skip_empty = True
+sort = Cover
