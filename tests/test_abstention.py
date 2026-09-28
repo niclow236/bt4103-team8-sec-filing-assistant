@@ -9,8 +9,15 @@ from langchain_core.messages import AIMessageChunk
 from src.app.answers import render_answer, write_answer_page
 from src.evaluation import BenchmarkQuestion, evaluate
 from src.evaluation.cli import main
+from src.evaluation.harness import RETRY_WAITS_S
 from src.pipeline.chunk import iter_chunks
-from src.rag import answer_question, config_from_env, verify_answer
+from src.rag import (
+    ProviderBusy,
+    ProviderUnavailable,
+    answer_question,
+    config_from_env,
+    verify_answer,
+)
 from src.rag.constants import ABSTAIN_PHRASE
 from src.rag.records import ABSTENTION_MESSAGES
 from src.retrieval import embed
@@ -230,6 +237,48 @@ def test_model_abstention_counts_in_harness_and_empty_subsets_are_null():
     assert empty["summary"]["abstention_rate"] is None
     with pytest.raises(ValueError, match="unique"):
         evaluate([question(1), question(1)], StaticRetriever([]), CONFIG, run_id="run")
+
+
+class Failing(Model):
+    """A chat model whose first ``times`` requests raise ``error``, then answer."""
+
+    def __init__(self, error, times):
+        super().__init__()
+        self.error, self.times, self.requests = error, times, 0
+
+    def stream(self, messages, **kwargs):
+        self.requests += 1
+        if self.requests <= self.times:
+            raise self.error
+        return super().stream(messages, **kwargs)
+
+
+def test_a_busy_provider_is_asked_again_before_it_stops_the_run(monkeypatch, caplog):
+    waits = []
+    monkeypatch.setattr("src.evaluation.harness.sleep", waits.append)
+    busy = ProviderBusy("Mistral's rate limit was reached")
+
+    model = Failing(busy, times=len(RETRY_WAITS_S))
+    report = evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
+    assert (report["summary"]["total"], report["summary"]["abstained"]) == (1, 0)
+    assert (model.requests, waits) == (len(RETRY_WAITS_S) + 1, list(RETRY_WAITS_S))
+    assert f"1: {busy}; asking again in {RETRY_WAITS_S[0]}s" in caplog.text
+
+    # Once the waits run out, the failure stops the run as any error does.
+    waits.clear()
+    with pytest.raises(ProviderBusy, match="rate limit"):
+        evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run",
+                 llm=Failing(busy, times=len(RETRY_WAITS_S) + 1))
+    assert waits == list(RETRY_WAITS_S)
+
+
+def test_a_failure_asking_again_cannot_fix_stops_the_run_at_once(monkeypatch):
+    monkeypatch.setattr("src.evaluation.harness.sleep",
+                        lambda seconds: pytest.fail("a refused key is not asked again"))
+    model = Failing(ProviderUnavailable("Mistral refused the API key"), times=1)
+    with pytest.raises(ProviderUnavailable, match="refused the API key"):
+        evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
+    assert model.requests == 1
 
 
 def test_evaluation_cli_writes_report_and_viewer_rows(corpus, tmp_path, monkeypatch, capsys):

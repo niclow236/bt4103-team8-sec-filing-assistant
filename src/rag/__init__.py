@@ -39,6 +39,7 @@ from .citations import render_citation, resolve_citations
 from .decompose import Decomposition, SubQuestion, decompose, search_decomposed
 from .numeric import Fact, answer_from_facts, find_metric, lookup_fact
 from .generate import (
+    ProviderBusy,
     ProviderUnavailable,
     chat_model,
     config_from_env,
@@ -71,6 +72,7 @@ __all__ = [
     "GroundedAnswer",
     "GroundedPrompt",
     "ParsedQuestion",
+    "ProviderBusy",
     "ProviderUnavailable",
     "SentenceCitations",
     "VerificationCheck",

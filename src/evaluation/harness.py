@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
+from functools import partial
 from math import isfinite
+from time import sleep
 from typing import Any
 
-from src.rag import answer_question, config_from_env, parse_question
-from src.rag.records import GenerationConfig
+from src.rag import ProviderBusy, answer_question, config_from_env, parse_question
+from src.rag.records import Answer, GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from .records import BenchmarkQuestion, UNANSWERABLE
+
+logger = logging.getLogger(__name__)
+
+# How long to wait before asking a question again after a failure that asking
+# again may fix (``ProviderBusy``): a rate limit, a server error, a dropped
+# connection. One wait per retry, so a question is asked at most three times.
+# The second is a full minute because the free plan's rate limits are per
+# minute. Anything else, and the third failure, stops the run.
+RETRY_WAITS_S = (10, 60)
 
 
 def _rates(rows: list[dict]) -> dict[str, Any]:
@@ -25,6 +37,18 @@ def _rates(rows: list[dict]) -> dict[str, Any]:
             row["answer"]["abstention_reason"] for row in abstentions
         ).items())),
     }
+
+
+def _answer_with_retries(question: BenchmarkQuestion, ask: Callable[[], Answer]) -> Answer:
+    """``ask()``, asked again after each wait in ``RETRY_WAITS_S`` while it
+    raises ``ProviderBusy``. The last attempt's error is not caught."""
+    for wait in RETRY_WAITS_S:
+        try:
+            return ask()
+        except ProviderBusy as error:
+            logger.warning("%s: %s; asking again in %ss", question.question_id, error, wait)
+            sleep(wait)
+    return ask()
 
 
 def evaluate(
@@ -42,7 +66,11 @@ def evaluate(
     """One configuration per run; count every completed question exactly once.
 
     Benchmark ticker/year fields override parsed scope when provided. Errors
-    propagate instead of being counted as abstentions. Empty subsets have a
+    propagate instead of being counted as abstentions, except that a failure
+    asking again may fix (``ProviderBusy``) is asked again, after each wait in
+    ``RETRY_WAITS_S``, before it stops the run: on a hosted free plan a rate
+    limit or a dropped connection can come at question 40 of 48, and one
+    should not throw away the 39 answers before it. Empty subsets have a
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
@@ -79,9 +107,11 @@ def evaluate(
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
-        answer = answer_question(question.question, retriever, config, query=query,
-                                 min_score=min_score, llm=llm, use_facts=use_facts,
-                                 use_decomposition=use_decomposition, parsed=parsed)
+        answer = _answer_with_retries(question, partial(
+            answer_question, question.question, retriever, config, query=query,
+            min_score=min_score, llm=llm, use_facts=use_facts,
+            use_decomposition=use_decomposition, parsed=parsed,
+        ))
         rows.append({"question_id": question.question_id, "run_id": run_id,
                      "question_type": question.question_type,
                      # Which route answered it. The Answer records the provider

@@ -976,8 +976,9 @@ uses their own key on their own computer.
    Set its expiry to a date after the demo, or leave it without one, since
    Mistral refuses an expired key. Create it and copy it straight away: the
    full key is shown only once.
-4. Put it in your own `.env`, on the `MISTRAL_API_KEY=` line that
-   `.env.example` leaves empty for it, and choose the provider:
+4. Put it in your own `.env`: remove the `#` from the `# MISTRAL_API_KEY=` line
+   `.env.example` leaves for it, paste your key after the `=`, and choose the
+   provider:
 
    ```
    LLM_PROVIDER=mistral
@@ -996,9 +997,13 @@ Claude Code, add `"permissions": {"deny": ["Read(**/.env)"]}` to your own
 Keys and make a new one.
 
 A missing key, a key Mistral refuses, a model your plan does not include, the
-rate limit, a lost connection and an answer the API ends on an error each raise
-`ProviderUnavailable` saying what to do. Nothing is retried, and nothing falls back to Ollama by itself: set
-`LLM_PROVIDER=ollama` to answer locally again.
+rate limit, a server error, a lost connection and an answer that ends before it
+is finished each raise `ProviderUnavailable` saying what to do. A key changed in
+`.env` is read when the notebook or command starts again. `answer_question`
+does not ask again, and nothing falls back to Ollama by itself: set
+`LLM_PROVIDER=ollama` to answer locally again. The failures that asking again
+may fix raise `ProviderBusy`, a kind of `ProviderUnavailable`, which the
+[evaluation harness](#the-benchmark) asks again before it stops a run.
 
 `ministral-8b-2512` is the default because it did best of the four suitable
 chat models the free plan serves. Voxtral Small and Codestral stated figures
@@ -1238,9 +1243,10 @@ is why `NUM_CTX` is set explicitly on every request rather than left to it.
 None of this applies to Mistral, whose models have windows far larger than any
 prompt here.
 
-With Ollama, a server that is not running, a model that has not been pulled, or
-a response that times out raises `ProviderUnavailable` with the command that
-fixes it. [Setting up Mistral](#setting-up-mistral) lists what Mistral's raise.
+With Ollama, a server that is not running, a model that has not been pulled, a
+response that times out, or a connection Ollama closes part-way raises
+`ProviderUnavailable` saying what to run or check.
+[Setting up Mistral](#setting-up-mistral) lists what Mistral's raise.
 
 ### How long an answer takes
 
@@ -1348,8 +1354,12 @@ The answer evaluation harness runs the same `answer_question` path and reports
 abstentions divided by all completed questions, both overall and separately
 for answerable and unanswerable questions. Each summary includes its total,
 abstention count, rate and counts by reason. Empty subsets have a `null` rate,
-and errors stop the run instead of inflating the abstention count. A high rate
-on answerable questions indicates lost coverage, not better answer quality.
+and errors stop the run instead of inflating the abstention count. The one
+exception is a failure that asking again may fix, such as Mistral's rate limit,
+a server error or a dropped connection (`ProviderBusy`): the question is asked
+again after 10 seconds and then after a minute, and only a third failure stops
+the run. A high rate on answerable questions indicates lost coverage, not
+better answer quality.
 
 ```bash
 python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl
@@ -1359,9 +1369,9 @@ python -m src.app.answers logs/evaluation-answers.jsonl --output logs/evaluation
 Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
 `--provider ollama` or `--provider mistral` to override `LLM_PROVIDER`, or
 `--model` to choose one of that provider's models. A `--provider` other than
-`LLM_PROVIDER` uses its own default model rather than `LLM_MODEL`. The JSON report records these
-settings, individual answers and aggregate rates. The command needs a populated
-benchmark and built indexes. Programmatic runs use
+`LLM_PROVIDER` uses its own default model rather than `LLM_MODEL`. The JSON
+report records these settings, individual answers and aggregate rates. The
+command needs a populated benchmark and built indexes. Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`.
 
 `--no-facts` sends every question to retrieval and generation instead of looking

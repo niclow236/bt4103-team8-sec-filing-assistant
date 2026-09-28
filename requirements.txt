@@ -49,6 +49,9 @@ pydantic==2.13.5
 # edgartools and chromadb; pinned here because generate catches its errors and
 # the tests mock Ollama's server and Mistral's API with it.
 httpx==0.28.1
+# How langchain-mistralai reads Mistral's event stream. Installed as its
+# dependency; pinned here because generate catches its SSEError.
+httpx-sse==0.4.3
 
 # The Mistral test notebook (notebooks/mistral/), which also uses
 # langchain-mistralai above:
