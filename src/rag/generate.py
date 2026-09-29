@@ -91,6 +91,10 @@ class ProviderBusy(ProviderUnavailable):
     connection that broke off or never came, or an answer that did not finish."""
 
 
+# What every Mistral failure offers instead.
+_ANSWER_LOCALLY = f"set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+
+
 # --- the entry points ------------------------------------------------------------
 
 def generate(
@@ -140,7 +144,8 @@ def stream(
     With ``llm`` given, ``config.provider`` must still be one of ``PROVIDERS``,
     since the request's shape and the reading of its failures depend on it. A
     fake chat model standing in for Mistral has to end its stream with a
-    ``finish_reason``, as Mistral's own does.
+    ``finish_reason``, as Mistral's own does, or with output that validates as
+    a whole answer.
     """
     if prompt.template_id != config.prompt_template_id:
         raise ValueError(
@@ -167,10 +172,17 @@ def stream(
     started = perf_counter()
     raw = ""
     shown = ""
-    merged = None
+    # Why the answer ended and what it used, each from the last chunk that
+    # says so. Merging the chunks would join a "stop" sent twice into
+    # "stopstop" and add a repeated token count to itself.
+    ended: Mapping[str, Any] = {}
+    usage: Mapping[str, Any] = {}
     try:
         for chunk in model.stream(prompt.to_messages(), **request):
-            merged = chunk if merged is None else merged + chunk
+            metadata = getattr(chunk, "response_metadata", None) or {}
+            if metadata.get("finish_reason") or metadata.get("done_reason"):
+                ended = metadata
+            usage = getattr(chunk, "usage_metadata", None) or usage
             piece = _text(chunk.content)
             if not piece:
                 continue
@@ -185,10 +197,9 @@ def stream(
             raise
         raise unavailable from error
     latency_ms = (perf_counter() - started) * 1000.0
-    metadata = getattr(merged, "response_metadata", None) or {}
-    stop_reason = provider.stop_reason(metadata, config)
-
     answer, parse_error = _validate(raw, schema)
+    stop_reason = provider.stop_reason(ended, config, answer is not None)
+
     if answer is not None:
         text = answer.render()
     else:
@@ -200,7 +211,6 @@ def stream(
     if len(text) > len(shown) and text.startswith(shown):
         yield text[len(shown):]
 
-    usage = getattr(merged, "usage_metadata", None) or {}
     return Generation(
         text=text,
         answer=answer,
@@ -237,7 +247,7 @@ def _text(content: Any) -> str:
     if isinstance(content, str):
         return content
     return "".join(
-        block if isinstance(block, str) else str(block.get("text", ""))
+        block if isinstance(block, str) else str(block.get("text") or "")
         for block in content or ()
         if isinstance(block, str)
         or (isinstance(block, dict) and block.get("type", "text") == "text")
@@ -319,9 +329,10 @@ def chat_model(
     For Ollama, the server is ``base_url``, else ``LLM_BASE_URL`` from the
     environment or .env, else Ollama's default address. ``LLM_NUM_GPU``, when
     set, says how many layers go on the GPU; see ``constants.LLM_NUM_GPU_ENV``
-    for when to set it. For Mistral, see :func:`_mistral_model`; ``base_url``
-    does not apply. The generation options are not set here: :func:`stream`
-    sends them with every request.
+    for when to set it. For Mistral, see :func:`_mistral_model`, which refuses
+    ``base_url``, since Mistral's address comes from ``MISTRAL_BASE_URL``. The
+    generation options are not set here: :func:`stream` sends them with every
+    request.
 
     Each client library is imported here rather than at the top of the module
     because it takes seconds to import, and code that only parses a question
@@ -357,15 +368,21 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, dotenv: Path)
     same client back, so a run of questions reuses one connection to the API
     rather than opening two new HTTP clients, and a new TLS handshake inside the
     measured latency, for every question.
+
+    ``base_url`` is refused rather than ignored: it is the Ollama server's
+    address, and a caller that passes one expects its requests to go there.
     """
+    if base_url is not None:
+        raise ValueError(
+            f"base_url is the Ollama server's address; Mistral's comes from {MISTRAL_BASE_URL_ENV}"
+        )
     load_env(dotenv)
     key = (os.environ.get(MISTRAL_API_KEY_ENV) or "").strip()
     if not key:
         raise ProviderUnavailable(
             f"the provider is {MISTRAL!r} but {MISTRAL_API_KEY_ENV} is not set: make a key with "
             f"your own account at {MISTRAL_CONSOLE} (API Keys) and put it in your .env, as "
-            f"'Setting up Mistral' in the README says, or set {LLM_PROVIDER_ENV}={OLLAMA} "
-            f"to answer locally"
+            f"'Setting up Mistral' in the README says, or {_ANSWER_LOCALLY}"
         )
     return _mistral_client(config.model, key, os.environ.get(MISTRAL_BASE_URL_ENV))
 
@@ -482,9 +499,10 @@ def _ollama_unavailable(
     The Ollama client does not wrap every failure the same way on a streamed
     request: a refused connection arrives as httpx's ``ConnectError``, not
     the client's own ``ConnectionError``, a model that has not been pulled
-    as a ``ResponseError`` with status 404, and a connection Ollama closes
-    part-way through an answer as httpx's ``RemoteProtocolError``. Each becomes
-    a message that says what to run.
+    as a ``ResponseError`` with status 404, a full queue as one with status
+    503, and a connection Ollama closes part-way through an answer as httpx's
+    ``RemoteProtocolError``. Each becomes a message that says what to run, and
+    the ones asking again may fix are :class:`ProviderBusy`.
     """
     import httpx
     from ollama import ResponseError
@@ -505,6 +523,13 @@ def _ollama_unavailable(
         if error.status_code == 404:
             return ProviderUnavailable(
                 f"Ollama at {url} has no model {config.model!r}: run `ollama pull {config.model}`"
+            )
+        # 503 is Ollama's queue being full, more requests waiting than
+        # OLLAMA_MAX_QUEUE allows, which asking again may fix, as for Mistral's
+        # 5xx. Its 500s, such as a model too big for memory, are not.
+        if error.status_code == 503:
+            return ProviderBusy(
+                f"Ollama at {url} is busy running {config.model!r} ({error.error}): ask again"
             )
         return ProviderUnavailable(f"Ollama could not run {config.model!r}: {error.error}")
     # Every other transport failure: Ollama closing the connection part-way,
@@ -567,7 +592,7 @@ def _mistral_unavailable(
         if status >= 500:
             return ProviderBusy(
                 f"Mistral's API failed while running {config.model!r} ({said}): ask again, "
-                f"or set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+                f"or {_ANSWER_LOCALLY}"
             )
         return ProviderUnavailable(f"Mistral's API refused the request ({said})")
     # ChatMistralAI always sets its endpoint; a fake chat model has none.
@@ -576,12 +601,21 @@ def _mistral_unavailable(
     if isinstance(error, httpx.TimeoutException):
         return ProviderBusy(
             f"{api} sent nothing for {HOSTED_TIMEOUT_S}s while running "
-            f"{config.model!r}: ask again, or set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+            f"{config.model!r}: ask again, or {_ANSWER_LOCALLY}"
         )
     if isinstance(error, (httpx.ConnectError, ConnectionError)):
+        # Being offline, a mistyped host and a certificate a proxy re-signed all
+        # fail this way, and cannot be told apart here: the error's own text
+        # (a name that did not resolve, CERTIFICATE_VERIFY_FAILED) says which,
+        # and a mistyped address is named when someone has set one.
+        why = f" ({error})" if str(error) else ""
+        address = (
+            f", unset {MISTRAL_BASE_URL_ENV}, since nobody needs to set it"
+            if os.environ.get(MISTRAL_BASE_URL_ENV) else ""
+        )
         return ProviderBusy(
-            f"cannot reach {api}: check the internet connection, or set "
-            f"{LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+            f"cannot reach {api}{why}: check the internet connection{address}, or "
+            f"{_ANSWER_LOCALLY}"
         )
     # A reply that is not an event stream (SSEError, itself a TransportError),
     # or an address without http(s)://: something other than Mistral's API
@@ -598,38 +632,53 @@ def _mistral_unavailable(
     if isinstance(error, httpx.TransportError):
         return ProviderBusy(
             f"the connection to {api} broke off ({type(error).__name__}: {error}): ask "
-            f"again, or set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+            f"again, or {_ANSWER_LOCALLY}"
         )
     return None
 
 
-def _ollama_stop_reason(metadata: Mapping[str, Any], config: GenerationConfig) -> str | None:
+def _ollama_stop_reason(
+    metadata: Mapping[str, Any], config: GenerationConfig, whole: bool
+) -> str | None:
     """Why Ollama stopped, as its ``done_reason`` says: "length" at the output ceiling."""
     return metadata.get("done_reason")
 
 
-def _mistral_stop_reason(metadata: Mapping[str, Any], config: GenerationConfig) -> str | None:
+def _mistral_stop_reason(
+    metadata: Mapping[str, Any], config: GenerationConfig, whole: bool
+) -> str | None:
     """Why Mistral stopped, as its ``finish_reason`` says, where the answer finished.
 
     "stop" is a finished answer, and "length" and "model_length" one cut off at
     a limit, which the ``Generation`` records as truncated. Anything else is an
-    answer that did not finish, and raises like an outage instead of handing on
-    the half that arrived: "error" is the API failing part-way, and no reason at
-    all is a stream that ended before its last event, or whose last event was
-    an error object with no ``choices``, which ChatMistralAI skips.
+    answer that did not finish, and raises instead of handing on the half that
+    arrived. "error" is the API failing part-way, and no reason at all is a
+    stream that ended before its last event, or whose last event was an error
+    object with no ``choices``, which ChatMistralAI skips: asking again may fix
+    either, so they are ``ProviderBusy``. Any other reason comes back the same
+    for the same prompt, so it is a plain ``ProviderUnavailable``.
+
+    ``whole`` is whether the output validated as a whole answer. With no reason,
+    that is an answer whose last event lost its reason rather than a cut
+    stream, whose JSON never closes: ChatMistralAI records ``finish_reason``
+    only when the same event names the model, which a proxy set through
+    ``MISTRAL_BASE_URL`` may leave out. It is handed on, with no reason.
     """
     reason = metadata.get("finish_reason")
-    if reason not in ("stop", "length", "model_length"):
-        why = (
-            "with an error" if reason == "error"
-            else "without finishing" if reason is None
-            else f"without finishing (finish_reason {reason!r})"
-        )
+    if reason in ("stop", "length", "model_length"):
+        return reason
+    if reason is None and whole:
+        return None
+    if reason in (None, "error"):
+        why = "with an error" if reason == "error" else "without finishing"
         raise ProviderBusy(
             f"Mistral's API stopped {config.model!r} part-way {why}: ask again, or "
-            f"set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+            f"{_ANSWER_LOCALLY}"
         )
-    return reason
+    raise ProviderUnavailable(
+        f"Mistral's API stopped {config.model!r} without finishing (finish_reason "
+        f"{reason!r}); {_ANSWER_LOCALLY}"
+    )
 
 
 def _error_detail(response: Any) -> tuple[str, str]:
@@ -637,7 +686,9 @@ def _error_detail(response: Any) -> tuple[str, str]:
 
     Mistral's API puts the text in ``message`` for most errors and in ``detail``
     for a refused key. A request that fails validation (422) has a ``message``
-    holding a list of problems, each read as where it is and what is wrong. The
+    holding a list of problems under ``detail``, each read as where it is and
+    what is wrong; the same list straight under ``detail``, as a proxy built on
+    FastAPI sends it, is read the same way. The
     closing full stop is dropped, since the text is quoted inside a longer
     message. The type is "" where the body gives none.
     """
@@ -659,9 +710,12 @@ def _error_detail(response: Any) -> tuple[str, str]:
         value = body.get(field)
         if isinstance(value, str) and value.strip():
             return short(value), kind
-        if isinstance(value, dict) and isinstance(value.get("detail"), list):
+        # A 422's problems: under message.detail as Mistral sends them, or
+        # straight under detail as a FastAPI proxy would.
+        listed = value.get("detail") if isinstance(value, dict) else value
+        if isinstance(listed, list):
             problems = [
-                problem for problem in value["detail"]
+                problem for problem in listed
                 if isinstance(problem, dict) and isinstance(problem.get("msg"), str)
             ]
             if problems:
@@ -716,15 +770,16 @@ class _Provider:
     ``package`` is the LangChain package its chat model comes from; ``build``
     makes that model for a config; ``request`` is what goes with the messages;
     ``unavailable`` turns the client's error into a ``ProviderUnavailable``, or
-    None to let it through; ``stop_reason`` reads why the answer ended, and
-    raises where the answer did not finish.
+    None to let it through; ``stop_reason`` reads why the answer ended, from the
+    last chunk's metadata and whether the output validated as a whole answer,
+    and raises where the answer did not finish.
     """
 
     package: str
     build: Callable[[GenerationConfig, str | None, Path], Any]
     request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
     unavailable: Callable[[Exception, Any, GenerationConfig], ProviderUnavailable | None]
-    stop_reason: Callable[[Mapping[str, Any], GenerationConfig], str | None]
+    stop_reason: Callable[[Mapping[str, Any], GenerationConfig, bool], str | None]
 
 
 _PROVIDERS = {

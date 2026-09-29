@@ -39,16 +39,19 @@ def _rates(rows: list[dict]) -> dict[str, Any]:
     }
 
 
-def _answer_with_retries(question: BenchmarkQuestion, ask: Callable[[], Answer]) -> Answer:
-    """``ask()``, asked again after each wait in ``RETRY_WAITS_S`` while it
-    raises ``ProviderBusy``. The last attempt's error is not caught."""
-    for wait in RETRY_WAITS_S:
+def _answer_with_retries(
+    question: BenchmarkQuestion, ask: Callable[[], Answer]
+) -> tuple[Answer, int]:
+    """``ask()``, and how many times it was asked: again after each wait in
+    ``RETRY_WAITS_S`` while it raises ``ProviderBusy``. The last attempt's
+    error is not caught."""
+    for attempt, wait in enumerate(RETRY_WAITS_S, start=1):
         try:
-            return ask()
+            return ask(), attempt
         except ProviderBusy as error:
             logger.warning("%s: %s; asking again in %ss", question.question_id, error, wait)
             sleep(wait)
-    return ask()
+    return ask(), len(RETRY_WAITS_S) + 1
 
 
 def evaluate(
@@ -70,7 +73,8 @@ def evaluate(
     asking again may fix (``ProviderBusy``) is asked again, after each wait in
     ``RETRY_WAITS_S``, before it stops the run: on a hosted free plan a rate
     limit or a dropped connection can come at question 40 of 48, and one
-    should not throw away the 39 answers before it. Empty subsets have a
+    should not throw away the 39 answers before it. Each row records how many
+    times its question was asked, as ``attempts``. Empty subsets have a
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
@@ -107,7 +111,7 @@ def evaluate(
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
-        answer = _answer_with_retries(question, partial(
+        answer, attempts = _answer_with_retries(question, partial(
             answer_question, question.question, retriever, config, query=query,
             min_score=min_score, llm=llm, use_facts=use_facts,
             use_decomposition=use_decomposition, parsed=parsed,
@@ -120,6 +124,9 @@ def evaluate(
                      "route": answer.config.provider,
                      # What it was split into, empty where it was not (#35).
                      "sub_questions": list(answer.sub_questions),
+                     # How many times it was asked, more than once where the
+                     # provider was busy: how often a hosted free plan was.
+                     "attempts": attempts,
                      "answer": answer.to_dict()})
     return {
         "run_id": run_id,

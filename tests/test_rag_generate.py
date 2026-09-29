@@ -31,11 +31,14 @@ from src.rag.constants import (
     MAX_OUTPUT_TOKENS,
     NUM_CTX,
     PROMPT_TEMPLATE_ID,
+    PROVIDERS,
 )
 from src.rag.citations import resolve_citations
 from src.rag.generate import (
+    _PROVIDERS,
     ProviderBusy,
     ProviderUnavailable,
+    _mistral_client,
     _prose,
     _text,
     chat_model,
@@ -319,7 +322,8 @@ def test_generation_refuses_negative_latency():
 
 # --- configuration -----------------------------------------------------------------------
 
-_LLM_VARS = ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL", "LLM_NUM_GPU", "MISTRAL_API_KEY")
+_LLM_VARS = ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL", "LLM_NUM_GPU", "MISTRAL_API_KEY",
+             "MISTRAL_BASE_URL")
 
 
 @pytest.fixture
@@ -327,13 +331,17 @@ def clean_env(monkeypatch):
     """No LLM variables before the test, and none left behind by it.
 
     load_dotenv writes into the real os.environ, which monkeypatch does not
-    see, so the variables a .env test loads are removed again afterwards.
+    see, so the variables a .env test loads are removed again afterwards. The
+    Mistral clients the test builds are dropped too, so no later test is
+    handed one back.
     """
     for name in _LLM_VARS:
         monkeypatch.delenv(name, raising=False)
+    _mistral_client.cache_clear()
     yield
     for name in _LLM_VARS:
         os.environ.pop(name, None)
+    _mistral_client.cache_clear()
 
 
 def _dotenv(tmp_path, **values):
@@ -450,6 +458,16 @@ def test_a_temperature_the_api_accepts_is_not_refused_when_the_model_is_built(tm
     chat_model(_mistral_config(temperature=1.2), dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
 
 
+def test_an_ollama_address_is_not_taken_for_mistral(tmp_path, clean_env):
+    with pytest.raises(ValueError, match="MISTRAL_BASE_URL"):
+        chat_model(_mistral_config(), base_url="http://proxy:8080/v1",
+                   dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
+
+
+def test_every_provider_the_command_offers_can_answer():
+    assert set(PROVIDERS) == set(_PROVIDERS)
+
+
 def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path, clean_env):
     config = _mistral_config()
     first = chat_model(config, dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
@@ -511,8 +529,17 @@ def test_a_model_that_is_not_pulled_says_how_to_pull_it():
 
 def test_a_server_error_is_reported_with_its_message():
     handler = lambda request: httpx.Response(500, json={"error": "model requires more system memory"})
-    with pytest.raises(ProviderUnavailable, match="more system memory"):
+    with pytest.raises(ProviderUnavailable, match="more system memory") as raised:
         generate(PROMPT, _config(), llm=_ollama(handler))
+    # The same model on the same machine fails the same way again.
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+def test_an_ollama_server_with_a_full_queue_is_asked_again():
+    # Ollama's own 503 when more requests are waiting than OLLAMA_MAX_QUEUE allows.
+    busy = {"error": "server busy, please try again.  maximum pending requests exceeded"}
+    with pytest.raises(ProviderBusy, match="Ollama at .* is busy running 'm'.*: ask again"):
+        generate(PROMPT, _config(), llm=_ollama(lambda request: httpx.Response(503, json=busy)))
 
 
 def test_an_error_streamed_mid_response_is_reported():
@@ -650,6 +677,10 @@ def test_a_piece_sent_as_blocks_reads_as_its_text():
     assert _text([]) == ""
 
 
+def test_a_text_block_with_no_text_adds_nothing():
+    assert _text([{"type": "text", "text": None}, {"type": "text", "text": "Rev"}]) == "Rev"
+
+
 # --- when Mistral cannot answer -------------------------------------------------------------
 
 def _refusing(status, body=None):
@@ -691,6 +722,10 @@ def _refusing(status, body=None):
                                    "input": 2, "ctx": {"le": 1.5}}]}},
      r"^Mistral's API refused the request \(HTTP 422: body\.temperature: Input should be less "
      r"than or equal to 1\.5\)$"),
+    # The same problems straight under detail, as a proxy built on FastAPI sends them.
+    (422, {"detail": [{"loc": ["body", "temperature"], "msg": "Input should be less than or "
+                                                              "equal to 1.5"}]},
+     r"\(HTTP 422: body\.temperature: Input should be less than or equal to 1\.5\)$"),
 ])
 def test_a_refused_request_says_what_to_do(status, body, expected):
     with pytest.raises(ProviderUnavailable, match=expected):
@@ -731,6 +766,21 @@ def test_no_response_from_mistral_says_what_to_do(exception_type, expected):
         generate(PROMPT, _mistral_config(), llm=_mistral(handler))
 
 
+@pytest.mark.parametrize("address, expected", [
+    ("https://api.mistrl.ai/v1", r"cannot reach .*\(boom\): check the internet connection, "
+                                 r"unset MISTRAL_BASE_URL, since nobody needs to set it, or set"),
+    (None, r"cannot reach .*\(boom\): check the internet connection, or set LLM_PROVIDER"),
+])
+def test_a_mistral_address_that_cannot_be_reached_names_the_setting(
+        monkeypatch, clean_env, address, expected):
+    # A mistyped host fails on every attempt, like being offline, so the
+    # setting is named whenever someone has set it, with httpx's reason.
+    if address is not None:
+        monkeypatch.setenv("MISTRAL_BASE_URL", address)
+    with pytest.raises(ProviderBusy, match=expected):
+        generate(PROMPT, _mistral_config(), llm=_mistral(_raises(httpx.ConnectError)))
+
+
 def test_a_connection_dropped_part_way_through_an_answer_says_what_to_do():
     class Dropped(httpx.SyncByteStream):
         def __iter__(self):
@@ -746,14 +796,55 @@ def test_a_connection_dropped_part_way_through_an_answer_says_what_to_do():
         generate(PROMPT, _mistral_config(), llm=_mistral(handler))
 
 
-@pytest.mark.parametrize("reason, why", [
-    ("error", "with an error"),
-    ("tool_calls", r"without finishing \(finish_reason 'tool_calls'\)"),
+@pytest.mark.parametrize("reason, expected, busy", [
+    ("error", "part-way with an error: ask again", True),
+    # A reason nothing expects comes back the same for the same prompt.
+    ("tool_calls", r"without finishing \(finish_reason 'tool_calls'\); set LLM_PROVIDER", False),
 ])
-def test_an_answer_mistral_did_not_finish_is_not_handed_on_as_one(reason, why):
+def test_an_answer_mistral_did_not_finish_is_not_handed_on_as_one(reason, expected, busy):
     half = json.dumps(ANSWER)[:95]
-    with pytest.raises(ProviderBusy, match=f"stopped 'ministral-8b-2512' part-way {why}: ask again"):
+    with pytest.raises(ProviderUnavailable, match=f"stopped 'ministral-8b-2512' {expected}") as raised:
         generate(PROMPT, _mistral_config(), llm=_mistral_serving(half, finish_reason=reason))
+    assert isinstance(raised.value, ProviderBusy) is busy
+
+
+@pytest.mark.parametrize("finish_reason", ["error", "tool_calls"])
+def test_a_whole_answer_that_ended_badly_is_still_refused(finish_reason):
+    # Only a missing reason is taken on the output's word; one the API gave is not.
+    with pytest.raises(ProviderUnavailable, match="without finishing|with an error"):
+        generate(PROMPT, _mistral_config(),
+                 llm=_mistral_serving(ANSWER, finish_reason=finish_reason))
+
+
+def test_a_finish_reason_sent_on_two_chunks_is_still_a_finished_answer():
+    # Merged chunk metadata joins strings end to end, so "stop" twice would read
+    # "stopstop", and adds the repeated token counts to each other.
+    events = _sse(json.dumps(ANSWER)).split("\n\n")
+    twice = events[:-2] + events[-3:-2] + events[-2:]
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              text="\n\n".join(twice))
+
+    result = generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert (result.text, result.stop_reason) == (ANSWER_TEXT, "stop")
+    assert (result.input_tokens, result.output_tokens) == (50, 20)
+
+
+def test_a_whole_answer_whose_last_event_lost_its_reason_is_handed_on():
+    # ChatMistralAI records finish_reason only when the same event names the
+    # model, which a proxy may leave out. The answer itself validated.
+    events = _sse(json.dumps(ANSWER)).split("\n\n")
+    last = json.loads(events[-3].removeprefix("data: "))
+    del last["model"]
+    events[-3] = f"data: {json.dumps(last)}"
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              text="\n\n".join(events))
+
+    result = generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert (result.text, result.stop_reason, result.parse_error) == (ANSWER_TEXT, None, None)
 
 
 @pytest.mark.parametrize("tail", [
@@ -841,17 +932,39 @@ def test_a_chat_model_for_the_other_provider_is_refused():
 
 # --- the evaluation command -----------------------------------------------------------------
 
-@pytest.mark.parametrize("provider", ["ollama", "mistral"])
-def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, provider):
+@pytest.mark.parametrize("provider, client", [("ollama", ChatOllama), ("mistral", ChatMistralAI)])
+def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, clean_env, provider,
+                                                     client):
     import src.evaluation.cli as cli
     from src.retrieval.bm25 import BM25Retriever
 
     seen = {}
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
     monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
-    monkeypatch.setattr(cli, "evaluate", lambda questions, retriever, config, **k:
-                        seen.update(config=config) or
+    monkeypatch.setattr(cli, "evaluate", lambda questions, retriever, config, llm, **k:
+                        seen.update(config=config, llm=llm) or
                         {"summary": {}, "by_answerability": {}, "results": []})
     cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r", "--output",
               str(tmp_path / "report.json"), "--provider", provider, "--model", "chosen"])
     assert (seen["config"].provider, seen["config"].model) == (provider, "chosen")
+    # The one chat model built before anything loaded answers every question.
+    assert isinstance(seen["llm"], client) and seen["llm"].model == "chosen"
+
+
+@pytest.mark.parametrize("values, expected", [
+    ({"LLM_PROVIDER": "mistrl"}, "LLM_PROVIDER must be one of ollama, mistral"),
+    ({"LLM_PROVIDER": "mistral", "MISTRAL_API_KEY": ""}, "MISTRAL_API_KEY is not set"),
+    ({"LLM_PROVIDER": "ollama", "LLM_NUM_GPU": "all"}, "LLM_NUM_GPU must be a whole number"),
+], ids=["provider", "key", "gpu-layers"])
+def test_the_evaluation_command_refuses_its_settings_before_loading_anything(
+        monkeypatch, tmp_path, clean_env, capsys, values, expected):
+    import src.evaluation.cli as cli
+
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(cli, "load_questions", lambda *a, **k: pytest.fail("loaded questions"))
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["q.jsonl", "--run-id", "r", "--output", str(tmp_path / "report.json")])
+    assert raised.value.code == 2
+    assert expected in capsys.readouterr().err

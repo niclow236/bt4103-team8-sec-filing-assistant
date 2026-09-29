@@ -6,7 +6,7 @@ from math import isfinite
 from pathlib import Path
 
 from src.config import PROCESSED_DIR
-from src.rag import config_from_env
+from src.rag import ProviderUnavailable, chat_model, config_from_env
 from src.rag.constants import PROVIDERS
 from src.retrieval.constants import FINAL_K
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
@@ -52,6 +52,13 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--run-id must be non-empty")
     if args.answers and args.answers.resolve() == args.output.resolve():
         parser.error("--output and --answers must name different files")
+    # Built before the questions and indexes load, so a mistyped LLM_PROVIDER
+    # or a missing MISTRAL_API_KEY stops the run at once.
+    try:
+        config = config_from_env(model=args.model, provider=args.provider)
+        llm = chat_model(config)
+    except (ValueError, ProviderUnavailable) as error:
+        parser.error(str(error))
     questions = load_questions(args.questions, processed_dir=args.processed_dir)
     from src.retrieval.bm25 import BM25Retriever
     from src.retrieval.dense import DenseRetriever
@@ -64,8 +71,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         retriever = HybridRetriever(BM25Retriever.load(processed_dir=args.processed_dir),
                                     DenseRetriever.load(processed_dir=args.processed_dir))
-    report = evaluate(questions, retriever, config_from_env(model=args.model, provider=args.provider),
-                      run_id=args.run_id, min_score=args.min_score, top_k=args.top_k,
+    report = evaluate(questions, retriever, config, llm=llm, run_id=args.run_id, min_score=args.min_score, top_k=args.top_k,
                       use_facts=args.use_facts, use_decomposition=args.use_decomposition)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

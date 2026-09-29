@@ -66,10 +66,6 @@ Python is the primary language. The team has no budget for paid APIs, so nothing
 | Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default, or [Mistral's API](https://docs.mistral.ai), `ministral-8b-2512` by default |
 | Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) and `ChatMistralAI` (`langchain-mistralai`) |
 | Holding the answer to a shape | `pydantic`, whose JSON schema either provider decodes against |
-| Tests | `pytest` |
-| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default |
-| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) |
-| Holding the answer to a shape | `pydantic`, whose JSON schema Ollama decodes against |
 | Tests | `pytest`, with `pytest-cov` to measure coverage |
 
 Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral needs nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral).
@@ -289,9 +285,9 @@ Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
 request to carry a contact string and blocks traffic without one, so the
 download stops immediately with a `MissingIdentityError` if this is blank. The
 generation settings further down the file are optional. By default answers come
-from a local model and need no key; `MISTRAL_API_KEY` is left empty for your own
-key, if you choose to answer with Mistral's API instead. Both are covered under
-[Answering a question](#answering-a-question).
+from a local model and need no key; the `# MISTRAL_API_KEY=` line stays commented
+out until you have your own key, if you choose to answer with Mistral's API
+instead. Both are covered under [Answering a question](#answering-a-question).
 
 Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
@@ -1244,8 +1240,8 @@ None of this applies to Mistral, whose models have windows far larger than any
 prompt here.
 
 With Ollama, a server that is not running, a model that has not been pulled, a
-response that times out, or a connection Ollama closes part-way raises
-`ProviderUnavailable` saying what to run or check.
+response that times out, a full queue on a shared server, or a connection Ollama
+closes part-way raises `ProviderUnavailable` saying what to run or check.
 [Setting up Mistral](#setting-up-mistral) lists what Mistral's raise.
 
 ### How long an answer takes
@@ -1356,10 +1352,12 @@ for answerable and unanswerable questions. Each summary includes its total,
 abstention count, rate and counts by reason. Empty subsets have a `null` rate,
 and errors stop the run instead of inflating the abstention count. The one
 exception is a failure that asking again may fix, such as Mistral's rate limit,
-a server error or a dropped connection (`ProviderBusy`): the question is asked
-again after 10 seconds and then after a minute, and only a third failure stops
-the run. A high rate on answerable questions indicates lost coverage, not
-better answer quality.
+a server error, a full Ollama queue or a dropped connection (`ProviderBusy`):
+the question is asked again after 10 seconds and then after a minute, and only
+a third failure stops the run. Each row records how many times its question was
+asked, as `attempts`. A mistyped `LLM_PROVIDER` or a missing `MISTRAL_API_KEY`
+stops the command before it loads anything. A high rate on answerable questions
+indicates lost coverage, not better answer quality.
 
 ```bash
 python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl

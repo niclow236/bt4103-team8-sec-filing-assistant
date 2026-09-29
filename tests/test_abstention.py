@@ -262,6 +262,7 @@ def test_a_busy_provider_is_asked_again_before_it_stops_the_run(monkeypatch, cap
     report = evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
     assert (report["summary"]["total"], report["summary"]["abstained"]) == (1, 0)
     assert (model.requests, waits) == (len(RETRY_WAITS_S) + 1, list(RETRY_WAITS_S))
+    assert report["results"][0]["attempts"] == len(RETRY_WAITS_S) + 1
     assert f"1: {busy}; asking again in {RETRY_WAITS_S[0]}s" in caplog.text
 
     # Once the waits run out, the failure stops the run as any error does.
@@ -287,10 +288,15 @@ def test_evaluation_cli_writes_report_and_viewer_rows(corpus, tmp_path, monkeypa
     retriever = BM25Retriever(list(iter_chunks(processed_dir=corpus)))
     monkeypatch.setattr(BM25Retriever, "load", lambda **kwargs: retriever)
     output, answers = tmp_path / "report.json", tmp_path / "answers.jsonl"
+    # Ollama, so a .env that picks Mistral without a key does not stop the run
+    # before it starts: the command builds the chat model first.
     main([str(benchmark), "--processed-dir", str(corpus), "--retriever", "bm25",
-          "--run-id", "cli", "--output", str(output), "--answers", str(answers)])
+          "--run-id", "cli", "--output", str(output), "--answers", str(answers),
+          "--provider", "ollama"])
     assert json.loads(output.read_text())["summary"]["abstention_rate"] == 1
-    assert json.loads(answers.read_text())["answer"]["abstention_reason"] == "filters_excluded_all"
+    row = json.loads(answers.read_text())
+    assert row["answer"]["abstention_reason"] == "filters_excluded_all"
+    assert row["attempts"] == 1
     assert '"abstention_rate": 1.0' in capsys.readouterr().out
 
 
