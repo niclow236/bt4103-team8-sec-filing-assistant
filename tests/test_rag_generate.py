@@ -831,10 +831,11 @@ def test_a_finish_reason_sent_on_two_chunks_is_still_a_finished_answer():
     assert (result.input_tokens, result.output_tokens) == (50, 20)
 
 
-def test_a_whole_answer_whose_last_event_lost_its_reason_is_handed_on():
-    # ChatMistralAI records finish_reason only when the same event names the
-    # model, which a proxy may leave out. The answer itself validated.
-    events = _sse(json.dumps(ANSWER)).split("\n\n")
+def _losing_the_reason(output) -> ChatMistralAI:
+    """A ChatMistralAI whose API streams ``output`` with no ``model`` on the last
+    event. ChatMistralAI records ``finish_reason`` only when the same event
+    names the model, which a proxy may leave out, so no reason arrives."""
+    events = _sse(json.dumps(output)).split("\n\n")
     last = json.loads(events[-3].removeprefix("data: "))
     del last["model"]
     events[-3] = f"data: {json.dumps(last)}"
@@ -843,8 +844,21 @@ def test_a_whole_answer_whose_last_event_lost_its_reason_is_handed_on():
         return httpx.Response(200, headers={"content-type": "text/event-stream"},
                               text="\n\n".join(events))
 
-    result = generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    return _mistral(handler)
+
+
+def test_a_whole_answer_whose_last_event_lost_its_reason_is_handed_on():
+    # The JSON closed, so the stream was not cut.
+    result = generate(PROMPT, _mistral_config(), llm=_losing_the_reason(ANSWER))
     assert (result.text, result.stop_reason, result.parse_error) == (ANSWER_TEXT, None, None)
+
+
+def test_a_whole_answer_that_fails_the_schema_and_lost_its_reason_is_recorded():
+    # The JSON closed, so the stream was not cut, although the answer is invalid:
+    # it is kept with its parse_error, as it would be with its reason.
+    bad = {**ANSWER, "sentences": [{**ANSWER["sentences"][0], "sources": [99]}]}
+    result = generate(PROMPT, _mistral_config(), llm=_losing_the_reason(bad))
+    assert result.stop_reason is None and "less than or equal to" in result.parse_error
 
 
 @pytest.mark.parametrize("tail", [

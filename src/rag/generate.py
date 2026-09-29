@@ -144,8 +144,8 @@ def stream(
     With ``llm`` given, ``config.provider`` must still be one of ``PROVIDERS``,
     since the request's shape and the reading of its failures depend on it. A
     fake chat model standing in for Mistral has to end its stream with a
-    ``finish_reason``, as Mistral's own does, or with output that validates as
-    a whole answer.
+    ``finish_reason``, as Mistral's own does, or with output that is a whole
+    JSON document.
     """
     if prompt.template_id != config.prompt_template_id:
         raise ValueError(
@@ -197,13 +197,14 @@ def stream(
             raise
         raise unavailable from error
     latency_ms = (perf_counter() - started) * 1000.0
-    answer, parse_error = _validate(raw, schema)
-    stop_reason = provider.stop_reason(ended, config, answer is not None)
+    whole = _is_json(raw)
+    stop_reason = provider.stop_reason(ended, config, whole)
 
+    answer, parse_error = _validate(raw, schema)
     if answer is not None:
         text = answer.render()
     else:
-        text = _prose(raw, complete=_is_json(raw))
+        text = _prose(raw, complete=whole)
         if not text.startswith(shown):
             # Cut inside an escape, the last sentence cannot be read at all,
             # so what was already shown is the most of the answer there is.
@@ -658,11 +659,12 @@ def _mistral_stop_reason(
     either, so they are ``ProviderBusy``. Any other reason comes back the same
     for the same prompt, so it is a plain ``ProviderUnavailable``.
 
-    ``whole`` is whether the output validated as a whole answer. With no reason,
+    ``whole`` is whether the output is a whole JSON document. With no reason,
     that is an answer whose last event lost its reason rather than a cut
     stream, whose JSON never closes: ChatMistralAI records ``finish_reason``
     only when the same event names the model, which a proxy set through
-    ``MISTRAL_BASE_URL`` may leave out. It is handed on, with no reason.
+    ``MISTRAL_BASE_URL`` may leave out. It is handed on with no reason, and
+    with a ``parse_error`` where it fails the schema, as it would be with one.
     """
     reason = metadata.get("finish_reason")
     if reason in ("stop", "length", "model_length"):
@@ -771,8 +773,8 @@ class _Provider:
     makes that model for a config; ``request`` is what goes with the messages;
     ``unavailable`` turns the client's error into a ``ProviderUnavailable``, or
     None to let it through; ``stop_reason`` reads why the answer ended, from the
-    last chunk's metadata and whether the output validated as a whole answer,
-    and raises where the answer did not finish.
+    last chunk's metadata and whether the output is a whole JSON document, and
+    raises where the answer did not finish.
     """
 
     package: str

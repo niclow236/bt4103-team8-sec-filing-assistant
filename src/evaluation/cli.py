@@ -25,9 +25,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Which provider answers: ollama, the local model, or mistral, the hosted API "
              "with your own MISTRAL_API_KEY. Defaults to LLM_PROVIDER in .env, else ollama.",
     )
-    parser.add_argument("--model", help="The model, as the provider names it. Defaults to LLM_MODEL "
-                                         "in .env when --provider is LLM_PROVIDER's, else the "
-                                         "provider's default.")
+    parser.add_argument(
+        "--model",
+        help="The model, as the provider names it. Defaults to LLM_MODEL in .env when "
+             "--provider is LLM_PROVIDER's, else the provider's default.",
+    )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output", type=Path, required=True, help="JSON report including rates and answers")
     parser.add_argument("--answers", type=Path, help="Optional answer JSONL for the browser viewer")
@@ -71,7 +73,8 @@ def main(argv: list[str] | None = None) -> None:
     else:
         retriever = HybridRetriever(BM25Retriever.load(processed_dir=args.processed_dir),
                                     DenseRetriever.load(processed_dir=args.processed_dir))
-    report = evaluate(questions, retriever, config, llm=llm, run_id=args.run_id, min_score=args.min_score, top_k=args.top_k,
+    report = evaluate(questions, retriever, config, llm=llm, run_id=args.run_id,
+                      min_score=args.min_score, top_k=args.top_k,
                       use_facts=args.use_facts, use_decomposition=args.use_decomposition)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

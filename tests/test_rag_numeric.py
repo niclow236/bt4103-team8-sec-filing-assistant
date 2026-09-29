@@ -804,7 +804,7 @@ def test_the_evaluation_command_can_turn_the_route_off(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "evaluate", lambda *a, **k: seen.update(k) or
                         {"summary": {}, "by_answerability": {}, "results": []})
     cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r",
-              "--output", str(tmp_path / "report.json"), "--no-facts"])
+              "--output", str(tmp_path / "report.json"), "--no-facts", "--provider", "ollama"])
     assert seen["use_facts"] is False
 
 
@@ -818,5 +818,5 @@ def test_the_evaluation_command_uses_the_route_by_default(monkeypatch, tmp_path)
     monkeypatch.setattr(cli, "evaluate", lambda *a, **k: seen.update(k) or
                         {"summary": {}, "by_answerability": {}, "results": []})
     cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r",
-              "--output", str(tmp_path / "report.json")])
+              "--output", str(tmp_path / "report.json"), "--provider", "ollama"])
     assert seen["use_facts"] is True

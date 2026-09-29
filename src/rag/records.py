@@ -83,7 +83,9 @@ class GenerationConfig:
     the budget its passages were cut with.
     """
 
-    provider: str          # "ollama" or "mistral", which the generator dispatches on; "facts" for a looked-up answer
+    # "ollama" or "mistral", which the generator dispatches on, or "facts" for
+    # an answer looked up in the facts store rather than written by a model.
+    provider: str
     # The model exactly as the provider names it, since two checkpoints of one
     # family answer differently and a results row has to say which one spoke.
     model: str
