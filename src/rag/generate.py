@@ -46,7 +46,10 @@ import json
 import os
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from functools import lru_cache
+from math import isfinite
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -70,6 +73,7 @@ from .constants import (
     MAX_OUTPUT_TOKENS,
     MISTRAL,
     MISTRAL_API_KEY_ENV,
+    MISTRAL_API_URL,
     MISTRAL_BASE_URL_ENV,
     MISTRAL_CONSOLE,
     NUM_CTX,
@@ -83,16 +87,30 @@ from .records import Generation, GenerationConfig, GroundedAnswer, render_senten
 
 class ProviderUnavailable(RuntimeError):
     """The model cannot answer: no server or connection, no such model, a missing
-    or refused key, a rate limit, or no response in time."""
+    or refused key, a rate limit or a used-up quota, or no response in time."""
 
 
 class ProviderBusy(ProviderUnavailable):
     """A failure that asking again may fix: a rate limit, a server error, a
-    connection that broke off or never came, or an answer that did not finish."""
+    connection that broke off or never came, or an answer that did not finish.
+
+    ``retry_after`` is how many seconds the provider asked to be left before
+    the next request, from the ``Retry-After`` of a 429 or a 5xx, or None where
+    it did not say.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 # What every Mistral failure offers instead.
 _ANSWER_LOCALLY = f"set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
+# Words in a 429's message that mean a quota or spending limit is used up,
+# rather than a per-minute rate limit that a wait fixes. Mistral's own wording
+# for the used-up case has not been seen here, so these are the plain words
+# such a message would use, not a quoted body.
+_USED_UP = ("month", "quota", "spending", "budget", "billing")
 
 
 # --- the entry points ------------------------------------------------------------
@@ -291,9 +309,13 @@ def config_from_env(
     """
     env = _environment(environ, dotenv)
     # Checked only when it is the one used, so a typo in .env does not block
-    # choosing a provider with the argument.
+    # choosing a provider with the argument, and refused under the name of
+    # whichever of the two it came from.
     configured = _provider_setting(env.get(LLM_PROVIDER_ENV))
-    chosen_provider = _provider_name(provider if (provider or "").strip() else configured)
+    if (provider or "").strip():
+        chosen_provider = _provider_name(provider, "the provider argument")
+    else:
+        chosen_provider = _provider_name(configured, LLM_PROVIDER_ENV)
     default = DEFAULT_MISTRAL_MODEL if chosen_provider == MISTRAL else DEFAULT_MODEL
     configured_model = env.get(LLM_MODEL_ENV) if chosen_provider == configured else None
     chosen = (model or configured_model or "").strip() or default
@@ -310,12 +332,13 @@ def _provider_setting(value: str | None) -> str:
     return (value or "").strip().lower() or DEFAULT_PROVIDER
 
 
-def _provider_name(value: str | None) -> str:
+def _provider_name(value: str | None, setting: str) -> str:
     """A provider setting as one of ``PROVIDERS``, refused where the config is
-    built if it names none of them."""
+    built if it names none of them, under the name of the ``setting`` it came
+    from."""
     name = _provider_setting(value)
     if name not in PROVIDERS:
-        raise ValueError(f"{LLM_PROVIDER_ENV} must be one of {', '.join(PROVIDERS)}, got {name!r}")
+        raise ValueError(f"{setting} must be one of {', '.join(PROVIDERS)}, got {name!r}")
     return name
 
 
@@ -323,6 +346,7 @@ def chat_model(
     config: GenerationConfig,
     *,
     base_url: str | None = None,
+    environ: Mapping[str, str] | None = None,
     dotenv: Path = ENV_FILE,
 ) -> Any:
     """The LangChain chat model for a config: ``ChatOllama`` or ``ChatMistralAI``.
@@ -332,24 +356,25 @@ def chat_model(
     set, says how many layers go on the GPU; see ``constants.LLM_NUM_GPU_ENV``
     for when to set it. For Mistral, see :func:`_mistral_model`, which refuses
     ``base_url``, since Mistral's address comes from ``MISTRAL_BASE_URL``. The
-    generation options are not set here: :func:`stream` sends them with every
-    request.
+    settings are read as :func:`config_from_env` reads them: the process
+    environment with ``dotenv`` loaded into it, or ``environ`` in place of both.
+    The generation options are not set here: :func:`stream` sends them with
+    every request.
 
     Each client library is imported here rather than at the top of the module
     because it takes seconds to import, and code that only parses a question
     or renders a prompt should not pay for it.
     """
-    return _provider(config).build(config, base_url, dotenv)
+    return _provider(config).build(config, base_url, _environment(environ, dotenv))
 
 
-def _ollama_model(config: GenerationConfig, base_url: str | None, dotenv: Path) -> Any:
+def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
     """``ChatOllama`` for the config, on the server :func:`chat_model` describes."""
     from langchain_ollama import ChatOllama
 
-    load_env(dotenv)
     if base_url is None:
-        base_url = os.environ.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL
-    layers = os.environ.get(LLM_NUM_GPU_ENV, "").strip()
+        base_url = env.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL
+    layers = (env.get(LLM_NUM_GPU_ENV) or "").strip()
     if layers and not layers.isdigit():
         raise ValueError(f"{LLM_NUM_GPU_ENV} must be a whole number of layers, got {layers!r}")
     return ChatOllama(
@@ -360,7 +385,7 @@ def _ollama_model(config: GenerationConfig, base_url: str | None, dotenv: Path) 
     )
 
 
-def _mistral_model(config: GenerationConfig, base_url: str | None, dotenv: Path) -> Any:
+def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
     """``ChatMistralAI`` for the config, with the key from the environment or .env.
 
     The key is each teammate's own, from their own Mistral account, so a missing
@@ -377,19 +402,24 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, dotenv: Path)
         raise ValueError(
             f"base_url is the Ollama server's address; Mistral's comes from {MISTRAL_BASE_URL_ENV}"
         )
-    load_env(dotenv)
-    key = (os.environ.get(MISTRAL_API_KEY_ENV) or "").strip()
+    key = (env.get(MISTRAL_API_KEY_ENV) or "").strip()
     if not key:
+        # A key pasted into .env after a blank MISTRAL_API_KEY= line was read
+        # is not seen, since a variable that is set wins over .env, even "".
         raise ProviderUnavailable(
             f"the provider is {MISTRAL!r} but {MISTRAL_API_KEY_ENV} is not set: make a key with "
             f"your own account at {MISTRAL_CONSOLE} (API Keys) and put it in your .env, as "
-            f"'Setting up Mistral' in the README says, or {_ANSWER_LOCALLY}"
+            f"'Setting up Mistral' in the README says, then restart the notebook or command so "
+            f"the key is read, or {_ANSWER_LOCALLY}"
         )
-    return _mistral_client(config.model, key, os.environ.get(MISTRAL_BASE_URL_ENV))
+    # The address given to the client in every case, so a setting read from
+    # ``environ`` is not passed over for the process's own MISTRAL_BASE_URL,
+    # which ChatMistralAI reads when it is given none.
+    return _mistral_client(config.model, key, env.get(MISTRAL_BASE_URL_ENV) or MISTRAL_API_URL)
 
 
 @lru_cache(maxsize=8)
-def _mistral_client(model: str, key: str, base_url: str | None) -> Any:
+def _mistral_client(model: str, key: str, base_url: str) -> Any:
     """One ``ChatMistralAI`` per model, key and address, built on first use.
 
     The temperature and the output ceiling are not set here: :func:`stream`
@@ -484,12 +514,14 @@ def _problems(problems: Sequence[Mapping[str, Any]], *, whole: str) -> str:
 
     Pydantic's errors and a Mistral 422's are the same shape, a ``loc`` and a
     ``msg``: "sentences.0.sources.0: Input should be less than or equal to 3".
-    A problem with no location, or a null one, is in ``whole``.
+    A problem with no location, or a null one, is in ``whole``, and a location
+    given as one string, as a proxy may send it, is one part.
     """
-    return "; ".join(
-        f"{'.'.join(str(part) for part in problem.get('loc') or ()) or whole}: {problem['msg']}"
-        for problem in problems[:3]
-    )
+    def where(loc: Any) -> str:
+        parts = [loc] if isinstance(loc, str) else loc or ()
+        return ".".join(str(part) for part in parts) or whole
+
+    return "; ".join(f"{where(problem.get('loc'))}: {problem['msg']}" for problem in problems[:3])
 
 
 def _ollama_unavailable(
@@ -501,9 +533,12 @@ def _ollama_unavailable(
     request: a refused connection arrives as httpx's ``ConnectError``, not
     the client's own ``ConnectionError``, a model that has not been pulled
     as a ``ResponseError`` with status 404, a full queue as one with status
-    503, and a connection Ollama closes part-way through an answer as httpx's
-    ``RemoteProtocolError``. Each becomes a message that says what to run, and
-    the ones asking again may fix are :class:`ProviderBusy`.
+    503, a proxy in ``HTTP_PROXY`` that refuses as httpx's ``ProxyError``, and
+    a connection Ollama closes part-way through an answer as httpx's
+    ``RemoteProtocolError`` or a ``NetworkError``. Each becomes a message that
+    says what to run, and the ones asking again may fix are
+    :class:`ProviderBusy`. Any other transport error, such as a malformed
+    request, fails the same way every time and comes through as itself.
     """
     import httpx
     from ollama import ResponseError
@@ -533,9 +568,16 @@ def _ollama_unavailable(
                 f"Ollama at {url} is busy running {config.model!r} ({error.error}): ask again"
             )
         return ProviderUnavailable(f"Ollama could not run {config.model!r}: {error.error}")
-    # Every other transport failure: Ollama closing the connection part-way,
-    # as it does when the process running the model stops.
-    if isinstance(error, httpx.TransportError):
+    # A proxy set for the whole machine that also catches this computer's own
+    # address: it refuses the same way on every request.
+    if isinstance(error, httpx.ProxyError):
+        return ProviderUnavailable(
+            f"a proxy refused the connection to Ollama at {url} ({error}): add 127.0.0.1 to "
+            f"NO_PROXY, or unset HTTP_PROXY, so requests to this computer skip the proxy"
+        )
+    # Ollama closing the connection part-way, as it does when the process
+    # running the model stops, or the connection failing mid-answer.
+    if isinstance(error, (httpx.RemoteProtocolError, httpx.NetworkError)):
         return ProviderBusy(
             f"the connection to Ollama at {url} broke off while running {config.model!r} "
             f"({type(error).__name__}: {error}): check that Ollama is still running, and "
@@ -553,17 +595,31 @@ def _mistral_unavailable(
     API refused, with its body already read, and a transport error when no
     response came or the connection broke off part-way. Each becomes a message
     that says what to do, and the ones asking again may fix are
-    :class:`ProviderBusy`.
+    :class:`ProviderBusy`. Any other transport error, such as a malformed
+    request, fails the same way every time and comes through as itself.
     """
     import httpx
     from httpx_sse import SSEError
 
+    # ChatMistralAI always sets its endpoint; a fake chat model has none.
+    url = getattr(model, "endpoint", None)
+    api = f"Mistral's API at {url}" if url else "Mistral's API"
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         detail, kind = _error_detail(error.response)
         # What the API said, where it said anything: "Your API key expired on
         # 2026-09-26" tells a teammate more than any status code.
         said = f"HTTP {status}: {detail}" if detail else f"HTTP {status}"
+        # Mistral refuses in JSON. A 401 or 403 page in anything else, such as
+        # a school firewall's or Cloudflare's HTML, never reached Mistral, so
+        # the key was not what it refused.
+        content_type = error.response.headers.get("content-type", "")
+        if status in (401, 403) and content_type and "json" not in content_type:
+            return ProviderUnavailable(
+                f"something other than {api} refused the request ({said}), such as a firewall "
+                f"or a proxy on this network, so the key was not checked: try another network, "
+                f"or unset {MISTRAL_BASE_URL_ENV} if it is set, since nobody needs to set it"
+            )
         if status == 403 and "tier" in detail.lower():
             return ProviderUnavailable(
                 f"your Mistral plan does not include {config.model!r} ({said}); set "
@@ -578,9 +634,20 @@ def _mistral_unavailable(
                 f"restart the notebook or command so the new key is read"
             )
         if status == 429:
+            # A 429 is also how a used-up monthly quota or spending limit is
+            # refused, and asking again cannot help with that until it resets.
+            if any(word in detail.lower() for word in _USED_UP):
+                return ProviderUnavailable(
+                    f"your Mistral account's usage limit is used up ({said}): asking again "
+                    f"will not help until it resets; see Limits at {MISTRAL_CONSOLE}, or "
+                    f"{_ANSWER_LOCALLY}"
+                )
+            retry_after = _retry_after(error.response)
+            wait = f"wait {retry_after:.0f}s" if retry_after else "wait a minute"
             return ProviderBusy(
-                f"Mistral's rate limit for {config.model!r} was reached ({said}); wait a minute "
-                f"and ask again, since the limits are per account"
+                f"Mistral's rate limit for {config.model!r} was reached ({said}); {wait} and "
+                f"ask again, since the limits are per account",
+                retry_after=retry_after,
             )
         # Mistral's own name for the error, since a message can mention a model
         # for other reasons: "too large for model with 131072 maximum context".
@@ -589,34 +656,45 @@ def _mistral_unavailable(
                 f"Mistral could not run {config.model!r} ({said}); set {LLM_MODEL_ENV} to a "
                 f"Mistral model, such as {DEFAULT_MISTRAL_MODEL}, or unset it"
             )
-        # An outage rather than anything wrong with the request.
+        # An outage rather than anything wrong with the request. A 503 may say
+        # how long it will last, as a 429 does.
         if status >= 500:
             return ProviderBusy(
                 f"Mistral's API failed while running {config.model!r} ({said}): ask again, "
-                f"or {_ANSWER_LOCALLY}"
+                f"or {_ANSWER_LOCALLY}",
+                retry_after=_retry_after(error.response),
             )
         return ProviderUnavailable(f"Mistral's API refused the request ({said})")
-    # ChatMistralAI always sets its endpoint; a fake chat model has none.
-    url = getattr(model, "endpoint", None)
-    api = f"Mistral's API at {url}" if url else "Mistral's API"
     if isinstance(error, httpx.TimeoutException):
         return ProviderBusy(
             f"{api} sent nothing for {HOSTED_TIMEOUT_S}s while running "
             f"{config.model!r}: ask again, or {_ANSWER_LOCALLY}"
         )
     if isinstance(error, (httpx.ConnectError, ConnectionError)):
-        # Being offline, a mistyped host and a certificate a proxy re-signed all
-        # fail this way, and cannot be told apart here: the error's own text
-        # (a name that did not resolve, CERTIFICATE_VERIFY_FAILED) says which,
-        # and a mistyped address is named when someone has set one.
         why = f" ({error})" if str(error) else ""
-        address = (
-            f", unset {MISTRAL_BASE_URL_ENV}, since nobody needs to set it"
-            if os.environ.get(MISTRAL_BASE_URL_ENV) else ""
-        )
+        # A network whose proxy re-signs HTTPS fails every request this way.
+        if "CERTIFICATE_VERIFY_FAILED" in str(error):
+            return ProviderUnavailable(
+                f"cannot reach {api}{why}: its certificate did not verify, as happens on a "
+                f"network whose proxy re-signs HTTPS, so asking again will not help: try "
+                f"another network, or {_ANSWER_LOCALLY}"
+            )
+        # Anywhere but Mistral's own address, the address is the likelier cause
+        # than being offline, and a mistyped one fails on every attempt.
+        if url and url.rstrip("/") != MISTRAL_API_URL:
+            return ProviderUnavailable(
+                f"cannot reach {api}{why}, the address {MISTRAL_BASE_URL_ENV} sets: correct it, "
+                f"or unset it, since nobody needs to set it"
+            )
+        # Offline, or a name that did not resolve, which looks the same.
         return ProviderBusy(
-            f"cannot reach {api}{why}: check the internet connection{address}, or "
-            f"{_ANSWER_LOCALLY}"
+            f"cannot reach {api}{why}: check the internet connection, or {_ANSWER_LOCALLY}"
+        )
+    # A proxy set in HTTPS_PROXY that refuses the connection does so every time.
+    if isinstance(error, httpx.ProxyError):
+        return ProviderUnavailable(
+            f"a proxy refused the connection to {api} ({error}): check HTTPS_PROXY in the "
+            f"environment, or unset it"
         )
     # A reply that is not an event stream (SSEError, itself a TransportError),
     # or an address without http(s)://: something other than Mistral's API
@@ -628,9 +706,9 @@ def _mistral_unavailable(
             f"unset {MISTRAL_BASE_URL_ENV} if it is set, since nobody needs to set it, or sign "
             f"in to the network if it has a login page"
         )
-    # Every other transport failure: a connection dropped part-way through an
-    # answer arrives as RemoteProtocolError, which is not a NetworkError.
-    if isinstance(error, httpx.TransportError):
+    # A connection dropped part-way through an answer: RemoteProtocolError, or
+    # a NetworkError such as a failed read.
+    if isinstance(error, (httpx.RemoteProtocolError, httpx.NetworkError)):
         return ProviderBusy(
             f"the connection to {api} broke off ({type(error).__name__}: {error}): ask "
             f"again, or {_ANSWER_LOCALLY}"
@@ -641,8 +719,20 @@ def _mistral_unavailable(
 def _ollama_stop_reason(
     metadata: Mapping[str, Any], config: GenerationConfig, whole: bool
 ) -> str | None:
-    """Why Ollama stopped, as its ``done_reason`` says: "length" at the output ceiling."""
-    return metadata.get("done_reason")
+    """Why Ollama stopped, as its ``done_reason`` says: "length" at the output ceiling.
+
+    Ollama sends ``done_reason`` on its last chunk only. Without it, and without
+    a whole JSON document (see :func:`_mistral_stop_reason`), the stream ended
+    part-way, as when a proxy or a restarted server closes it cleanly, and it
+    raises ``ProviderBusy`` rather than handing on the half that arrived.
+    """
+    reason = metadata.get("done_reason")
+    if reason is None and not whole:
+        raise ProviderBusy(
+            f"Ollama stopped {config.model!r} part-way without finishing: check that Ollama "
+            f"is still running, and ask again"
+        )
+    return reason
 
 
 def _mistral_stop_reason(
@@ -690,7 +780,9 @@ def _error_detail(response: Any) -> tuple[str, str]:
     for a refused key. A request that fails validation (422) has a ``message``
     holding a list of problems under ``detail``, each read as where it is and
     what is wrong; the same list straight under ``detail``, as a proxy built on
-    FastAPI sends it, is read the same way. The
+    FastAPI sends it, is read the same way. An OpenAI-style proxy, such as
+    LiteLLM, nests the whole error under ``error``, which is read in its place.
+    An HTML page, such as a firewall's, is named as one rather than quoted. The
     closing full stop is dropped, since the text is quoted inside a longer
     message. The type is "" where the body gives none.
     """
@@ -704,9 +796,14 @@ def _error_detail(response: Any) -> tuple[str, str]:
     try:
         body = json.loads(text)
     except ValueError:
+        if "html" in response.headers.get("content-type", ""):
+            return "an HTML page", ""
         return short(text), ""
     if not isinstance(body, dict):
         return short(text), ""
+    # An OpenAI-style proxy nests the error: {"error": {"message": ..., "type": ...}}.
+    if isinstance(body.get("error"), dict):
+        body = body["error"]
     kind = body["type"] if isinstance(body.get("type"), str) else ""
     for field in ("message", "detail", "error"):
         value = body.get(field)
@@ -723,6 +820,25 @@ def _error_detail(response: Any) -> tuple[str, str]:
             if problems:
                 return short(_problems(problems, whole="request")), kind
     return short(text), kind
+
+
+def _retry_after(response: Any) -> float | None:
+    """The seconds a ``Retry-After`` header asks for, given as a number of seconds
+    or as an HTTP date, or None where there is none or it cannot be read."""
+    value = (response.headers.get("retry-after") or "").strip()
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(seconds, 0.0) if isfinite(seconds) else None
 
 
 # --- the providers ---------------------------------------------------------------
@@ -770,7 +886,8 @@ class _Provider:
     """Everything that differs between the providers, for one of them.
 
     ``package`` is the LangChain package its chat model comes from; ``build``
-    makes that model for a config; ``request`` is what goes with the messages;
+    makes that model for a config, from the settings :func:`chat_model` read;
+    ``request`` is what goes with the messages;
     ``unavailable`` turns the client's error into a ``ProviderUnavailable``, or
     None to let it through; ``stop_reason`` reads why the answer ended, from the
     last chunk's metadata and whether the output is a whole JSON document, and
@@ -778,7 +895,7 @@ class _Provider:
     """
 
     package: str
-    build: Callable[[GenerationConfig, str | None, Path], Any]
+    build: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
     request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
     unavailable: Callable[[Exception, Any, GenerationConfig], ProviderUnavailable | None]
     stop_reason: Callable[[Mapping[str, Any], GenerationConfig, bool], str | None]

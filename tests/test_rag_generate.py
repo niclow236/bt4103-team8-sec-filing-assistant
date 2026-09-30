@@ -406,6 +406,29 @@ def test_an_unknown_provider_setting_is_refused():
         config_from_env(environ={"LLM_PROVIDER": "openai"})
 
 
+def test_an_unknown_provider_argument_is_refused_under_its_own_name():
+    # Not LLM_PROVIDER, which the caller may not have set at all.
+    with pytest.raises(ValueError, match="^the provider argument must be one of ollama, mistral, "
+                                         "got 'openai'$"):
+        config_from_env(provider="openai", environ={})
+
+
+def test_chat_model_reads_the_settings_it_is_given_in_place_of_the_environment(monkeypatch):
+    # As config_from_env does: environ replaces both the process environment
+    # and .env, so a test needs neither.
+    monkeypatch.setenv("MISTRAL_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9")
+    ollama = chat_model(_config(), environ={"LLM_BASE_URL": "http://gpu-box:11434",
+                                            "LLM_NUM_GPU": "0"})
+    assert (ollama.base_url, ollama.num_gpu) == ("http://gpu-box:11434", 0)
+    mistral = chat_model(_mistral_config(), environ={"MISTRAL_API_KEY": "from-environ"})
+    assert mistral.mistral_api_key.get_secret_value() == "from-environ"
+    # Mistral's own address, not the process's MISTRAL_BASE_URL.
+    assert mistral.endpoint == "https://api.mistral.ai/v1"
+    with pytest.raises(ProviderUnavailable, match="MISTRAL_API_KEY is not set"):
+        chat_model(_mistral_config(), environ={})
+
+
 def test_chat_model_is_chat_ollama_on_the_configured_server(tmp_path, clean_env):
     llm = chat_model(_config(model="llama3.2:3b"), dotenv=tmp_path / "absent.env")
     assert isinstance(llm, ChatOllama)
@@ -481,8 +504,10 @@ def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path, cl
 @pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
 def test_a_missing_key_says_where_to_make_one(tmp_path, clean_env, values):
     # No key line is what .env.example leaves, and an empty value what removing
-    # its # without pasting a key leaves.
-    with pytest.raises(ProviderUnavailable, match="console.mistral.ai"):
+    # its # without pasting a key leaves. Once a blank line was read, a key
+    # pasted in later is only seen after a restart, so the message says so.
+    with pytest.raises(ProviderUnavailable, match="console.mistral.ai.*then restart the notebook "
+                                                  "or command so the key is read"):
         chat_model(_mistral_config(), dotenv=_dotenv(tmp_path, **values))
 
 
@@ -560,6 +585,14 @@ def test_a_connection_ollama_closes_part_way_says_what_to_do():
         generate(PROMPT, _config(), llm=_ollama(lambda request: httpx.Response(200, stream=Dropped())))
 
 
+def test_an_ollama_stream_that_ends_without_its_done_chunk_is_asked_again():
+    # The body closed cleanly part-way through the answer: no error, no done_reason.
+    cut = _ndjson(json.dumps(ANSWER)).splitlines(keepends=True)[:20]
+    handler = lambda request: httpx.Response(200, text="".join(cut))
+    with pytest.raises(ProviderBusy, match="Ollama stopped 'm' part-way without finishing"):
+        generate(PROMPT, _config(), llm=_ollama(handler))
+
+
 def test_an_unrelated_error_is_not_disguised():
     class Broken(ChatOllama):
         def stream(self, *args, **kwargs):
@@ -601,10 +634,12 @@ def _sse(output: str, *, size: int = 1, finish_reason: str = "stop",
     return "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
 
 
-def _mistral(handler) -> ChatMistralAI:
+def _mistral(handler, base_url: str = MISTRAL_URL) -> ChatMistralAI:
+    # base_url fixes the address the error messages read, which ChatMistralAI
+    # would otherwise take from the shell's MISTRAL_BASE_URL.
     return ChatMistralAI(
-        model=DEFAULT_MISTRAL_MODEL, api_key="test-key", max_retries=1,
-        client=httpx.Client(base_url=MISTRAL_URL, transport=httpx.MockTransport(handler)),
+        model=DEFAULT_MISTRAL_MODEL, api_key="test-key", max_retries=1, base_url=base_url,
+        client=httpx.Client(base_url=base_url, transport=httpx.MockTransport(handler)),
     )
 
 
@@ -722,6 +757,15 @@ def _refusing(status, body=None):
                                    "input": 2, "ctx": {"le": 1.5}}]}},
      r"^Mistral's API refused the request \(HTTP 422: body\.temperature: Input should be less "
      r"than or equal to 1\.5\)$"),
+    # An OpenAI-style proxy, such as LiteLLM, nests the error and its type.
+    (400, {"error": {"message": "Invalid model: x", "type": "invalid_model"}},
+     r"could not run 'ministral-8b-2512' \(HTTP 400: Invalid model: x\); set LLM_MODEL"),
+    # A location sent as one string is one part, not one per character.
+    (422, {"detail": [{"loc": "body", "msg": "bad"}]}, r"\(HTTP 422: body: bad\)$"),
+    # A used-up quota is a 429 too, and a wait does not fix it.
+    (429, {"message": "Monthly token limit exceeded"},
+     r"usage limit is used up \(HTTP 429: Monthly token limit exceeded\): asking again will "
+     r"not help until it resets"),
     # The same problems straight under detail, as a proxy built on FastAPI sends them.
     (422, {"detail": [{"loc": ["body", "temperature"], "msg": "Input should be less than or "
                                                               "equal to 1.5"}]},
@@ -730,6 +774,60 @@ def _refusing(status, body=None):
 def test_a_refused_request_says_what_to_do(status, body, expected):
     with pytest.raises(ProviderUnavailable, match=expected):
         generate(PROMPT, _mistral_config(), llm=_refusing(status, body))
+
+
+@pytest.mark.parametrize("headers, retry_after, wait", [
+    ({}, None, "wait a minute"),
+    ({"retry-after": "30"}, 30.0, "wait 30s"),
+    ({"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"}, 0.0, "wait a minute"),   # already past
+    ({"retry-after": "soon"}, None, "wait a minute"),
+], ids=["none", "seconds", "date", "unreadable"])
+def test_a_rate_limit_carries_how_long_mistral_asked_to_be_left(headers, retry_after, wait):
+    handler = lambda request: httpx.Response(
+        429, json={"message": "Requests rate limit exceeded"}, headers=headers)
+    with pytest.raises(ProviderBusy, match=f"was reached .*; {wait} and ask again") as raised:
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert raised.value.retry_after == retry_after
+
+
+def test_a_retry_after_given_as_a_date_is_read_as_the_seconds_until_it():
+    from email.utils import format_datetime
+    from datetime import datetime, timedelta, timezone
+
+    when = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=120), usegmt=True)
+    handler = lambda request: httpx.Response(429, json={"message": "limit"},
+                                             headers={"retry-after": when})
+    with pytest.raises(ProviderBusy) as raised:
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert 100 < raised.value.retry_after <= 120
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_refusal_that_is_not_mistral_s_does_not_blame_the_key(status):
+    # A firewall's or Cloudflare's block page: HTML, never Mistral's JSON.
+    page = "<!DOCTYPE html><html><body>Access denied by your network</body></html>"
+    handler = lambda request: httpx.Response(status, text=page,
+                                             headers={"content-type": "text/html"})
+    with pytest.raises(ProviderUnavailable, match=rf"something other than Mistral's API at .* "
+                                                  rf"refused the request \(HTTP {status}: an HTML "
+                                                  rf"page\), such as a firewall") as raised:
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert "API key" not in str(raised.value)
+
+
+def test_an_outage_carries_how_long_mistral_asked_to_be_left():
+    handler = lambda request: httpx.Response(503, json={"message": "Service unavailable"},
+                                             headers={"retry-after": "45"})
+    with pytest.raises(ProviderBusy, match="failed while running") as raised:
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert raised.value.retry_after == 45.0
+
+
+def test_a_server_error_page_is_named_rather_than_quoted():
+    handler = lambda request: httpx.Response(502, text="<html><body>Bad gateway</body></html>",
+                                             headers={"content-type": "text/html; charset=utf-8"})
+    with pytest.raises(ProviderBusy, match=r"\(HTTP 502: an HTML page\): ask again"):
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
 
 
 def test_a_refusal_whose_body_was_never_read_still_says_what_to_do():
@@ -766,19 +864,56 @@ def test_no_response_from_mistral_says_what_to_do(exception_type, expected):
         generate(PROMPT, _mistral_config(), llm=_mistral(handler))
 
 
-@pytest.mark.parametrize("address, expected", [
-    ("https://api.mistrl.ai/v1", r"cannot reach .*\(boom\): check the internet connection, "
-                                 r"unset MISTRAL_BASE_URL, since nobody needs to set it, or set"),
-    (None, r"cannot reach .*\(boom\): check the internet connection, or set LLM_PROVIDER"),
-])
-def test_a_mistral_address_that_cannot_be_reached_names_the_setting(
-        monkeypatch, clean_env, address, expected):
-    # A mistyped host fails on every attempt, like being offline, so the
-    # setting is named whenever someone has set it, with httpx's reason.
-    if address is not None:
-        monkeypatch.setenv("MISTRAL_BASE_URL", address)
-    with pytest.raises(ProviderBusy, match=expected):
+def test_mistral_s_own_address_that_cannot_be_reached_is_asked_again():
+    # Offline, or a name that did not resolve, which looks the same: httpx's
+    # reason is quoted.
+    with pytest.raises(ProviderBusy, match=r"cannot reach Mistral's API at https://api\.mistral"
+                                           r"\.ai/v1 \(boom\): check the internet connection"):
         generate(PROMPT, _mistral_config(), llm=_mistral(_raises(httpx.ConnectError)))
+
+
+def test_a_mistral_address_that_cannot_be_reached_names_the_setting():
+    # Anywhere but Mistral's own address, a mistyped setting is the likelier
+    # cause, and it fails the same way on every attempt.
+    llm = _mistral(_raises(httpx.ConnectError), base_url="https://api.mistrl.ai/v1")
+    with pytest.raises(ProviderUnavailable, match=r"cannot reach Mistral's API at https://api\."
+                                                  r"mistrl\.ai/v1 \(boom\), the address "
+                                                  r"MISTRAL_BASE_URL sets: correct it") as raised:
+        generate(PROMPT, _mistral_config(), llm=llm)
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+def test_a_certificate_a_proxy_re_signed_is_not_asked_again():
+    def handler(request):
+        raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                                 "self-signed certificate in certificate chain", request=request)
+
+    with pytest.raises(ProviderUnavailable, match="did not verify, as happens on a network whose "
+                                                  "proxy re-signs HTTPS") as raised:
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+@pytest.mark.parametrize("llm, config, expected", [
+    (lambda handler: _mistral(handler), _mistral_config, "check HTTPS_PROXY"),
+    (lambda handler: _ollama(handler), _config, "add 127.0.0.1 to NO_PROXY"),
+], ids=["mistral", "ollama"])
+def test_a_proxy_that_refuses_is_not_asked_again(llm, config, expected):
+    with pytest.raises(ProviderUnavailable,
+                       match=f"a proxy refused the connection.*{expected}") as raised:
+        generate(PROMPT, config(), llm=llm(_raises(httpx.ProxyError)))
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+@pytest.mark.parametrize("llm, config", [
+    (lambda handler: _mistral(handler), _mistral_config),
+    (lambda handler: _ollama(handler), _config),
+], ids=["mistral", "ollama"])
+def test_a_request_httpx_could_not_send_comes_through_as_itself(llm, config):
+    # It fails the same way every time, so it is neither a dropped connection
+    # nor worth asking again.
+    with pytest.raises(httpx.LocalProtocolError):
+        generate(PROMPT, config(), llm=llm(_raises(httpx.LocalProtocolError)))
 
 
 def test_a_connection_dropped_part_way_through_an_answer_says_what_to_do():
@@ -909,7 +1044,10 @@ def _raises(exception_type):
     (lambda request: httpx.Response(400, json={"message": "Invalid model: x",
                                                "type": "invalid_model"}), False),
     (lambda request: httpx.Response(422, json={"message": "Invalid request"}), False),
-], ids=["429", "503", "connect", "timeout", "dropped", "401", "invalid-model", "422"])
+    (lambda request: httpx.Response(429, json={"message": "Monthly token limit exceeded"}), False),
+    (_raises(httpx.ProxyError), False),
+], ids=["429", "503", "connect", "timeout", "dropped", "401", "invalid-model", "422", "quota",
+        "proxy"])
 def test_only_a_failure_asking_again_may_fix_is_busy(handler, busy):
     # ProviderBusy is what the evaluation harness asks again on.
     with pytest.raises(ProviderUnavailable) as raised:
@@ -927,6 +1065,7 @@ def test_a_failed_mistral_request_is_sent_once():
         raise httpx.ConnectError("boom", request=request)
 
     llm = ChatMistralAI(model=DEFAULT_MISTRAL_MODEL, api_key="test-key", max_retries=5,
+                        base_url=MISTRAL_URL,
                         client=httpx.Client(base_url=MISTRAL_URL,
                                             transport=httpx.MockTransport(handler)))
     with pytest.raises(ProviderBusy):
@@ -982,3 +1121,29 @@ def test_the_evaluation_command_refuses_its_settings_before_loading_anything(
         cli.main(["q.jsonl", "--run-id", "r", "--output", str(tmp_path / "report.json")])
     assert raised.value.code == 2
     assert expected in capsys.readouterr().err
+
+
+def test_a_stopped_run_writes_the_answers_before_it_and_fails(monkeypatch, tmp_path, clean_env):
+    import src.evaluation.cli as cli
+    from src.evaluation import RunStopped
+    from src.retrieval.bm25 import BM25Retriever
+
+    row = {"question_id": "q1", "answer": {"text": "Revenue was $100."}}
+    report = {"summary": {"total": 1}, "by_answerability": {}, "results": [row],
+              "stopped": {"question_id": "q2", "error": "ProviderBusy: rate limit"}}
+
+    def stopping(*args, **kwargs):
+        raise RunStopped(report)
+
+    monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
+    monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
+    monkeypatch.setattr(cli, "evaluate", stopping)
+    output, answers = tmp_path / "report.json", tmp_path / "answers.jsonl"
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r", "--output", str(output),
+                  "--answers", str(answers), "--provider", "ollama"])
+    # sys.exit with a message: printed to stderr, exit status 1.
+    assert raised.value.code == (f"stopped at q2: ProviderBusy: rate limit; 1 answered before it, "
+                                 f"written to {output}")
+    assert json.loads(output.read_text())["stopped"]["question_id"] == "q2"
+    assert [json.loads(line) for line in answers.read_text().splitlines()] == [row]

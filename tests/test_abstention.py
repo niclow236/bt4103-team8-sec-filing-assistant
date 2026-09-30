@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessageChunk
 from src.app.answers import render_answer, write_answer_page
 from src.evaluation import BenchmarkQuestion, evaluate
 from src.evaluation.cli import main
-from src.evaluation.harness import RETRY_WAITS_S
+from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S, RunStopped
 from src.pipeline.chunk import iter_chunks
 from src.rag import (
     ProviderBusy,
@@ -240,15 +240,16 @@ def test_model_abstention_counts_in_harness_and_empty_subsets_are_null():
 
 
 class Failing(Model):
-    """A chat model whose first ``times`` requests raise ``error``, then answer."""
+    """A chat model whose requests after the first ``after`` raise ``error``
+    ``times`` times, then answer again."""
 
-    def __init__(self, error, times):
+    def __init__(self, error, times, after=0):
         super().__init__()
-        self.error, self.times, self.requests = error, times, 0
+        self.error, self.times, self.after, self.requests = error, times, after, 0
 
     def stream(self, messages, **kwargs):
         self.requests += 1
-        if self.requests <= self.times:
+        if self.after < self.requests <= self.after + self.times:
             raise self.error
         return super().stream(messages, **kwargs)
 
@@ -263,23 +264,63 @@ def test_a_busy_provider_is_asked_again_before_it_stops_the_run(monkeypatch, cap
     assert (report["summary"]["total"], report["summary"]["abstained"]) == (1, 0)
     assert (model.requests, waits) == (len(RETRY_WAITS_S) + 1, list(RETRY_WAITS_S))
     assert report["results"][0]["attempts"] == len(RETRY_WAITS_S) + 1
+    assert report["stopped"] is None
     assert f"1: {busy}; asking again in {RETRY_WAITS_S[0]}s" in caplog.text
 
-    # Once the waits run out, the failure stops the run as any error does.
-    waits.clear()
-    with pytest.raises(ProviderBusy, match="rate limit"):
-        evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run",
-                 llm=Failing(busy, times=len(RETRY_WAITS_S) + 1))
+
+def test_a_run_the_provider_stops_keeps_the_answers_before_it(monkeypatch):
+    waits = []
+    monkeypatch.setattr("src.evaluation.harness.sleep", waits.append)
+    busy = ProviderBusy("Mistral's rate limit was reached")
+    # Question 1 answers; question 2 stays busy past every wait.
+    model = Failing(busy, times=len(RETRY_WAITS_S) + 1, after=1)
+    with pytest.raises(RunStopped,
+                       match="stopped at 2: ProviderBusy: Mistral's rate limit") as raised:
+        evaluate([question(1), question(2), question(3)], StaticRetriever([passage()]), CONFIG,
+                 run_id="run", llm=model)
+    assert raised.value.__cause__ is busy
     assert waits == list(RETRY_WAITS_S)
+    report = raised.value.report
+    assert report["stopped"] == {"question_id": "2",
+                                 "error": "ProviderBusy: Mistral's rate limit was reached"}
+    assert [row["question_id"] for row in report["results"]] == ["1"]
+    assert report["summary"]["total"] == 1
 
 
 def test_a_failure_asking_again_cannot_fix_stops_the_run_at_once(monkeypatch):
     monkeypatch.setattr("src.evaluation.harness.sleep",
                         lambda seconds: pytest.fail("a refused key is not asked again"))
     model = Failing(ProviderUnavailable("Mistral refused the API key"), times=1)
-    with pytest.raises(ProviderUnavailable, match="refused the API key"):
+    with pytest.raises(RunStopped, match="stopped at 1: ProviderUnavailable: Mistral refused "
+                                         "the API key") as raised:
         evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
     assert model.requests == 1
+    assert raised.value.report["results"] == []
+
+
+def test_a_wait_the_provider_asks_for_is_given(monkeypatch):
+    waits = []
+    monkeypatch.setattr("src.evaluation.harness.sleep", waits.append)
+    model = Failing(ProviderBusy("rate limit", retry_after=90), times=len(RETRY_WAITS_S))
+    evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
+    # Each wait is the longer of the harness's own and the 90 s asked for.
+    assert waits == [max(wait, 90) for wait in RETRY_WAITS_S]
+
+
+def test_a_wait_longer_than_a_run_can_sit_through_stops_it_at_once(monkeypatch):
+    monkeypatch.setattr("src.evaluation.harness.sleep",
+                        lambda seconds: pytest.fail("an hour is not waited out"))
+    model = Failing(ProviderBusy("rate limit", retry_after=MAX_RETRY_WAIT_S + 1), times=1)
+    with pytest.raises(RunStopped, match="stopped at 1: ProviderBusy"):
+        evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
+    assert model.requests == 1
+
+
+def test_an_error_that_is_not_the_provider_s_comes_through_as_itself():
+    # A bug is not a stopped run, and must not look like one.
+    with pytest.raises(KeyError):
+        evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run",
+                 llm=Failing(KeyError("a bug"), times=1))
 
 
 def test_evaluation_cli_writes_report_and_viewer_rows(corpus, tmp_path, monkeypatch, capsys):

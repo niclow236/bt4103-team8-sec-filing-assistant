@@ -369,11 +369,14 @@ LLM_MODEL_ENV = "LLM_MODEL"
 LLM_BASE_URL_ENV = "LLM_BASE_URL"
 # The Mistral key: each teammate's own, from their own account, never a shared one.
 MISTRAL_API_KEY_ENV = "MISTRAL_API_KEY"
-# Where Mistral's API is, when not its own address. ChatMistralAI reads this
-# variable itself, and the client cache is keyed on it too. Nobody needs to set
-# it: it exists for a proxy, and for pointing the test suite at a dead address
-# to prove no test reaches the real API.
+# Where Mistral's API is, when not its own address. The client is built with
+# it, and the client cache is keyed on it too. Nobody needs to set it: it
+# exists for a proxy, and for pointing the test suite at a dead address to
+# prove no test reaches the real API.
 MISTRAL_BASE_URL_ENV = "MISTRAL_BASE_URL"
+# Mistral's own address, ChatMistralAI's default, used when MISTRAL_BASE_URL is
+# not set. A connection that fails anywhere else is blamed on the setting.
+MISTRAL_API_URL = "https://api.mistral.ai/v1"
 # Where a teammate makes their own Mistral key, named in every message that asks
 # for one.
 MISTRAL_CONSOLE = "https://console.mistral.ai"

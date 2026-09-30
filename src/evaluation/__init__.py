@@ -8,13 +8,14 @@ from .benchmark import (
 )
 from .metrics import hard_negative_accuracy, mrr, ndcg_at_k, recall_at_k, score_question
 from .records import BenchmarkQuestion, RunResult
-from .harness import evaluate
+from .harness import RunStopped, evaluate
 
 __all__ = [
     "BenchmarkQuestion",
     "DEFAULT_GENERATED_QUESTIONS_PATH",
     "DEFAULT_QUESTIONS_PATH",
     "RunResult",
+    "RunStopped",
     "generate_xbrl_questions",
     "hard_negative_accuracy",
     "load_questions",

@@ -993,13 +993,16 @@ Claude Code, add `"permissions": {"deny": ["Read(**/.env)"]}` to your own
 Keys and make a new one.
 
 A missing key, a key Mistral refuses, a model your plan does not include, the
-rate limit, a server error, a lost connection and an answer that ends before it
-is finished each raise `ProviderUnavailable` saying what to do. A key changed in
-`.env` is read when the notebook or command starts again. `answer_question`
-does not ask again, and nothing falls back to Ollama by itself: set
-`LLM_PROVIDER=ollama` to answer locally again. The failures that asking again
-may fix raise `ProviderBusy`, a kind of `ProviderUnavailable`, which the
-[evaluation harness](#the-benchmark) asks again before it stops a run.
+rate limit or a used-up quota, a server error, a lost connection and an answer
+that ends before it is finished each raise `ProviderUnavailable` saying what to
+do. So do the ways a network can get in the way: a firewall's page in place of
+Mistral's answer, a proxy that refuses, or one that re-signs HTTPS so the
+certificate does not verify. A key changed in `.env` is read when the notebook
+or command starts again. `answer_question` does not ask again, and nothing
+falls back to Ollama by itself: set `LLM_PROVIDER=ollama` to answer locally
+again. The failures that asking again may fix raise `ProviderBusy`, a kind of
+`ProviderUnavailable`, which the [evaluation harness](#the-benchmark) asks again
+before it stops a run.
 
 `ministral-8b-2512` is the default because it did best of the four suitable
 chat models the free plan serves. Voxtral Small and Codestral stated figures
@@ -1240,8 +1243,9 @@ None of this applies to Mistral, whose models have windows far larger than any
 prompt here.
 
 With Ollama, a server that is not running, a model that has not been pulled, a
-response that times out, a full queue on a shared server, or a connection Ollama
-closes part-way raises `ProviderUnavailable` saying what to run or check.
+response that times out, a full queue on a shared server, a proxy that catches
+this computer's own address, or a connection Ollama closes part-way, cleanly or
+not, raises `ProviderUnavailable` saying what to run or check.
 [Setting up Mistral](#setting-up-mistral) lists what Mistral's raise.
 
 ### How long an answer takes
@@ -1353,11 +1357,14 @@ abstention count, rate and counts by reason. Empty subsets have a `null` rate,
 and errors stop the run instead of inflating the abstention count. The one
 exception is a failure that asking again may fix, such as Mistral's rate limit,
 a server error, a full Ollama queue or a dropped connection (`ProviderBusy`):
-the question is asked again after 10 seconds and then after a minute, and only
-a third failure stops the run. Each row records how many times its question was
-asked, as `attempts`. A mistyped `LLM_PROVIDER` or a missing `MISTRAL_API_KEY`
-stops the command before it loads anything. A high rate on answerable questions
-indicates lost coverage, not better answer quality.
+the question is asked again after 10 seconds and then after a minute, or after
+as long as the provider asks for, up to five minutes. Each row records how many
+times its question was asked, as `attempts`. When the provider still cannot
+answer, the run stops there, but the report and `--answers` file are still
+written with every question before it, the report's `stopped` names the
+question and the error, and the command exits 1. A mistyped `LLM_PROVIDER` or a
+missing `MISTRAL_API_KEY` stops the command before it loads anything. A high
+rate on answerable questions indicates lost coverage, not better answer quality.
 
 ```bash
 python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl

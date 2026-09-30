@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from math import isfinite
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from src.rag import ProviderUnavailable, chat_model, config_from_env
 from src.rag.constants import PROVIDERS
 from src.retrieval.constants import FINAL_K
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
-from .harness import evaluate
+from .harness import RunStopped, evaluate
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -73,9 +74,15 @@ def main(argv: list[str] | None = None) -> None:
     else:
         retriever = HybridRetriever(BM25Retriever.load(processed_dir=args.processed_dir),
                                     DenseRetriever.load(processed_dir=args.processed_dir))
-    report = evaluate(questions, retriever, config, llm=llm, run_id=args.run_id,
-                      min_score=args.min_score, top_k=args.top_k,
-                      use_facts=args.use_facts, use_decomposition=args.use_decomposition)
+    try:
+        report = evaluate(questions, retriever, config, llm=llm, run_id=args.run_id,
+                          min_score=args.min_score, top_k=args.top_k,
+                          use_facts=args.use_facts, use_decomposition=args.use_decomposition)
+        stopped = None
+    except RunStopped as error:
+        # The answers before the question the provider stopped at are written
+        # as for a complete run, and the command then fails.
+        report, stopped = error.report, error
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if args.answers:
@@ -84,3 +91,6 @@ def main(argv: list[str] | None = None) -> None:
                                 encoding="utf-8")
     print(json.dumps({"summary": report["summary"],
                       "by_answerability": report["by_answerability"]}, indent=2))
+    if stopped is not None:
+        answered = len(report["results"])
+        sys.exit(f"{stopped}; {answered} answered before it, written to {args.output}")
