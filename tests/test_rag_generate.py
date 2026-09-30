@@ -585,6 +585,19 @@ def test_a_connection_ollama_closes_part_way_says_what_to_do():
         generate(PROMPT, _config(), llm=_ollama(lambda request: httpx.Response(200, stream=Dropped())))
 
 
+def test_a_connection_ollama_closes_after_its_done_chunk_keeps_the_answer():
+    # The done chunk, with its done_reason, arrived before the connection broke.
+    class Dropped(httpx.SyncByteStream):
+        def __iter__(self):
+            yield _ndjson(json.dumps(ANSWER), size=40).encode()
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body")
+
+    result = generate(PROMPT, _config(),
+                      llm=_ollama(lambda request: httpx.Response(200, stream=Dropped())))
+    assert (result.text, result.stop_reason) == (ANSWER_TEXT, "stop")
+
+
 def test_an_ollama_stream_that_ends_without_its_done_chunk_is_asked_again():
     # The body closed cleanly part-way through the answer: no error, no done_reason.
     cut = _ndjson(json.dumps(ANSWER)).splitlines(keepends=True)[:20]
@@ -762,10 +775,9 @@ def _refusing(status, body=None):
      r"could not run 'ministral-8b-2512' \(HTTP 400: Invalid model: x\); set LLM_MODEL"),
     # A location sent as one string is one part, not one per character.
     (422, {"detail": [{"loc": "body", "msg": "bad"}]}, r"\(HTTP 422: body: bad\)$"),
-    # A used-up quota is a 429 too, and a wait does not fix it.
-    (429, {"message": "Monthly token limit exceeded"},
-     r"usage limit is used up \(HTTP 429: Monthly token limit exceeded\): asking again will "
-     r"not help until it resets"),
+    # A location that is neither a list nor a string is one part, not a
+    # TypeError that would hide the provider's own error.
+    (422, {"message": {"detail": [{"loc": 3, "msg": "bad"}]}}, r"\(HTTP 422: 3: bad\)$"),
     # The same problems straight under detail, as a proxy built on FastAPI sends them.
     (422, {"detail": [{"loc": ["body", "temperature"], "msg": "Input should be less than or "
                                                               "equal to 1.5"}]},
@@ -776,12 +788,33 @@ def test_a_refused_request_says_what_to_do(status, body, expected):
         generate(PROMPT, _mistral_config(), llm=_refusing(status, body))
 
 
+@pytest.mark.parametrize("text", [
+    '{"message": {"detail": [{"loc": {"a": 1}, "msg": "bad"}]}}',
+    '{"detail": [{"loc": ["body", 3, null], "msg": "bad"}]}',
+    '{"error": {"detail": [{"msg": "no location"}]}}',
+    '{"message": 5, "type": 7}',
+    '{"error": null}',
+    "[1, 2]",
+    "null",
+    "[" * 100_000 + "]" * 100_000,   # deeper than json.loads can recurse
+], ids=["dict-loc", "mixed-loc", "nested-error", "odd-types", "null-error", "list", "null",
+        "deep"])
+def test_an_odd_error_body_never_hides_the_provider_s_error(text):
+    # The body is read inside stream's except block, so anything it raised
+    # there would replace the provider's error with an unrelated one.
+    handler = lambda request: httpx.Response(422, text=text,
+                                             headers={"content-type": "application/json"})
+    with pytest.raises(ProviderUnavailable, match=r"^Mistral's API refused the request \(HTTP 422"):
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+
+
 @pytest.mark.parametrize("headers, retry_after, wait", [
     ({}, None, "wait a minute"),
     ({"retry-after": "30"}, 30.0, "wait 30s"),
+    ({"retry-after": "1.5"}, 1.5, "wait 2s"),   # rounded up, never down to "wait 1s"
     ({"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"}, 0.0, "wait a minute"),   # already past
     ({"retry-after": "soon"}, None, "wait a minute"),
-], ids=["none", "seconds", "date", "unreadable"])
+], ids=["none", "seconds", "fraction", "date", "unreadable"])
 def test_a_rate_limit_carries_how_long_mistral_asked_to_be_left(headers, retry_after, wait):
     handler = lambda request: httpx.Response(
         429, json={"message": "Requests rate limit exceeded"}, headers=headers)
@@ -931,6 +964,30 @@ def test_a_connection_dropped_part_way_through_an_answer_says_what_to_do():
         generate(PROMPT, _mistral_config(), llm=_mistral(handler))
 
 
+@pytest.mark.parametrize("output, finish_reason, expected", [
+    (json.dumps(ANSWER), "stop", (ANSWER_TEXT, "stop", False)),
+    # Cut at the ceiling, with its reason: recorded as truncated, as with [DONE].
+    (json.dumps(ANSWER)[:95], "length", ("Revenue was $100. [1] It", "length", True)),
+], ids=["stop", "length"])
+def test_a_connection_that_drops_after_the_last_event_keeps_the_answer(
+        output, finish_reason, expected):
+    # Everything up to and including the event with finish_reason arrived; the
+    # connection broke while the client read on for "data: [DONE]".
+    class Dropped(httpx.SyncByteStream):
+        def __iter__(self):
+            yield _sse(output, finish_reason=finish_reason).split("data: [DONE]")[0].encode()
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body")
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Dropped())
+
+    result = generate(PROMPT, _mistral_config(), llm=_mistral(handler))
+    text, stop_reason, truncated = expected
+    assert result.text.startswith(text)
+    assert (result.stop_reason, result.truncated) == (stop_reason, truncated)
+
+
 @pytest.mark.parametrize("reason, expected, busy", [
     ("error", "part-way with an error: ask again", True),
     # A reason nothing expects comes back the same for the same prompt.
@@ -996,6 +1053,47 @@ def test_a_whole_answer_that_fails_the_schema_and_lost_its_reason_is_recorded():
     assert result.stop_reason is None and "less than or equal to" in result.parse_error
 
 
+def test_an_answer_cut_at_the_limit_that_lost_its_reason_is_recorded_as_truncated():
+    # A proxy dropped the reason, but the token count shows the answer reached the ceiling.
+    cut = json.dumps(ANSWER)[:len(json.dumps(ANSWER)) // 2]
+    events = _sse(cut, finish_reason="length", completion_tokens=100).split("\n\n")
+    last = json.loads(events[-3].removeprefix("data: "))
+    del last["model"]
+    events[-3] = f"data: {json.dumps(last)}"
+    handler = lambda request: httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                             text="\n\n".join(events))
+    result = generate(PROMPT, _mistral_config(), llm=_mistral(handler), max_tokens=100)
+    assert result.truncated and result.parse_error
+    assert (result.stop_reason, result.output_tokens) == ("length", 100)
+
+
+def test_an_answer_that_lost_its_reason_short_of_the_limit_is_still_asked_again():
+    # Below the ceiling, a cut answer with no reason is not taken as one cut at it.
+    cut = json.dumps(ANSWER)[:len(json.dumps(ANSWER)) // 2]
+    events = _sse(cut, finish_reason="length", completion_tokens=99).split("\n\n")
+    last = json.loads(events[-3].removeprefix("data: "))
+    del last["model"]
+    events[-3] = f"data: {json.dumps(last)}"
+    handler = lambda request: httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                             text="\n\n".join(events))
+    with pytest.raises(ProviderBusy, match="part-way without finishing"):
+        generate(PROMPT, _mistral_config(), llm=_mistral(handler), max_tokens=100)
+
+
+def test_an_ollama_answer_cut_at_the_limit_with_no_done_reason_is_recorded_as_truncated():
+    # A server that sends no done_reason, such as an older Ollama, still sends
+    # eval_count, and one that reached the ceiling was cut at it.
+    cut = json.dumps(ANSWER)[:len(json.dumps(ANSWER)) // 2]
+    lines = _ndjson(cut, eval_tokens=100).splitlines()
+    done = json.loads(lines[-1])
+    del done["done_reason"]
+    lines[-1] = json.dumps(done)
+    handler = lambda request: httpx.Response(200, text="\n".join(lines) + "\n")
+    result = generate(PROMPT, _config(), llm=_ollama(handler), max_tokens=100)
+    assert result.truncated and result.parse_error
+    assert (result.stop_reason, result.output_tokens) == ("length", 100)
+
+
 @pytest.mark.parametrize("tail", [
     "",   # the stream closed before its last event
     # An error object in place of the last event: it has no choices, so
@@ -1044,7 +1142,8 @@ def _raises(exception_type):
     (lambda request: httpx.Response(400, json={"message": "Invalid model: x",
                                                "type": "invalid_model"}), False),
     (lambda request: httpx.Response(422, json={"message": "Invalid request"}), False),
-    (lambda request: httpx.Response(429, json={"message": "Monthly token limit exceeded"}), False),
+    # Every 429 is asked again, whatever it says: its wording is not guessed at.
+    (lambda request: httpx.Response(429, json={"message": "Monthly token limit exceeded"}), True),
     (_raises(httpx.ProxyError), False),
 ], ids=["429", "503", "connect", "timeout", "dropped", "401", "invalid-model", "422", "quota",
         "proxy"])
@@ -1123,17 +1222,29 @@ def test_the_evaluation_command_refuses_its_settings_before_loading_anything(
     assert expected in capsys.readouterr().err
 
 
-def test_a_stopped_run_writes_the_answers_before_it_and_fails(monkeypatch, tmp_path, clean_env):
+_FLAGS_NOTE = (" (on this command, --provider and --model do the same as LLM_PROVIDER and "
+               "LLM_MODEL, and win over .env when given)")
+
+
+@pytest.mark.parametrize("stopper, error, note", [
+    ("RunStopped", "ProviderBusy: rate limit", ""),
+    ("RunInterrupted", "KeyboardInterrupt: interrupted", ""),
+    # Advice that names a setting gets the note right after it, not after the path.
+    ("RunStopped", "ProviderBusy: ask again, or set LLM_PROVIDER=ollama to answer locally",
+     _FLAGS_NOTE),
+], ids=["stopped", "interrupted", "advice"])
+def test_a_stopped_run_writes_the_answers_before_it_and_fails(
+        monkeypatch, tmp_path, clean_env, stopper, error, note):
+    import src.evaluation as evaluation
     import src.evaluation.cli as cli
-    from src.evaluation import RunStopped
     from src.retrieval.bm25 import BM25Retriever
 
     row = {"question_id": "q1", "answer": {"text": "Revenue was $100."}}
     report = {"summary": {"total": 1}, "by_answerability": {}, "results": [row],
-              "stopped": {"question_id": "q2", "error": "ProviderBusy: rate limit"}}
+              "stopped": {"question_id": "q2", "error": error}}
 
     def stopping(*args, **kwargs):
-        raise RunStopped(report)
+        raise getattr(evaluation, stopper)(report)
 
     monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
     monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
@@ -1143,7 +1254,24 @@ def test_a_stopped_run_writes_the_answers_before_it_and_fails(monkeypatch, tmp_p
         cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r", "--output", str(output),
                   "--answers", str(answers), "--provider", "ollama"])
     # sys.exit with a message: printed to stderr, exit status 1.
-    assert raised.value.code == (f"stopped at q2: ProviderBusy: rate limit; 1 answered before it, "
+    assert raised.value.code == (f"stopped at q2: {error}{note}; 1 answered before it, "
                                  f"written to {output}")
     assert json.loads(output.read_text())["stopped"]["question_id"] == "q2"
     assert [json.loads(line) for line in answers.read_text().splitlines()] == [row]
+
+
+def test_the_command_says_its_flags_win_over_the_settings_its_errors_name(
+        monkeypatch, tmp_path, clean_env, capsys):
+    # Without a key, --provider mistral fails whatever .env says, so the advice
+    # to set LLM_PROVIDER=ollama there has to say that the flag wins.
+    import src.evaluation.cli as cli
+    from src.evaluation.cli import _for_this_command
+
+    monkeypatch.setenv("MISTRAL_API_KEY", "")
+    with pytest.raises(SystemExit):
+        cli.main(["q.jsonl", "--run-id", "r", "--output", str(tmp_path / "report.json"),
+                  "--provider", "mistral"])
+    assert f"set LLM_PROVIDER=ollama to answer locally{_FLAGS_NOTE}" in capsys.readouterr().err
+    # A message that names neither setting is printed as it is.
+    message = "LLM_NUM_GPU must be a whole number of layers, got 'all'"
+    assert _for_this_command(message) == message

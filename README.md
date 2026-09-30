@@ -1220,11 +1220,11 @@ Three things follow from that.
   what arrived.
 
 With Ollama, the context window is set on every request, to 8,192 tokens
-(`NUM_CTX`). This matters more than it looks. When a prompt is longer than Ollama's window, Ollama
-cuts it from the front without telling the caller: the only sign is a warning in
-its own server log. Run with a 2,048-token window, it kept 1,026 of 3,205 prompt
-tokens, dropping the rules and the first sources, and the model answered a
-question about revenue with a paragraph about hiring.
+(`NUM_CTX`). This matters more than it looks. When a prompt is longer than
+Ollama's window, Ollama cuts it from the front without telling the caller: the
+only sign is a warning in its own server log. Run with a 2,048-token window, it
+kept 1,026 of 3,205 prompt tokens, dropping the rules and the first sources,
+and the model answered a question about revenue with a paragraph about hiring.
 
 So the window is what caps `FINAL_K`, and #85 measured the fit rather than
 assuming it. Counted with llama3.2's own tokenizer over the XBRL benchmark
@@ -1252,10 +1252,10 @@ not, raises `ProviderUnavailable` saying what to run or check.
 
 With Mistral, about two seconds: over the 48 test questions on the free plan,
 the median from question to full answer, retrieval included, was 2.2 s at
-`FINAL_K` 16. With Ollama, minutes on a laptop, and the
-rest of this section is about that. Measured on a team laptop (Intel i5-1135G7,
-16 GB of RAM, an NVIDIA MX450 with 2 GB), with a browser and an editor open,
-over real questions from the corpus:
+`FINAL_K` 16. With Ollama, minutes on a laptop, and the rest of this section is
+about that. Measured on a team laptop (Intel i5-1135G7, 16 GB of RAM, an NVIDIA
+MX450 with 2 GB), with a browser and an editor open, over real questions from
+the corpus:
 
 | Model | Where it ran | Reading the prompt | Writing | First words appear | Whole answer |
 |---|---|---|---|---|---|
@@ -1360,11 +1360,12 @@ a server error, a full Ollama queue or a dropped connection (`ProviderBusy`):
 the question is asked again after 10 seconds and then after a minute, or after
 as long as the provider asks for, up to five minutes. Each row records how many
 times its question was asked, as `attempts`. When the provider still cannot
-answer, the run stops there, but the report and `--answers` file are still
-written with every question before it, the report's `stopped` names the
-question and the error, and the command exits 1. A mistyped `LLM_PROVIDER` or a
-missing `MISTRAL_API_KEY` stops the command before it loads anything. A high
-rate on answerable questions indicates lost coverage, not better answer quality.
+answer, or you press Ctrl-C, the run stops there, but the report and
+`--answers` file are still written with every question before it, the report's
+`stopped` names the question and the error, and the command exits 1. A mistyped
+`LLM_PROVIDER` or a missing `MISTRAL_API_KEY` stops the command before it loads
+anything. A high rate on answerable questions indicates lost coverage, not
+better answer quality.
 
 ```bash
 python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl
@@ -1377,7 +1378,11 @@ Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
 `LLM_PROVIDER` uses its own default model rather than `LLM_MODEL`. The JSON
 report records these settings, individual answers and aggregate rates. The
 command needs a populated benchmark and built indexes. Programmatic runs use
-`src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`.
+`src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`,
+which returns the report. A run that stops part-way raises instead:
+`RunStopped`, a `ProviderUnavailable`, when the provider cannot answer, and
+`RunInterrupted`, a `KeyboardInterrupt`, on Ctrl-C. Either carries the report
+of the questions before it on `.report`, as the command writes it.
 
 `--no-facts` sends every question to retrieval and generation instead of looking
 a numeric one up in the XBRL facts store first, which is the without half of

@@ -1,6 +1,8 @@
 """Issue #33: real indexed retrieval, generation bypass, UI and evaluation."""
 
+import copy
 import json
+import pickle
 from dataclasses import replace
 
 import pytest
@@ -9,7 +11,7 @@ from langchain_core.messages import AIMessageChunk
 from src.app.answers import render_answer, write_answer_page
 from src.evaluation import BenchmarkQuestion, evaluate
 from src.evaluation.cli import main
-from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S, RunStopped
+from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S, RunInterrupted, RunStopped
 from src.pipeline.chunk import iter_chunks
 from src.rag import (
     ProviderBusy,
@@ -291,11 +293,47 @@ def test_a_failure_asking_again_cannot_fix_stops_the_run_at_once(monkeypatch):
     monkeypatch.setattr("src.evaluation.harness.sleep",
                         lambda seconds: pytest.fail("a refused key is not asked again"))
     model = Failing(ProviderUnavailable("Mistral refused the API key"), times=1)
-    with pytest.raises(RunStopped, match="stopped at 1: ProviderUnavailable: Mistral refused "
-                                         "the API key") as raised:
+    # Caught as a ProviderUnavailable, as a notebook's handler written for
+    # evaluate before RunStopped existed would catch it.
+    with pytest.raises(ProviderUnavailable, match="stopped at 1: ProviderUnavailable: Mistral "
+                                                  "refused the API key") as raised:
         evaluate([question(1)], StaticRetriever([passage()]), CONFIG, run_id="run", llm=model)
+    assert type(raised.value) is RunStopped
     assert model.requests == 1
     assert raised.value.report["results"] == []
+
+
+def _interrupted(seconds):
+    raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize("while_", ["answering", "waiting"])
+def test_ctrl_c_keeps_the_answers_before_it(monkeypatch, while_):
+    # Most likely pressed during a retry's wait, when a watched run sits idle.
+    if while_ == "waiting":
+        monkeypatch.setattr("src.evaluation.harness.sleep", _interrupted)
+        model = Failing(ProviderBusy("rate limit"), times=1, after=1)
+    else:
+        model = Failing(KeyboardInterrupt(), times=1, after=1)
+    with pytest.raises(RunInterrupted,
+                       match="stopped at 2: KeyboardInterrupt: interrupted") as raised:
+        evaluate([question(1), question(2), question(3)], StaticRetriever([passage()]), CONFIG,
+                 run_id="run", llm=model)
+    assert [row["question_id"] for row in raised.value.report["results"]] == ["1"]
+    # Still an interrupt, so it stops a notebook cell, and not a provider
+    # failure that a handler for one would take it for.
+    assert isinstance(raised.value, KeyboardInterrupt)
+    assert not isinstance(raised.value, ProviderUnavailable)
+
+
+@pytest.mark.parametrize("stopper", [RunStopped, RunInterrupted])
+def test_a_stopped_run_survives_a_copy_and_a_process_boundary(stopper):
+    report = {"stopped": {"question_id": "2", "error": "ProviderBusy: rate limit"},
+              "results": [{"question_id": "1"}]}
+    for rebuilt in (copy.copy(stopper(report)), pickle.loads(pickle.dumps(stopper(report)))):
+        assert type(rebuilt) is stopper
+        assert rebuilt.report == report
+        assert str(rebuilt) == "stopped at 2: ProviderBusy: rate limit"
 
 
 def test_a_wait_the_provider_asks_for_is_given(monkeypatch):

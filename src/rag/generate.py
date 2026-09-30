@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
-from math import isfinite
+from math import ceil, isfinite
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -106,11 +106,6 @@ class ProviderBusy(ProviderUnavailable):
 
 # What every Mistral failure offers instead.
 _ANSWER_LOCALLY = f"set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
-# Words in a 429's message that mean a quota or spending limit is used up,
-# rather than a per-minute rate limit that a wait fixes. Mistral's own wording
-# for the used-up case has not been seen here, so these are the plain words
-# such a message would use, not a quoted body.
-_USED_UP = ("month", "quota", "spending", "budget", "billing")
 
 
 # --- the entry points ------------------------------------------------------------
@@ -161,9 +156,10 @@ def stream(
 
     With ``llm`` given, ``config.provider`` must still be one of ``PROVIDERS``,
     since the request's shape and the reading of its failures depend on it. A
-    fake chat model standing in for Mistral has to end its stream with a
-    ``finish_reason``, as Mistral's own does, or with output that is a whole
-    JSON document.
+    fake chat model has to end its stream as the provider's own does, with a
+    ``finish_reason`` (Mistral) or ``done_reason`` (Ollama), or else with output
+    that is a whole JSON document, or with a token count that reached
+    ``max_tokens``, which reads as an answer cut off at the ceiling.
     """
     if prompt.template_id != config.prompt_template_id:
         raise ValueError(
@@ -213,9 +209,18 @@ def stream(
         unavailable = provider.unavailable(error, model, config)
         if unavailable is None:
             raise
-        raise unavailable from error
+        # A connection that drops after the chunk saying why the answer ended,
+        # while the client reads on for the stream's end (Mistral's "data:
+        # [DONE]"), has lost nothing, so the answer is kept. Before that chunk,
+        # what arrived is part of an answer, and asking again may finish it.
+        if not (ended and isinstance(unavailable, ProviderBusy)):
+            raise unavailable from error
     latency_ms = (perf_counter() - started) * 1000.0
     whole = _is_json(raw)
+    if not ended and not whole and (usage.get("output_tokens") or 0) >= max_tokens:
+        # Cut at the output ceiling rather than dropped: a proxy can lose the
+        # reason, but the count still says every allowed token was used.
+        ended = {"finish_reason": "length", "done_reason": "length"}
     stop_reason = provider.stop_reason(ended, config, whole)
 
     answer, parse_error = _validate(raw, schema)
@@ -373,7 +378,7 @@ def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[s
     from langchain_ollama import ChatOllama
 
     if base_url is None:
-        base_url = env.get(LLM_BASE_URL_ENV) or DEFAULT_OLLAMA_URL
+        base_url = (env.get(LLM_BASE_URL_ENV) or "").strip() or DEFAULT_OLLAMA_URL
     layers = (env.get(LLM_NUM_GPU_ENV) or "").strip()
     if layers and not layers.isdigit():
         raise ValueError(f"{LLM_NUM_GPU_ENV} must be a whole number of layers, got {layers!r}")
@@ -415,7 +420,8 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[
     # The address given to the client in every case, so a setting read from
     # ``environ`` is not passed over for the process's own MISTRAL_BASE_URL,
     # which ChatMistralAI reads when it is given none.
-    return _mistral_client(config.model, key, env.get(MISTRAL_BASE_URL_ENV) or MISTRAL_API_URL)
+    address = (env.get(MISTRAL_BASE_URL_ENV) or "").strip() or MISTRAL_API_URL
+    return _mistral_client(config.model, key, address)
 
 
 @lru_cache(maxsize=8)
@@ -515,10 +521,12 @@ def _problems(problems: Sequence[Mapping[str, Any]], *, whole: str) -> str:
     Pydantic's errors and a Mistral 422's are the same shape, a ``loc`` and a
     ``msg``: "sentences.0.sources.0: Input should be less than or equal to 3".
     A problem with no location, or a null one, is in ``whole``, and a location
-    given as one string, as a proxy may send it, is one part.
+    given as one value rather than a list, as a proxy may send it, is one part.
+    Nothing here may raise: it runs while a provider's error is being read, and
+    would hide that error.
     """
     def where(loc: Any) -> str:
-        parts = [loc] if isinstance(loc, str) else loc or ()
+        parts = loc if isinstance(loc, (list, tuple)) else () if loc is None else [loc]
         return ".".join(str(part) for part in parts) or whole
 
     return "; ".join(f"{where(problem.get('loc'))}: {problem['msg']}" for problem in problems[:3])
@@ -634,16 +642,14 @@ def _mistral_unavailable(
                 f"restart the notebook or command so the new key is read"
             )
         if status == 429:
-            # A 429 is also how a used-up monthly quota or spending limit is
-            # refused, and asking again cannot help with that until it resets.
-            if any(word in detail.lower() for word in _USED_UP):
-                return ProviderUnavailable(
-                    f"your Mistral account's usage limit is used up ({said}): asking again "
-                    f"will not help until it resets; see Limits at {MISTRAL_CONSOLE}, or "
-                    f"{_ANSWER_LOCALLY}"
-                )
+            # Every 429 is taken as a limit a wait may lift, the per-minute rate
+            # limit among them. A used-up quota comes back the same way, but
+            # its wording is not known here, and guessing it could stop a run
+            # that a wait would have saved. The harness asks again at most
+            # twice, and a stopped run keeps its answers, so that costs at most
+            # one round of waiting.
             retry_after = _retry_after(error.response)
-            wait = f"wait {retry_after:.0f}s" if retry_after else "wait a minute"
+            wait = f"wait {ceil(retry_after)}s" if retry_after else "wait a minute"
             return ProviderBusy(
                 f"Mistral's rate limit for {config.model!r} was reached ({said}); {wait} and "
                 f"ask again, since the limits are per account",
@@ -724,7 +730,10 @@ def _ollama_stop_reason(
     Ollama sends ``done_reason`` on its last chunk only. Without it, and without
     a whole JSON document (see :func:`_mistral_stop_reason`), the stream ended
     part-way, as when a proxy or a restarted server closes it cleanly, and it
-    raises ``ProviderBusy`` rather than handing on the half that arrived.
+    raises ``ProviderBusy`` rather than handing on the half that arrived. An
+    answer whose ``eval_count`` reached the ceiling has already been read as
+    "length" by :func:`stream`, since a server that sends no reason, such as an
+    older one, still sends the count.
     """
     reason = metadata.get("done_reason")
     if reason is None and not whole:
@@ -755,6 +764,9 @@ def _mistral_stop_reason(
     only when the same event names the model, which a proxy set through
     ``MISTRAL_BASE_URL`` may leave out. It is handed on with no reason, and
     with a ``parse_error`` where it fails the schema, as it would be with one.
+    An answer cut at the ceiling that lost its reason the same way has already
+    been read as "length" by :func:`stream`, from its token count, which
+    ChatMistralAI records whether or not the event names the model.
     """
     reason = metadata.get("finish_reason")
     if reason in ("stop", "length", "model_length"):
@@ -795,7 +807,7 @@ def _error_detail(response: Any) -> tuple[str, str]:
         return "", ""
     try:
         body = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         if "html" in response.headers.get("content-type", ""):
             return "an HTML page", ""
         return short(text), ""

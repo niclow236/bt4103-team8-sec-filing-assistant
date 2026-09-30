@@ -38,15 +38,33 @@ RETRY_WAITS_S = (10, 60)
 MAX_RETRY_WAIT_S = 300
 
 
-class RunStopped(RuntimeError):
-    """A run a provider failure stopped part-way, with the report of the
-    questions answered before it: ``report["stopped"]`` names the question and
-    the error, and ``report["results"]`` holds every row before it."""
+class _Stopped:
+    """What a run that stopped part-way carries: ``report``, the report of the
+    questions answered before it, in which ``stopped`` names the question it
+    stopped at and why, and ``results`` holds every row before it."""
 
     def __init__(self, report: dict[str, Any]) -> None:
         stopped = report["stopped"]
         super().__init__(f"stopped at {stopped['question_id']}: {stopped['error']}")
         self.report = report
+
+    def __reduce__(self) -> tuple[type, tuple[dict[str, Any]]]:
+        # Rebuilt from its report, since the message alone cannot rebuild it:
+        # a copy, or one unpickled across a process boundary.
+        return type(self), (self.report,)
+
+
+class RunStopped(_Stopped, ProviderUnavailable):
+    """A run a provider failure stopped part-way, with the answers before it on
+    ``report``. A ``ProviderUnavailable``, so a caller's handler for one still
+    catches it."""
+
+
+class RunInterrupted(_Stopped, KeyboardInterrupt):
+    """A run stopped with Ctrl-C part-way, with the answers before it on
+    ``report``. A ``KeyboardInterrupt``, so it still stops a script or a
+    notebook cell as Ctrl-C does, and no handler for a provider failure
+    mistakes it for one."""
 
 
 def _rates(rows: list[dict]) -> dict[str, Any]:
@@ -99,11 +117,13 @@ def evaluate(
     again may fix (``ProviderBusy``) is asked again first, after each wait in
     ``RETRY_WAITS_S``, and each row records how many times its question was
     asked, as ``attempts``. When the provider still cannot answer, the run
-    raises :class:`RunStopped` carrying the report of every question before
-    that one, with ``stopped`` naming it: on a hosted free plan a rate limit
-    can come at question 40 of 48, and it should not throw away the 39 answers
-    before it. A complete report has ``stopped`` None. Any other error, such
-    as a bug, comes through as itself. Empty subsets have a
+    raises :class:`RunStopped`, a ``ProviderUnavailable``, carrying the report
+    of every question before that one, with ``stopped`` naming it: on a hosted
+    free plan a rate limit can come at question 40 of 48, and it should not
+    throw away the 39 answers before it. Ctrl-C raises :class:`RunInterrupted`,
+    a ``KeyboardInterrupt``, carrying the same report. A complete report has
+    ``stopped`` None. Any other error, such as a bug, comes through as itself.
+    Empty subsets have a
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
@@ -136,7 +156,7 @@ def evaluate(
 
     def report(stopped: dict[str, str] | None) -> dict[str, Any]:
         # The rows answered so far and the rates over them, with ``stopped``
-        # naming the question a provider failure stopped the run at, or None.
+        # naming the question the run stopped at and why, or None.
         return {
             "run_id": run_id,
             "retriever": retriever.name,
@@ -156,33 +176,46 @@ def evaluate(
             "results": rows,
         }
 
-    for question in questions:
+    def row_for(question: BenchmarkQuestion) -> dict[str, Any]:
+        # One question asked and answered, as its row in the report.
         parsed = parse_question(question.question)
         query = parsed.to_query(top_k=top_k)
         if question.ticker is not None:
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
+        answer, attempts = _answer_with_retries(question, partial(
+            answer_question, question.question, retriever, config, query=query,
+            min_score=min_score, llm=llm, use_facts=use_facts,
+            use_decomposition=use_decomposition, parsed=parsed,
+        ))
+        return {"question_id": question.question_id, "run_id": run_id,
+                "question_type": question.question_type,
+                # Which route answered it. The Answer records the provider
+                # that produced it, and a looked-up answer says "facts"
+                # rather than naming the model that was never asked.
+                "route": answer.config.provider,
+                # What it was split into, empty where it was not (#35).
+                "sub_questions": list(answer.sub_questions),
+                # How many times it was asked, more than once where the
+                # provider was busy: how often a hosted free plan was.
+                "attempts": attempts,
+                "answer": answer.to_dict()}
+
+    for question in questions:
         try:
-            answer, attempts = _answer_with_retries(question, partial(
-                answer_question, question.question, retriever, config, query=query,
-                min_score=min_score, llm=llm, use_facts=use_facts,
-                use_decomposition=use_decomposition, parsed=parsed,
-            ))
+            rows.append(row_for(question))
         except ProviderUnavailable as error:
-            stopped = {"question_id": question.question_id,
-                       "error": f"{type(error).__name__}: {error}"}
+            stopped = _stopped(question, f"{type(error).__name__}: {error}")
             raise RunStopped(report(stopped)) from error
-        rows.append({"question_id": question.question_id, "run_id": run_id,
-                     "question_type": question.question_type,
-                     # Which route answered it. The Answer records the provider
-                     # that produced it, and a looked-up answer says "facts"
-                     # rather than naming the model that was never asked.
-                     "route": answer.config.provider,
-                     # What it was split into, empty where it was not (#35).
-                     "sub_questions": list(answer.sub_questions),
-                     # How many times it was asked, more than once where the
-                     # provider was busy: how often a hosted free plan was.
-                     "attempts": attempts,
-                     "answer": answer.to_dict()})
+        except KeyboardInterrupt as error:
+            # Most likely pressed during a retry's wait, which is when someone
+            # watching a run is most tempted to.
+            stopped = _stopped(question, "KeyboardInterrupt: interrupted")
+            raise RunInterrupted(report(stopped)) from error
     return report(None)
+
+
+def _stopped(question: BenchmarkQuestion, error: str) -> dict[str, str]:
+    """The ``stopped`` entry of a report: the question a run stopped at, and why."""
+    return {"question_id": question.question_id, "error": error}

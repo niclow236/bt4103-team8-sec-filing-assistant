@@ -8,10 +8,23 @@ from pathlib import Path
 
 from src.config import PROCESSED_DIR
 from src.rag import ProviderUnavailable, chat_model, config_from_env
-from src.rag.constants import PROVIDERS
+from src.rag.constants import LLM_MODEL_ENV, LLM_PROVIDER_ENV, PROVIDERS
 from src.retrieval.constants import FINAL_K
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
-from .harness import RunStopped, evaluate
+from .harness import RunInterrupted, RunStopped, evaluate
+
+
+def _for_this_command(message: str) -> str:
+    """A provider error as this command prints it.
+
+    Its advice names the .env settings that the app and notebooks read, and
+    here --provider and --model win over those when given, so setting .env
+    alone would change nothing. The message says so wherever it names one.
+    """
+    if LLM_PROVIDER_ENV in message or LLM_MODEL_ENV in message:
+        return (f"{message} (on this command, --provider and --model do the same as "
+                f"{LLM_PROVIDER_ENV} and {LLM_MODEL_ENV}, and win over .env when given)")
+    return message
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -61,7 +74,7 @@ def main(argv: list[str] | None = None) -> None:
         config = config_from_env(model=args.model, provider=args.provider)
         llm = chat_model(config)
     except (ValueError, ProviderUnavailable) as error:
-        parser.error(str(error))
+        parser.error(_for_this_command(str(error)))
     questions = load_questions(args.questions, processed_dir=args.processed_dir)
     from src.retrieval.bm25 import BM25Retriever
     from src.retrieval.dense import DenseRetriever
@@ -79,9 +92,10 @@ def main(argv: list[str] | None = None) -> None:
                           min_score=args.min_score, top_k=args.top_k,
                           use_facts=args.use_facts, use_decomposition=args.use_decomposition)
         stopped = None
-    except RunStopped as error:
-        # The answers before the question the provider stopped at are written
-        # as for a complete run, and the command then fails.
+    except (RunStopped, RunInterrupted) as error:
+        # The answers before the question the run stopped at, whether a
+        # provider failure or Ctrl-C stopped it, are written as for a complete
+        # run, and the command then fails.
         report, stopped = error.report, error
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -92,5 +106,7 @@ def main(argv: list[str] | None = None) -> None:
     print(json.dumps({"summary": report["summary"],
                       "by_answerability": report["by_answerability"]}, indent=2))
     if stopped is not None:
+        # The note goes right after the advice it is about, not after the path.
         answered = len(report["results"])
-        sys.exit(f"{stopped}; {answered} answered before it, written to {args.output}")
+        sys.exit(f"{_for_this_command(str(stopped))}; {answered} answered before it, "
+                 f"written to {args.output}")

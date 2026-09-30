@@ -222,7 +222,9 @@ class Generation:
     would average in as free.
 
     ``stop_reason`` is the provider's word for why it stopped, kept as given:
-    Ollama's ``done_reason`` or Mistral's ``finish_reason``.
+    Ollama's ``done_reason`` or Mistral's ``finish_reason``. Where the reason was
+    lost on the way, as a proxy can lose it, it is "length" for an answer whose
+    token count reached the ceiling, and None for a whole answer.
     :attr:`truncated` is the reading every consumer needs: an answer cut off
     at the token limit has lost its last citation, and the resolver should
     know that before it flags the final sentence as unsupported.
