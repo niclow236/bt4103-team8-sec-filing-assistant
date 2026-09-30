@@ -14,10 +14,10 @@ resolved against the corpus's scope and exposed so the app can show them back.
 sources, the rules, and the question, as a ``GroundedPrompt`` the generator
 hands to the model and whose ``passages`` go onto the ``Answer`` unchanged.
 
-``generate.py`` runs that prompt through a local model served by Ollama, using
-LangChain's ``ChatOllama`` with the answer's JSON schema as the output format,
-streaming the answer as prose and returning a ``Generation`` with the parsed
-answer, the latency and the token counts.
+``generate.py`` runs that prompt through the configured model, a local one
+served by Ollama or one on Mistral's API, with the answer's JSON schema as the
+output format, streaming the answer as prose and returning a ``Generation``
+with the parsed answer, the latency and the token counts.
 
 ``citations.py`` resolves a completed generation against ``prompt.passages``,
 removes invented markers from displayed text, and attaches sentence warnings.
@@ -39,6 +39,7 @@ from .citations import render_citation, resolve_citations
 from .decompose import Decomposition, SubQuestion, decompose, search_decomposed
 from .numeric import Fact, answer_from_facts, find_metric, lookup_fact
 from .generate import (
+    ProviderBusy,
     ProviderUnavailable,
     chat_model,
     config_from_env,
@@ -71,6 +72,7 @@ __all__ = [
     "GroundedAnswer",
     "GroundedPrompt",
     "ParsedQuestion",
+    "ProviderBusy",
     "ProviderUnavailable",
     "SentenceCitations",
     "VerificationCheck",

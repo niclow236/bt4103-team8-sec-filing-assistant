@@ -20,7 +20,7 @@ handed without threading extra state through the call -- the same reason
 sources answer the question, then the answer as sentences, each listing the
 source numbers it draws on. It is a Pydantic model rather than a dataclass
 because it is the one record here that is filled by something untrusted. Its
-JSON schema is handed to Ollama as the output format, so decoding is
+JSON schema goes with every request as the output format, so decoding is
 constrained to it, and the same model validates what comes back. Everything
 else in this module is built by our own code and checks itself in
 ``__post_init__``.
@@ -83,7 +83,9 @@ class GenerationConfig:
     the budget its passages were cut with.
     """
 
-    provider: str          # "ollama", the local runtime that served the model; what the generator dispatches on
+    # "ollama" or "mistral", which the generator dispatches on, or "facts" for
+    # an answer looked up in the facts store rather than written by a model.
+    provider: str
     # The model exactly as the provider names it, since two checkpoints of one
     # family answer differently and a results row has to say which one spoke.
     model: str
@@ -137,8 +139,8 @@ class GroundedAnswer(BaseModel):
     ``answerable`` comes first, so the model commits to whether the sources
     bear on the question before it writes anything, and a model that says
     they do not is not then asked to fill ``sentences`` from memory. Both
-    fields are required, so the schema Ollama decodes against always has the
-    citations field in it.
+    fields are required, so the schema the model decodes against always has
+    the citations field in it.
 
     Use :meth:`for_sources` rather than this class to talk to a model: it
     narrows ``sources`` to the numbers the prompt actually showed.
@@ -153,7 +155,7 @@ class GroundedAnswer(BaseModel):
     def for_sources(cls, n_sources: int) -> type[GroundedAnswer]:
         """This model with every source number held to 1..``n_sources``.
 
-        Its JSON schema is what Ollama decodes against, so a model shown eight
+        Its JSON schema is what the model decodes against, so a model shown eight
         sources cannot write a ninth: the constraint is on the tokens it may
         produce, not a check made after it has produced them. Validating with
         the same class then refuses an out-of-range number from a runtime
@@ -215,11 +217,14 @@ class Generation:
     their markers, then the text of the one being written, without, so a
     truncated answer is still shown for what it is.
 
-    ``input_tokens`` and ``output_tokens`` are Ollama's counts, None where it
-    did not report one, which is the truth of it rather than a zero that would
-    average in as free.
+    ``input_tokens`` and ``output_tokens`` are the provider's counts, None where
+    it did not report one, which is the truth of it rather than a zero that
+    would average in as free.
 
-    ``stop_reason`` is Ollama's word for why it stopped, kept as given.
+    ``stop_reason`` is the provider's word for why it stopped, kept as given:
+    Ollama's ``done_reason`` or Mistral's ``finish_reason``. Where the reason was
+    lost on the way, as a proxy can lose it, it is "length" for an answer whose
+    token count reached the ceiling, and None for a whole answer.
     :attr:`truncated` is the reading every consumer needs: an answer cut off
     at the token limit has lost its last citation, and the resolver should
     know that before it flags the final sentence as unsupported.
@@ -235,8 +240,9 @@ class Generation:
     stop_reason: str | None
     parse_error: str | None = None
 
-    # Ollama's word for "hit the output limit".
-    _TRUNCATED_REASONS = frozenset({"length"})
+    # Both providers say "length" for an answer that hit the output ceiling, and
+    # Mistral says "model_length" when the model's context window ran out first.
+    _TRUNCATED_REASONS = frozenset({"length", "model_length"})
 
     def __post_init__(self) -> None:
         if self.latency_ms < 0:

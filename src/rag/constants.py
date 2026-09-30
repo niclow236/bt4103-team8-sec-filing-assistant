@@ -244,7 +244,7 @@ QUANTITY_BEFORE = (
 # fails the suite rather than passing silently.
 #
 # v4 asks for the answer as JSON in the shape of ``records.GroundedAnswer``,
-# which Ollama is also made to decode against. v3 asked for prose with inline
+# which the model is also made to decode against. v3 asked for prose with inline
 # "[n]" markers and an exact abstain sentence, both of which a small local
 # model has to reproduce character for character to be read correctly.
 PROMPT_TEMPLATE_ID = "grounded_v4"
@@ -332,21 +332,54 @@ Question: {question}"""
 SOURCE_SEPARATOR = "\n\n\n"
 
 # --- generation -------------------------------------------------------------
-# Answers are generated locally, by a model served through Ollama. The team has
-# no budget for a paid API (the charter allocates none), so there is no hosted
-# provider to configure, and nothing in the app, the harness or a demo depends on
-# a key. ``GenerationConfig.provider`` still records the runtime, so a results
-# row says what served the answer.
+# Two providers, chosen with LLM_PROVIDER in .env (#106). Ollama runs a model on
+# the computer running the code: no account, no key and no network, and 2 to 4
+# minutes an answer on a laptop's CPU. Mistral's hosted API answers in about 2
+# seconds on its free plan, with each teammate's own key from their own account.
+# Ollama is the default, so a fresh clone works offline, and a demo whose key or
+# connection fails still has something to fall back on.
+# ``GenerationConfig.provider`` records which one served an answer, so a results
+# row says what produced it.
 OLLAMA = "ollama"
+MISTRAL = "mistral"
+PROVIDERS = (OLLAMA, MISTRAL)
+DEFAULT_PROVIDER = OLLAMA
 
 # The model a fresh clone uses, as Ollama names it. Swap it with
 # ``ollama pull <model>`` and LLM_MODEL in .env.
 DEFAULT_MODEL = "llama3.2:3b"
 
-# Where the model and the server come from when nothing is passed in. Both are
-# read from the environment, with the project's .env loaded into it first.
+# The Mistral model used when LLM_MODEL is unset. Ministral 3 8B did best of the
+# four suitable chat models the free plan serves. On the 48 test questions at
+# FINAL_K 16 it stated 22 of the 28 expected figures, 20 of them to the exact
+# digit, and abstained twice, against 22, 17 and 4 for Ministral 3 14B at the
+# same 2.2 s median, and the free plan allows it 188 requests a minute to 14B's
+# 30. Voxtral Small and Codestral stated figures the passages did not hold. See
+# docs/mistral-free-tier-evaluation.md and notebooks/mistral/.
+DEFAULT_MISTRAL_MODEL = "ministral-8b-2512"
+
+# Where the provider, the model, the server and the key come from when nothing
+# is passed in. All are read from the environment, with the project's .env loaded
+# into it first.
+LLM_PROVIDER_ENV = "LLM_PROVIDER"
+# The model for the provider LLM_PROVIDER names. A provider chosen over it, with
+# ``--provider``, uses its own default instead: an Ollama model name means
+# nothing to Mistral's API, and the reverse.
 LLM_MODEL_ENV = "LLM_MODEL"
 LLM_BASE_URL_ENV = "LLM_BASE_URL"
+# The Mistral key: each teammate's own, from their own account, never a shared one.
+MISTRAL_API_KEY_ENV = "MISTRAL_API_KEY"
+# Where Mistral's API is, when not its own address. The client is built with
+# it, and the client cache is keyed on it too. Nobody needs to set it: it
+# exists for a proxy, and for pointing the test suite at a dead address to
+# prove no test reaches the real API.
+MISTRAL_BASE_URL_ENV = "MISTRAL_BASE_URL"
+# Mistral's own address, ChatMistralAI's default, used when MISTRAL_BASE_URL is
+# not set. A connection that fails anywhere else is blamed on the setting.
+MISTRAL_API_URL = "https://api.mistral.ai/v1"
+# Where a teammate makes their own Mistral key, named in every message that asks
+# for one.
+MISTRAL_CONSOLE = "https://console.mistral.ai"
 # Ollama's own default address, which is always the computer the code runs on:
 # every member runs their own Ollama. 127.0.0.1 rather than localhost, which
 # Windows can resolve to ::1 first, where Ollama is not listening.
@@ -384,6 +417,11 @@ MAX_OUTPUT_TOKENS = 1024
 # This is a read timeout, not a limit on the whole answer, and the longest wait
 # is the first one: nothing streams back until the whole prompt has been read.
 GENERATION_TIMEOUT_S = 600.0
+
+# The same wait for Mistral's API. Its slowest answer in the free-plan test took
+# 23.9 s from question to last word, so two minutes only ever catches a connection
+# that has gone quiet. It is also what the test notebook ran with.
+HOSTED_TIMEOUT_S = 120
 
 # --- financial metrics ------------------------------------------------------
 # The line items a question can name, the XBRL concepts a filer tags them with,

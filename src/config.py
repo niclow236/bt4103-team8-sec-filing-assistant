@@ -53,8 +53,9 @@ MANIFEST_FILE = RAW_DIR / "manifest.jsonl"
 
 
 # The local settings file .env.example describes: the EDGAR identity, and which
-# local model answers and where Ollama runs. Git-ignored, and read into the
-# environment by load_env before anything reads the environment.
+# provider and model answer, with where Ollama runs or your own Mistral key.
+# Git-ignored, and read into the environment by load_env before anything reads
+# the environment.
 ENV_FILE = PROJECT_ROOT / ".env"
 
 
@@ -63,13 +64,15 @@ class MissingIdentityError(RuntimeError):
 
 
 def load_env(path: Path = ENV_FILE) -> bool:
-    """Read the local .env into the environment, once, without overriding it.
+    """Read the local .env into the environment, without overriding it.
 
     Every module that reads a setting from the environment calls this first,
     so a value a teammate puts in .env is seen wherever it is read and not
     only on the paths that happen to run configure_edgar. A variable already
     set in the process wins over the file, so a shell export still overrides
-    it. Returns whether the file was found.
+    it. The file is read again on every call: a variable added to it later is
+    seen, but one already set, even to "" by an earlier read, is not replaced,
+    so a changed value needs a new process. Returns whether the file was found.
     """
     return load_dotenv(path)
 

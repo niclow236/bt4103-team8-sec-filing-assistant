@@ -143,6 +143,7 @@ The list answers were close across models. The low scores all come from Q13, Q14
    - Both are Apache 2.0.
    - Both stated every figure that retrieval surfaced correctly, and mostly abstained when it didn't. In a finance assistant, saying "the filings do not answer this" is far better than a confident wrong number.
    - 8B has six times the request limit (188 a minute) and gives nearly identical results.
+   - Update, 27 September: with 16 passages rather than 8 (#85), 8B stated more figures to the exact digit than 14B (20 of 28, against 17) and abstained less (2 against 4), so the app's Mistral default is 8B, `ministral-8b-2512`.
 3. **Don't use Voxtral Small or Codestral for this task.** They are slightly faster, but they invent figures when the passages don't hold them. Codestral's licence also restricts commercial use.
 4. **Retrieval is what to work on next.** Until the passages carry the figure, no model can state it.
 
@@ -154,11 +155,11 @@ The list answers were close across models. The low scores all come from Q13, Q14
    - Answering figure questions from the XBRL facts table that `src/retrieval/facts.py` builds.
 2. **Grade by hand.** Fill in the `manual_correct` column of the two run files in [`notebooks/mistral/results/`](../notebooks/mistral/results/) to confirm the automatic checks.
 3. **Tighten how figures are written.** Either strengthen rule 4 or check the figures after generation. The app also needs to render or strip the markdown bold.
-4. **Add Mistral as a provider in `src/rag/generate.py`,** after `feature/rag-generate` merges:
-   - Use `ChatMistralAI` behind the existing chat-model interface, with the answer schema sent as a strict `json_schema` response format.
-   - Configure the provider, the model and `MISTRAL_API_KEY` in `.env`.
-   - Keep Ollama for offline use.
-   - The hosted app should use one agreed account's key. Teammates keep their own keys for development.
+4. **Add Mistral as a provider in `src/rag/generate.py`.** Done in #106:
+   - `ChatMistralAI` sits behind the same chat-model interface, with the answer schema sent as a strict `json_schema` response format.
+   - `LLM_PROVIDER=mistral` and `MISTRAL_API_KEY` in `.env` turn it on, as the README's [Setting up Mistral](../README.md#setting-up-mistral) describes.
+   - Ollama stays the default, for offline use.
+   - Every teammate uses a key from their own account, including whoever presents the demo. Keys are never shared.
 5. **Re-check the free plan before the demo.** Model availability and limits can change. The notebook's connection check reports any model the plan no longer serves.
 
 ## Limitations

@@ -26,15 +26,18 @@ chromadb==1.5.9
 # directly.
 tokenizers==0.23.2
 
-# Answer generation runs on a local model served by Ollama, since the team has
-# no budget for a paid API. Ollama itself is not a Python package: install it
-# from https://ollama.com/download and pull a model (see the README).
+# Answer generation, by a local model served by Ollama (the default) or by
+# Mistral's API on its free plan, with each member's own key (see the README).
+# Ollama itself is not a Python package: install it from
+# https://ollama.com/download and pull a model.
 #
-# LangChain's Ollama chat model is the client, streaming and token counts
-# included; langchain-core is what generate reads partial JSON with. ollama is
-# the client library underneath, pinned because generate catches its errors.
+# LangChain's chat models are the clients, streaming and token counts included:
+# langchain-ollama for Ollama and langchain-mistralai for Mistral.
+# langchain-core is what generate reads partial JSON with. ollama is the client
+# library underneath langchain-ollama, pinned because generate catches its errors.
 langchain-core==1.6.3
 langchain-ollama==1.1.0
+langchain-mistralai==1.1.6
 ollama==0.6.2
 
 # The schema an answer is generated against and validated with. Already
@@ -42,17 +45,19 @@ ollama==0.6.2
 # rag/records.py uses it directly.
 pydantic==2.13.5
 
-# HTTP client underneath the Ollama client. Already installed as a dependency
-# of edgartools and chromadb; pinned here because generate catches its errors
-# and the tests mock Ollama's server with it.
+# HTTP client underneath both chat models. Already installed as a dependency of
+# edgartools and chromadb; pinned here because generate catches its errors and
+# the tests mock Ollama's server and Mistral's API with it.
 httpx==0.28.1
+# How langchain-mistralai reads Mistral's event stream. Installed as its
+# dependency; pinned here because generate catches its SSEError.
+httpx-sse==0.4.3
 
-# The Mistral test notebook (notebooks/mistral/):
-# - langchain-mistralai: Mistral's chat model for LangChain, the same interface ChatOllama implements.
+# The Mistral test notebook (notebooks/mistral/), which also uses
+# langchain-mistralai above:
 # - ipykernel: runs the notebook in VS Code or Jupyter.
 # - nbconvert: runs it from a terminal or an agent (jupyter nbconvert --execute).
 # - openpyxl: refreshes the test questions from the team's workbook.
-langchain-mistralai==1.1.6
 ipykernel==7.3.0
 nbconvert==7.17.1
 openpyxl==3.1.5
