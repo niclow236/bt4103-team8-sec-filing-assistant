@@ -142,7 +142,7 @@ bt4103-team8-sec-filing-assistant/
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
-│   ├── answers/             #   the 48 test questions through the app's answer path, with results/
+│   ├── answers/             #   test questions and headline figures through the app's answer path, with results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
 │   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text
 │   └── test_data/           #   the team's 48 test questions
@@ -1334,6 +1334,33 @@ share of revenue from the Americas), in two runs of three for Google's
 marketable securities, and abstained on Salesforce's goodwill. BM25's fifth
 miss had the figure among its passages and gave the neighbouring year's: 46%
 for Google's FY2022 share of revenue from the United States, which was 48%.
+
+Those 48 questions cover eight of the fifteen companies, and most are answered
+right. `python notebooks/answers/headline_figures.py` asks the plain question
+for each of the 75 filings and each line item the facts route supports, such
+as "What was Micron's operating income in fiscal year 2023?", 825 in all, and
+grades the answers against the XBRL store. It separates the two ways such a
+question is answered: from the facts store, exactly and with no model, or by a
+model from retrieved passages where the route gave way. Without `--provider` it
+asks no model and counts what the route answers, which needs no key and comes
+out the same on every run.
+
+| 825 headline questions, one run | BM25 | Hybrid |
+|---|---|---|
+| Answered from the facts store | 623 | 637 |
+| Left to the model: right | 43 | 58 |
+| Left to the model: right, to fewer digits | 24 | 22 |
+| Left to the model: a wrong figure or none | 44 | 28 |
+| Left to the model: abstained | 28 | 17 |
+| No single figure in the store to grade against | 63 | 63 |
+
+Of the 762 the store can grade, 690 were right with BM25 and 717 with Hybrid
+(`results/headline-0-main-bm25.csv` and `headline-0-main-hybrid.csv`). The
+store holds the figure for every one of those 762, so each question left to
+the model is one the route found a figure for and then no passage to cite: the
+retriever decides that too, which is why the first row differs. Operating cash
+flow is the largest group, 47 of the 75 with BM25, and the model then gave a
+wrong figure for 25 of them.
 
 ## Streamlit app and components
 
