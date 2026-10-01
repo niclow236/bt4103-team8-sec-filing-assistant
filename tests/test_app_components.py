@@ -83,6 +83,16 @@ def test_supported_evidence_outranks_unverified_groundedness_but_not_citation_de
     assert "sec-supported" not in rows[1]["class"]
 
 
+def test_word_for_word_sentence_with_only_a_groundedness_check_is_supported():
+    answer = replace(sample_answer("q"), verification=VerificationResult("factual", (
+        VerificationCheck("groundedness", "supported", 0, "Revenue",
+                          "Extractive wording found in a cited passage."),
+    )))
+    row = soup(answer).select(".sec-claim")[0]
+    assert "sec-supported" in row["class"]
+    assert "Completed checks support this claim" in row.text
+
+
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html,bad", "https://", "https://[bad"])
 def test_unsafe_or_missing_filing_links_are_not_clickable(url):
     answer = sample_answer("q")
