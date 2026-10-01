@@ -1291,6 +1291,81 @@ Three things follow.
   seconds here. Ollama unloads a model after five idle minutes, so the next
   request pays for loading it again.
 
+## Streamlit app and components
+
+The real app reads the processed filings and indexes on this machine, searches
+them, sends retrieved passages to the configured answer model, verifies the
+result, and shows citations to those filings:
+
+```bash
+python -m streamlit run src/app/app.py
+```
+
+Build the local indexes first if they do not exist (`python -m src.retrieval
+bm25` and `python -m src.retrieval embed`). The app checks each index against
+the current processed corpus before searching. BM25 is the default retrieval
+method; Hybrid also loads the dense index and embedding model. The model
+provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`). The supplied
+`.env.example` selects Mistral's free API and defaults to `ministral-8b-2512`;
+each user must add their own `MISTRAL_API_KEY`. Set `LLM_PROVIDER=ollama` to use
+the local Ollama provider instead.
+An explicit Item filter is enforced for numeric questions too. When the
+question or filters change, the app hides the prior answer until Ask is pressed
+again.
+
+Issue #37's reusable UI is in `src/app/components.py`.
+
+- `answer_card(answer, key="answer-id")` displays a completed `Answer`. Inline
+  markers open and focus the corresponding citation expander without another
+  model call. Use a distinct, stable key for every card on the page.
+- `citation_expander(citation, passages, key="source-id", expanded=False)`
+  displays the exact stored passage, full source line (company, ticker, CIK,
+  form, fiscal year, Part, Item, title, filing date) and filing link. Missing
+  metadata is labelled unknown. Source numbering follows prompt order.
+- `filter_sidebar(question, parsed=None)` returns the effective `Query` to
+  pass to `answer_question(query=...)`. It reflects companies and years from
+  the shared parser and explicit Item mentions such as `Items 7 and 8`.
+  Users can override or clear any selection; empty means unrestricted.
+  Manual edits survive reruns. A changed question replaces all three filter
+  axes, and **Use question filters** restores the extracted selections.
+  Out-of-scope mentions produce a visible warning. Unrecognised Items remain
+  selected rather than silently broadening retrieval.
+
+Call the sidebar once per key on every rerun, outside a form. A controller
+with an existing retriever can use the components as follows:
+
+```python
+import streamlit as st
+from src.app.components import answer_card, filter_sidebar
+from src.rag import answer_question, verify_answer
+
+question = st.text_input("Question")
+query = filter_sidebar(question)
+if st.button("Ask", disabled=not question.strip()):
+    answer = answer_question(question.strip(), retriever, query=query)
+    st.session_state["last_answer"] = verify_answer(answer)
+if "last_answer" in st.session_state:
+    answer_card(st.session_state["last_answer"], key="last-answer")
+```
+
+An explicit Item filter sends numeric questions through normal retrieval,
+because the facts shortcut cannot enforce Item filters. Verification remains
+explicit: resolved citations alone are not labelled as factual support.
+Missing, invalid, unresolved, incomplete and unverified claims carry visible
+warning labels; mismatches have a separate label and colour. Model and filing
+text is HTML-escaped, and only HTTP(S) filing links are clickable. The fixed
+JavaScript click handler uses Streamlit 1.64's
+[`st.html`](https://docs.streamlit.io/develop/api-reference/text/st.html);
+untrusted text is never inserted into that script.
+
+Acceptance checks are in `tests/test_app_components.py`: source mapping,
+escaping, warning states, real Streamlit widget reruns and the Item-filter
+handoff to the RAG engine. Run them with:
+
+```bash
+python -m pytest tests/test_app_components.py -q
+```
+
 ## The benchmark
 
 Hand-written questions go in `benchmark/questions.jsonl`, one JSON object per

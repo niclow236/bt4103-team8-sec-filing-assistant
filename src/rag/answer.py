@@ -82,7 +82,9 @@ def answer_question(
 
     # The Query's filters rather than the parse's, so a caller that narrowed the
     # search by hand gets the figure for the company and year it asked about.
-    if use_facts and parsed.question_type == "numeric":
+    # The facts route searches its own supporting passages and does not accept
+    # Item filters. Let normal retrieval enforce an explicit sidebar Item.
+    if use_facts and parsed.question_type == "numeric" and not query.items:
         looked_up = answer_from_facts(
             question, query.tickers, query.fiscal_years, retriever,
             facts_file=facts_file, min_score=min_score,
