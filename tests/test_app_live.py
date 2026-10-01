@@ -50,3 +50,19 @@ def test_live_app_reports_missing_index_without_model_call(monkeypatch):
     assert not ui.exception
     assert "Build the local index first" in ui.error[0].value
     assert not ui.get("html")
+
+
+def test_live_app_verifies_against_the_sidebar_scope(monkeypatch):
+    verified = []
+    monkeypatch.setattr(app_module, "load_retriever", lambda method: object())
+    monkeypatch.setattr(app_module, "answer_question",
+                        lambda question, *args, **kwargs: sample_answer(question))
+    monkeypatch.setattr(app_module, "verify_answer",
+                        lambda answer, *, parsed: verified.append(parsed) or answer)
+    ui = AppTest.from_string(APP).run(timeout=30)
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.sidebar.multiselect[0].set_value(["MSFT"]).run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    assert verified[0].tickers == ("MSFT",)
+    assert verified[0].fiscal_years == (2024,)
