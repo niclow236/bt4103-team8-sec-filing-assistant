@@ -1204,8 +1204,24 @@ in millions to one decimal place is matched in that form as well: Palo Alto
 Networks prints total assets of $10,241,600,000 as "10,241.6" and never as a
 whole number of millions, so the route could cite none of its statements. A
 decimal has to sit in a row that names the line item or carry its scale word,
-since a table in millions holds rates written the same way. How many headline
-questions the route answers at each step is in
+since a table in millions holds rates written the same way.
+
+A line item answers to the names the statements give it as well as the names
+a question uses: "income from operations" (Salesforce, Alphabet, Meta and
+ServiceNow), "operating profit" (Texas Instruments), "cash and equivalents"
+(Micron), "trade payables" (Adobe), and the cash flow statement's line for
+cash from operations, which few filers word alike. Each was read off the rows
+that print a stored figure across the 75 filings. The route cites a row only
+where it names the line item and the checker reads a row the same way. Before
+these were added the route answered operating cash flow for no filing of
+Apple, Amazon, Salesforce, Cisco, Alphabet, Meta or Micron, and where it did
+cite a passage for operating cash flow or operating income the checker marked
+the route's own figure a mismatch against that passage, 27 times in the 623
+answers it gave with BM25. "Inventory", singular, is left out though Alphabet
+and Broadcom print it: the word is in too much prose about purchase
+commitments for a sentence that uses it to be checked against the balance.
+
+How many headline questions the route answers at each step is in
 [How often the answers are right](#how-often-the-answers-are-right).
 
 `parsed.to_query()` gives BM25 a different text from dense search. Once the
@@ -1380,6 +1396,8 @@ numbers in a cell are the three runs:
 | main, Hybrid (`0-main-hybrid`) | 26, 26, 26 | 1, 1, 1 | 1, 1, 1 | 8 | 18 | 0.92, 0.91, 0.93 |
 | Table boost 1.2, BM25 (`1-table-boost-bm25`) | 26, 25, 25 | 0, 1, 1 | 2, 2, 2 | 8 | 18 | 0.85, 0.87, 0.90 |
 | Table boost 1.2, Hybrid (`1-table-boost-hybrid`) | 26, 27, 26 | 1, 0, 1 | 1, 1, 1 | 8 | 19 | 0.93, 0.92, 0.95 |
+| Facts route changes, BM25 (`4-statement-names-bm25`) | 25, 25, 26 | 1, 1, 0 | 2, 2, 2 | 8 | 18 | 0.88, 0.88, 0.89 |
+| Facts route changes, Hybrid (`4-statement-names-hybrid`) | 27, 27, 27 | 0, 0, 0 | 1, 1, 1 | 8 | 19 | 0.93, 0.91, 0.92 |
 
 The figure columns barely move between runs and the prose column moves by a
 point or two, so one figure question is a real difference and 0.02 of prose
@@ -1403,6 +1421,12 @@ gave 18%. Hybrid gains Google's marketable securities in its passages, at rank
 figure in the other two. Salesforce's goodwill is still not retrieved by
 either.
 
+The facts route changes below do not touch these 48: the route answers the
+same eight, and the other questions reach the model with the same passages as
+before. So the last two rows are the table-boost state asked again, and the
+difference is the model's: with Hybrid it stated Google's marketable
+securities in all three runs this time, where it had in one.
+
 Those 48 questions cover eight of the fifteen companies, and most are answered
 right. `python notebooks/answers/headline_figures.py` asks the plain question
 for each of the 75 filings and each line item the facts route supports, such
@@ -1418,6 +1442,8 @@ out the same on every run.
 | main, BM25 (`headline-0-main-bm25`) | 623 | 43 | 24 | 44 | 28 | 690 |
 | main, Hybrid (`headline-0-main-hybrid`) | 637 | 58 | 22 | 28 | 17 | 717 |
 | Table boost 1.2, Hybrid (`headline-1-table-boost-hybrid`) | 651 | 87 | 5 | 8 | 11 | 743 |
+| Facts route changes, BM25 (`headline-4-statement-names-bm25`) | 747 | 3 | 0 | 1 | 11 | 750 |
+| Facts route changes, Hybrid (`headline-4-statement-names-hybrid`) | 752 | 8 | 0 | 1 | 1 | 760 |
 
 The other 63 have no single figure in the store to grade against: a software
 company has no inventories, some filers report no total for liabilities, and
@@ -1442,11 +1468,20 @@ asked. With Hybrid, as each change to the route went in:
 | Table boost 1.2 (`headline-1-table-boost-hybrid`) | 651 |
 | Looking through 50 passages for the citation, not 20 (`headline-2-passage-depth-hybrid-no-model`) | 660 |
 | A figure printed to one decimal of a million (`headline-3-decimal-millions-hybrid-no-model`) | 692 |
+| The statements' own names for a line (`headline-4-statement-names-hybrid`) | 752 |
 
 The nine the deeper search added were answered by the model before: five right,
 one to fewer digits, two wrong and one abstained. The 32 the decimal form added
 are all Palo Alto Networks', and the model had 28 of them right and abstained
-on four.
+on four. The 60 the statements' names added are operating cash flow (39),
+operating income (12), accounts payable (5) and cash (4), and the model had 46
+right, four to fewer digits, five wrong and five abstained. No step lost a
+question the route had answered before it.
+
+That leaves ten of the 762 to the model with Hybrid, and it gets eight right.
+The two it misses are Amazon's revenue for FY2024 and FY2025, asked as "total
+revenue": Amazon's statement says "net sales", and a search for the question's
+words does not reach it.
 
 ## Streamlit app and components
 
