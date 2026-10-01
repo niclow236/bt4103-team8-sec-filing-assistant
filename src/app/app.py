@@ -49,7 +49,8 @@ def main() -> None:
                 retriever = load_retriever(method)
                 answer = answer_question(question.strip(), retriever, query=query,
                                          parsed=parsed, config=config_from_env())
-                answer = verify_answer(answer, parsed=parsed)
+                answer = verify_answer(answer, parsed=replace(
+                    parsed, tickers=query.tickers, fiscal_years=query.fiscal_years))
         except (FileNotFoundError, ValueError, ProviderUnavailable) as error:
             st.error(str(error))
         else:
