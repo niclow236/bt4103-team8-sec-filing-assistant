@@ -151,9 +151,7 @@ def answer_card_html(answer: Answer, *, key: str = "answer") -> str:
                 c.marker == int(m[1]) and c.resolved for c in answer.citations
             ) for m in _MARKER.finditer(text))
             flagged = flagged or missing or not _MARKER.search(text)
-            evidence_supported = any(
-                c.status == "supported" and c.kind in {"fact", "passage"} for c in checks
-            )
+            evidence_supported = any(c.status == "supported" for c in checks)
             if any(c.status == "mismatch" for c in warnings):
                 status, label = "sec-warning sec-mismatch", "Mismatch — needs review"
             elif flagged or answer.truncated or answer.parse_error:
