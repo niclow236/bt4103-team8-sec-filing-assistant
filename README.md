@@ -1191,6 +1191,15 @@ The supporting search uses the question's metric alias, so "net sales" searches
 for that wording in the filing. Inventory purchase obligations, reserves and
 write-downs require different concepts and cannot be checked against `InventoryNet`.
 
+The route looks through the top 50 passages of that search for one that prints
+the figure (`FACT_PASSAGE_K`), where it used to look through 20. The figure was
+in the store and the statement in the filing, but a search for "total revenue"
+ranks Amazon's income statement, which says "net sales", below the prose that
+uses the word. 50 is what Hybrid and a reranker already fetch for any smaller
+request, so it searches and scores nothing more. How many headline questions
+the route answers at each step is in
+[How often the answers are right](#how-often-the-answers-are-right).
+
 `parsed.to_query()` gives BM25 a different text from dense search. Once the
 filters confine the search to Meta's FY2025 filing, "Meta's" and "fiscal year
 2025" tell no passage in it apart, but BM25 still scores the prose that repeats
@@ -1416,6 +1425,17 @@ the exact figure far more often, 87 against 58, because the statement table is
 now among its sources. Thirty questions became right and four stopped being:
 Adobe's accounts payable in four of its five years, where the model now
 abstains. Adobe's balance sheet calls the line "Trade payables".
+
+The first column is the facts route's, and it can be counted with no model
+asked. With Hybrid, as each change to the route went in:
+
+| Facts route, Hybrid, no model asked | Answered from the store, of the 762 it holds a figure for |
+|---|---|
+| Table boost 1.2 (`headline-1-table-boost-hybrid`) | 651 |
+| Looking through 50 passages for the citation, not 20 (`headline-2-passage-depth-hybrid-no-model`) | 660 |
+
+The nine the deeper search added were answered by the model before: five right,
+one to fewer digits, two wrong and one abstained.
 
 ## Streamlit app and components
 

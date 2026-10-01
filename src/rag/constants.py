@@ -584,7 +584,17 @@ FACTS_SENTENCE = "{company} reported {label} of {figure} for {period}."
 # than FINAL_K because this is not a ranked answer set: the figure is in one
 # specific table of one specific filing, and the search is already narrowed to
 # that filing, so the cost of looking further down is a few string comparisons.
-FACT_PASSAGE_K = 20
+#
+# 50, which is retrieval's CANDIDATE_K, rather than the 20 it started at. Hybrid
+# and a reranker fetch that many candidates for any smaller request, so looking
+# through all of them searches and scores nothing more. At 20 the route found a
+# figure in the store and then no passage to cite for questions whose statement
+# table sat a little further down: a search for "total revenue" ranks Amazon's
+# income statement, which says "net sales", below the prose that uses the word.
+# Over the plain question for each filing and line item, 825 of them
+# (notebooks/answers/headline_figures.py, with Hybrid), the route answered 660
+# at 50 where it answered 651 at 20, and none it had answered before was lost.
+FACT_PASSAGE_K = 50
 
 # --- decomposing a question -------------------------------------------------
 # How many company-and-year PAIRS a question may be split into (#35). It caps

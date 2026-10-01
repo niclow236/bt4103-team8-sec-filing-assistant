@@ -586,16 +586,19 @@ def test_net_sales_finds_the_statement_beyond_revenue_distractors(store, monkeyp
     table = _passage("Statement (in millions)\n| | 2025 |\n| Total net sales | 716,924 |",
                      ticker="AMZN", company="Amazon", fiscal_year=2025)
     chunks = [dataclasses.asdict(table)]
-    for index in range(80):
+    # More passages using the question's words than the route looks through,
+    # FACT_PASSAGE_K, so the statement is out of reach of a search for them,
+    # and enough others that those words still tell a passage apart.
+    for index in range(200):
         text = ("Total revenue discussion about annual performance and future business prospects."
-                if index < 25 else "Employees technology operations research strategy competition.")
+                if index < 60 else "Employees technology operations research strategy competition.")
         chunks.append(dataclasses.asdict(_passage(
             text=text, chunk_id=f"{ACCESSION}_item7_{index}", ticker="AMZN", company="Amazon",
             fiscal_year=2025, content_type="prose")))
     retriever = BM25Retriever(chunks)
     fact = lookup_fact(question, ("AMZN",), (2025,), facts_file=path)
     assert fact is not None
-    # The old canonical search loses the statement below its top-20 cutoff.
+    # The old canonical search loses the statement below its cutoff.
     assert supporting_passage(fact, retriever) is None
     monkeypatch.setattr("src.rag.answer.generate", lambda *a, **k: pytest.fail("generated"))
     result = answer_question(question, retriever, facts_file=path)
@@ -762,6 +765,41 @@ def test_a_figure_outside_a_table_row_still_needs_its_scale_named():
     assert not prints_figure("Total net sales of 391,035 were reported.", by_scale, labels=revenue)
     assert prints_figure("Total net sales of $391,035 million were reported.", by_scale,
                          labels=revenue)
+
+
+def test_a_statement_ranked_below_thirty_passages_is_still_found():
+    # A search for the line item's name ranks the prose that uses those words
+    # above a statement that words the line differently. Thirty such passages
+    # put the table out of reach of a search twenty deep, with the figure in
+    # the store and nothing to cite it from.
+    from src.retrieval.bm25 import BM25Retriever
+    from src.retrieval.constants import TABLE_BOOST
+    from src.retrieval.records import Query
+
+    table = _passage("Statement (in millions)\n| | 2024 |\n| Total net sales | 391,035 |")
+    chunks = [dataclasses.asdict(table)]
+    for index in range(120):
+        text = ("Total revenue discussion about annual performance and future business prospects."
+                if index < 30 else "Employees technology operations research strategy competition.")
+        chunks.append(dataclasses.asdict(_passage(
+            text=text, chunk_id=f"{ACCESSION}_item7_{index}", content_type="prose")))
+    retriever = BM25Retriever(chunks)
+    ranked = [p.chunk_id for p in retriever.search(
+        Query("total revenue", top_k=len(chunks), table_boost=TABLE_BOOST))]
+    assert ranked.index(table.chunk_id) == 30
+    found = supporting_passage(FACT, retriever)
+    assert found is not None and found.chunk_id == table.chunk_id
+
+
+def test_the_search_for_a_passage_stays_within_the_candidates_already_fetched():
+    # Hybrid and a reranker fetch CANDIDATE_K candidates for any smaller
+    # request, so looking through that many costs nothing more. Past it, a
+    # reranker would score every extra passage.
+    from src.retrieval.constants import CANDIDATE_K
+
+    retriever = StubRetriever(_passage())
+    supporting_passage(FACT, retriever)
+    assert retriever.queries[0].top_k <= CANDIDATE_K
 
 
 def test_the_supporting_search_carries_the_table_boost():
