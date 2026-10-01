@@ -142,6 +142,7 @@ bt4103-team8-sec-filing-assistant/
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
+│   ├── answers/             #   the 48 test questions through the app's answer path, with results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
 │   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text
 │   └── test_data/           #   the team's 48 test questions
@@ -1292,6 +1293,47 @@ Three things follow.
 - The first request also loads the model into memory, which took 10 to 50
   seconds here. Ollama unloads a model after five idle minutes, so the next
   request pays for loading it again.
+
+### How often the answers are right
+
+`python notebooks/answers/app_path_accuracy.py` asks the 48 test questions the
+way the app does, through `answer_question`, and checks the answers
+automatically. The Mistral notebook calls retrieval and the model itself, so it
+never takes the facts route or the split of a multi-filing question. This runs
+both, so it measures what a user is shown. The checks are the notebook's: a
+figure question is right when the answer states every expected figure, rounding
+allowed, and a prose answer is scored by the share of the expected items it
+mentions. They are proxies, as they are there.
+
+It asks every question three times, because a hosted model does not repeat
+itself. Mistral's API gave three different answers to one prompt at temperature
+0, with or without a seed, and where the figure was missing from its sources
+the same model abstained in some answers and stated a wrong figure in others.
+Retrieval and the facts route are the same in every run, so the spread across
+runs is the model's.
+
+With `ministral-8b-2512` at `FINAL_K` 16, three runs each
+(`notebooks/answers/results/0-main-bm25.csv` and `0-main-hybrid.csv`):
+
+| 48 test questions, by the app's retrieval method | BM25 | Hybrid |
+|---|---|---|
+| Figures right, rounding allowed (of 28) | 23, 23, 23 | 26, 26, 26 |
+| Answered with a wrong figure or none | 4, 4, 3 | 1, 1, 1 |
+| Abstained | 1, 1, 2 | 1, 1, 1 |
+| Answered from the facts store, with no model | 8 | 8 |
+| Expected figure in the passages, where a model answered (of 20) | 16 | 18 |
+| Prose: expected terms in the answer, mean (of 20) | 0.87, 0.88, 0.87 | 0.92, 0.91, 0.93 |
+| Prose: expected terms in the passages, mean | 0.980 | 0.994 |
+
+The figure rows barely moved between runs and the prose row moved by a point
+or two, so one figure question is a real difference and 0.02 of prose terms is
+not. A model that is not given the figure states a wrong one more often than it
+abstains. Of the four figures BM25 never put in front of it, it stated a wrong
+one in all three runs for two (Oracle's FY2025 net income, and Salesforce's
+share of revenue from the Americas), in two runs of three for Google's
+marketable securities, and abstained on Salesforce's goodwill. BM25's fifth
+miss had the figure among its passages and gave the neighbouring year's: 46%
+for Google's FY2022 share of revenue from the United States, which was 48%.
 
 ## Streamlit app and components
 
