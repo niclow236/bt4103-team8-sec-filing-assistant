@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import streamlit as st
 
 from src.app.components import answer_card, filter_sidebar
