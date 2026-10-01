@@ -132,8 +132,9 @@ def answer_card_html(answer: Answer, *, key: str = "answer") -> str:
     parts = [_STYLE, f'<article class="sec-answer" id="{namespace}">',
              f'<h3>{escape(answer.question)}</h3>']
     if answer.abstained:
-        parts.append(f'<p>{escape(answer.text)}</p><p>{escape(ABSTENTION_MESSAGES.get(
-            answer.abstention_reason, "The available evidence does not answer this question."))}</p>')
+        reason = ABSTENTION_MESSAGES.get(
+            answer.abstention_reason, "The available evidence does not answer this question.")
+        parts.append(f'<p>{escape(answer.text)}</p><p>{escape(reason)}</p>')
     else:
         if answer.truncated or answer.parse_error:
             parts.append('<p class="sec-warning" role="alert">Incomplete or malformed answer. '
