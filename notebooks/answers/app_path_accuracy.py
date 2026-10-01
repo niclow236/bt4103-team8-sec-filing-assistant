@@ -101,9 +101,10 @@ def amounts(text: str) -> list[tuple[str, tuple[float, ...]]]:
     A dollar amount with no scale after it is read two ways, since both are
     written: a statement's own "391,035", which is in millions, and a figure
     written out in full, "$391,035,000,000", as the facts route writes one.
+    Markdown emphasis is read through, so "**683.9** million" keeps its scale.
     """
     found = []
-    for dollar, number, unit in AMOUNT.findall(text):
+    for dollar, number, unit in AMOUNT.findall(text.replace("*", "")):
         value, unit = float(number.replace(",", "")), unit.lower()
         if unit in ("%", "percent"):
             found.append(("%", (value,)))

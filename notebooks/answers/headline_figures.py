@@ -108,10 +108,11 @@ def states(text: str, expected: Decimal) -> str | None:
 
     Sign-blind, since "a net loss of $2,722 million" states -2,722 million. A
     rounded figure is compared at the precision it shows, as ``verify_answer``
-    compares one.
+    compares one. Markdown emphasis is read through: a model that writes
+    "**683.9** million" has stated 683.9 million.
     """
     target, best = abs(expected), None
-    for dollar, number, decimals, unit in AMOUNT.findall(text):
+    for dollar, number, decimals, unit in AMOUNT.findall(text.replace("*", "")):
         unit = unit.lower()
         if not (dollar or unit):
             continue
