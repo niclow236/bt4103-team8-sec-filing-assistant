@@ -40,7 +40,7 @@ def main() -> None:
         method = st.selectbox("Retrieval method", ("BM25", "Hybrid"),
                               help="Hybrid also loads the local dense index and embedding model.")
         st.caption("Uses local processed filings and indexes. The answer model "
-                   "comes from LLM_PROVIDER / LLM_MODEL in .env (Mistral configured).")
+                   "comes from LLM_PROVIDER / LLM_MODEL in .env.")
 
     request = (question.strip(), query.tickers, query.fiscal_years, query.items, method)
     if st.button("Ask", type="primary", disabled=not question.strip()):
