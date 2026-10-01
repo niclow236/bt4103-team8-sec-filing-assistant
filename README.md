@@ -144,7 +144,7 @@ bt4103-team8-sec-filing-assistant/
 ├── notebooks/               # exploration and experiments
 │   ├── answers/             #   test questions and headline figures through the app's answer path, with results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
-│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost
 │   └── test_data/           #   the team's 48 test questions
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
@@ -831,9 +831,50 @@ Those numbers, and the search-text ones further down, were measured at the
 
 `table_boost` leans a query toward table passages without excluding prose, by
 raising a table passage's score before the cut to k. It is off by default and is
-set by `rag/query.py` only for questions that ask for a figure.
-`retrieval.constants.TABLE_BOOST` is still 1.0, which is also off, until the
-XBRL benchmark (#24) gives a value measured rather than guessed.
+set by `rag/query.py` only for questions that ask for a figure, to
+`retrieval.constants.TABLE_BOOST`, which is 1.2.
+
+That constant stayed at 1.0, which is also off, until the XBRL benchmark (#24)
+could give a value measured rather than guessed. `python
+notebooks/retrieval/table_boost_sweep.py` is the measurement: 20 benchmark
+questions from each of the 75 filings and the 48 test questions, cut at
+`FINAL_K`, with the boost applied only where the parser reads a request for a
+figure, as the shipped code applies it.
+
+| Table boost | 1.0 | 1.05 | 1.1 | 1.15 | 1.2 | 1.25 | 1.5 | 2.0 |
+|---|---|---|---|---|---|---|---|---|
+| Supporting chunk in the top 16, hybrid (1,490 benchmark questions) | 69.0% | 74.2% | 75.8% | 76.3% | 76.6% | 76.6% | 76.5% | 76.1% |
+| Reciprocal rank, mean | 0.287 | 0.375 | 0.433 | 0.451 | 0.455 | 0.452 | 0.450 | 0.443 |
+| Where tables support the question (1,086) | 69.5% | 76.9% | 80.0% | 81.3% | 81.9% | 81.8% | 83.0% | 84.0% |
+| Where tables and prose do (292) | 74.3% | 75.0% | 75.0% | 73.3% | 74.3% | 74.3% | 71.2% | 68.8% |
+| Where only prose does (112) | 50.0% | 45.5% | 37.5% | 35.7% | 32.1% | 32.1% | 27.7% | 18.8% |
+| Tables among the top 16, mean | 4.9 | 8.0 | 10.0 | 10.9 | 11.4 | 11.8 | 13.1 | 14.8 |
+| Supporting chunk in the top 16, BM25 alone | 56.8% | 59.1% | 60.1% | 61.9% | 63.2% | 64.5% | 68.5% | 71.8% |
+| Expected figure in the top 16, hand-written (28) | 23 | 25 | 27 | 27 | 27 | 27 | 27 | 27 |
+| Its rank, median | 6 | 2 | 2 | 2 | 1 | 1 | 1 | 1 |
+| Prose: expected terms found, mean (20) | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 |
+
+Hybrid's hit rate and reciprocal rank both peak at 1.2 and neither rises past
+it, while the cost keeps rising: a figure printed only in prose loses its
+passage more often at every step. At 1.2 the benchmark gains 134 questions
+where a table holds the figure and loses 20 of the 112 where only prose does.
+The steps are small because a cosine similarity is: dense scores sit in a
+narrow band, about 0.45 for an off-topic query's best passage and 0.68 to 0.74
+for an answerable one's, so a multiplier of 1.2 is enough to carry a loosely
+related table past the best prose passage. BM25's scores spread wider, which
+is why BM25 alone is still gaining at 2.0; one value serves both, set where
+hybrid peaks. Re-run the sweep when the embedding model changes or the corpus
+is re-chunked, since the right value follows the scale of the scores it
+multiplies.
+
+What the lean does to the answers is in
+[How often the answers are right](#how-often-the-answers-are-right): on the
+825 headline questions the model gave a wrong figure or none for 8 where it
+had for 28.
+
+The `FINAL_K`, fusion-weight and search-text numbers in this README were
+measured with the boost off. `ParsedQuestion.to_query` now sets it for a figure
+question, so a re-run of those scripts reports with it on.
 
 `Query.top_k` defaults to 10, which suits Recall@10 and nDCG@10. The RAG stage
 asks for `FINAL_K`, 16, since that is what goes into the prompt.
@@ -1312,28 +1353,38 @@ the same model abstained in some answers and stated a wrong figure in others.
 Retrieval and the facts route are the same in every run, so the spread across
 runs is the model's.
 
-With `ministral-8b-2512` at `FINAL_K` 16, three runs each
-(`notebooks/answers/results/0-main-bm25.csv` and `0-main-hybrid.csv`):
+With `ministral-8b-2512` at `FINAL_K` 16, three runs of the 48 at each state of
+the code. Each row is a file in `notebooks/answers/results/`, and the three
+numbers in a cell are the three runs:
 
-| 48 test questions, by the app's retrieval method | BM25 | Hybrid |
-|---|---|---|
-| Figures right, rounding allowed (of 28) | 23, 23, 23 | 26, 26, 26 |
-| Answered with a wrong figure or none | 4, 4, 3 | 1, 1, 1 |
-| Abstained | 1, 1, 2 | 1, 1, 1 |
-| Answered from the facts store, with no model | 8 | 8 |
-| Expected figure in the passages, where a model answered (of 20) | 16 | 18 |
-| Prose: expected terms in the answer, mean (of 20) | 0.87, 0.88, 0.87 | 0.92, 0.91, 0.93 |
-| Prose: expected terms in the passages, mean | 0.980 | 0.994 |
+| 48 test questions | Figures right, of 28 | Wrong figure or none | Abstained | From the facts store | Figure in the passages, of the 20 a model answered | Prose: expected terms in the answer |
+|---|---|---|---|---|---|---|
+| main, BM25 (`0-main-bm25`) | 23, 23, 23 | 4, 4, 3 | 1, 1, 2 | 8 | 16 | 0.87, 0.88, 0.87 |
+| main, Hybrid (`0-main-hybrid`) | 26, 26, 26 | 1, 1, 1 | 1, 1, 1 | 8 | 18 | 0.92, 0.91, 0.93 |
+| Table boost 1.2, BM25 (`1-table-boost-bm25`) | 26, 25, 25 | 0, 1, 1 | 2, 2, 2 | 8 | 18 | 0.85, 0.87, 0.90 |
+| Table boost 1.2, Hybrid (`1-table-boost-hybrid`) | 26, 27, 26 | 1, 0, 1 | 1, 1, 1 | 8 | 19 | 0.93, 0.92, 0.95 |
 
-The figure rows barely moved between runs and the prose row moved by a point
-or two, so one figure question is a real difference and 0.02 of prose terms is
-not. A model that is not given the figure states a wrong one more often than it
-abstains. Of the four figures BM25 never put in front of it, it stated a wrong
-one in all three runs for two (Oracle's FY2025 net income, and Salesforce's
-share of revenue from the Americas), in two runs of three for Google's
-marketable securities, and abstained on Salesforce's goodwill. BM25's fifth
-miss had the figure among its passages and gave the neighbouring year's: 46%
-for Google's FY2022 share of revenue from the United States, which was 48%.
+The figure columns barely move between runs and the prose column moves by a
+point or two, so one figure question is a real difference and 0.02 of prose
+terms is not. A model that is not given the figure states a wrong one more
+often than it abstains. Of the four figures BM25 never put in front of it on
+main, it stated a wrong one in all three runs for two (Oracle's FY2025 net
+income, and Salesforce's share of revenue from the Americas), in two runs of
+three for Google's marketable securities, and abstained on Salesforce's
+goodwill. BM25's fifth miss had the figure among its passages and gave the
+neighbouring year's: 46% for Google's FY2022 share of revenue from the United
+States, which was 48%.
+
+The table boost puts the figure in front of the model for two more of BM25's
+questions and one more of Hybrid's. BM25 now gets three more right: Google's
+share of revenue from the United States, Oracle's net income and Salesforce's
+share from the Americas. It loses Microsoft's effective tax rate in two runs
+of three: the filing gives it twice, 17.6% in the tax note's table and a
+rounded 18% in the MD&A's prose, and with both among its passages the model
+gave 18%. Hybrid gains Google's marketable securities in its passages, at rank
+10, and the model stated it in one run of three and the equity securities'
+figure in the other two. Salesforce's goodwill is still not retrieved by
+either.
 
 Those 48 questions cover eight of the fifteen companies, and most are answered
 right. `python notebooks/answers/headline_figures.py` asks the plain question
@@ -1345,22 +1396,26 @@ model from retrieved passages where the route gave way. Without `--provider` it
 asks no model and counts what the route answers, which needs no key and comes
 out the same on every run.
 
-| 825 headline questions, one run | BM25 | Hybrid |
-|---|---|---|
-| Answered from the facts store | 623 | 637 |
-| Left to the model: right | 43 | 58 |
-| Left to the model: right, to fewer digits | 24 | 22 |
-| Left to the model: a wrong figure or none | 44 | 28 |
-| Left to the model: abstained | 28 | 17 |
-| No single figure in the store to grade against | 63 | 63 |
+| 825 headline questions, one run | From the facts store | Model: right | Model: right, to fewer digits | Model: a wrong figure or none | Model: abstained | Right, of the 762 the store can grade |
+|---|---|---|---|---|---|---|
+| main, BM25 (`headline-0-main-bm25`) | 623 | 43 | 24 | 44 | 28 | 690 |
+| main, Hybrid (`headline-0-main-hybrid`) | 637 | 58 | 22 | 28 | 17 | 717 |
+| Table boost 1.2, Hybrid (`headline-1-table-boost-hybrid`) | 651 | 87 | 5 | 8 | 11 | 743 |
 
-Of the 762 the store can grade, 690 were right with BM25 and 717 with Hybrid
-(`results/headline-0-main-bm25.csv` and `headline-0-main-hybrid.csv`). The
-store holds the figure for every one of those 762, so each question left to
-the model is one the route found a figure for and then no passage to cite: the
-retriever decides that too, which is why the first row differs. Operating cash
-flow is the largest group, 47 of the 75 with BM25, and the model then gave a
-wrong figure for 25 of them.
+The other 63 have no single figure in the store to grade against: a software
+company has no inventories, some filers report no total for liabilities, and
+Oracle tags two net incomes that disagree. The store holds the figure for
+every one of the 762, so each question left to the model is one the route
+found a figure for and then no passage to cite. The retriever decides that
+too, which is why the first column differs between rows. Operating cash flow
+is the largest group, 47 of the 75 with BM25 on main, and the model then gave
+a wrong figure for 25 of them.
+
+With the table boost the model's wrong answers fall from 28 to 8 and it states
+the exact figure far more often, 87 against 58, because the statement table is
+now among its sources. Thirty questions became right and four stopped being:
+Adobe's accounts payable in four of its five years, where the model now
+abstains. Adobe's balance sheet calls the line "Trade payables".
 
 ## Streamlit app and components
 
@@ -1378,12 +1433,13 @@ the current processed corpus before searching. The sidebar's Configuration box
 picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
 the metadata filter, so the first Ask also checks the dense index and loads the
 embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
-is BM25 alone and loads neither. The app opens on hybrid because, on the 48 test
-questions with the sidebar's filters applied, it stated 26 of the 28 expected
-figures in every run against BM25's 23, and one wrong figure against three or
-four (see [How often the answers are right](#how-often-the-answers-are-right)).
-A row measured without the metadata filter searches every filing, and the
-sidebar says so when one is picked. The model
+is BM25 alone and loads neither. The app opens on hybrid because, with the
+sidebar's filters applied, it gets more of the test questions' figures right
+than BM25: 26 of 28 against 23 before the table boost was set, and 26 or 27
+against 25 or 26 with it (see
+[How often the answers are right](#how-often-the-answers-are-right)). A row
+measured without the metadata filter searches every filing, and the sidebar
+says so when one is picked. The model
 provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
 model by default, or Mistral's free API (`ministral-8b-2512`) with
 `LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds

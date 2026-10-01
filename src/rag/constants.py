@@ -601,8 +601,8 @@ FACT_PASSAGE_K = 20
 # passages per filing are not the only cost: each pair is another search, and
 # each filing is another one for the model to hold together in one answer at
 # 3B on a laptop. Which of the two matters more is a thing to measure on the
-# benchmark (#26) rather than to assume here, in the way TABLE_BOOST and the
-# score floors are left at their conservative settings until measured.
+# benchmark (#26) rather than to assume here, in the way the score floors are
+# left unset until measured and TABLE_BOOST stayed off until its sweep.
 #
 # The other cap is not a constant, because it follows from the budget itself:
 # no split may leave a sub-question with no passage at all, so a split is only

@@ -151,7 +151,7 @@ The list answers were close across models. The low scores all come from Q13, Q14
 
 1. **Improve retrieval of financial-statement figures.** Options, with this notebook re-run after each change to measure it:
    - Reranking.
-   - The table boost (`TABLE_BOOST`, still 1.0 pending #24).
+   - The table boost (`TABLE_BOOST`, still 1.0 pending #24). Update, 2 October: set to 1.2 by `notebooks/retrieval/table_boost_sweep.py`, which put the expected figure in the top 16 for 27 of the 28 figure questions, from 23.
    - Answering figure questions from the XBRL facts table that `src/retrieval/facts.py` builds.
 2. **Grade by hand.** Fill in the `manual_correct` column of the two run files in [`notebooks/mistral/results/`](../notebooks/mistral/results/) to confirm the automatic checks.
 3. **Tighten how figures are written.** Either strengthen rule 4 or check the figures after generation. The app also needs to render or strip the markdown bold.

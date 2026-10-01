@@ -326,17 +326,60 @@ PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type", "is_key_sec
 
 # A multiplier on the score of a table passage when the question is numeric, so
 # "what was revenue in FY2024" leans toward the passages that keep figures under
-# their row and column labels. 1.0 is off, which is where it starts: this is the
-# most tempting knob in the file to set by intuition and the easiest to fool
-# yourself with, since boosting tables always looks better on the handful of
-# numeric questions you happen to try. #24 generates the mechanical XBRL
-# benchmark precisely so this can be set from data.
+# their row and column labels. 1.0 is off, which is where it stayed until it
+# could be measured: this is the most tempting knob in the file to set by
+# intuition and the easiest to fool yourself with, since boosting tables always
+# looks better on the handful of numeric questions you happen to try. #24
+# generated the mechanical XBRL benchmark precisely so this could be set from
+# data.
+#
+# `notebooks/retrieval/table_boost_sweep.py` is that measurement: 20 benchmark
+# questions from each of the 75 filings and the 48 hand-written ones, cut at
+# FINAL_K, with the boost applied as shipped, which is to a question the parser
+# reads as asking for a figure and to no other.
+#
+#   boost                              1.0   1.05    1.1   1.15    1.2   1.25    1.5    2.0
+#   XBRL benchmark, hybrid (1,490 questions)
+#     supporting chunk in the top 16  0.690  0.742  0.758  0.763  0.766  0.766  0.765  0.761
+#     reciprocal rank, mean           0.287  0.375  0.433  0.451  0.455  0.452  0.450  0.443
+#     supported by tables (1,086)     0.695  0.769  0.800  0.813  0.819  0.818  0.830  0.840
+#     by tables and prose (292)       0.743  0.750  0.750  0.733  0.743  0.743  0.712  0.688
+#     by prose alone (112)            0.500  0.455  0.375  0.357  0.321  0.321  0.277  0.188
+#     tables among the 16, mean         4.9    8.0   10.0   10.9   11.4   11.8   13.1   14.8
+#   the same, BM25 alone
+#     supporting chunk in the top 16  0.568  0.591  0.601  0.619  0.632  0.645  0.685  0.718
+#   48 hand-written questions, hybrid
+#     expected figure in the top 16   23/28  25/28  27/28  27/28  27/28  27/28  27/28  27/28
+#     its rank, median                    6      2      2      2      1      1      1      1
+#     prose terms found, mean         0.994  0.994  0.994  0.994  0.994  0.994  0.994  0.994
+#
+# 1.2 is the value, for what the hybrid rows show. The supporting chunk reaches
+# the prompt for 1,142 of the 1,490 benchmark questions instead of 1,028, and
+# its reciprocal rank goes from 0.287 to 0.455: both peak at 1.2 and neither
+# rises past it. What the lean costs keeps rising, though. A figure printed only
+# in prose loses its passage more often at every step, so past 1.2 there is
+# more to lose and nothing left to gain. At 1.2 the trade is 134 questions
+# gained where a table holds the figure, none lost there, and 20 lost of the
+# 112 where only prose does. On the hand-written questions the expected figure
+# reaches the prompt for 27 of 28 instead of 23 and its median rank goes from 6
+# to 1; the 20 prose questions, two of which the parser reads as asking for a
+# figure, do not move.
+#
+# The steps are small because a cosine similarity is. Dense scores sit in a
+# narrow band (the score thresholds above put an off-topic query's best passage
+# at 0.45 and an answerable one's at 0.68 to 0.74), so a multiplier of 1.2 is
+# enough to carry a loosely related table past the best prose passage. BM25's
+# scores spread wider, which is why BM25 alone is still gaining at 2.0. One
+# value serves both, set where hybrid peaks, because hybrid is what the harness
+# measures and what the app searches with by default. The right value follows
+# the scale of the scores it multiplies, so re-run the sweep when the embedding
+# model changes (#46) or the corpus is re-chunked.
 #
 # It reaches the retrievers as ``Query(table_boost=TABLE_BOOST)``, set by
 # whatever decides the question is numeric, and never as a retriever default:
 # a boost applied to every question is a thumb on the scale for prose questions
 # too. ``Query(content_type="table")`` is the hard version -- tables only.
-TABLE_BOOST = 1.0
+TABLE_BOOST = 1.2
 
 # --- where indexes live -----------------------------------------------------
 # Imported from src.config, which owns every project path, and named here so a
