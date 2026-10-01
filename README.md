@@ -1349,10 +1349,14 @@ Build the local indexes first if they do not exist (`python -m src.retrieval
 bm25` and `python -m src.retrieval embed`). The app checks each index against
 the current processed corpus before searching. The sidebar's Configuration box
 picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
-the metadata filter, so the first Ask also loads the dense index and the
-embedding model; C1 is BM25 alone and loads neither. A row measured without the
-metadata filter searches every filing, and the sidebar says so when one is
-picked. The model
+the metadata filter, so the first Ask also checks the dense index and loads the
+embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
+is BM25 alone and loads neither. The app opens on hybrid because, on the 48 test
+questions with the sidebar's filters applied, it stated 26 of the 28 expected
+figures in every run against BM25's 23, and one wrong figure against three or
+four (see [How often the answers are right](#how-often-the-answers-are-right)).
+A row measured without the metadata filter searches every filing, and the
+sidebar says so when one is picked. The model
 provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
 model by default, or Mistral's free API (`ministral-8b-2512`) with
 `LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds

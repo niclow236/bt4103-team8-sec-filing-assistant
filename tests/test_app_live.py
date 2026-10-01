@@ -154,3 +154,17 @@ def test_live_app_verifies_against_the_sidebar_scope(monkeypatch):
     assert not ui.exception
     assert verified[0].tickers == ("MSFT",)
     assert verified[0].fiscal_years == (2024,)
+
+
+def test_live_app_searches_with_hybrid_unless_another_row_is_chosen(monkeypatch):
+    # The row the app opens on is the one the 48 test questions were measured
+    # best with (README, "How often the answers are right"), so a change of
+    # DEFAULT_STACK to a BM25 row has to be made on purpose.
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_string(APP).run(timeout=30)
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    ui.sidebar.selectbox[0].set_value("C1").run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    assert [stack.config.retriever for stack in built.values()] == ["hybrid", "bm25"]
