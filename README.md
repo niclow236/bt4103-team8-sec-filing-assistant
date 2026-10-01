@@ -1305,10 +1305,10 @@ Build the local indexes first if they do not exist (`python -m src.retrieval
 bm25` and `python -m src.retrieval embed`). The app checks each index against
 the current processed corpus before searching. BM25 is the default retrieval
 method; Hybrid also loads the dense index and embedding model. The model
-provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`). The supplied
-`.env.example` selects Mistral's free API and defaults to `ministral-8b-2512`;
-each user must add their own `MISTRAL_API_KEY`. Set `LLM_PROVIDER=ollama` to use
-the local Ollama provider instead.
+provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
+model by default, or Mistral's free API (`ministral-8b-2512`) with
+`LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds
+rather than minutes.
 An explicit Item filter is enforced for numeric questions too. When the
 question or filters change, the app hides the prior answer until Ask is pressed
 again.
