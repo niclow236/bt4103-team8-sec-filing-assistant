@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from time import perf_counter
 
 import streamlit as st
 
@@ -14,6 +15,13 @@ from src.rag.verify import verify_answer
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.dense import DenseRetriever
 from src.retrieval.hybrid import HybridRetriever
+from src.retrieval.rerank import Reranker
+
+
+@st.cache_resource
+def load_config():
+    """Load environment-backed generation settings once per Streamlit process."""
+    return config_from_env()
 
 
 @st.cache_resource(show_spinner="Checking the local filing indexes…")
@@ -22,9 +30,25 @@ def load_retriever(method: str):
     bm25 = BM25Retriever.load()
     if method == "BM25":
         return bm25
-    if method == "Hybrid":
-        return HybridRetriever(bm25, DenseRetriever.load())
+    if method in {"Hybrid", "Hybrid + rerank"}:
+        retriever = HybridRetriever(bm25, DenseRetriever.load())
+        if method == "Hybrid + rerank":
+            return Reranker(retriever)
+        return retriever
     raise ValueError(f"Unknown retrieval method: {method}")
+
+
+@st.cache_data(show_spinner=False)
+def answer_cached(question: str, tickers: tuple[str, ...], fiscal_years: tuple[int, ...],
+                  items: tuple[str, ...], method: str):
+    """Cache deterministic answer work for repeated demo questions."""
+    parsed = parse_question(question, facts_file=None)
+    query = replace(parsed.to_query(), tickers=tickers, fiscal_years=fiscal_years, items=items)
+    retriever = load_retriever(method)
+    answer = answer_question(question, retriever, query=query, parsed=parsed,
+                             config=load_config())
+    return verify_answer(answer, parsed=replace(
+        parsed, tickers=query.tickers, fiscal_years=query.fiscal_years))
 
 
 def main() -> None:
@@ -37,23 +61,22 @@ def main() -> None:
     parsed = parse_question(question, facts_file=None) if question.strip() else None
     query = filter_sidebar(question, parsed=parsed)
     with st.sidebar:
-        method = st.selectbox("Retrieval method", ("BM25", "Hybrid"),
-                              help="Hybrid also loads the local dense index and embedding model.")
+        method = st.selectbox("Retrieval method", ("BM25", "Hybrid", "Hybrid + rerank"),
+                              help="Hybrid loads dense retrieval; reranking adds a cross-encoder.")
         st.caption("Uses local processed filings and indexes. The answer model "
                    "comes from LLM_PROVIDER / LLM_MODEL in .env.")
 
     request = (question.strip(), query.tickers, query.fiscal_years, query.items, method)
     if st.button("Ask", type="primary", disabled=not question.strip()):
         try:
+            started = perf_counter()
             with st.spinner("Searching filings and generating an answer…"):
-                retriever = load_retriever(method)
-                answer = answer_question(question.strip(), retriever, query=query,
-                                         parsed=parsed, config=config_from_env())
-                answer = verify_answer(answer, parsed=replace(
-                    parsed, tickers=query.tickers, fiscal_years=query.fiscal_years))
+                answer = answer_cached(question.strip(), query.tickers, query.fiscal_years,
+                                       query.items, method)
         except (FileNotFoundError, ValueError, ProviderUnavailable) as error:
             st.error(str(error))
         else:
+            st.caption(f"Query completed in {(perf_counter() - started):.2f}s")
             st.session_state["filing_answer"] = answer
             st.session_state["filing_request"] = request
 
