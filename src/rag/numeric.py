@@ -393,6 +393,12 @@ def prints_figure(
     391,035 |" is revenue in millions. A passage that declares a different
     scale is still refused.
 
+    A needle with a decimal point in it, "56.9" for a filer that prints its
+    millions to one place, is held to more than that: a declared scale is not
+    enough, because a table in millions holds percentages and rates written
+    the same way. It has to sit in a row that names the metric, or carry its
+    scale word beside it.
+
     And the needles carry no sign, so the sign is checked here: a loss of
     $1,500 is printed "(1,500)" or "-1,500", and a passage showing a positive
     1,500 is a different line item. A figure whose sign disagrees with the
@@ -412,9 +418,11 @@ def prints_figure(
                 if divisor == 1:
                     if _SCALE_AFTER.match(after) is None:
                         return True
-                elif (declared
-                      or re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I)
-                      or (heading is None and _row_names(before, labels))):
+                    continue
+                named = _row_names(before, labels)
+                if (re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I)
+                        or (declared and (named or "." not in needle))
+                        or (heading is None and named)):
                     return True
     return False
 

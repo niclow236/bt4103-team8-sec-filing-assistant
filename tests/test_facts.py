@@ -175,6 +175,22 @@ def test_a_whole_figure_is_offered_at_each_scale_it_could_be_printed_in():
     assert by_scale[1_000_000] == {"391035", "391,035"}
 
 
+def test_a_figure_printed_to_one_decimal_of_a_million_is_offered_that_way():
+    # Palo Alto Networks reports in millions to a decimal: total assets of
+    # 10241600000 are printed "10,241.6", and never as a whole number.
+    by_scale = facts.printed_forms_by_scale("10241600000")
+    assert by_scale[1_000_000] == {"10241.6", "10,241.6"}
+    assert by_scale[1_000] == {"10241600", "10,241,600"}
+    # Two places of a million is not how a statement prints, and neither the
+    # thousands column nor a billion in prose is matched on a decimal.
+    assert 1_000_000_000 not in facts.printed_forms_by_scale("84250000000")
+    assert 1_000_000 not in facts.printed_forms_by_scale("10241650000")
+    assert facts.printed_forms_by_scale("1234500") == {1: {"1234500", "1,234,500"}}
+    # A short decimal is a rate in most tables that hold one.
+    assert 1_000_000 not in facts.printed_forms_by_scale("1500000")
+    assert facts.printed_forms_by_scale("56900000")[1_000_000] == {"56.9"}
+
+
 def test_a_figure_that_is_not_round_at_any_scale_is_offered_as_a_decimal():
     # Earnings per share: no scale divides it, and it is printed to the cent.
     assert facts.printed_forms_by_scale("6.08") == {1: {"6.08"}}

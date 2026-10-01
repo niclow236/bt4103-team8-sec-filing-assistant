@@ -1196,8 +1196,16 @@ the figure (`FACT_PASSAGE_K`), where it used to look through 20. The figure was
 in the store and the statement in the filing, but a search for "total revenue"
 ranks Amazon's income statement, which says "net sales", below the prose that
 uses the word. 50 is what Hybrid and a reranker already fetch for any smaller
-request, so it searches and scores nothing more. How many headline questions
-the route answers at each step is in
+request, so it searches and scores nothing more.
+
+A passage prints the figure when it shows it at a scale it declares or beside
+a scale word, or in a table row that names the line item. A filer that reports
+in millions to one decimal place is matched in that form as well: Palo Alto
+Networks prints total assets of $10,241,600,000 as "10,241.6" and never as a
+whole number of millions, so the route could cite none of its statements. A
+decimal has to sit in a row that names the line item or carry its scale word,
+since a table in millions holds rates written the same way. How many headline
+questions the route answers at each step is in
 [How often the answers are right](#how-often-the-answers-are-right).
 
 `parsed.to_query()` gives BM25 a different text from dense search. Once the
@@ -1433,9 +1441,12 @@ asked. With Hybrid, as each change to the route went in:
 |---|---|
 | Table boost 1.2 (`headline-1-table-boost-hybrid`) | 651 |
 | Looking through 50 passages for the citation, not 20 (`headline-2-passage-depth-hybrid-no-model`) | 660 |
+| A figure printed to one decimal of a million (`headline-3-decimal-millions-hybrid-no-model`) | 692 |
 
 The nine the deeper search added were answered by the model before: five right,
-one to fewer digits, two wrong and one abstained.
+one to fewer digits, two wrong and one abstained. The 32 the decimal form added
+are all Palo Alto Networks', and the model had 28 of them right and abstained
+on four.
 
 ## Streamlit app and components
 

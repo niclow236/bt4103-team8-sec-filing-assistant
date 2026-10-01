@@ -767,6 +767,37 @@ def test_a_figure_outside_a_table_row_still_needs_its_scale_named():
                          labels=revenue)
 
 
+def test_a_figure_printed_to_a_decimal_of_a_million_is_cited_from_its_row():
+    # Palo Alto Networks reports in millions to one decimal place, so its
+    # total assets of 10,241,600,000 are never printed as a whole number.
+    from src.rag.constants import FINANCIAL_METRICS
+    from src.retrieval.facts import printed_forms_by_scale
+
+    text = ("CONSOLIDATED BALANCE SHEETS (part 2 of 5)\n\n"
+            "| July 31, | 2021 |  | 2020 |  |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| Total assets | $ | 10,241.6 | $ | 9,065.4 |\n")
+    assets = FINANCIAL_METRICS["assets"].aliases
+    by_scale = printed_forms_by_scale(Decimal("10241600000"))
+    assert prints_figure(text, by_scale, labels=assets)
+    assert prints_figure("(in millions)\n" + text, by_scale, labels=assets)
+    assert not prints_figure("(in thousands)\n" + text, by_scale, labels=assets)
+    # A declared scale is not enough for a decimal, as it is for a whole
+    # figure: a table in millions holds rates written the same way.
+    other_row = "(in millions)\n\n| Deferred items | 10,241.6 |\n"
+    assert not prints_figure(other_row, by_scale, labels=assets)
+    in_thousands = "(in thousands)\n\n| Deferred items | 10,241,600 |\n"
+    assert prints_figure(in_thousands, by_scale, labels=assets)
+    # Prose carries its scale beside the figure.
+    assert prints_figure("Total assets were $10,241.6 million.", by_scale)
+    # A loss printed to a decimal keeps the sign rule.
+    loss = "| Net loss | $ | -498.9 | $ | -267 |\n"
+    net_income = FINANCIAL_METRICS["net_income"].aliases
+    assert prints_figure(loss, printed_forms_by_scale(Decimal("-498900000")), negative=True,
+                         labels=net_income)
+    assert not prints_figure(loss, printed_forms_by_scale(Decimal("498900000")), labels=net_income)
+
+
 def test_a_statement_ranked_below_thirty_passages_is_still_found():
     # A search for the line item's name ranks the prose that uses those words
     # above a statement that words the line differently. Thirty such passages
