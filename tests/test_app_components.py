@@ -66,6 +66,23 @@ def test_unverified_and_global_checks_remain_visible():
     assert "Output needs review." in page.text
 
 
+def test_supported_evidence_outranks_unverified_groundedness_but_not_citation_defects():
+    answer = replace(sample_answer("q"), verification=VerificationResult("numeric", (
+        VerificationCheck("fact", "supported", 0, "Revenue", "The annual fact agrees."),
+        VerificationCheck("groundedness", "unverified", 0, "Revenue",
+                          "No semantic entailment check was run."),
+        VerificationCheck("fact", "supported", 1, "Unavailable claim",
+                          "A structured fact agrees."),
+    )))
+    page = soup(answer)
+    rows = page.select(".sec-claim")
+    assert "sec-supported" in rows[0]["class"]
+    assert "Completed checks support this claim" in rows[0].text
+    assert "No semantic entailment check was run." in page.text
+    assert "sec-warning" in rows[1]["class"]
+    assert "sec-supported" not in rows[1]["class"]
+
+
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html,bad", "https://", "https://[bad"])
 def test_unsafe_or_missing_filing_links_are_not_clickable(url):
     answer = sample_answer("q")
