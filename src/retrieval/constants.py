@@ -338,32 +338,40 @@ PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type", "is_key_sec
 # FINAL_K, with the boost applied as shipped, which is to a question the parser
 # reads as asking for a figure and to no other.
 #
+# It has been run twice. The first run, with BM25 scoring every word of the
+# question, chose 1.2: hybrid found the supporting chunk for 1,142 of the 1,490
+# benchmark questions there, 1,028 with the boost off, and both that and the
+# reciprocal rank peaked at 1.2. BM25 then stopped scoring the words most
+# passages contain (bm25.py), which moved the scores the boost multiplies, so
+# the sweep was run again. These are the second run's numbers:
+#
 #   boost                              1.0   1.05    1.1   1.15    1.2   1.25    1.5    2.0
 #   XBRL benchmark, hybrid (1,490 questions)
-#     supporting chunk in the top 16  0.690  0.742  0.758  0.763  0.766  0.766  0.765  0.761
-#     reciprocal rank, mean           0.287  0.375  0.433  0.451  0.455  0.452  0.450  0.443
-#     supported by tables (1,086)     0.695  0.769  0.800  0.813  0.819  0.818  0.830  0.840
-#     by tables and prose (292)       0.743  0.750  0.750  0.733  0.743  0.743  0.712  0.688
-#     by prose alone (112)            0.500  0.455  0.375  0.357  0.321  0.321  0.277  0.188
-#     tables among the 16, mean         4.9    8.0   10.0   10.9   11.4   11.8   13.1   14.8
+#     supporting chunk in the top 16  0.754  0.779  0.783  0.786  0.789  0.788  0.787  0.777
+#     reciprocal rank, mean           0.340  0.418  0.461  0.471  0.472  0.470  0.463  0.459
+#     supported by tables (1,086)     0.779  0.820  0.834  0.843  0.847  0.851  0.861  0.870
+#     by tables and prose (292)       0.757  0.760  0.760  0.747  0.753  0.740  0.719  0.675
+#     by prose alone (112)            0.500  0.438  0.348  0.339  0.312  0.304  0.250  0.134
+#     tables among the 16, mean         6.4    9.4   11.5   12.4   12.9   13.2   14.0   14.8
 #   the same, BM25 alone
-#     supporting chunk in the top 16  0.568  0.591  0.601  0.619  0.632  0.645  0.685  0.718
+#     supporting chunk in the top 16  0.695  0.710  0.717  0.723  0.731  0.733  0.752  0.762
 #   48 hand-written questions, hybrid
-#     expected figure in the top 16   23/28  25/28  27/28  27/28  27/28  27/28  27/28  27/28
-#     its rank, median                    6      2      2      2      1      1      1      1
+#     expected figure in the top 16   27/28  28/28  28/28  28/28  28/28  28/28  28/28  28/28
+#     its rank, median                  3.5      2      1      1      1      1      1      1
 #     prose terms found, mean         0.994  0.994  0.994  0.994  0.994  0.994  0.994  0.994
 #
-# 1.2 is the value, for what the hybrid rows show. The supporting chunk reaches
-# the prompt for 1,142 of the 1,490 benchmark questions instead of 1,028, and
-# its reciprocal rank goes from 0.287 to 0.455: both peak at 1.2 and neither
-# rises past it. What the lean costs keeps rising, though. A figure printed only
-# in prose loses its passage more often at every step, so past 1.2 there is
-# more to lose and nothing left to gain. At 1.2 the trade is 134 questions
-# gained where a table holds the figure, none lost there, and 20 lost of the
-# 112 where only prose does. On the hand-written questions the expected figure
-# reaches the prompt for 27 of 28 instead of 23 and its median rank goes from 6
-# to 1; the 20 prose questions, two of which the parser reads as asking for a
-# figure, do not move.
+# 1.2 is still the value, for what the hybrid rows show. The supporting chunk
+# reaches the prompt for 1,175 of the 1,490 benchmark questions instead of
+# 1,123, and its reciprocal rank goes from 0.340 to 0.472: both peak at 1.2 and
+# neither rises past it. What the lean costs keeps rising, though. A figure
+# printed only in prose loses its passage more often at every step, so past
+# 1.2 there is more to lose and nothing left to gain. At 1.2 the trade is 74
+# questions gained where a table holds the figure, none lost there, and 21 lost
+# of the 112 where only prose does. The boost buys less than it did, because
+# the keyword search now finds many of those tables without it. On the
+# hand-written questions the expected figure reaches the prompt for all 28
+# instead of 27 and its median rank goes from 3.5 to 1; the 20 prose questions,
+# two of which the parser reads as asking for a figure, do not move.
 #
 # The steps are small because a cosine similarity is. Dense scores sit in a
 # narrow band (the score thresholds above put an off-topic query's best passage

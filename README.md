@@ -839,25 +839,32 @@ could give a value measured rather than guessed. `python
 notebooks/retrieval/table_boost_sweep.py` is the measurement: 20 benchmark
 questions from each of the 75 filings and the 48 test questions, cut at
 `FINAL_K`, with the boost applied only where the parser reads a request for a
-figure, as the shipped code applies it.
+figure, as the shipped code applies it. It was run twice. The first run, with
+every word of a question scored by the keyword search, chose 1.2: hybrid
+found the supporting chunk for 76.6% of the benchmark there against 69.0% with
+the boost off. The table below is the second run, after the keyword search
+stopped scoring the words most passages contain (further down), which is the
+search the boost now sits on:
 
 | Table boost | 1.0 | 1.05 | 1.1 | 1.15 | 1.2 | 1.25 | 1.5 | 2.0 |
 |---|---|---|---|---|---|---|---|---|
-| Supporting chunk in the top 16, hybrid (1,490 benchmark questions) | 69.0% | 74.2% | 75.8% | 76.3% | 76.6% | 76.6% | 76.5% | 76.1% |
-| Reciprocal rank, mean | 0.287 | 0.375 | 0.433 | 0.451 | 0.455 | 0.452 | 0.450 | 0.443 |
-| Where tables support the question (1,086) | 69.5% | 76.9% | 80.0% | 81.3% | 81.9% | 81.8% | 83.0% | 84.0% |
-| Where tables and prose do (292) | 74.3% | 75.0% | 75.0% | 73.3% | 74.3% | 74.3% | 71.2% | 68.8% |
-| Where only prose does (112) | 50.0% | 45.5% | 37.5% | 35.7% | 32.1% | 32.1% | 27.7% | 18.8% |
-| Tables among the top 16, mean | 4.9 | 8.0 | 10.0 | 10.9 | 11.4 | 11.8 | 13.1 | 14.8 |
-| Supporting chunk in the top 16, BM25 alone | 56.8% | 59.1% | 60.1% | 61.9% | 63.2% | 64.5% | 68.5% | 71.8% |
-| Expected figure in the top 16, hand-written (28) | 23 | 25 | 27 | 27 | 27 | 27 | 27 | 27 |
-| Its rank, median | 6 | 2 | 2 | 2 | 1 | 1 | 1 | 1 |
+| Supporting chunk in the top 16, hybrid (1,490 benchmark questions) | 75.4% | 77.9% | 78.3% | 78.6% | 78.9% | 78.8% | 78.7% | 77.7% |
+| Reciprocal rank, mean | 0.340 | 0.418 | 0.461 | 0.471 | 0.472 | 0.470 | 0.463 | 0.459 |
+| Where tables support the question (1,086) | 77.9% | 82.0% | 83.4% | 84.3% | 84.7% | 85.1% | 86.1% | 87.0% |
+| Where tables and prose do (292) | 75.7% | 76.0% | 76.0% | 74.7% | 75.3% | 74.0% | 71.9% | 67.5% |
+| Where only prose does (112) | 50.0% | 43.8% | 34.8% | 33.9% | 31.2% | 30.4% | 25.0% | 13.4% |
+| Tables among the top 16, mean | 6.4 | 9.4 | 11.5 | 12.4 | 12.9 | 13.2 | 14.0 | 14.8 |
+| Supporting chunk in the top 16, BM25 alone | 69.5% | 71.0% | 71.7% | 72.3% | 73.1% | 73.3% | 75.2% | 76.2% |
+| Expected figure in the top 16, hand-written (28) | 27 | 28 | 28 | 28 | 28 | 28 | 28 | 28 |
+| Its rank, median | 3.5 | 2 | 1 | 1 | 1 | 1 | 1 | 1 |
 | Prose: expected terms found, mean (20) | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 |
 
-Hybrid's hit rate and reciprocal rank both peak at 1.2 and neither rises past
-it, while the cost keeps rising: a figure printed only in prose loses its
-passage more often at every step. At 1.2 the benchmark gains 134 questions
-where a table holds the figure and loses 20 of the 112 where only prose does.
+Hybrid's hit rate and reciprocal rank still both peak at 1.2 and neither rises
+past it, while the cost keeps rising: a figure printed only in prose loses its
+passage more often at every step. At 1.2 the benchmark gains 74 questions
+where a table holds the figure and loses 21 of the 112 where only prose does.
+The boost buys less than it did, 3.5 points of hit rate where it bought 7.6,
+because the keyword search now finds many of those tables without it.
 The steps are small because a cosine similarity is: dense scores sit in a
 narrow band, about 0.45 for an off-topic query's best passage and 0.68 to 0.74
 for an answerable one's, so a multiplier of 1.2 is enough to carry a loosely
@@ -908,9 +915,8 @@ does to the answers is in
 [How often the answers are right](#how-often-the-answers-are-right).
 
 The `FINAL_K`, fusion-weight and search-text numbers in this README were
-measured with the boost off and every word of the question scored, and the
-table boost sweep above with every word scored. A re-run of those scripts
-reports with the boost on and the common words left out.
+measured with the boost off and every word of the question scored. A re-run of
+those scripts reports with the boost on and the common words left out.
 
 `Query.top_k` defaults to 10, which suits Recall@10 and nDCG@10. The RAG stage
 asks for `FINAL_K`, 16, since that is what goes into the prompt.
