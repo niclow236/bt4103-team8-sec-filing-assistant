@@ -1,0 +1,145 @@
+﻿qid,retriever,text,wants_figures,rerank_seconds,figure_question,figure_in_top_k,figure_rank,section_in_top_k,terms_in_top_k
+Q01,hybrid,as shipped,False,7.04,False,,,True,1.0
+Q01,hybrid + rerank,as shipped,False,7.04,False,,,True,1.0
+Q01,"hybrid + rerank, scores as they are",as shipped,False,7.04,False,,,True,1.0
+Q02,hybrid,as shipped,False,7.04,False,,,True,1.0
+Q02,hybrid + rerank,as shipped,False,7.04,False,,,True,1.0
+Q02,"hybrid + rerank, scores as they are",as shipped,False,7.04,False,,,True,1.0
+Q03,hybrid,as shipped,True,6.78,True,True,1.0,True,
+Q03,hybrid + rerank,as shipped,True,6.78,True,True,2.0,True,
+Q03,"hybrid + rerank, scores as they are",as shipped,True,6.78,True,True,2.0,True,
+Q04,hybrid,as shipped,True,7.28,True,True,1.0,True,
+Q04,hybrid + rerank,as shipped,True,7.28,True,True,4.0,True,
+Q04,"hybrid + rerank, scores as they are",as shipped,True,7.28,True,True,5.0,True,
+Q05,hybrid,as shipped,False,7.83,False,,,True,1.0
+Q05,hybrid + rerank,as shipped,False,7.83,False,,,True,1.0
+Q05,"hybrid + rerank, scores as they are",as shipped,False,7.83,False,,,True,1.0
+Q06,hybrid,as shipped,True,6.01,True,True,2.0,True,
+Q06,hybrid + rerank,as shipped,True,6.01,True,True,8.0,True,
+Q06,"hybrid + rerank, scores as they are",as shipped,True,6.01,True,True,8.0,True,
+Q07,hybrid,as shipped,False,5.6,False,,,True,1.0
+Q07,hybrid + rerank,as shipped,False,5.6,False,,,True,1.0
+Q07,"hybrid + rerank, scores as they are",as shipped,False,5.6,False,,,True,1.0
+Q08,hybrid,as shipped,False,6.57,False,,,True,1.0
+Q08,hybrid + rerank,as shipped,False,6.57,False,,,True,1.0
+Q08,"hybrid + rerank, scores as they are",as shipped,False,6.57,False,,,True,1.0
+Q09,hybrid,as shipped,False,6.43,False,,,True,1.0
+Q09,hybrid + rerank,as shipped,False,6.43,False,,,True,1.0
+Q09,"hybrid + rerank, scores as they are",as shipped,False,6.43,False,,,True,1.0
+Q10,hybrid,as shipped,True,6.21,True,True,1.0,True,
+Q10,hybrid + rerank,as shipped,True,6.21,True,True,5.0,True,
+Q10,"hybrid + rerank, scores as they are",as shipped,True,6.21,True,True,6.0,True,
+Q11,hybrid,as shipped,True,5.23,True,True,1.0,True,
+Q11,hybrid + rerank,as shipped,True,5.23,True,True,4.0,True,
+Q11,"hybrid + rerank, scores as they are",as shipped,True,5.23,True,True,4.0,True,
+Q12,hybrid,as shipped,True,6.34,True,True,1.0,True,
+Q12,hybrid + rerank,as shipped,True,6.34,True,True,9.0,True,
+Q12,"hybrid + rerank, scores as they are",as shipped,True,6.34,True,True,10.0,True,
+Q13,hybrid,as shipped,False,6.09,False,,,True,1.0
+Q13,hybrid + rerank,as shipped,False,6.09,False,,,True,1.0
+Q13,"hybrid + rerank, scores as they are",as shipped,False,6.09,False,,,True,1.0
+Q14,hybrid,as shipped,False,6.34,False,,,True,0.875
+Q14,hybrid + rerank,as shipped,False,6.34,False,,,True,0.625
+Q14,"hybrid + rerank, scores as they are",as shipped,False,6.34,False,,,True,0.625
+Q15,hybrid,as shipped,True,5.37,True,True,1.0,True,
+Q15,hybrid + rerank,as shipped,True,5.37,True,True,2.0,True,
+Q15,"hybrid + rerank, scores as they are",as shipped,True,5.37,True,True,2.0,True,
+Q16,hybrid,as shipped,False,6.54,False,,,True,1.0
+Q16,hybrid + rerank,as shipped,False,6.54,False,,,True,1.0
+Q16,"hybrid + rerank, scores as they are",as shipped,False,6.54,False,,,True,1.0
+Q17,hybrid,as shipped,False,6.13,False,,,True,1.0
+Q17,hybrid + rerank,as shipped,False,6.13,False,,,True,1.0
+Q17,"hybrid + rerank, scores as they are",as shipped,False,6.13,False,,,True,1.0
+Q18,hybrid,as shipped,True,5.93,True,True,2.0,True,
+Q18,hybrid + rerank,as shipped,True,5.93,True,True,2.0,True,
+Q18,"hybrid + rerank, scores as they are",as shipped,True,5.93,True,True,2.0,True,
+Q19,hybrid,as shipped,True,5.86,False,,,True,1.0
+Q19,hybrid + rerank,as shipped,True,5.86,False,,,True,1.0
+Q19,"hybrid + rerank, scores as they are",as shipped,True,5.86,False,,,True,1.0
+Q20,hybrid,as shipped,True,10.14,False,,,True,1.0
+Q20,hybrid + rerank,as shipped,True,10.14,False,,,True,1.0
+Q20,"hybrid + rerank, scores as they are",as shipped,True,10.14,False,,,True,1.0
+Q21,hybrid,as shipped,True,10.14,True,True,1.0,True,
+Q21,hybrid + rerank,as shipped,True,10.14,True,True,3.0,True,
+Q21,"hybrid + rerank, scores as they are",as shipped,True,10.14,True,True,3.0,True,
+Q22,hybrid,as shipped,True,10.16,True,True,10.0,True,
+Q22,hybrid + rerank,as shipped,True,10.16,True,True,9.0,True,
+Q22,"hybrid + rerank, scores as they are",as shipped,True,10.16,True,True,9.0,True,
+Q23,hybrid,as shipped,False,8.61,False,,,True,1.0
+Q23,hybrid + rerank,as shipped,False,8.61,False,,,True,0.6
+Q23,"hybrid + rerank, scores as they are",as shipped,False,8.61,False,,,True,0.6
+Q24,hybrid,as shipped,True,9.24,True,True,1.0,True,
+Q24,hybrid + rerank,as shipped,True,9.24,True,True,7.0,True,
+Q24,"hybrid + rerank, scores as they are",as shipped,True,9.24,True,True,8.0,True,
+Q25,hybrid,as shipped,False,9.96,False,,,True,1.0
+Q25,hybrid + rerank,as shipped,False,9.96,False,,,True,1.0
+Q25,"hybrid + rerank, scores as they are",as shipped,False,9.96,False,,,True,1.0
+Q26,hybrid,as shipped,True,9.14,True,True,1.0,True,
+Q26,hybrid + rerank,as shipped,True,9.14,True,True,3.0,True,
+Q26,"hybrid + rerank, scores as they are",as shipped,True,9.14,True,True,3.0,True,
+Q27,hybrid,as shipped,False,7.78,True,True,1.0,True,
+Q27,hybrid + rerank,as shipped,False,7.78,True,True,1.0,True,
+Q27,"hybrid + rerank, scores as they are",as shipped,False,7.78,True,True,1.0,True,
+Q28,hybrid,as shipped,False,7.26,False,,,True,1.0
+Q28,hybrid + rerank,as shipped,False,7.26,False,,,True,1.0
+Q28,"hybrid + rerank, scores as they are",as shipped,False,7.26,False,,,True,1.0
+Q29,hybrid,as shipped,True,5.33,True,True,1.0,True,
+Q29,hybrid + rerank,as shipped,True,5.33,True,True,13.0,True,
+Q29,"hybrid + rerank, scores as they are",as shipped,True,5.33,True,True,14.0,True,
+Q30,hybrid,as shipped,True,5.52,True,True,2.0,True,
+Q30,hybrid + rerank,as shipped,True,5.52,True,True,2.0,True,
+Q30,"hybrid + rerank, scores as they are",as shipped,True,5.52,True,True,2.0,True,
+Q31,hybrid,as shipped,False,6.62,False,,,True,1.0
+Q31,hybrid + rerank,as shipped,False,6.62,False,,,True,1.0
+Q31,"hybrid + rerank, scores as they are",as shipped,False,6.62,False,,,True,1.0
+Q32,hybrid,as shipped,False,6.6,False,,,True,1.0
+Q32,hybrid + rerank,as shipped,False,6.6,False,,,True,1.0
+Q32,"hybrid + rerank, scores as they are",as shipped,False,6.6,False,,,True,1.0
+Q33,hybrid,as shipped,True,4.96,True,True,1.0,True,
+Q33,hybrid + rerank,as shipped,True,4.96,True,True,1.0,True,
+Q33,"hybrid + rerank, scores as they are",as shipped,True,4.96,True,True,1.0,True,
+Q34,hybrid,as shipped,True,4.94,True,True,1.0,True,
+Q34,hybrid + rerank,as shipped,True,4.94,True,True,4.0,True,
+Q34,"hybrid + rerank, scores as they are",as shipped,True,4.94,True,True,5.0,True,
+Q35,hybrid,as shipped,True,5.71,True,True,1.0,True,
+Q35,hybrid + rerank,as shipped,True,5.71,True,True,1.0,True,
+Q35,"hybrid + rerank, scores as they are",as shipped,True,5.71,True,True,1.0,True,
+Q36,hybrid,as shipped,True,5.41,True,True,1.0,True,
+Q36,hybrid + rerank,as shipped,True,5.41,True,True,5.0,True,
+Q36,"hybrid + rerank, scores as they are",as shipped,True,5.41,True,True,5.0,True,
+Q37,hybrid,as shipped,True,5.79,True,True,1.0,True,
+Q37,hybrid + rerank,as shipped,True,5.79,True,True,6.0,True,
+Q37,"hybrid + rerank, scores as they are",as shipped,True,5.79,True,True,5.0,True,
+Q38,hybrid,as shipped,True,7.63,True,True,1.0,False,
+Q38,hybrid + rerank,as shipped,True,7.63,True,True,9.0,False,
+Q38,"hybrid + rerank, scores as they are",as shipped,True,7.63,True,True,14.0,False,
+Q39,hybrid,as shipped,False,6.13,False,,,True,1.0
+Q39,hybrid + rerank,as shipped,False,6.13,False,,,True,1.0
+Q39,"hybrid + rerank, scores as they are",as shipped,False,6.13,False,,,True,1.0
+Q40,hybrid,as shipped,True,5.63,True,True,3.0,True,
+Q40,hybrid + rerank,as shipped,True,5.63,True,True,12.0,True,
+Q40,"hybrid + rerank, scores as they are",as shipped,True,5.63,True,True,12.0,True,
+Q41,hybrid,as shipped,True,6.61,True,True,2.0,False,
+Q41,hybrid + rerank,as shipped,True,6.61,True,True,7.0,False,
+Q41,"hybrid + rerank, scores as they are",as shipped,True,6.61,True,True,8.0,False,
+Q42,hybrid,as shipped,True,7.03,True,True,1.0,False,
+Q42,hybrid + rerank,as shipped,True,7.03,True,True,5.0,False,
+Q42,"hybrid + rerank, scores as they are",as shipped,True,7.03,True,True,5.0,False,
+Q43,hybrid,as shipped,False,7.87,False,,,True,1.0
+Q43,hybrid + rerank,as shipped,False,7.87,False,,,True,1.0
+Q43,"hybrid + rerank, scores as they are",as shipped,False,7.87,False,,,True,1.0
+Q44,hybrid,as shipped,True,6.23,True,True,3.0,True,
+Q44,hybrid + rerank,as shipped,True,6.23,True,True,7.0,True,
+Q44,"hybrid + rerank, scores as they are",as shipped,True,6.23,True,True,9.0,True,
+Q45,hybrid,as shipped,True,5.88,True,True,5.0,True,
+Q45,hybrid + rerank,as shipped,True,5.88,True,False,22.0,True,
+Q45,"hybrid + rerank, scores as they are",as shipped,True,5.88,True,False,24.0,True,
+Q46,hybrid,as shipped,False,6.93,False,,,True,1.0
+Q46,hybrid + rerank,as shipped,False,6.93,False,,,True,1.0
+Q46,"hybrid + rerank, scores as they are",as shipped,False,6.93,False,,,True,1.0
+Q47,hybrid,as shipped,True,6.2,True,True,1.0,True,
+Q47,hybrid + rerank,as shipped,True,6.2,True,True,1.0,True,
+Q47,"hybrid + rerank, scores as they are",as shipped,True,6.2,True,True,2.0,True,
+Q48,hybrid,as shipped,True,6.64,True,True,1.0,True,
+Q48,hybrid + rerank,as shipped,True,6.64,True,True,1.0,True,
+Q48,"hybrid + rerank, scores as they are",as shipped,True,6.64,True,True,1.0,True,
