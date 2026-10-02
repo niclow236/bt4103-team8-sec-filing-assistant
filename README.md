@@ -1174,6 +1174,38 @@ multi-company or multi-year sentences, calculations and unsupported number
 notation need review; they are not silently marked supported. Comparative
 answers can use one company and year per sentence for an unambiguous check.
 
+Four rules keep the checker from flagging an answer it has the evidence for.
+A dollar amount for a per-share line item is dollars a share whether or not it
+says so, since a statement prints "$4.67" in the row and an answer writes "EPS
+of $4.67". The day in a written date ("September 30, 2023") is not a figure,
+though its year still scopes the claim. A name inside a longer name of another
+line item is part of the longer one, so "diluted net income per share", which
+is what Adobe, Salesforce, Alphabet and Intuit call earnings per share, names
+earnings per share and not net income, to the router and the checker alike.
+And where the facts store confirms a figure for the line item and year, a
+cited passage that prints it without tying it to them, in a table row that
+names no line item or in a sentence beside more than one year, leaves the
+passage check `unverified` with the reason, not `mismatch`. Where the store
+cannot confirm the figure such a passage is a mismatch, as before.
+
+What the answer card showed for the answers to the 825 headline questions,
+with Hybrid, before those rules and with them:
+
+| What the checker says of an answer | Supported | Unverified | Mismatch |
+|---|---|---|---|
+| The facts route's 756 answers, before (`headline-6-common-words-hybrid-checked`) | 700 | 0 | 56 |
+| The same, with the rules (`headline-9-final-hybrid`) | 756 | 0 | 0 |
+| The 6 a model answered right, before | 1 | 0 | 5 |
+| The same, with the rules | 3 | 0 | 3 |
+| The 29 answered where the store has no single figure to grade, before | 1 | 17 | 11 |
+| The same, with the rules | 8 | 16 | 5 |
+
+Every one of the 56 was a right answer the store had just supplied. The
+checker is still weakest on line items the facts route does not cover: of the
+150 right answers in `line-items-9-final-hybrid` it marks 48 a mismatch, 62
+unverified and 40 supported, since no store concept is mapped for those lines
+and the cited passage has to tie the figure to the line item itself.
+
 The evaluation harness checks every answer this way before it records it, so
 a saved run carries its checks. Write a run's answers and open them in a
 browser:
@@ -1501,6 +1533,8 @@ numbers in a cell are the three runs:
 | Second citation search, Hybrid (`5-other-names-hybrid`) | 27, 27, 26 | 0, 0, 1 | 1, 1, 1 | 8 | 19 | 0.90, 0.93, 0.92 |
 | Common words left out, BM25 (`6-common-words-bm25`) | 26, 27, 26 | 2, 1, 2 | 0, 0, 0 | 8 | 19 | 0.88, 0.90, 0.88 |
 | Common words left out, Hybrid (`6-common-words-hybrid`) | 28, 28, 28 | 0, 0, 0 | 0, 0, 0 | 8 | 20 | 0.92, 0.93, 0.92 |
+| Final state, BM25 (`9-final-bm25`) | 26, 26, 27 | 2, 2, 1 | 0, 0, 0 | 8 | 19 | 0.89, 0.88, 0.90 |
+| Final state, Hybrid (`9-final-hybrid`) | 27, 28, 28 | 1, 0, 0 | 0, 0, 0 | 8 | 20 | 0.90, 0.93, 0.91 |
 
 The figure columns barely move between runs and the prose column moves by a
 point or two, so one figure question is a real difference and 0.02 of prose
@@ -1545,6 +1579,14 @@ an abstention into a wrong answer: BM25 now ranks an acquisition's table among
 the sixteen and the passage with the balance seventeenth, one past the cut,
 and the model reads the goodwill off the table it was given.
 
+The last pair of rows is the branch as it ends, after the changes to how a
+question is read, the checker and the refusal. None of them changes what
+these 48 are searched with, so the rows are the state above asked again. The
+one Hybrid miss is Google's marketable securities in one run of three, the
+equity securities' figure given for the total, with the right figure among
+the passages. BM25's are Salesforce's goodwill in all three runs and
+Microsoft's effective tax rate, 18% for 17.6%, in two.
+
 Those 48 questions cover eight of the fifteen companies, and most are answered
 right. `python notebooks/answers/headline_figures.py` asks the plain question
 for each of the 75 filings and each line item the facts route supports, such
@@ -1566,6 +1608,7 @@ out the same on every run.
 | Second citation search, Hybrid (`headline-5-other-names-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
 | Common words left out, BM25 (`headline-6-common-words-bm25`) | 752 | 3 | 0 | 2 | 5 | 755 |
 | Common words left out, Hybrid (`headline-6-common-words-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
+| Final state, Hybrid (`headline-9-final-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
 
 The other 63 have no single figure in the store to grade against: a software
 company has no inventories, some filers report no total for liabilities, and
@@ -1622,6 +1665,7 @@ question in words the filing does not use:
 | Before the second search, Hybrid (`headline-4-statement-names-hybrid-every-name-no-model`) | 2,164 |
 | With it, BM25 (`headline-5-other-names-bm25-every-name-no-model`) | 2,225 |
 | With it, Hybrid (`headline-5-other-names-hybrid-every-name-no-model`) | 2,229 |
+| With the filers' names for earnings per share, Hybrid (`headline-8-checker-hybrid-every-name-no-model`) | 2,379 of 2,387 |
 
 No question the route answered before was lost, and none of those answers
 changed. Of the 65 Hybrid gained, 43 were asked as "trade payables" of a filer
@@ -1630,6 +1674,11 @@ of Amazon and Cisco, and six as ServiceNow's operating or net loss in years it
 reported income. BM25 gained 190, most of them revenue asked in a word the
 statement does not print: the dense half of Hybrid often gets from "revenue"
 to "net sales" on the first search, and a keyword search cannot.
+
+The last row adds "diluted net income per share" and "basic net income per
+share", which is what four of the filers call earnings per share: 150 more
+questions, all answered from the store, with every earlier answer unchanged.
+The checker supports all 2,379.
 
 Leaving the common words out of the keyword search changes the search the
 route cites from, and not what the route answers. Run again after that change,
@@ -1650,6 +1699,7 @@ a question is read (see [From a question to an answer](#from-a-question-to-an-an
 |---|---|---|---|---|---|---|
 | Before (`line-items-6-common-words-hybrid`) | 0 | 4.5 | 120 | 5 | 48 | 4 |
 | Read as figure questions (`line-items-7-figure-questions-hybrid`) | 162 | 11.7 | 145 | 2 | 24 | 6 |
+| Final state (`line-items-9-final-hybrid`) | 162 | 11.7 | 148 | 2 | 21 | 6 |
 
 147 of the 177 are right where 125 were, and the wrong answers halve. 27
 questions became right and five stopped being. Two of the five are abstentions
