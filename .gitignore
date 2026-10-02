@@ -252,6 +252,15 @@ chroma/
 Thumbs.db
 .vscode/
 .idea/
+
+# The Streamlit agent skill, when `streamlit skills` or the app's own prompt
+# installs it in the project. Both are symlinks into the Streamlit package
+# inside .venv, so they resolve only on the machine that made them, and
+# Streamlit's installer says not to commit them. The project's own skill,
+# .claude/skills/verify, stays tracked.
+.agents/skills/developing-with-streamlit
+.claude/skills/developing-with-streamlit
+
 # Terminal output saved by src/utils.py run logging. Records of one machine
 # run, not shared source.
 logs/
