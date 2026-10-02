@@ -7,20 +7,23 @@ queries. Start the app with a clean process:
 python -m streamlit run src/app/app.py
 ```
 
-Record the time from opening the app until the question box is usable. Then
-record the time for the first submitted question. Repeat the same question
-without changing its filters; the second run should use `answer_cached` and be
-materially faster.
-
 The app displays the completed-query duration below the answer. The first
 query includes loading the indexes, embedding model and (when selected) the
 cross-encoder. Streamlit's `@st.cache_resource` keeps those resources alive for
 the process, while `@st.cache_data` reuses the answer for an identical question,
 filter tuple and retrieval method.
 
-Record results in the project report using this format:
+## Recorded baseline
+
+The team's recorded laptop measurement was approximately **41 seconds for a
+cold start**, including index and model loading. Once the process was warm, the
+first search took approximately **13-15 seconds**. Repeated identical questions
+use the data cache and do not call `answer_question` again. These figures are a
+baseline rather than a universal guarantee: hardware, local index size, model,
+and provider affect the result.
 
 | Run | Retrieval method | Cold/warm | Time |
 |---|---|---|---|
-| 1 | Hybrid + rerank | Cold | __ s |
-| 2 | Hybrid + rerank | Warm, same question | __ s |
+| 1 | Hybrid + rerank | Cold | ~41 s |
+| 2 | Hybrid + rerank | Warm, first search | ~13-15 s |
+| 3 | Hybrid + rerank | Cached repeated question | No second answer-generation call |

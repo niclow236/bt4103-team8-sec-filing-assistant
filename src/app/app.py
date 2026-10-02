@@ -13,6 +13,7 @@ from src.rag.generate import ProviderUnavailable, config_from_env
 from src.rag.query import parse_question
 from src.rag.verify import verify_answer
 from src.retrieval.bm25 import BM25Retriever
+from src.retrieval.constants import FINAL_K
 from src.retrieval.dense import DenseRetriever
 from src.retrieval.hybrid import HybridRetriever
 from src.retrieval.rerank import Reranker
@@ -43,7 +44,8 @@ def answer_cached(question: str, tickers: tuple[str, ...], fiscal_years: tuple[i
                   items: tuple[str, ...], method: str):
     """Cache deterministic answer work for repeated demo questions."""
     parsed = parse_question(question, facts_file=None)
-    query = replace(parsed.to_query(), tickers=tickers, fiscal_years=fiscal_years, items=items)
+    query = replace(parsed.to_query(top_k=FINAL_K), tickers=tickers,
+                    fiscal_years=fiscal_years, items=items)
     retriever = load_retriever(method)
     answer = answer_question(question, retriever, query=query, parsed=parsed,
                              config=load_config())
