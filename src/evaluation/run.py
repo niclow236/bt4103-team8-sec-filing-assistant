@@ -12,48 +12,31 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from src.config import PROCESSED_DIR, PROJECT_ROOT
+from src.config import PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
 from src.pipeline.constants import CHUNK_CHAR_BUDGET
 from src.retrieval.base import Retriever
 from src.retrieval.records import Query
+from src.stack import RESULTS_ROOT, STACKS, build_retriever
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .metrics import score_question
 from .records import BenchmarkQuestion, RunResult
 
-DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results"
+DEFAULT_RESULTS_ROOT = RESULTS_ROOT
+# The rows this command runs, as the shared registry defines them (#43). Kept
+# in src/stack.py so the app can select the same configuration it reads out of
+# results/, and projected to the mapping this runner writes into its result
+# files: a row records the four fields that describe its retrieval, and the
+# generation settings on a StackConfig are not part of a retrieval measurement.
 CONFIGURATIONS: dict[str, dict[str, Any]] = {
-    "C0": {
-        "name": "naive BM25",
-        "retriever": "bm25-fixed-size",
-        "chunking": "fixed-size",
-        "metadata_filter": False,
-    },
-    "C1": {
-        "name": "section-aware BM25",
-        "retriever": "bm25",
-        "chunking": "section-aware",
-        "metadata_filter": False,
-    },
-    "C2": {
-        "name": "dense retrieval",
-        "retriever": "dense",
-        "chunking": "section-aware",
-        "metadata_filter": False,
-    },
-    "C3": {
-        "name": "hybrid retrieval",
-        "retriever": "hybrid",
-        "chunking": "section-aware",
-        "metadata_filter": False,
-    },
-    "C4": {
-        "name": "hybrid retrieval with metadata filters",
-        "retriever": "hybrid",
-        "chunking": "section-aware",
-        "metadata_filter": True,
-    },
+    config_id: {
+        "name": config.name,
+        "retriever": config.retriever,
+        "chunking": config.chunking,
+        "metadata_filter": config.metadata_filter,
+    }
+    for config_id, config in STACKS.items()
 }
 
 
@@ -262,18 +245,20 @@ class FixedSizeBM25Retriever:
 
 
 def _load_retrievers(processed_dir: Path) -> dict[str, Retriever]:
-    from src.retrieval.bm25 import BM25Retriever
-    from src.retrieval.dense import DenseRetriever
-    from src.retrieval.hybrid import HybridRetriever
+    """Every retriever the selected rows need, built the one shared way (#43).
 
-    bm25 = BM25Retriever.load(processed_dir=processed_dir)
-    dense = DenseRetriever.load(processed_dir=processed_dir)
-    return {
-        "bm25-fixed-size": FixedSizeBM25Retriever(processed_dir),
-        "bm25": bm25,
-        "dense": dense,
-        "hybrid": HybridRetriever(bm25, dense),
+    C0's baseline is the exception and is built here: it re-cuts the corpus
+    into fixed-size windows, which exists to be measured against rather than
+    to be demonstrated, so it is not in the path the app shares.
+    """
+    wanted = {config["retriever"] for config in CONFIGURATIONS.values()}
+    built: dict[str, Retriever] = {
+        key: build_retriever(key, processed_dir=processed_dir)
+        for key in sorted(wanted - {"bm25-fixed-size"})
     }
+    if "bm25-fixed-size" in wanted:
+        built["bm25-fixed-size"] = FixedSizeBM25Retriever(processed_dir)
+    return built
 
 
 def main(argv: list[str] | None = None) -> None:
