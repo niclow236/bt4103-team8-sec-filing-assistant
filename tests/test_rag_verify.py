@@ -395,3 +395,186 @@ def test_a_table_without_a_declared_scale_is_unverified_not_mismatch(store):
     assert "declares no scale" in unscaled_checks[0].reason
     assert [c.status for c in checks(
         verify_answer(answer(claim, passages=[scaled]), facts_file=store), "passage")] == ["supported"]
+
+
+# --- per-share amounts ----------------------------------------------------------
+
+EPS_TABLE = ("(in millions, except per share data)\n\n"
+             "| (in millions, except per share data) | 2024 | 2023 |\n| --- | --- | --- |\n"
+             "| Net income | $13,746 | $10,135 |\n"
+             "| Basic earnings per share | $4.67 | $3.16 |\n"
+             "| Diluted earnings per share | $4.55 | $3.08 |")
+
+
+def test_a_dollar_amount_in_a_per_share_row_is_dollars_a_share():
+    # Oracle prints "$4.55" in the row. The sign names the currency; it does
+    # not make the row whole dollars, which a claim of $4.55 a share is not.
+    cited = [passage(EPS_TABLE, content_type="table")]
+    result = verify_answer(answer("Diluted earnings per share were $4.55 per share.",
+                                  passages=cited, question="Describe Apple's FY2024 earnings."))
+    assert checks(result, "passage")[0].status == "supported"
+    basic_for_diluted = verify_answer(answer("Diluted earnings per share were $4.67 per share.",
+                                             passages=cited,
+                                             question="Describe Apple's FY2024 earnings."))
+    assert checks(basic_for_diluted, "passage")[0].status == "mismatch"
+
+
+@pytest.mark.parametrize("row", ["| Diluted EPS | 5.20 |", "| Diluted EPS | $5.20 |"])
+def test_a_per_share_claim_is_per_share_whether_or_not_it_says_so(row):
+    text = "In millions, except per share\n| Metric | 2024 |\n| --- | --- |\n" + row
+    result = verify_answer(answer("Diluted EPS was $5.20.",
+                                  passages=[passage(text, content_type="table")],
+                                  question="Describe Apple's FY2024 earnings."))
+    assert checks(result, "passage")[0].status == "supported"
+
+
+@pytest.mark.parametrize("claim, status", [
+    ("Diluted EPS was $5.20.", "supported"),
+    ("Diluted EPS was $5.20 per share.", "supported"),
+    ("Diluted EPS was $6.20.", "mismatch"),
+])
+def test_a_per_share_claim_is_checked_against_the_per_share_fact(claim, status, tmp_path):
+    path = tmp_path / "facts.parquet"
+    pd.DataFrame([fact() | {"concept": "EarningsPerShareDiluted", "unit": "USD per share",
+                            "value": 5.2}]).to_parquet(path, index=False)
+    result = verify_answer(answer(claim, question="What was Apple's diluted EPS in FY2024?",
+                                  passages=[passage(claim)]), facts_file=path)
+    assert checks(result, "fact")[0].status == status
+
+
+def test_a_per_share_row_in_the_filer_s_words_is_read_as_per_share():
+    # Adobe: "Diluted net income per share", with the dollar sign in a cell of
+    # its own. Read as a net income row, it was skipped for a per-share claim.
+    text = ("(in millions, except per share data)\n\n"
+            "| (in millions, except per share data) | 2024 | 2024 | 2023 | 2023 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| Net income | $ | 5,560 | $ | 5,428 |\n"
+            "| Diluted net income per share | $ | 12.36 | $ | 11.82 |")
+    cited = [passage(text, content_type="table")]
+    result = verify_answer(answer("Diluted earnings per share were $12.36 per share.",
+                                  passages=cited, question="Describe Apple's FY2024 earnings."))
+    assert checks(result, "passage")[0].status == "supported"
+    last_year = verify_answer(answer("Diluted earnings per share were $11.82 per share.",
+                                     passages=cited,
+                                     question="Describe Apple's FY2024 earnings."))
+    assert checks(last_year, "passage")[0].status == "mismatch"
+
+
+# --- printed in the passage, and not tied to the line item or the year -----------
+
+# Texas Instruments' income statement runs over several passages, and the one
+# that prints earnings per share begins after its heading: the rows say only
+# "Basic" and "Diluted".
+UNNAMED_ROWS = ("Consolidated Statements of Income (In millions, except per-share amounts)\n\n"
+                "| For Years Ended December 31, | 2024 | 2023 |\n| --- | --- | --- |\n"
+                "| Basic | $5.24 | $7.13 |\n| Diluted | $5.20 | $7.07 |\n"
+                "| Net income | $4,799 | $6,510 |")
+EPS_QUESTION = "What was Apple's diluted EPS in FY2024?"
+
+
+@pytest.fixture
+def eps_store(tmp_path):
+    path = tmp_path / "eps.parquet"
+    pd.DataFrame([fact() | {"concept": "EarningsPerShareDiluted", "unit": "USD per share",
+                            "value": 5.2}]).to_parquet(path, index=False)
+    return path
+
+
+@pytest.mark.parametrize("claim, status", [
+    # Printed in a row that does not say what it is, and the store says it is
+    # diluted earnings per share: not support from the passage, and not a mismatch.
+    ("Diluted earnings per share were $5.20 per share.", "unverified"),
+    # Not printed anywhere, and not what the store holds.
+    ("Diluted earnings per share were $6.20 per share.", "mismatch"),
+    # Printed in the other year's column.
+    ("Diluted earnings per share were $7.07 per share.", "mismatch"),
+    # Printed only in a row that names another line item.
+    ("Diluted earnings per share were $4,799 per share.", "mismatch"),
+])
+def test_a_confirmed_figure_in_a_row_that_names_no_line_item_is_not_a_mismatch(
+        claim, status, eps_store):
+    result = verify_answer(answer(claim, question=EPS_QUESTION,
+                                  passages=[passage(UNNAMED_ROWS, content_type="table")]),
+                           facts_file=eps_store)
+    check, = checks(result, "passage")
+    assert check.status == status
+    if status == "unverified":
+        assert "does not name the line item" in check.reason
+
+
+def test_an_unnamed_row_is_still_a_mismatch_where_no_store_confirms_the_figure():
+    # A question that is not numeric gets no fact check, so nothing says the
+    # figure in the row labelled "Diluted" is earnings per share.
+    result = verify_answer(answer("Diluted earnings per share were $5.20 per share.",
+                                  question="Describe Apple's FY2024 earnings.",
+                                  passages=[passage(UNNAMED_ROWS, content_type="table")]))
+    assert checks(result, "passage")[0].status == "mismatch"
+
+
+TWO_YEARS = "Revenue totaled $5.2 billion and $4.0 billion in 2024 and 2023, respectively."
+
+
+def test_a_confirmed_figure_in_a_sentence_naming_two_years_is_not_a_mismatch(store):
+    # The checker does not work out which figure belongs to which year, so the
+    # sentence cannot support the claim. The store says $5.2 billion is FY2024's.
+    check, = checks(verify_answer(answer(passages=[passage(TWO_YEARS)]), facts_file=store),
+                    "passage")
+    assert check.status == "unverified"
+    assert "more than one year" in check.reason
+
+
+@pytest.mark.parametrize("claim, changes, question", [
+    # A figure the sentence does not hold.
+    ("Revenue was $6 billion.", {}, QUESTION),
+    # The other year's figure: the store holds $5.2 billion for FY2024.
+    ("Revenue was $4.0 billion.", {}, QUESTION),
+    # The sentence is in another year's filing.
+    ("Revenue was $5.2 billion.", {"fiscal_year": 2023}, QUESTION),
+    # No fact check, so nothing confirms which year the figure is.
+    ("Revenue was $5.2 billion.", {}, "Describe Apple's FY2024 results."),
+])
+def test_a_two_year_sentence_is_still_a_mismatch_without_that_confirmation(
+        claim, changes, question, store):
+    result = verify_answer(answer(claim, question=question,
+                                  passages=[passage(TWO_YEARS, **changes)]), facts_file=store)
+    assert checks(result, "passage")[0].status == "mismatch"
+
+
+def test_a_single_year_sentence_still_supports_beside_a_two_year_one(store):
+    source = TWO_YEARS + " Revenue was $5.2 billion in 2024."
+    result = verify_answer(answer(passages=[passage(source)]), facts_file=store)
+    assert checks(result, "passage")[0].status == "supported"
+
+
+# --- the day in a date ------------------------------------------------------------
+
+@pytest.mark.parametrize("claim", [
+    "Revenue was $5.2 billion as of September 28, 2024.",
+    "Revenue was $5.2 billion for the year ended Sept. 28, 2024.",
+    "Revenue was $5.2 billion at 28 September 2024.",
+    "Revenue was $5.2 billion as of December 31.",
+])
+def test_the_day_of_a_written_date_is_not_a_figure(claim, store):
+    # Read as one, the 28 was checked against FY2024 revenue, and an answer
+    # the store had just confirmed was marked a mismatch with it.
+    result = verify_answer(answer(claim, passages=[passage("Revenue was $5.2 billion.")]),
+                           facts_file=store)
+    assert [check.figure for check in checks(result, "fact")] == ["$5.2 billion"]
+    assert [check.status for check in checks(result, "fact")] == ["supported"]
+    assert [check.status for check in checks(result, "passage")] == ["supported"]
+
+
+def test_a_date_does_not_hide_the_figures_around_it(store):
+    result = verify_answer(answer("On September 28, 2024, revenue was $6 billion, up 5%.",
+                                  passages=[passage("Revenue was $5.2 billion.")]),
+                           facts_file=store)
+    assert [check.figure for check in checks(result, "fact")] == ["$6 billion", "5%"]
+    assert checks(result, "fact")[0].status == "mismatch"
+
+
+def test_the_year_of_a_written_date_still_scopes_the_claim(store):
+    # A claim dated in another fiscal year is outside the question's scope.
+    result = verify_answer(answer("Revenue was $5.2 billion as of September 30, 2023.",
+                                  passages=[passage("Revenue was $5.2 billion.")]),
+                           facts_file=store)
+    assert checks(result, "passage")[0].status == "unverified"

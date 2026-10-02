@@ -188,12 +188,26 @@ def metrics_in(text: str) -> set[str]:
     :func:`find_metric` adds the judgement a question needs. One definition
     rather than two, so a change to how an alias is matched cannot land on one
     side only and leave the router answering what the checker will not check.
+
+    A name inside a longer name of another metric is part of that name:
+    "diluted net income per share" names earnings per share, and the "net
+    income" in it does not name net income. A text that also says "net income"
+    on its own names both.
     """
-    return {
-        key for key, metric in FINANCIAL_METRICS.items()
-        if any(re.search(r"\b" + re.escape(alias) + r"\b", text, re.I)
-               for alias in metric.aliases)
+    found = {
+        key: [match.span() for alias in metric.aliases
+              for match in re.finditer(r"\b" + re.escape(alias) + r"\b", text, re.I)]
+        for key, metric in FINANCIAL_METRICS.items()
     }
+
+    def inside_another(key: str, span: tuple[int, int]) -> bool:
+        return any(
+            other != key and start <= span[0] and span[1] <= end and (start, end) != span
+            for other, spans in found.items() for start, end in spans
+        )
+
+    return {key for key, spans in found.items()
+            if any(not inside_another(key, span) for span in spans)}
 
 
 def _longest_alias(metric: str, question: str) -> str:

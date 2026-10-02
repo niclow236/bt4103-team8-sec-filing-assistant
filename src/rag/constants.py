@@ -448,6 +448,11 @@ HOSTED_TIMEOUT_S = 120
 # across the 75 filings. "Inventory", singular, is left out though Alphabet and
 # Broadcom print it: the word is in too much prose about purchase commitments
 # and risk for a sentence using it to be checked against the balance.
+#
+# Adobe, Salesforce, Alphabet and Intuit call earnings per share "net income
+# per share", which holds another line item's name. ``numeric.metrics_in``
+# reads a name inside a longer one as part of the longer one, so "diluted net
+# income per share" names earnings per share and not net income.
 
 
 class Metric(NamedTuple):
@@ -473,9 +478,11 @@ FINANCIAL_METRICS: dict[str, Metric] = {
     "inventory": Metric(("inventories",), ("InventoryNet",), "USD"),
     "cash": Metric(("cash and cash equivalents", "cash and equivalents"),
                    ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
-    "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
+    "diluted_eps": Metric(("diluted earnings per share", "diluted eps",
+                           "diluted net income per share"),
                           ("EarningsPerShareDiluted",), "USD/shares"),
-    "basic_eps": Metric(("basic earnings per share", "basic eps"),
+    "basic_eps": Metric(("basic earnings per share", "basic eps",
+                         "basic net income per share"),
                         ("EarningsPerShareBasic",), "USD/shares"),
     "operating_cash": Metric(("cash from operations", "operating cash flow",
                               "net cash from operations",

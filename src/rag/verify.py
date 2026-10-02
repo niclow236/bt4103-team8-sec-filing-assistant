@@ -64,6 +64,25 @@ _FACT_SCOPE_UNSUPPORTED = FACT_SCOPE_UNSUPPORTED
 _METRICS = FINANCIAL_METRICS
 _metrics = metrics_in
 
+# Why a cited passage that prints a claim's figure still does not support it.
+# Where the facts store confirms the figure, either is unknown rather than
+# wrong, like a table with no declared scale.
+_UNNAMED_ROW = ("The facts store confirms this figure, and a cited table prints it in a row "
+                "that does not name the line item.")
+_SEVERAL_YEARS = ("The facts store confirms this figure, and a cited sentence prints it "
+                  "beside more than one year.")
+
+# A date as an answer writes one: "September 30, 2023", "Sept. 30", "31 May
+# 2022". Its day is not a figure. Read as one, the 30 in "total assets were
+# $352,583 million as of September 30, 2023" was checked against total assets
+# and the answer marked a mismatch with the store it had just agreed with.
+_MONTH = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|"
+          r"Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?")
+_WRITTEN_DATES = re.compile(
+    rf"\b{_MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?\b(?:,?\s+(?:19|20)\d{{2}}\b)?"
+    rf"|\b\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}(?!\w)(?:,?\s+(?:19|20)\d{{2}}\b)?"
+)
+
 
 def _plain(text: str) -> str:
     return " ".join(_MARKERS.sub("", text).casefold().split()).rstrip(".!?")
@@ -80,9 +99,10 @@ class _Figure:
 
 
 def _figures(text: str, *, scale: Decimal = Decimal(1), unit: str = "", ignore_years: bool = True) -> list[_Figure]:
-    # Preserve offsets when masking source numbers and ISO dates.
+    # Preserve offsets when masking source numbers and dates.
     masked = _MARKERS.sub(lambda m: " " * len(m[0]), text)
     masked = _DATES.sub(lambda m: " " * len(m[0]), masked)
+    masked = _WRITTEN_DATES.sub(lambda m: " " * len(m[0]), masked)
     figures = []
     for match in _NUMBER.finditer(masked):
         raw = match["number"].replace(",", "")
@@ -97,14 +117,20 @@ def _figures(text: str, *, scale: Decimal = Decimal(1), unit: str = "", ignore_y
             continue
         magnitude = _SCALES.get((match["scale"] or "").lower(), scale)
         currency = (match["currency"] or "").strip().upper()
-        kind = {"$": "USD", "US$": "USD", "€": "EUR", "£": "GBP"}.get(currency, currency) or unit
+        kind = {"$": "USD", "US$": "USD", "€": "EUR", "£": "GBP"}.get(currency, currency)
+        if kind and unit == f"{kind}/shares":
+            # A dollar amount for a per-share line item is dollars a share. A
+            # statement prints "$4.67" in the row and an answer writes "EPS of
+            # $4.67", and neither is followed by "per share".
+            kind = unit
+        kind = kind or unit
         suffix_unit = (match["unit"] or "").lower()
         if suffix_unit in {"%", "percent", "basis points", "bps"}:
             kind = "ratio"
             magnitude = Decimal("0.0001") if suffix_unit in {"basis points", "bps"} else Decimal("0.01")
         elif suffix_unit:
             kind = suffix_unit
-        if re.match(r"\s*(?:per share|/\s*share)", suffix, re.I):
+        if re.match(r"\s*(?:per share|/\s*share)", suffix, re.I) and not kind.endswith("/shares"):
             kind = "USD/shares" if kind in {"", "USD"} else kind + "/shares"
         value = Decimal(raw) * magnitude
         if match["sign"] in {"-", "−"} or match["before_sign"] in {"-", "−"} or (match["open"] and match["close"]):
@@ -148,7 +174,14 @@ def _scope(text: str, parsed: ParsedQuestion, passages) -> tuple[set[str], set[i
 
 
 def _passage_values(passage, metric: str | None):
-    """Yield values with row context and year headers from Markdown tables."""
+    """Yield values with row context and year headers from Markdown tables.
+
+    Each comes with its year and with why the passage does not tie it to the
+    line item and that year, or None where it does. It does not where a table
+    row names no line item, or where a sentence names more than one year, since
+    which figure belongs to which year is not worked out here. Such a figure
+    cannot support a claim. It can keep one from being called a mismatch.
+    """
     text = passage.text
     table_scale = _TABLE_SCALE.search(text)
     scale = _SCALES[table_scale[1].lower().rstrip("s")] if table_scale else Decimal(1)
@@ -165,8 +198,12 @@ def _passage_values(passage, metric: str | None):
             if years and not _metrics(line):
                 header_years = years
                 continue
-            if metric and metric not in _metrics(line):
-                continue
+            named = _metrics(line)
+            if metric and metric not in named and named:
+                continue  # Another line item's row.
+            # A row that names no line item ("Basic", under a heading in the
+            # passage before this one) may still be the claim's.
+            untied = _UNNAMED_ROW if metric and metric not in named else None
             default_unit = _METRICS[metric][2] if metric else ""
             if currencies:
                 currency = next(iter(currencies)) if len(currencies) == 1 else "unknown"
@@ -177,7 +214,7 @@ def _passage_values(passage, metric: str | None):
                     cell = "$" + cell.strip()
                 cell_scale = Decimal(1) if default_unit.endswith("/shares") else scale
                 for figure in _figures(cell, scale=cell_scale, unit=default_unit, ignore_years=False):
-                    yield figure, header_years.get(i, passage.fiscal_year)
+                    yield figure, header_years.get(i, passage.fiscal_year), untied
         else:
             # Do not let revenue in one sentence validate assets in another.
             for clause in re.split(r"(?<=[.!?])\s+|;", line):
@@ -185,10 +222,10 @@ def _passage_values(passage, metric: str | None):
                     continue
                 local_years = _years(clause)
                 year = next(iter(local_years)) if len(local_years) == 1 else passage.fiscal_year
-                if len(local_years) > 1:
-                    continue  # A multi-year prose comparison needs semantic alignment.
+                # A multi-year prose comparison needs semantic alignment.
+                untied = _SEVERAL_YEARS if len(local_years) > 1 else None
                 default_unit = _METRICS[metric][2] if metric else ""
-                yield from ((f, year) for f in _figures(clause, unit=default_unit))
+                yield from ((f, year, untied) for f in _figures(clause, unit=default_unit))
 
 
 def _check(kind, status, index, claim, reason, figure=None, evidence=()):
@@ -311,29 +348,45 @@ def verify_answer(
         number_count += len(figures)
         for figure in figures:
             matches = []
+            # Why a passage that prints the figure does not tie it to the line
+            # item and year claimed: it is there, and it is not support.
+            untied = []
             # Ambiguous scope cannot become a pass through coincidental values.
             ambiguous = len(tickers) != 1 or len(years) != 1 or len(metrics) > 1
             if not ambiguous:
                 for passage in cited:
                     if passage.ticker not in tickers:
                         continue
-                    for candidate, year in _passage_values(passage, metric):
-                        if year in years and _matches(figure, candidate.value, candidate.unit):
+                    for candidate, year, why_not in _passage_values(passage, metric):
+                        if year not in years or not _matches(
+                                figure, candidate.value, candidate.unit):
+                            continue
+                        if why_not is None:
                             matches.append(passage.chunk_id)
+                        else:
+                            untied.append(why_not)
             # Most table chunks carry no "(in millions)" caption, so their
             # figures are in an unknown scale: a miss there is unknown, not wrong.
             unscaled = bool(cited) and not matches and not ambiguous and any(
                 p.content_type == "table" and not _TABLE_SCALE.search(p.text) for p in cited)
-            status = ("unverified" if ambiguous or not cited or unscaled
+            fact = (_fact_check(frame, facts_error, figure, metric, tickers, years, cited,
+                                index, claim, answer.question) if numeric else None)
+            # A passage that prints the figure without tying it to the line
+            # item and year contradicts nothing where the facts store says the
+            # figure is that line item's for that year. Where the store cannot
+            # say so, the passage has to do the tying itself, as before.
+            if matches or fact is None or fact.status != "supported":
+                untied = []
+            status = ("unverified" if ambiguous or not cited or unscaled or untied
                       else "supported" if matches else "mismatch")
             reason = ("A cited table declares no scale, so its figures cannot be compared."
-                      if unscaled else
+                      if unscaled else untied[0] if untied else
                       {"supported": "The figure occurs in cited evidence at the displayed precision.",
                        "unverified": "Cited evidence or a unique company, year and metric scope is missing.",
                        "mismatch": "No matching figure and unit in the cited evidence for this scope."}[status])
             checks.append(_check("passage", status, index, claim, reason, figure, dict.fromkeys(matches)))
-            if numeric:
-                checks.append(_fact_check(frame, facts_error, figure, metric, tickers, years, cited, index, claim, answer.question))
+            if fact is not None:
+                checks.append(fact)
     if numeric and not number_count:
         checks.append(_check("fact", "unverified", None, answer.text,
                              facts_error or "No supported numeric notation was found to check against facts."))

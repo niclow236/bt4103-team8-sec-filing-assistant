@@ -20,6 +20,7 @@ from src.rag.numeric import (
     find_metric,
     format_figure,
     lookup_fact,
+    metrics_in,
     prints_figure,
     supporting_passage,
 )
@@ -135,6 +136,29 @@ def test_a_qualifier_on_the_line_item_is_not_a_lookup(question):
     ("What was Apple's basic EPS in FY2024?", "basic_eps"),
 ])
 def test_the_scope_guard_does_not_block_the_per_share_metrics(question, expected):
+    assert find_metric(question) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Diluted net income per share", {"diluted_eps"}),
+    ("| Basic net income per share | $ | 10.1 | $ | 10.94 |", {"basic_eps"}),
+    ("| Net income | $ | 4,822 | $ | 5,260 |", {"net_income"}),
+    ("Net income was $4,822 million, or diluted net income per share of $10.02.",
+     {"net_income", "diluted_eps"}),
+])
+def test_a_name_inside_a_longer_name_of_another_line_item_is_part_of_it(text, expected):
+    # Adobe, Salesforce, Alphabet and Intuit call earnings per share "net
+    # income per share". Read as net income, the row was skipped for a
+    # per-share claim, and the claim was marked a mismatch against the row
+    # that prints it.
+    assert metrics_in(text) == expected
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("What was Adobe's diluted net income per share in FY2023?", "diluted_eps"),
+    ("What was Intuit's basic net income per share in FY2023?", "basic_eps"),
+])
+def test_per_share_in_the_filer_s_words_is_a_lookup(question, expected):
     assert find_metric(question) == expected
 
 
