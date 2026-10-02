@@ -143,10 +143,17 @@ def load_retriever(name: str):
     return HybridRetriever(bm25, DenseRetriever.load())
 
 
+def read_as_the_app_does(question: str):
+    """The question as ``src/app/app.py`` reads it, so that the route it takes,
+    the lean toward tables and the checks are the ones a user gets. One place,
+    for the three scripts here to follow the app from."""
+    return parse_question(question, facts_file=None)
+
+
 def ask(question: str, retriever, config, llm, last_request: list[float]):
     """One answer by the app's path, asked again where the provider was busy,
     on the evaluation harness's terms."""
-    parsed = parse_question(question, facts_file=None)
+    parsed = read_as_the_app_does(question)
     for wait in (*RETRY_WAITS_S, None):
         gap = MIN_INTERVAL_S - (time.perf_counter() - last_request[0])
         if gap > 0:

@@ -32,12 +32,18 @@ question once for every name the line item has in ``FINANCIAL_METRICS``,
 instead of the first name only, which says whether the route copes with a
 question in words the filing does not use.
 
+Each answer is also put through ``verify_answer`` as the app puts it, and the
+row records what the answer card would say of it: a mismatch, support, or
+neither. Since the grade says whether the answer is right, the two together
+say how often the checker marks a right answer a mismatch and how often it
+catches a wrong one.
+
     python notebooks/answers/headline_figures.py --label facts-only
     python notebooks/answers/headline_figures.py --every-name --label every-name
     python notebooks/answers/headline_figures.py --provider mistral --label hybrid
 
 Rows land in ``notebooks/answers/results/headline-<label>.csv``, one per
-question, and the summary prints. ``--report`` prints a finished run's again.
+question, and the summaries print. ``--report`` prints a finished run's again.
 """
 
 from __future__ import annotations
@@ -55,7 +61,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd  # noqa: E402
 
-from app_path_accuracy import MIN_INTERVAL_S, RESULTS_DIR, load_retriever  # noqa: E402
+from app_path_accuracy import (  # noqa: E402
+    MIN_INTERVAL_S,
+    RESULTS_DIR,
+    load_retriever,
+    read_as_the_app_does,
+)
 from src.config import read_tickers  # noqa: E402
 from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S  # noqa: E402
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS  # noqa: E402
@@ -66,6 +77,7 @@ from src.rag import (  # noqa: E402
     chat_model,
     config_from_env,
     parse_question,
+    verify_answer,
 )
 from src.rag.constants import (  # noqa: E402
     COMPANY_ALIASES,
@@ -96,6 +108,9 @@ ROUNDING_LIMIT = Decimal("0.01")
 
 OUTCOMES = ("from the facts store", "model: right", "model: right, rounded",
             "model: wrong figure or none", "model: abstained", "left to a model")
+# What the checker says of an answer, the worst first: one mismatch marks the
+# claim whatever else is supported.
+CHECKER = ("mismatch", "supported")
 
 
 class NotAsked(Exception):
@@ -159,7 +174,7 @@ def questions(frame, every_name: bool = False) -> list[dict]:
 def ask(question: str, retriever, config, llm, last_request: list[float]):
     """The answer by the app's path, or None where it was left to a model that
     this run does not ask."""
-    parsed = parse_question(question, facts_file=None)
+    parsed = read_as_the_app_does(question)
     for wait in (*RETRY_WAITS_S, None):
         if not isinstance(llm, NoModel):
             gap = MIN_INTERVAL_S - (time.perf_counter() - last_request[0])
@@ -193,18 +208,62 @@ def outcome_of(answer, expected: str | None) -> str:
         stated, "model: wrong figure or none")
 
 
-def summarize(table: pd.DataFrame) -> pd.DataFrame:
-    """Questions by line item and outcome. A question the store holds no single
-    figure for is counted apart, since nothing it is answered with can be
-    graded."""
-    table = table.assign(outcome=table.outcome.where(
+def checker_says(answer, question: str) -> str:
+    """What the app's checker makes of an answer, as the answer card shows it.
+
+    "mismatch" where any check is one, since the card then marks the claim a
+    mismatch whatever else agrees with it. "supported" where a passage or the
+    facts store supports a figure and nothing contradicts one. "unverified"
+    otherwise. Blank for an abstention and for a question no model was asked,
+    which have nothing to check.
+    """
+    if answer is None or answer.abstained:
+        return ""
+    checked = verify_answer(answer, parsed=read_as_the_app_does(question))
+    statuses = {check.status for check in checked.verification.checks
+                if check.kind in ("passage", "fact")}
+    return next((status for status in CHECKER if status in statuses), "unverified")
+
+
+def with_no_store_figure(table: pd.DataFrame) -> pd.DataFrame:
+    """A question the store holds no single figure for is counted apart, since
+    nothing it is answered with can be graded."""
+    return table.assign(outcome=table.outcome.where(
         table.expected.notna() | (table.outcome == "from the facts store"), "no store figure"))
+
+
+def summarize(table: pd.DataFrame) -> pd.DataFrame:
+    """Questions by line item and outcome."""
+    table = with_no_store_figure(table)
     columns = [name for name in (*OUTCOMES, "no store figure") if (table.outcome == name).any()]
     counts = pd.crosstab(table.metric, table.outcome).reindex(
         index=list(FINANCIAL_METRICS), columns=columns, fill_value=0)
     counts["questions"] = counts.sum(axis=1)
     counts.loc["all"] = counts.sum()
     return counts
+
+
+def summarize_checker(table: pd.DataFrame) -> pd.DataFrame | None:
+    """Answers by outcome and by what the checker says of them, or None for a
+    run recorded before the checker was."""
+    if "checker" not in table.columns:
+        return None
+    checked = with_no_store_figure(table)
+    checked = checked[checked.checker.fillna("") != ""]
+    if checked.empty:
+        return None
+    return pd.crosstab(checked.outcome, checked.checker).reindex(
+        index=[name for name in (*OUTCOMES, "no store figure") if (checked.outcome == name).any()],
+        columns=[name for name in ("supported", "unverified", "mismatch")
+                 if (checked.checker == name).any()], fill_value=0)
+
+
+def report(table: pd.DataFrame) -> None:
+    print(summarize(table).to_string())
+    checker = summarize_checker(table)
+    if checker is not None:
+        print("\nWhat the checker says of the answers:")
+        print(checker.to_string())
 
 
 def main() -> None:
@@ -224,8 +283,8 @@ def main() -> None:
     args = parser.parse_args()
     results_csv = RESULTS_DIR / f"headline-{args.label}.csv"
     if args.report:
-        print(summarize(pd.read_csv(results_csv, encoding="utf-8-sig", dtype={"expected": str}))
-              .to_string())
+        report(pd.read_csv(results_csv, encoding="utf-8-sig",
+                           dtype={"expected": str, "checker": str}))
         return
 
     # Built before the indexes load, so a mistyped LLM_PROVIDER or a missing
@@ -246,6 +305,7 @@ def main() -> None:
         for number, q in enumerate(asked, start=1):
             answer = ask(q["question"], retriever, config, llm, last_request)
             rows.append({**q, "outcome": outcome_of(answer, q["expected"]),
+                         "checker": checker_says(answer, q["question"]),
                          "answer": "" if answer is None else answer.text})
             if number % 55 == 0:
                 print(f"  {number:,} of {len(asked):,}", flush=True)
@@ -257,7 +317,7 @@ def main() -> None:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         table.to_csv(results_csv, index=False, encoding="utf-8-sig")
         print("\nSaved", results_csv.relative_to(ROOT))
-        print(summarize(table).to_string())
+        report(table)
     if stopped is not None:
         sys.exit(f"stopped after {len(rows)} answers: {type(stopped).__name__}: {stopped}")
 
