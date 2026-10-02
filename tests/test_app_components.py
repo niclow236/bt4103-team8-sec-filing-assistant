@@ -274,14 +274,3 @@ def test_sidebar_item_reaches_answer_retrieval_without_facts_bypass(monkeypatch)
     answer = answer_question(query.text, EmptyRetriever(), sample_answer("q").config,
                              query=query, parsed=parse_question(query.text, facts_file=None))
     assert answer.abstained
-
-
-def test_standalone_citation_component_renders():
-    app = AppTest.from_string('''
-from src.app.components import citation_expander
-from tests.sample_answers import sample_answer
-a = sample_answer("q")
-citation_expander(a.citations[0], a.passages, expanded=True)
-''').run(timeout=30)
-    assert not app.exception
-    assert len(app.get("html")) == 1

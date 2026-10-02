@@ -47,7 +47,7 @@ from .generate import (
     stream,
 )
 from .prompt import GroundedPrompt, build_prompt, render_source
-from .query import ParsedQuestion, build_query, parse_question
+from .query import ParsedQuestion, parse_question
 from .records import (
     Answer,
     Citation,
@@ -83,7 +83,6 @@ __all__ = [
     "build_prompt",
     "decompose",
     "search_decomposed",
-    "build_query",
     "chat_model",
     "config_from_env",
     "find_metric",

@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from src.rag.query import ParsedQuestion, build_query, parse_question
+from src.rag.query import ParsedQuestion, parse_question
 from src.retrieval.constants import TABLE_BOOST
 from src.retrieval.records import Query
 
@@ -651,14 +651,6 @@ def test_describe_shows_every_decision_back_to_the_user():
 
 def test_describe_says_when_nothing_is_filtered():
     assert "Filters: none, searching every company and year" in _parse("What is a 10-K?").describe()
-
-
-def test_build_query_is_the_short_form():
-    query = build_query("Apple's revenue in FY2024", top_k=5, known_tickers=SCOPE,
-                        fiscal_years=YEARS, facts_file=None)
-    assert query.tickers == ("AAPL",)
-    assert query.fiscal_years == (2024,)
-    assert query.top_k == 5
 
 
 # --- search text ----------------------------------------------------------------

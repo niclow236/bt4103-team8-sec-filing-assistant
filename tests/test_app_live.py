@@ -5,7 +5,7 @@ asks ``src.stack`` for a configuration by id and answers through it, so these
 tests stand in a built ``Stack`` rather than patching the RAG entry point.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from streamlit.testing.v1 import AppTest
@@ -174,6 +174,73 @@ def test_live_app_reads_the_question_with_the_facts_store_s_labels(monkeypatch):
     ui.button[0].click().run()
     assert not ui.exception
     assert read and all("facts_file" not in options for options in read)
+
+
+def _ask(monkeypatch, answer, question="What was Apple's revenue in FY2024?"):
+    """Ask the app one question, with ``answer`` standing in for the configuration's own."""
+    _standing_in(monkeypatch)
+    monkeypatch.setattr(FakeStack, "answer",
+                        lambda self, question, **overrides: answer(question, **overrides))
+    ui = AppTest.from_string(APP, default_timeout=30).run()
+    ui.text_input[0].set_value(question).run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    return ui
+
+
+def test_live_app_writes_the_answer_to_the_page_as_it_arrives(monkeypatch):
+    import streamlit as st
+
+    def answer(question, *args, on_token, **kwargs):
+        on_token("Example revenue ")
+        on_token("was $5 billion.")
+        st.stop()  # The page as it stands part way through an answer.
+
+    ui = _ask(monkeypatch, answer)
+    assert [text.value for text in ui.text] == ["Example revenue was $5 billion."]
+
+
+def test_live_app_replaces_the_streamed_prose_with_the_checked_answer(monkeypatch):
+    # What is streamed is provisional. Once the answer is resolved and
+    # checked, the card is the only copy of it on the page.
+    def answer(question, *args, on_token, **kwargs):
+        on_token("Example revenue was $5 billion.")
+        return sample_answer(question)
+
+    ui = _ask(monkeypatch, answer)
+    assert not ui.text
+    assert len(ui.get("html")) == 1
+
+
+def test_live_app_leaves_no_half_answer_above_a_provider_error(monkeypatch):
+    def answer(question, *args, on_token, **kwargs):
+        on_token("Example revenue ")
+        raise app_module.ProviderUnavailable("The model stopped answering")
+
+    ui = _ask(monkeypatch, answer)
+    assert "The model stopped answering" in ui.error[0].value
+    assert not ui.text
+    assert not ui.get("html")
+
+
+def test_live_app_says_under_the_answer_how_the_question_was_read(monkeypatch):
+    ui = _ask(monkeypatch, lambda question, *args, **kwargs: sample_answer(question))
+    assert ui.main.caption[-1].value == (
+        "Question type: numeric · Companies: AAPL · Fiscal years: FY2024")
+    # In the scope the sidebar ends up with, which is what gets searched.
+    ui.sidebar.multiselect[0].set_value(["MSFT"]).run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    assert ui.main.caption[-1].value == (
+        "Question type: numeric · Companies: MSFT · Fiscal years: FY2024")
+
+
+def test_live_app_names_the_filings_a_split_question_was_searched_in(monkeypatch):
+    ui = _ask(monkeypatch, lambda question, *args, **kwargs: replace(
+        sample_answer(question), sub_questions=("AAPL FY2024", "MSFT FY2024")),
+        question="Compare Apple and Microsoft's revenue in FY2024")
+    assert ui.main.caption[-1].value.endswith(
+        " · Searched one filing at a time: AAPL FY2024, MSFT FY2024")
 
 
 def test_live_app_searches_with_hybrid_unless_another_row_is_chosen(monkeypatch):

@@ -1191,11 +1191,16 @@ An abstention has no sentence warnings. Malformed or truncated output keeps
 its `parse_error` and `truncated` status. When structured sentence boundaries
 cannot be recovered, the available prose is kept as one flagged block.
 Streamed prose is provisional; replace it with the resolved answer and show
-its warnings when generation finishes.
+its warnings when generation finishes. The app does: it passes `on_token`,
+writes the prose to the page as it arrives, and clears it once the checked
+answer card is ready, or when the provider fails part way.
 
 `parse_question` reads the companies, fiscal years and question type out of the
-question, and `parsed.describe()` says what it read, so the app can show
-"Companies: AAPL" and the user can see when the reading was wrong. A company
+question, and `parsed.describe()` says what it read. The app shows it under
+the answer, in the scope the sidebar ended with ("Question type: numeric ·
+Companies: AAPL · Fiscal years: FY2024"), so the user can see when the reading
+was wrong. Where a question was split into one search per filing, the same
+line names the filings (`Answer.sub_questions`). A company
 the corpus does not hold, such as Intel, is reported in `parsed.unresolved`
 rather than silently ignored. `build_prompt` numbers the passages as sources,
 puts the rules above them, and never shows the model a URL.
@@ -1206,8 +1211,8 @@ for a figure: "What was Apple's commercial paper?" is numeric, while
 "What is Apple's commercial paper program?" remains factual. The parser reads
 only the label column and caches successful reads until the file changes;
 failed reads are retried. Built-in cues remain available without a store.
-Pass `facts_file=...` to `parse_question` or `build_query` to use another store;
-both `answer_question` and `verify_answer` pass their store through automatically.
+Pass `facts_file=...` to `parse_question` to use another store; both
+`answer_question` and `verify_answer` pass their store through automatically.
 Use `facts_file=None` to disable label lookup, as verification does when it
 only needs sentence-level entities. Possessive total questions match recognised
 company names. Comparative, temporal and unanswerable classifications keep
@@ -1691,17 +1696,20 @@ model by default, or Mistral's free API (`ministral-8b-2512`) with
 rather than minutes.
 An explicit Item filter is enforced for numeric questions too. When the
 question or filters change, the app hides the prior answer until Ask is pressed
-again.
+again. While a model is answering, its prose is written to the page as it
+arrives, and the checked answer card replaces it. Under the card the app says
+how it read the question: the question type, and the companies and years it
+searched.
 
 Issue #37's reusable UI is in `src/app/components.py`.
 
 - `answer_card(answer, key="answer-id")` displays a completed `Answer`. Inline
   markers open and focus the corresponding citation expander without another
-  model call. Use a distinct, stable key for every card on the page.
-- `citation_expander(citation, passages, key="source-id", expanded=False)`
-  displays the exact stored passage, full source line (company, ticker, CIK,
-  form, fiscal year, Part, Item, title, filing date) and filing link. Missing
-  metadata is labelled unknown. Source numbering follows prompt order.
+  model call. Each expander holds the exact stored passage, the full source
+  line (company, ticker, CIK, form, fiscal year, Part, Item, title, filing
+  date) and the filing link, with missing metadata labelled unknown. Source
+  numbering follows prompt order. Use a distinct, stable key for every card on
+  the page.
 - `filter_sidebar(question, parsed=None)` returns the effective `Query` to
   pass to `answer_question(query=...)`. It reflects companies and years from
   the shared parser and explicit Item mentions such as `Items 7 and 8`.

@@ -183,13 +183,6 @@ def answer_card(answer: Answer, *, key: str = "answer") -> None:
     st.html(answer_card_html(answer, key=key), unsafe_allow_javascript=True)
 
 
-def citation_expander(citation: Citation, passages: Sequence[RetrievedPassage], *,
-                      key: str = "citation", expanded: bool = False) -> None:
-    """Render a standalone citation, full stored source line and exact passage."""
-    st.html(_STYLE + '<section class="sec-answer">' + _citation_html(
-        citation, passages, namespace=_namespace(key), expanded=expanded) + '</section>')
-
-
 def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
                    key: str = "filters", top_k: int = FINAL_K,
                    companies: Sequence[str] | None = None,
@@ -258,4 +251,4 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
     return query
 
 
-__all__ = ["answer_card", "answer_card_html", "citation_expander", "filter_sidebar"]
+__all__ = ["answer_card", "answer_card_html", "filter_sidebar"]

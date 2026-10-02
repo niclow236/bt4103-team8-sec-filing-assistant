@@ -333,14 +333,6 @@ def parse_question(
     )
 
 
-def build_query(question: str, *, top_k: int | None = None, **options: Any) -> Query:
-    """Parse a question and return only its Query, for a caller that wants nothing else.
-
-    ``options`` are passed to :func:`parse_question`.
-    """
-    return parse_question(question, **options).to_query(top_k=top_k)
-
-
 @lru_cache(maxsize=1)
 def _scope() -> frozenset[str]:
     """The tickers in config/companies.txt, read once per process."""
