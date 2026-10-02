@@ -297,7 +297,6 @@ class Query:
     fiscal_years: tuple[int, ...] = ()
     items: tuple[str, ...] = ()       # "1A", "7", ...; matched case-insensitively
     content_type: str | None = None   # "prose" or "table"; None allows both
-    key_items_only: bool = False      # the Items the project leans on: 1, 1A, 7, 7A, 8
     # How far to lean toward table passages without excluding prose: a
     # multiplier on a table passage's score, applied before the cut to k. 1.0 is
     # off. Not a filter, so it is not in ``filters`` -- it changes the order
@@ -354,6 +353,4 @@ class Query:
             active["item"] = [item.upper() for item in self.items]
         if self.content_type:
             active["content_type"] = self.content_type
-        if self.key_items_only:
-            active["is_key_section"] = True
         return active

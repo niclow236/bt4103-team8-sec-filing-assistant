@@ -180,7 +180,6 @@ QUERIES = [
     Query("x", tickers=("aaa", "ccc"), fiscal_years=(2024,)),
     Query("x", items=("1a", "7")),
     Query("x", content_type="table"),
-    Query("x", key_items_only=True),
     Query("x", tickers=("BBB",), fiscal_years=(2023,), items=("8",), content_type="table"),
 ]
 

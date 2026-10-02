@@ -133,8 +133,6 @@ def matches(chunk: Mapping[str, Any], query: Query) -> bool:
         return False
     if query.content_type and chunk.get("content_type") != query.content_type:
         return False
-    if query.key_items_only and not chunk.get("is_key_section"):
-        return False
     return True
 
 
@@ -160,7 +158,6 @@ def candidates(
             processed_dir=processed_dir,
             tickers=list(query.tickers) or None,
             fiscal_years=list(query.fiscal_years) or None,
-            key_items_only=query.key_items_only,
         )
     for chunk in chunks:
         if matches(chunk, query):

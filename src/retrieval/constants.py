@@ -295,7 +295,7 @@ MIN_FUSED_SCORE: float | None = None
 # Those two are filtered above it, as passages.py does. A Query whose items or
 # content_type are passed to iter_chunks and forgotten is not an error -- it
 # just searches a corpus four times wider than the question asked for.
-PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type", "is_key_section")
+PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type")
 
 # A multiplier on the score of a table passage when the question is numeric, so
 # "what was revenue in FY2024" leans toward the passages that keep figures under

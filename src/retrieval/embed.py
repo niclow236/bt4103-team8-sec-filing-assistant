@@ -83,7 +83,7 @@ from .records import IndexManifest, Query, fingerprint_of, manifest_path, passag
 COLLECTION_NAME = "passages"
 
 # Everything from an ``iter_chunks`` row worth carrying into the index. The
-# first five are ``constants.PREFILTER_FIELDS``, which retrieval filters on;
+# first four are ``constants.PREFILTER_FIELDS``, which retrieval filters on;
 # the rest are what a citation needs, so an answer can name the filing and link
 # to it without reopening data/processed/.
 METADATA_FIELDS = (

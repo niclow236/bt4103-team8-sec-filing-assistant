@@ -146,7 +146,7 @@ def answer_question(
                 reason = "below_threshold"
             elif admitted is False and query.filters:
                 unrestricted = replace(query, tickers=(), fiscal_years=(), items=(),
-                                       content_type=None, key_items_only=False)
+                                       content_type=None)
                 if has_candidates(retriever, unrestricted) is True:
                     reason = "filters_excluded_all"
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(),

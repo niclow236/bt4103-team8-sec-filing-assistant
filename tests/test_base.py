@@ -45,10 +45,9 @@ def test_a_query_without_filters_admits_every_row():
         (Query("q", items=("1A",)), row(), row(item=None)),
         (Query("q", content_type="table"), row(content_type="table"), row()),
         (Query("q", content_type="prose"), row(), row(content_type="table")),
-        (Query("q", key_items_only=True), row(), row(is_key_section=False)),
     ],
     ids=["ticker", "fiscal_year", "no_fiscal_year", "item", "no_item",
-         "table", "prose", "is_key_section"],
+         "table", "prose"],
 )
 def test_each_filter_admits_and_excludes(query, admitted, excluded):
     assert matches(admitted, query)
@@ -71,7 +70,7 @@ def test_filters_on_different_fields_must_all_hold():
 def test_every_prefilter_field_can_be_set_from_a_query():
     """The fields #22 names are the fields a Query can restrict, no more and no fewer."""
     every = Query("q", tickers=("A",), fiscal_years=(2024,), items=("1",),
-                  content_type="table", key_items_only=True)
+                  content_type="table")
     assert set(every.filters) == set(PREFILTER_FIELDS)
 
 
@@ -84,7 +83,6 @@ QUERIES = [
     Query("q", tickers=("AAA", "CCC"), fiscal_years=(2024,)),
     Query("q", items=("1a", "7")),
     Query("q", content_type="table"),
-    Query("q", key_items_only=True),
     Query("q", tickers=("BBB",), fiscal_years=(2023,), items=("8",), content_type="table"),
 ]
 

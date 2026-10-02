@@ -127,13 +127,6 @@ def test_empty_index_and_unknown_custom_retriever_do_not_invent_a_cause():
         assert_abstention(result, "no_evidence")
 
 
-def test_key_section_filter_is_checked_against_index_metadata():
-    row = dict(chunk_id="p", text="Revenue increased", is_key_section=False)
-    result = answer_question("Revenue?", BM25Retriever([row]), CONFIG,
-                             query=Query("Revenue?", key_items_only=True), llm=NeverGenerate())
-    assert_abstention(result, "filters_excluded_all")
-
-
 def test_surviving_evidence_generates_and_cites_only_kept_passages():
     model = Model()
     retriever = StaticRetriever([passage(chunk_id="weak", score=0.1, text="EXCLUDED"),

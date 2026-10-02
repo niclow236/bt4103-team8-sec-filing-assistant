@@ -53,7 +53,6 @@ FILTERS = [
     Query("segment revenue risk", top_k=200, tickers=("AAA", "CCC"), fiscal_years=(2024,)),
     Query("segment revenue risk", top_k=200, items=("1a", "7")),
     Query("segment revenue risk", top_k=200, content_type="table"),
-    Query("segment revenue risk", top_k=200, key_items_only=True),
     Query("segment revenue risk", top_k=200, tickers=("BBB",), fiscal_years=(2023,),
           items=("8",), content_type="table"),
 ]

@@ -794,14 +794,20 @@ rather than left unused. The script that measured it went with them, since it
 cannot run without the class, and is in the history as
 `notebooks/retrieval/rerank_comparison.py`.
 
-The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`,
-`key_items_only`) are applied before scoring, not after, in every method. BM25
+The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`)
+are applied before scoring, not after, in every method. BM25
 scores only the passages the filters admit, and the dense retriever passes them
 to Chroma as a `where` clause, so a query pinned to Microsoft's FY2024 filing
 gets its top k from that filing rather than from whatever survives a
 corpus-wide top k. This matters more here than in most corpora: fifteen peers
 across five years write near-identical risk factors, and semantic similarity
 alone would happily return the right paragraph from the wrong year.
+
+A fifth filter, restricting a search to the key Items (1, 1A, 7, 7A and 8),
+was removed. Nothing set it, and measured on Hybrid it found less: the
+supporting chunk was in the top 16 for 284 of 375 benchmark questions (five
+from each filing) where the unrestricted search has 298, with Oracle's falling
+from 19 of 25 to 3, and the 48 test questions came out the same either way.
 
 A question that asks for a figure is fused with its own weights,
 `FIGURE_FUSION_WEIGHTS`, which `rag/query.py` selects by setting
