@@ -252,8 +252,13 @@ def _load_retrievers(processed_dir: Path) -> dict[str, Retriever]:
     to be demonstrated, so it is not in the path the app shares.
     """
     wanted = {config["retriever"] for config in CONFIGURATIONS.values()}
+    # One dict for every row, so the hybrid rows search the same BM25 and dense
+    # retrievers the BM25 and dense rows do instead of loading their own: a run
+    # that built each key on its own read every index twice and held two bge
+    # encoders, about 0.9 GB more than it needs to.
+    parts: dict[str, Any] = {}
     built: dict[str, Retriever] = {
-        key: build_retriever(key, processed_dir=processed_dir)
+        key: build_retriever(key, processed_dir=processed_dir, parts=parts)
         for key in sorted(wanted - {"bm25-fixed-size"})
     }
     if "bm25-fixed-size" in wanted:

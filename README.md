@@ -1305,8 +1305,12 @@ python -m streamlit run src/app/app.py
 
 Build the local indexes first if they do not exist (`python -m src.retrieval
 bm25` and `python -m src.retrieval embed`). The app checks each index against
-the current processed corpus before searching. BM25 is the default retrieval
-method; Hybrid also loads the dense index and embedding model. The model
+the current processed corpus before searching. The sidebar's Configuration box
+picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
+the metadata filter, so the first Ask also loads the dense index and the
+embedding model; C1 is BM25 alone and loads neither. A row measured without the
+metadata filter searches every filing, and the sidebar says so when one is
+picked. The model
 provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
 model by default, or Mistral's free API (`ministral-8b-2512`) with
 `LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds
@@ -1469,14 +1473,17 @@ for `benchmark/generated.jsonl` in particular: those questions are generated
 from the same store the route answers from, so leaving it on measures the store
 against itself.
 
-`--config` selects a named configuration — `C0` to `C4`, as `src/stack.py`
-defines them and `python -m src.evaluation.run` measures them — and sets the
-retriever and the metadata filter from it. `--retriever` and the switches below
-override what the configuration says, and the report records the configuration
-it answered with, including any override, under `stack`. The app's sidebar
-offers the same configurations and builds them through the same function, so
-the system on screen is the system a number in `results/` describes; a row a run
-has measured is labelled there with the run that measured it.
+`--config` selects a named configuration, `C1` to `C4` as `src/stack.py`
+defines them and `python -m src.evaluation.run` measures them, and sets the
+retriever and the metadata filter from it: a row measured without the filter is
+answered from a search of the whole corpus. `--retriever` and the switches
+below override what the configuration says, and the report records the
+configuration it answered with, including any override, under `stack`. The
+app's sidebar offers the same configurations and builds them through the same
+function, so the system on screen is the system a number in `results/`
+describes; a row a run has measured is labelled there with the run that
+measured it. `C0`, the fixed-size baseline, is built by the ablation runner
+only and cannot be selected.
 
 `--no-decompose` searches each question once instead of once per filing. A
 question naming more than one company or more than one year is otherwise split

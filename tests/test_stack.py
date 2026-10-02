@@ -13,9 +13,11 @@ from dataclasses import replace
 import pytest
 
 from src.rag.records import GenerationConfig
+from src.retrieval.records import Query
 from src.stack import (
     DEFAULT_STACK,
     RETRIEVERS,
+    SELECTABLE,
     STACKS,
     MeasuredRun,
     Stack,
@@ -59,6 +61,14 @@ def test_the_default_is_the_only_row_whose_retrieval_the_app_can_show():
     # The sidebar's company and year filters are the metadata filter, so a row
     # with it off would ignore what the user selected.
     assert STACKS[DEFAULT_STACK].metadata_filter is True
+
+
+def test_only_rows_the_shared_path_can_build_are_selectable():
+    # C0's baseline is built by the ablation runner alone, so offering it would
+    # promise a stack build_stack refuses -- and the error blamed a retriever
+    # the user never typed.
+    assert SELECTABLE == ("C1", "C2", "C3", "C4")
+    assert DEFAULT_STACK in SELECTABLE
 
 
 def test_an_unknown_id_says_what_the_ids_are():
@@ -180,6 +190,29 @@ def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
     assert loaded[-1] == "rerank"
 
 
+def test_configurations_built_with_the_same_parts_share_their_indexes(monkeypatch):
+    # The ablation runner builds bm25, dense and hybrid in one process; hybrid
+    # must search the two already loaded rather than read each index again.
+    import src.retrieval.bm25 as bm25_module
+    import src.retrieval.dense as dense_module
+
+    loaded = []
+    monkeypatch.setattr(bm25_module.BM25Retriever, "load",
+                        classmethod(lambda cls, **kw: loaded.append("bm25") or object()))
+    monkeypatch.setattr(dense_module.DenseRetriever, "load",
+                        classmethod(lambda cls, **kw: loaded.append("dense") or object()))
+    parts = {}
+    bm25 = build_retriever("bm25", parts=parts)
+    dense = build_retriever("dense", parts=parts)
+    hybrid = build_retriever("hybrid", parts=parts)
+    assert loaded == ["bm25", "dense"]
+    assert hybrid.bm25 is bm25 and hybrid.dense is dense
+    # Without a shared dict every call still loads its own, so nothing is
+    # cached between callers that did not ask for it.
+    build_retriever("hybrid")
+    assert loaded == ["bm25", "dense", "bm25", "dense"]
+
+
 # --- answering through a stack -------------------------------------------------------
 
 def test_a_stack_answers_with_its_own_settings(monkeypatch):
@@ -216,6 +249,50 @@ def test_a_caller_may_override_a_setting_the_configuration_names(monkeypatch):
                         lambda question, retriever, **kw: seen.update(kw))
     _stack("C4", min_score=0.25).answer("q", min_score=0.75)
     assert seen["min_score"] == 0.75
+
+
+def test_a_row_without_the_metadata_filter_searches_the_whole_corpus(monkeypatch):
+    # C3 was measured unfiltered (src/evaluation/run.py), so answering through
+    # it must drop the filters its caller's Query carries. C4 keeps them.
+    seen = {}
+    monkeypatch.setattr("src.rag.answer.answer_question",
+                        lambda question, retriever, **kw: seen.update(kw))
+    asked = Query("What was Apple's revenue in FY2024?", top_k=7, tickers=("AAPL",),
+                  fiscal_years=(2024,), items=("7",), keyword_text="revenue")
+    _stack("C3").answer(asked.text, query=asked)
+    assert seen["query"] == Query(asked.text, top_k=7)
+    _stack("C3", top_k=5).answer(asked.text)
+    assert seen["query"] == Query(asked.text, top_k=5)
+    _stack("C4").answer(asked.text, query=asked)
+    assert seen["query"] is asked
+
+
+def test_the_harness_searches_the_way_the_row_was_measured():
+    # The gap this closes: evaluate() recorded the row and then built its own
+    # query, so C1 to C3 answered exactly as C4 did while the report said
+    # otherwise.
+    from src.evaluation import BenchmarkQuestion, evaluate
+
+    searched = []
+
+    class Recording(StubRetriever):
+        def search(self, query, k=None):
+            searched.append(query)
+            return []
+
+    question = BenchmarkQuestion(
+        question_id="q1", question="What risks did Apple describe in FY2024?",
+        expected_answer="", supporting_chunk_ids=("c1",), hard_negative_chunk_ids=(),
+        ticker="AAPL", fiscal_year=2024, question_type="factual", difficulty="easy",
+        source="manual",
+    )
+    for config_id in ("C3", "C4"):
+        report = evaluate([question], Recording(), GENERATION, run_id=config_id,
+                          stack=STACKS[config_id])
+        assert report["stack"]["metadata_filter"] is STACKS[config_id].metadata_filter
+    unfiltered, filtered = searched
+    assert unfiltered.filters == {}
+    assert filtered.filters == {"ticker": ["AAPL"], "fiscal_year": [2024]}
 
 
 # --- the configurations results/ has measured ------------------------------------------
@@ -308,7 +385,10 @@ def test_neither_the_app_nor_the_commands_construct_a_retriever():
 
     from src.config import PROJECT_ROOT
 
-    classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever", "CrossEncoderReranker")
+    # Reranker is the alias src/retrieval/rerank.py also exports, so naming
+    # only the class would miss a file that imported it under that name.
+    classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever",
+               "CrossEncoderReranker", "Reranker")
     for relative in ("src/app/app.py", "src/evaluation/cli.py"):
         source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         for name in classes:

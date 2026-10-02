@@ -10,7 +10,17 @@ from src.app.components import answer_card, filter_sidebar
 from src.rag.generate import ProviderUnavailable
 from src.rag.query import parse_question
 from src.rag.verify import verify_answer
-from src.stack import DEFAULT_STACK, STACKS, build_stack, measured_runs
+from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, build_stack, measured_runs
+
+
+@st.cache_resource
+def _indexes() -> dict:
+    """The BM25 and dense retrievers every configuration shares, once per process.
+
+    Without it, switching from C4 to C3 -- the same hybrid retriever -- read
+    both indexes again and loaded a second copy of the embedding model.
+    """
+    return {}
 
 
 @st.cache_resource(show_spinner="Checking the local filing indexes…")
@@ -22,7 +32,7 @@ def load_stack(config_id: str):
     assembled here. Cached on the id because building one loads the indexes
     and, for the dense and reranked rows, a model.
     """
-    return build_stack(config_id)
+    return build_stack(config_id, parts=_indexes())
 
 
 @st.cache_data(show_spinner=False)
@@ -53,8 +63,8 @@ def main() -> None:
         # the demo can be set to the configuration a reported number came from.
         runs = dict(measured())
         config_id = st.selectbox(
-            "Configuration", tuple(STACKS),
-            index=tuple(STACKS).index(DEFAULT_STACK),
+            "Configuration", SELECTABLE,
+            index=SELECTABLE.index(DEFAULT_STACK),
             format_func=lambda key: runs.get(key, f"{key} — {STACKS[key].name}"),
             help="Named in src/stack.py and built the same way the evaluation "
                  "command builds it. A row measured under results/ is labelled "
@@ -62,6 +72,9 @@ def main() -> None:
         )
         if config_id not in runs:
             st.caption("No run under results/ has measured this configuration yet.")
+        if not STACKS[config_id].metadata_filter:
+            st.caption("This configuration was measured without the metadata filter, so "
+                       "it searches every filing and the filters above are not applied.")
         st.caption("Uses local processed filings and indexes. The answer model "
                    "comes from LLM_PROVIDER / LLM_MODEL in .env.")
 

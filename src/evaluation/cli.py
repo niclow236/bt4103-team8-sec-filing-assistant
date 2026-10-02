@@ -10,7 +10,7 @@ from src.config import PROCESSED_DIR
 from src.rag import ProviderUnavailable
 from src.rag.constants import LLM_MODEL_ENV, LLM_PROVIDER_ENV, PROVIDERS
 from src.retrieval.constants import FINAL_K
-from src.stack import DEFAULT_STACK, RETRIEVERS, STACKS, build_stack
+from src.stack import DEFAULT_STACK, RETRIEVERS, SELECTABLE, build_stack
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate
 
@@ -33,10 +33,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("questions", type=Path, nargs="?", default=DEFAULT_QUESTIONS_PATH)
     parser.add_argument("--processed-dir", type=Path, default=PROCESSED_DIR)
     parser.add_argument(
-        "--config", choices=tuple(STACKS), default=DEFAULT_STACK,
+        "--config", choices=SELECTABLE, default=DEFAULT_STACK,
         help="Which configuration to answer with, as src/stack.py names it and the "
-             "app selects it. Sets the retriever and the metadata filter; --retriever "
-             "and the switches below override what it says.",
+             "app selects it. Sets the retriever and the metadata filter, so a row "
+             "measured without the filter is answered from a search of the whole "
+             "corpus; --retriever and the switches below override what it says. C0, "
+             "the fixed-size baseline, is built by the ablation runner only.",
     )
     parser.add_argument(
         "--retriever", choices=RETRIEVERS,

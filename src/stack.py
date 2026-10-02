@@ -38,6 +38,7 @@ from typing import Any
 
 from .config import PROCESSED_DIR, PROJECT_ROOT
 from .retrieval.constants import FINAL_K
+from .retrieval.records import Query
 
 # Where the ablation runner writes, and so where the app looks for the
 # configurations that have actually been measured.
@@ -84,6 +85,18 @@ class StackConfig:
             "use_decomposition": self.use_decomposition,
         }
 
+    def scoped(self, query: Query) -> Query:
+        """``query`` as this row searches for it.
+
+        A row measured without the metadata filter searched the whole corpus
+        for the question as asked (``src/evaluation/run.py``), so the filters a
+        caller's Query carries, and what the parse added for them, are dropped
+        here rather than left for each caller to remember. Recording the flag
+        and not applying it made C1 to C3 answer exactly as C4 does, so a row
+        selected in the app was not the row ``results/`` had measured.
+        """
+        return query if self.metadata_filter else Query(query.text, top_k=query.top_k)
+
 
 STACKS: dict[str, StackConfig] = {
     "C0": StackConfig(
@@ -114,6 +127,12 @@ STACKS: dict[str, StackConfig] = {
 # row with them off would ignore what the user selected.
 DEFAULT_STACK = "C4"
 
+# The rows a caller can build and answer with. C0's fixed-size baseline is
+# built only by the ablation runner (see RETRIEVERS), so a run measures it but
+# the app and the answer harness cannot offer it: offering it promised a stack
+# build_retriever refuses, and the error blamed a retriever nobody typed.
+SELECTABLE = tuple(key for key, config in STACKS.items() if config.retriever in RETRIEVERS)
+
 
 def stack_config(config_id: str) -> StackConfig:
     """The configuration an id names, or an error listing the ids there are."""
@@ -131,29 +150,42 @@ def build_retriever(
     *,
     processed_dir: Path = PROCESSED_DIR,
     model: Any | None = None,
+    parts: dict[str, Any] | None = None,
 ) -> Any:
     """The retriever a configuration names, loaded against the local corpus.
 
     The one place a retriever is constructed. ``model`` is a cross-encoder
     already in memory, for the reranker, so a caller that reuses one across
-    configurations is not made to load it twice.
+    configurations is not made to load it twice. ``parts`` is the same for the
+    indexes: a dict this fills with the BM25 and dense retrievers it loads. A
+    caller that builds several configurations over one ``processed_dir`` passes
+    the same dict to every call, so each index is read and verified once and
+    the hybrid rows share it -- without one, a run that builds the bm25, dense
+    and hybrid rows reads every index twice and holds two bge encoders.
     """
+    parts = {} if parts is None else parts
+
+    def part(name: str, load: Any) -> Any:
+        if name not in parts:
+            parts[name] = load(processed_dir=processed_dir)
+        return parts[name]
+
     from .retrieval.bm25 import BM25Retriever
 
     if key == "bm25":
-        return BM25Retriever.load(processed_dir=processed_dir)
+        return part("bm25", BM25Retriever.load)
 
     from .retrieval.dense import DenseRetriever
 
     if key == "dense":
-        return DenseRetriever.load(processed_dir=processed_dir)
+        return part("dense", DenseRetriever.load)
 
     from .retrieval.hybrid import HybridRetriever
 
     if key in ("hybrid", "rerank"):
         hybrid = HybridRetriever(
-            BM25Retriever.load(processed_dir=processed_dir),
-            DenseRetriever.load(processed_dir=processed_dir),
+            part("bm25", BM25Retriever.load),
+            part("dense", DenseRetriever.load),
         )
         if key == "hybrid":
             return hybrid
@@ -201,6 +233,12 @@ class Stack:
             "use_decomposition": self.config.use_decomposition,
         }
         settings.update(overrides)
+        # A row measured without the metadata filter searched the whole corpus,
+        # so it answers from one here too, whatever filters its caller built.
+        if not self.config.metadata_filter:
+            given = settings.get("query")
+            settings["query"] = self.config.scoped(
+                given if given is not None else Query(question, top_k=self.config.top_k))
         return answer_question(question, self.retriever, **settings)
 
 
@@ -213,6 +251,7 @@ def build_stack(
     retriever_key: str | None = None,
     retriever: Any | None = None,
     llm: Any | None = None,
+    parts: dict[str, Any] | None = None,
     **settings: Any,
 ) -> Stack:
     """Build the configuration ``config_id`` names.
@@ -224,6 +263,8 @@ def build_stack(
     read the dense index on the way past. ``retriever`` and ``llm`` are
     already-built parts, for a caller that loaded them once for several
     configurations or a test that wants neither an index nor a model.
+    ``parts`` is passed to ``build_retriever``, for a caller that builds more
+    than one configuration and wants them to share the indexes.
     ``settings`` override the rest of the configuration -- ``top_k``,
     ``min_score``, ``use_facts``, ``use_decomposition``.
     """
@@ -252,7 +293,7 @@ def build_stack(
     built_llm = llm if llm is not None else chat_model(generation)
     built_retriever = (
         retriever if retriever is not None
-        else build_retriever(config.retriever, processed_dir=processed_dir)
+        else build_retriever(config.retriever, processed_dir=processed_dir, parts=parts)
     )
     return Stack(
         config=config, retriever=built_retriever, generation=generation, llm=built_llm,
@@ -337,6 +378,7 @@ __all__ = [
     "MeasuredRun",
     "RESULTS_ROOT",
     "RETRIEVERS",
+    "SELECTABLE",
     "STACKS",
     "Stack",
     "StackConfig",

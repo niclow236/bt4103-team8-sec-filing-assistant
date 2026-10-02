@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 import src.app.app as app_module
 from src.rag.records import GenerationConfig
-from src.stack import DEFAULT_STACK, STACKS, stack_config
+from src.stack import DEFAULT_STACK, SELECTABLE, stack_config
 from tests.sample_answers import sample_answer
 
 
@@ -79,19 +79,32 @@ def test_live_app_answers_through_the_selected_configuration(monkeypatch):
     assert stack.asked[-1][1]["query"].items == ("8",)
 
 
-def test_live_app_offers_every_named_configuration(monkeypatch):
+def test_live_app_offers_every_configuration_it_can_build(monkeypatch):
     # AppTest reports a selectbox's options already formatted, so each row is
-    # named by its id and the configuration's own name.
-    _standing_in(monkeypatch)
+    # named by its id and the configuration's own name. C0 is measured by the
+    # ablation runner but cannot be built here, so it is not offered even when
+    # a run has measured it.
+    _standing_in(monkeypatch, runs=[("C0", "nightly-7 · C0 — naive BM25")])
     ui = AppTest.from_string(APP).run(timeout=30)
     assert not ui.exception
     options = list(ui.sidebar.selectbox[0].options)
-    assert len(options) == len(STACKS)
+    assert len(options) == len(SELECTABLE)
     assert all(
         label.startswith(f"{config_id} — ")
-        for config_id, label in zip(STACKS, options)
+        for config_id, label in zip(SELECTABLE, options)
     )
     assert ui.sidebar.selectbox[0].value == DEFAULT_STACK
+
+
+def test_live_app_says_when_a_row_does_not_apply_the_filters(monkeypatch):
+    # The sidebar prints the filters it would search with, so a row that
+    # ignores them has to say so.
+    _standing_in(monkeypatch)
+    ui = AppTest.from_string(APP).run(timeout=30)
+    assert not any("filters above are not applied" in c.value for c in ui.sidebar.caption)
+    ui.sidebar.selectbox[0].set_value("C3").run()
+    assert not ui.exception
+    assert any("filters above are not applied" in c.value for c in ui.sidebar.caption)
 
 
 def test_live_app_labels_a_configuration_with_the_run_that_measured_it(monkeypatch):

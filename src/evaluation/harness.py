@@ -131,8 +131,9 @@ def evaluate(
 
     ``stack`` is the named configuration a caller assembled from, recorded in
     the report so a results file says which configuration to select in the app
-    to see the same system (#43). The settings below still decide the run; this
-    only names where they came from.
+    to see the same system (#43). It also decides whether each question's
+    filters are applied: a row measured without the metadata filter is answered
+    from a search of the whole corpus. The settings below decide the rest.
 
     ``use_facts`` is the with/without half of the numeric-routing ablation
     (#34): False sends every question to retrieval and generation. It matters
@@ -194,6 +195,10 @@ def evaluate(
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
+        # After the benchmark's own ticker and year, so a row measured without
+        # the metadata filter drops those too and searches what it measured.
+        if stack is not None:
+            query = stack.scoped(query)
         answer, attempts = _answer_with_retries(question, partial(
             answer_question, question.question, retriever, config, query=query,
             min_score=min_score, llm=llm, use_facts=use_facts,
