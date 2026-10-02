@@ -28,7 +28,7 @@ The team has no budget, so the question was whether a free, open-source model se
 Everything except the model is the project's own code, imported unchanged from `src/`:
 
 1. `parse_question` reads the question.
-2. The hybrid retriever (BM25 and dense, fused by reciprocal rank, top 8, no reranker yet) finds passages.
+2. The hybrid retriever (BM25 and dense, fused by reciprocal rank, top 8) finds passages.
 3. `build_prompt` renders the `grounded_v4` prompt.
 4. The answer is constrained to the `GroundedAnswer` JSON schema, which holds every cited source number to 1–8.
 5. The answer is validated and rendered as prose with `[n]` markers.
@@ -150,7 +150,7 @@ The list answers were close across models. The low scores all come from Q13, Q14
 ## Next steps
 
 1. **Improve retrieval of financial-statement figures.** Options, with this notebook re-run after each change to measure it:
-   - Reranking.
+   - Reranking. Update, 2 October: measured and removed. Re-scoring hybrid's top 50 with the cross-encoder put the expected figure in the top 16 for 27 of the 28 figure questions, where hybrid alone has 28 (README, "Searching the indexes").
    - The table boost (`TABLE_BOOST`, still 1.0 pending #24). Update, 2 October: set to 1.2 by `notebooks/retrieval/table_boost_sweep.py`, which put the expected figure in the top 16 for 27 of the 28 figure questions, from 23.
    - Answering figure questions from the XBRL facts table that `src/retrieval/facts.py` builds.
 2. **Grade by hand.** Fill in the `manual_correct` column of the two run files in [`notebooks/mistral/results/`](../notebooks/mistral/results/) to confirm the automatic checks.

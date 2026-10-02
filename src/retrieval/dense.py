@@ -81,8 +81,8 @@ class DenseRetriever:
 
     Satisfies ``base.Retriever`` structurally -- a ``name`` and a
     ``search(query, k=None)`` -- so the ablation harness holds this exactly as
-    it holds ``BM25Retriever``, and a reranker wraps either without knowing
-    which it was given.
+    it holds ``BM25Retriever``, and ``HybridRetriever`` fuses the two without
+    knowing more of either.
 
     Build one with :meth:`load`. The constructor takes an already-open
     collection so a test can hand in its own, and does no checking of its own:

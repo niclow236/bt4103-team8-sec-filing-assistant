@@ -153,7 +153,7 @@ def test_overriding_the_retriever_does_not_load_the_one_it_replaced(monkeypatch)
     assert stack.retriever == "<bm25>"
 
 
-@pytest.mark.parametrize("key", ["", "bm52", "reranker", "bm25-fixed-size"])
+@pytest.mark.parametrize("key", ["", "bm52", "rerank", "bm25-fixed-size"])
 def test_build_retriever_refuses_a_key_it_cannot_build(key):
     with pytest.raises(ValueError, match="unknown retriever"):
         build_retriever(key)
@@ -161,11 +161,10 @@ def test_build_retriever_refuses_a_key_it_cannot_build(key):
 
 def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
     # Each key reaches its own constructor, and asking for BM25 does not load
-    # the dense index or a cross-encoder.
+    # the dense index.
     import src.retrieval.bm25 as bm25_module
     import src.retrieval.dense as dense_module
     import src.retrieval.hybrid as hybrid_module
-    import src.retrieval.rerank as rerank_module
 
     loaded = []
     monkeypatch.setattr(bm25_module.BM25Retriever, "load",
@@ -174,8 +173,6 @@ def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
                         classmethod(lambda cls, **kw: loaded.append("dense") or "DENSE"))
     monkeypatch.setattr(hybrid_module, "HybridRetriever",
                         lambda a, b: loaded.append("hybrid") or "HYBRID")
-    monkeypatch.setattr(rerank_module, "CrossEncoderReranker",
-                        lambda inner, model=None: loaded.append("rerank") or "RERANK")
 
     assert build_retriever("bm25") == "BM25"
     assert loaded == ["bm25"]
@@ -185,9 +182,6 @@ def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
     loaded.clear()
     assert build_retriever("hybrid") == "HYBRID"
     assert loaded == ["bm25", "dense", "hybrid"]
-    loaded.clear()
-    assert build_retriever("rerank") == "RERANK"
-    assert loaded[-1] == "rerank"
 
 
 def test_configurations_built_with_the_same_parts_share_their_indexes(monkeypatch):
@@ -385,10 +379,7 @@ def test_neither_the_app_nor_the_commands_construct_a_retriever():
 
     from src.config import PROJECT_ROOT
 
-    # Reranker is the alias src/retrieval/rerank.py also exports, so naming
-    # only the class would miss a file that imported it under that name.
-    classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever",
-               "CrossEncoderReranker", "Reranker")
+    classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever")
     for relative in ("src/app/app.py", "src/evaluation/cli.py"):
         source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         for name in classes:

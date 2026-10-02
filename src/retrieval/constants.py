@@ -1,10 +1,10 @@
 """Fixed values that tune the retrieval stage.
 
 Kept apart from the retrievers the same way ``src/pipeline/constants.py`` is
-kept apart from the stages, and for a sharper reason here: BM25, dense, hybrid
-and reranking are built by different people at the same time, and every one of
-them needs the candidate depth, the model name and the fusion constants. Four
-modules holding four copies of ``k = 50`` is four numbers to change when the
+kept apart from the stages, and for a sharper reason here: BM25, dense and
+hybrid are built by different people at the same time, and every one of
+them needs the candidate depth, the model name and the fusion constants. Three
+modules holding three copies of ``k = 50`` is three numbers to change when the
 sweep says 80, and a comparison that is silently unfair the one time somebody
 misses one.
 
@@ -26,16 +26,15 @@ from __future__ import annotations
 from src.config import BM25_INDEX_FILE, CHROMA_DIR, INDEX_DIR
 
 # --- the methods being compared ---------------------------------------------
-# The four retrievers the ablation runs, named once here so that the string on
+# The three retrievers the ablation runs, named once here so that the string on
 # a RetrievedPassage, the key in FUSION_WEIGHTS and the row label in the results
 # table cannot drift apart. These are the exact values RetrievedPassage.retriever
 # is documented to take.
 BM25 = "bm25"
 DENSE = "dense"
 HYBRID = "hybrid"
-RERANK = "rerank"
 
-RETRIEVERS = (BM25, DENSE, HYBRID, RERANK)
+RETRIEVERS = (BM25, DENSE, HYBRID)
 
 # --- embedding model --------------------------------------------------------
 # The corpus was already cut for this class of model. CHUNK_CHAR_BUDGET is 1,800
@@ -119,11 +118,9 @@ BM25_K1 = 1.5
 BM25_B = 0.75
 
 # --- how deep to retrieve, and how much to keep -----------------------------
-# Broad, then narrow. Each method returns CANDIDATE_K, the union is fused, the
-# reranker scores that set, and FINAL_K passages reach the generator. Retrieving
-# FINAL_K directly measures worse (Snowflake finance-RAG, cited in #21): the
-# passage that answers the question is often outside a first-stage top-8 and
-# only a reranker that has seen it can pull it up.
+# Broad, then narrow. Each method returns CANDIDATE_K, the union is fused, and
+# FINAL_K passages reach the generator. A passage one method ranks thirtieth
+# can still reach the prompt when the other ranks it high.
 #
 # 50 and 8 were the architecture's numbers (§3, §5). FINAL_K was also a context
 # budget, because a laptop's Ollama could not read a larger prompt; a hosted
@@ -257,29 +254,8 @@ FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
 # "CONSOLIDATED BALANCE SHEETS" in its own text, so BM25 finds the passage it
 # used to miss, and the agreement equal weights reward is now agreement worth
 # having. The knob stays because the sweep is cheap to re-run when the corpus
-# or the reranker (#21) changes; it is set to the pair that measured best.
+# changes; it is set to the pair that measured best.
 FIGURE_FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
-
-# --- reranking --------------------------------------------------------------
-# A cross-encoder reads the question and the passage together and scores the
-# pair, which is what lets it catch relevance a bi-encoder misses -- at a cost
-# that only makes sense on a candidate set this small. ms-marco-MiniLM-L-6-v2 is
-# the standard baseline: 22M parameters, CPU-viable, and the model most reported
-# rerank numbers are measured against, which makes ours comparable to theirs.
-# bge-reranker-base is the stronger and slower alternative if the interim
-# results say reranking is where the gain is.
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-# Query-passage pairs per forward pass. Throughput only, like EMBED_BATCH_SIZE.
-RERANK_BATCH_SIZE = 32
-
-# The pair -- question and passage together -- must fit the cross-encoder's
-# window, and the question spends part of it. A 1,800-character passage is about
-# 450 tokens, leaving roughly 60 for the question, so a long decomposed
-# sub-question can push a pair over and the tail of the passage is dropped.
-# Truncation here is the model's own and silent, which is why the limit is
-# written down: if reranking underperforms on long questions, look here first.
-RERANK_MAX_TOKENS = 512
 
 # --- score thresholds -------------------------------------------------------
 # Floors below which a passage is dropped rather than returned weakly.
@@ -302,12 +278,9 @@ RERANK_MAX_TOKENS = 512
 # threshold set by reasoning rather than by #26's sweep would cut either
 # everything or nothing. RRF scores are tiny and bounded -- one method at rank 1
 # gives 1/61 -- so a threshold there is really a "how many methods agreed" test.
-# The cross-encoder emits logits, roughly -11 to +11, where 0 is the natural
-# indifference point and the only one of the four with a meaningful prior.
 MIN_BM25_SCORE: float | None = None
 MIN_DENSE_SCORE: float | None = None
 MIN_FUSED_SCORE: float | None = None
-MIN_RERANK_SCORE: float | None = None
 
 # --- filters ----------------------------------------------------------------
 # The corpus is fifteen peers in one industry over five years, so metadata is a
@@ -395,15 +368,14 @@ TABLE_BOOST = 1.2
 # in exactly one place. INDEX_DIR holds both: bm25.pkl is a single file, Chroma
 # wants a directory of its own.
 __all__ = [
-    "BM25", "DENSE", "HYBRID", "RERANK", "RETRIEVERS",
+    "BM25", "DENSE", "HYBRID", "RETRIEVERS",
     "EMBED_MODEL", "EMBED_DIMENSIONS", "EMBED_MAX_TOKENS", "EMBED_BATCH_SIZE", "EMBED_SORT_WINDOW",
     "EMBED_NORMALIZE", "DISTANCE_METRIC", "QUERY_PREFIX", "PASSAGE_PREFIX",
     "CONTEXT_HEADER",
     "BM25_K1", "BM25_B",
     "CANDIDATE_K", "FINAL_K",
     "RRF_K", "FUSION_WEIGHTS", "FIGURE_FUSION_WEIGHTS",
-    "RERANK_MODEL", "RERANK_BATCH_SIZE", "RERANK_MAX_TOKENS",
-    "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE", "MIN_RERANK_SCORE",
+    "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE",
     "PREFILTER_FIELDS", "TABLE_BOOST",
     "INDEX_DIR", "BM25_INDEX_FILE", "CHROMA_DIR",
 ]

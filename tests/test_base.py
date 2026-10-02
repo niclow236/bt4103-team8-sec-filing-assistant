@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from src.pipeline.chunk import iter_chunks
-from src.retrieval.base import WrappingRetriever, candidates, matches, rank
+from src.retrieval.base import candidates, matches, rank, reorder
 from src.retrieval.constants import PREFILTER_FIELDS
 from src.retrieval.records import Query
 
@@ -151,30 +151,15 @@ def test_a_boost_that_is_not_positive_is_refused(boost):
 
 # --- the boost through a second stage ---------------------------------------
 
-
-class Inner:
-    """A first stage that returns one prose and one table passage, prose first."""
-
-    name = "bm25"
-
-    def search(self, query, k=None):
-        return rank([(row(chunk_id="prose"), 2.0), (row(chunk_id="table", content_type="table"), 1.0)],
-                    retriever=self.name, k=k)
-
-
-class Logits(WrappingRetriever):
-    """Scores the way a cross-encoder can: below zero, prose ahead of the table."""
-
-    name = "rerank"
-
-    def score(self, query, passages):
-        return [-1.0 if passage.content_type == "table" else -0.8 for passage in passages]
-
-
 def test_a_second_stage_applies_the_querys_boost_to_its_own_scores():
-    """Re-scoring throws the first stage's boost away, so the wrapper applies it again."""
-    plain = Logits(Inner()).search(Query("q", top_k=2))
-    boosted = Logits(Inner()).search(Query("q", top_k=2, table_boost=2.0))
+    """Re-scoring throws the first stage's boost away, so reorder applies it again."""
+    found = rank([(row(chunk_id="prose"), 2.0), (row(chunk_id="table", content_type="table"), 1.0)],
+                 retriever="bm25")
+    # Scores that run below zero, prose ahead of the table.
+    scored = [(p, -1.0 if p.content_type == "table" else -0.8) for p in found]
+    plain = reorder(scored, retriever="second")
+    boosted = reorder(scored, retriever="second", table_boost=2.0)
     assert [p.chunk_id for p in plain] == ["prose", "table"]
     assert [p.chunk_id for p in boosted] == ["table", "prose"]
     assert boosted[0].score == pytest.approx(-0.5)
+    assert boosted[0].sources == ("bm25",)

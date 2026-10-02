@@ -937,9 +937,8 @@ def test_a_statement_ranked_below_thirty_passages_is_still_found():
 
 
 def test_the_search_for_a_passage_stays_within_the_candidates_already_fetched():
-    # Hybrid and a reranker fetch CANDIDATE_K candidates for any smaller
-    # request, so looking through that many costs nothing more. Past it, a
-    # reranker would score every extra passage.
+    # Hybrid fetches CANDIDATE_K candidates for any smaller request, so
+    # looking through that many costs nothing more.
     from src.retrieval.constants import CANDIDATE_K
 
     retriever = StubRetriever(_passage())

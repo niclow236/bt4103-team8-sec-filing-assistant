@@ -105,7 +105,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── chunk.py         #   stage 3
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
-│   ├── retrieval/           # BM25, dense, hybrid, reranking
+│   ├── retrieval/           # BM25, dense, hybrid
 │   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
 │   │   ├── cli.py           #   the command line: embed, bm25, facts, check, benchmark
 │   │   ├── base.py          #   the Retriever contract, the metadata pre-filter, ranking helpers
@@ -115,7 +115,6 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── dense.py         #   searches the dense index
 │   │   ├── bm25.py          #   builds and searches the BM25 index
 │   │   ├── hybrid.py        #   fuses BM25 and dense results by reciprocal rank
-│   │   ├── rerank.py        #   re-scores fused candidates with a cross-encoder
 │   │   └── facts.py         #   XBRL figures from EDGAR into a table
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
@@ -763,7 +762,7 @@ for passage in hybrid.search(query):
     passage.rank, passage.score, passage.chunk_id, passage.sources
 ```
 
-Four methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
+Three methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
 searches the bge vectors in Chroma, and `HybridRetriever` asks each of them for
 their top 50 (`CANDIDATE_K`) and fuses the two lists by reciprocal rank, so
 their scores, which are on different scales, are never compared directly. A
@@ -771,31 +770,29 @@ fused passage records in `sources` which methods returned it. All of them
 satisfy the `Retriever` protocol in `base.py`, so the evaluation harness can
 loop over them.
 
-`CrossEncoderReranker` is the fourth, and it wraps one of the other three
-rather than replacing it:
+There was a fourth, a cross-encoder reranker (#21) that re-scored hybrid's top
+50 with `ms-marco-MiniLM-L-6-v2`. Nothing on the answer path used it, so it was
+measured before being wired in, and it did not put more answers in front of
+the model. `rerank_comparison.csv` and `rerank_comparison_xbrl.csv` in
+`notebooks/retrieval/results/` hold the rows:
 
-```python
-from src.retrieval.rerank import CrossEncoderReranker
+| | Hybrid | Hybrid, reranked | Reranked, no table boost on its scores |
+|---|---|---|---|
+| Expected figure in the top 16, hand-written (28) | 28 | 27 | 27 |
+| Its rank, median | 1 | 4.5 | 5 |
+| Prose: expected terms found, mean (20) | 0.994 | 0.961 | 0.961 |
+| Supporting chunk in the top 16 (225 benchmark questions, 3 from each filing) | 180 | 184 | 174 |
+| Reciprocal rank, mean | 0.501 | 0.362 | 0.319 |
+| Tables among the top 16, mean | 13.0 | 9.4 | 6.4 |
 
-reranked = CrossEncoderReranker(hybrid)      # or the BM25 or dense retriever
-for passage in reranked.search(query):
-    passage.rank, passage.score, passage.sources   # sources still name the inner methods
-```
-
-It asks the retriever it wraps for `CANDIDATE_K` candidates, scores each
-question-and-passage pair with `ms-marco-MiniLM-L-6-v2`, and returns the top k
-of its own ranking. That is the broad-then-narrow shape: the passage that
-answers a question is often outside a first-stage top 8, and only a second
-stage that has seen it can pull it up. On the Apple supply-chain question it
-does, promoting two passages the fused ranking had outside its top 8. Scores
-are the cross-encoder's logits, so they are on none of the other three scales
-and `MIN_RERANK_SCORE` stays unset. Reranking 50 candidates adds about 0.3 to
-0.9 seconds once the model is loaded, and the model is loaded once per process
-however `load_model` is called.
-
-The reranker is a `--retriever` choice like the other three, since every
-retriever is built in one place (`src/stack.py`); an ablation row that uses it
-is a `--retriever rerank` or a line in that registry rather than code.
+On the benchmark it gained 11 questions and lost 7, which 225 questions cannot
+tell from no change, and it moved the passages hybrid had found down the list.
+On the hand-written questions it lost Salesforce's goodwill. It also took a
+median of 9 seconds a question on the team laptop while two other runs shared
+its cores. So the reranker and the wrapper class it was built on were removed
+rather than left unused. The script that measured it went with them, since it
+cannot run without the class, and is in the history as
+`notebooks/retrieval/rerank_comparison.py`.
 
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`,
 `key_items_only`) are applied before scoring, not after, in every method. BM25
@@ -823,7 +820,7 @@ questions rather than helping: the expected figure reached the top 8 for 20 of
 barely moved. Carrying each statement's title into its passages (#88) is what
 changed it: a balance sheet passage now holds the words "CONSOLIDATED BALANCE
 SHEETS", so BM25 finds the table it used to miss. The sweep is worth re-running
-when the corpus changes, or against a reranked ranking rather than a fused one.
+when the corpus changes.
 
 Those numbers, and the search-text ones further down, were measured at the
 `FINAL_K` of 8 that was in force at the time. Both scripts report at whatever
@@ -1255,8 +1252,8 @@ The route looks through the top 50 passages of that search for one that prints
 the figure (`FACT_PASSAGE_K`), where it used to look through 20. The figure was
 in the store and the statement in the filing, but a search for "total revenue"
 ranks Amazon's income statement, which says "net sales", below the prose that
-uses the word. 50 is what Hybrid and a reranker already fetch for any smaller
-request, so it searches and scores nothing more.
+uses the word. 50 is what Hybrid already fetches for any smaller request, so
+it searches and scores nothing more.
 
 Where that search finds nothing to cite, the route searches once more, for
 the line item's other names together. A question need not use the filer's
@@ -1330,8 +1327,8 @@ citations, and an `abstention_reason` that the browser viewer displays:
 Pass `min_score=<calibrated value>` to `answer_question` to add an inclusive
 floor on the selected retriever's final scores. Its internal thresholds also
 remain in force. `None` adds no floor; the existing defaults remain unset
-pending benchmark calibration (#26). BM25, cosine similarity, fused ranks and
-reranker scores have different scales and must not share an arbitrary cutoff.
+pending benchmark calibration (#26). BM25, cosine similarity and fused ranks
+have different scales and must not share an arbitrary cutoff.
 The gate prevents generation on empty evidence; score alone does not prove
 that a nonempty set answers the question, so the model can still abstain.
 

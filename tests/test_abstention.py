@@ -23,7 +23,6 @@ from src.rag import (
 from src.rag.constants import ABSTAIN_PHRASE
 from src.rag.records import ABSTENTION_MESSAGES
 from src.retrieval import embed
-from src.retrieval.base import WrappingRetriever
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.dense import DenseRetriever
 from src.retrieval.hybrid import HybridRetriever
@@ -117,19 +116,6 @@ def test_native_threshold_is_not_mislabelled_as_an_empty_filter(indexed, monkeyp
     result = answer_question("Revenue?", indexed, CONFIG,
                              query=Query("Revenue?", tickers=("AAA",)), llm=NeverGenerate())
     assert_abstention(result, "below_threshold")
-
-
-def test_wrapper_propagates_candidate_availability(corpus):
-    class Reranker(WrappingRetriever):
-        name = "rerank"
-
-        def score(self, query, passages):
-            return [-1.0] * len(passages)
-
-    retriever = Reranker(BM25Retriever(list(iter_chunks(processed_dir=corpus))), min_score=0)
-    for ticker, reason in [("AAA", "below_threshold"), ("MISSING", "filters_excluded_all")]:
-        assert_abstention(answer_question("Revenue?", retriever, CONFIG,
-                          query=Query("Revenue?", tickers=(ticker,)), llm=NeverGenerate()), reason)
 
 
 def test_empty_index_and_unknown_custom_retriever_do_not_invent_a_cause():

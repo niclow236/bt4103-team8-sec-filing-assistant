@@ -638,8 +638,8 @@ FACTS_SENTENCE = "{company} reported {label} of {figure} for {period}."
 # that filing, so the cost of looking further down is a few string comparisons.
 #
 # 50, which is retrieval's CANDIDATE_K, rather than the 20 it started at. Hybrid
-# and a reranker fetch that many candidates for any smaller request, so looking
-# through all of them searches and scores nothing more. At 20 the route found a
+# fetches that many candidates for any smaller request, so looking through all
+# of them searches and scores nothing more. At 20 the route found a
 # figure in the store and then no passage to cite for questions whose statement
 # table sat a little further down: a search for "total revenue" ranks Amazon's
 # income statement, which says "net sales", below the prose that uses the word.

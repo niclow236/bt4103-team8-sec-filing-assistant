@@ -30,7 +30,7 @@ def load_stack(config_id: str):
     The same call the evaluation command makes, so what the demo shows is the
     system the numbers in ``results/`` describe, rather than a fourth stack
     assembled here. Cached on the id because building one loads the indexes
-    and, for the dense and reranked rows, a model.
+    and, for the dense and hybrid rows, the embedding model.
     """
     return build_stack(config_id, parts=_indexes())
 

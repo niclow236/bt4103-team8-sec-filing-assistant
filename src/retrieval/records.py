@@ -2,7 +2,7 @@
 
 Kept apart from the retrievers that build them, the same way
 ``src/pipeline/records.py`` is kept apart from the stages, so that BM25, dense
-retrieval, hybrid fusion, reranking, the RAG engine and the evaluation harness
+retrieval, hybrid fusion, the RAG engine and the evaluation harness
 can all agree on one shape without importing each other. A retriever imports
 this module; nothing here imports a retriever.
 
@@ -136,7 +136,7 @@ class RetrievedPassage:
     text: str             # the passage as stored, never with a context header prepended
     score: float          # the retriever's own scale; comparable within a method, not across
     rank: int             # position in this result set, 1 being the best
-    # Which method produced this: "bm25", "dense", "hybrid", "rerank". Carried on
+    # Which method produced this: "bm25", "dense", "hybrid". Carried on
     # the passage rather than tracked alongside it, because the evaluation
     # harness runs several methods over the same question and has to attribute
     # every passage it is handed without threading extra state through the call.

@@ -24,8 +24,7 @@ threaded through two commands.
 Nothing here imports Streamlit or argparse: the app and the two commands are
 callers of this module, never the other way round. The retriever imports are
 inside the functions because loading the dense index pulls in sentence
-transformers and the reranker loads a cross-encoder, and a caller asking for
-BM25 should pay for neither.
+transformers, and a caller asking for BM25 should not pay for that.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ RESULTS_ROOT = PROJECT_ROOT / "results"
 # C0 baseline, which is built by the ablation runner rather than here: it
 # re-cuts the corpus into fixed-size windows, so it belongs with the run that
 # needs it and not in the path the app shares.
-RETRIEVERS = ("bm25", "dense", "hybrid", "rerank")
+RETRIEVERS = ("bm25", "dense", "hybrid")
 
 
 @dataclass(frozen=True)
@@ -149,19 +148,16 @@ def build_retriever(
     key: str,
     *,
     processed_dir: Path = PROCESSED_DIR,
-    model: Any | None = None,
     parts: dict[str, Any] | None = None,
 ) -> Any:
     """The retriever a configuration names, loaded against the local corpus.
 
-    The one place a retriever is constructed. ``model`` is a cross-encoder
-    already in memory, for the reranker, so a caller that reuses one across
-    configurations is not made to load it twice. ``parts`` is the same for the
-    indexes: a dict this fills with the BM25 and dense retrievers it loads. A
-    caller that builds several configurations over one ``processed_dir`` passes
-    the same dict to every call, so each index is read and verified once and
-    the hybrid rows share it -- without one, a run that builds the bm25, dense
-    and hybrid rows reads every index twice and holds two bge encoders.
+    The one place a retriever is constructed. ``parts`` is a dict this fills
+    with the BM25 and dense retrievers it loads. A caller that builds several
+    configurations over one ``processed_dir`` passes the same dict to every
+    call, so each index is read and verified once and the hybrid rows share
+    it -- without one, a run that builds the bm25, dense and hybrid rows reads
+    every index twice and holds two bge encoders.
     """
     parts = {} if parts is None else parts
 
@@ -182,16 +178,11 @@ def build_retriever(
 
     from .retrieval.hybrid import HybridRetriever
 
-    if key in ("hybrid", "rerank"):
-        hybrid = HybridRetriever(
+    if key == "hybrid":
+        return HybridRetriever(
             part("bm25", BM25Retriever.load),
             part("dense", DenseRetriever.load),
         )
-        if key == "hybrid":
-            return hybrid
-        from .retrieval.rerank import CrossEncoderReranker
-
-        return CrossEncoderReranker(hybrid, model=model)
 
     raise ValueError(
         f"unknown retriever {key!r}; expected one of {', '.join(RETRIEVERS)}"
