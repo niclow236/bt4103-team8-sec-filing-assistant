@@ -353,7 +353,7 @@ def test_a_corrupt_store_is_a_miss_not_an_error(tmp_path):
     # question goes to retrieval rather than failing on a route it never asked for.
     import src.rag.numeric as numeric
 
-    numeric._cached_facts.cache_clear()
+    numeric.cached_facts.cache_clear()
     path = tmp_path / "facts.parquet"
     path.write_bytes(b"not a parquet file at all")
     assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=path) is None
@@ -778,7 +778,7 @@ def test_the_store_is_read_once_however_many_questions_are_asked(store, monkeypa
     import src.rag.numeric as numeric
 
     path = store()
-    numeric._cached_facts.cache_clear()
+    numeric.cached_facts.cache_clear()
     reads = []
     real = numeric.load_facts
     monkeypatch.setattr(numeric, "load_facts", lambda p: reads.append(p) or real(p))
@@ -792,7 +792,7 @@ def test_a_rebuilt_store_is_not_served_stale(store):
 
     import src.rag.numeric as numeric
 
-    numeric._cached_facts.cache_clear()
+    numeric.cached_facts.cache_clear()
     path = store()
     assert lookup_fact(QUESTION, ("AAPL",), (2024,), facts_file=path).value == Decimal(REVENUE)
     # Rebuilt with a different figure. The cache is keyed on the modification

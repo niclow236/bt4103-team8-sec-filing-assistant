@@ -166,7 +166,7 @@ def format_figure(value: Decimal, unit: str) -> str:
 
 
 @lru_cache(maxsize=2)
-def _cached_facts(path: Path, mtime_ns: int):
+def cached_facts(path: Path, mtime_ns: int):
     """The facts store, read once per file per change.
 
     Keyed on the modification time as well as the path, so a rebuilt store is
@@ -301,7 +301,7 @@ def lookup_fact(
     if frame is None:
         try:
             path = Path(facts_file)
-            frame = _cached_facts(path, path.stat().st_mtime_ns)
+            frame = cached_facts(path, path.stat().st_mtime_ns)
         except Exception:
             # Every way of failing to read the store is a miss, deliberately:
             # a corrupt file raises whatever the parquet engine chooses to

@@ -59,7 +59,7 @@ from .records import (
     VerificationCheck,
     VerificationResult,
 )
-from .verify import record_verification, verify_answer
+from .verify import verify_answer
 
 __all__ = [
     "Answer",
@@ -90,7 +90,6 @@ __all__ = [
     "generate",
     "lookup_fact",
     "parse_question",
-    "record_verification",
     "render_citation",
     "render_source",
     "resolve_citations",

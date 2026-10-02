@@ -8,6 +8,7 @@ from dataclasses import replace
 import pytest
 from langchain_core.messages import AIMessageChunk
 
+from src.app.answers import main as view
 from src.app.answers import render_answer, write_answer_page
 from src.evaluation import BenchmarkQuestion, evaluate
 from src.evaluation.cli import main
@@ -27,6 +28,7 @@ from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.dense import DenseRetriever
 from src.retrieval.hybrid import HybridRetriever
 from src.retrieval.records import Query, RetrievedPassage
+from src.stack import STACKS
 
 
 CONFIG = config_from_env(model="test-model", environ={})
@@ -225,6 +227,72 @@ def test_model_abstention_counts_in_harness_and_empty_subsets_are_null():
     assert empty["summary"]["abstention_rate"] is None
     with pytest.raises(ValueError, match="unique"):
         evaluate([question(1), question(1)], StaticRetriever([]), CONFIG, run_id="run")
+
+
+class Stating(Model):
+    """A chat model that answers each question with the next of ``sentences``."""
+
+    def __init__(self, *sentences):
+        super().__init__()
+        self.sentences = iter(sentences)
+
+    def stream(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        yield AIMessageChunk(content=json.dumps({
+            "answerable": True,
+            "sentences": [{"text": next(self.sentences), "sources": [1]}],
+        }))
+
+
+def test_harness_checks_each_answer_as_the_app_does(tmp_path):
+    class ByTicker(StaticRetriever):
+        def search(self, query, k=None):
+            return [] if query.tickers == ("MISSING",) else self.passages
+
+    asked = [question(1), question(2), question(3), question(4, ticker="MISSING")]
+    report = evaluate(asked, ByTicker([passage(text="Revenue was $5.2 billion.")]), CONFIG,
+                      run_id="run", llm=Stating("Revenue was $5.2 billion.",
+                                                "Revenue was $6 billion.", "Revenue increased."))
+    figure_checks = [[check["status"] for check in row["answer"]["verification"]["checks"]
+                      if check["kind"] == "passage"] for row in report["results"]]
+    assert figure_checks == [["supported"], ["mismatch"], [], []]
+    # By the worst check of each answer, as the answer card colours a claim.
+    # The abstention states nothing and is not counted.
+    assert report["checks"] == {"mismatch": 1, "supported": 1, "unchecked": 1}
+
+    # The rows are what --answers writes, and the viewer shows their checks.
+    answers = tmp_path / "answers.jsonl"
+    answers.write_text("".join(json.dumps(row) + "\n" for row in report["results"]),
+                       encoding="utf-8")
+    view([str(answers), "--output", str(tmp_path / "answers.html")])
+    page = (tmp_path / "answers.html").read_text(encoding="utf-8")
+    assert page.count("<article>") == 4
+    assert page.count('data-status="mismatch"') == 1
+    assert "This answer has not been verified" not in page
+
+
+def test_harness_checks_an_answer_in_the_scope_the_benchmark_names():
+    # The benchmark's company replaces the question's own. A passage from
+    # another company cannot then support the figure, however well it matches.
+    cited = StaticRetriever([passage(text="Revenue was $5.2 billion.")])
+    own = evaluate([question(1)], cited, CONFIG, run_id="run",
+                   llm=Stating("Revenue was $5.2 billion."))
+    assert own["checks"] == {"supported": 1}
+    other = evaluate([question(1, ticker="BBB")], cited, CONFIG, run_id="run",
+                     llm=Stating("Revenue was $5.2 billion."))
+    assert other["checks"] == {"mismatch": 1}
+
+
+@pytest.mark.parametrize("config_id", ["C3", "C4"])
+def test_harness_checks_an_answer_against_the_benchmark_s_company_under_any_row(config_id):
+    # C3 was measured without the metadata filter, so its search names no
+    # company. The answer is still about the benchmark's, and the app checks
+    # one against the sidebar's company under such a row too. Checked against
+    # the query the row searched with, another company's passage supported it.
+    cited = StaticRetriever([passage(text="Revenue was $5.2 billion.")])
+    other = evaluate([question(1, ticker="BBB")], cited, CONFIG, run_id="run",
+                     llm=Stating("Revenue was $5.2 billion."), stack=STACKS[config_id])
+    assert other["checks"] == {"mismatch": 1}
 
 
 class Failing(Model):

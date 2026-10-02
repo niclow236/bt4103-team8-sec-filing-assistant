@@ -1168,33 +1168,24 @@ multi-company or multi-year sentences, calculations and unsupported number
 notation need review; they are not silently marked supported. Comparative
 answers can use one company and year per sentence for an unambiguous check.
 
-Save a result for each question and configuration, then show the browser UI:
-
-```python
-from pathlib import Path
-from src.rag import record_verification
-from src.app.answers import write_answer_page
-
-record_verification(
-    answer, Path("logs/verification.jsonl"),
-    question_id="q001", run_id="hybrid-llama3.2-baseline",
-)
-write_answer_page([answer], Path("logs/answers.html"))
-```
-
-Open `logs/answers.html` in a browser. Warnings appear above the answer, with
-expandable check details and source passages. To review an entire saved run:
+The evaluation harness checks every answer this way before it records it, so
+a saved run carries its checks. Write a run's answers and open them in a
+browser:
 
 ```bash
-python -m src.app.answers logs/verification.jsonl --output logs/answers.html
+python -m src.evaluation benchmark/questions.jsonl --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl
+python -m src.app.answers logs/evaluation-answers.jsonl --output logs/answers.html
 ```
+
+Warnings appear above each answer, with expandable check details and source
+passages. For answers held in memory,
+`write_answer_page([answer], Path("logs/answers.html"))` writes the same page.
 
 Every JSONL row retains the question/run IDs, generation configuration,
 answer, sources and individual checks. `numeric_support_rate` is the supported
 numeric checks divided by all applicable passage/fact checks; unverified checks
 stay in the denominator. Abstentions have no numeric score (`null`). Keep the
-groundedness checks separate when evaluating semantic faithfulness. Use one
-writer per results file; recording errors propagate to the caller.
+groundedness checks separate when evaluating semantic faithfulness.
 
 An abstention has no sentence warnings. Malformed or truncated output keeps
 its `parse_error` and `truncated` status. When structured sentence boundaries
@@ -1882,8 +1873,13 @@ records the `sub_questions` its evidence came from and the report counts the
 rows that were split, so the comparison says how many questions it could apply
 to at all.
 
-Evaluation rows include citation checks; run `verify_answer` separately when
-numeric verification is also needed.
+Every answer is put through `verify_answer` before it is recorded, against the
+company and year it was searched in, as the app checks an answer before
+showing it. The report's `checks` counts the answered rows by the worst of
+their passage and fact checks: `mismatch`, `supported`, `unverified`, or
+`unchecked` for an answer that states no figure. That is what the answer card
+shows for each, so a run says how many of its answers a user would see
+flagged. The facts store is read once for the run.
 
 ## Team and course
 

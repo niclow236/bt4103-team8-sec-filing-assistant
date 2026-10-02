@@ -17,6 +17,7 @@ from src.rag import (
     answer_question,
     config_from_env,
     parse_question,
+    verify_answer,
 )
 from src.rag.answer import REFUSALS
 from src.rag.records import Answer, GenerationConfig
@@ -80,6 +81,25 @@ def _rates(rows: list[dict]) -> dict[str, Any]:
     }
 
 
+def _checks(rows: list[dict]) -> dict[str, int]:
+    """Answered rows by the worst status among their passage and fact checks.
+
+    The answer card marks a claim the same way: one mismatch outweighs any
+    support, and support outweighs a check that could not be made.
+    ``unchecked`` is an answer that states no figure. Abstentions state nothing
+    and are not counted.
+    """
+    worst: Counter[str] = Counter()
+    for row in rows:
+        if row["answer"]["abstained"]:
+            continue
+        statuses = {check["status"] for check in row["answer"]["verification"]["checks"]
+                    if check["kind"] in ("passage", "fact")}
+        worst[next((status for status in ("mismatch", "supported", "unverified")
+                    if status in statuses), "unchecked")] += 1
+    return dict(sorted(worst.items()))
+
+
 def _answer_with_retries(
     question: BenchmarkQuestion, ask: Callable[[], Answer]
 ) -> tuple[Answer, int]:
@@ -130,6 +150,12 @@ def evaluate(
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
+
+    Every answer is put through ``verify_answer`` as the app puts it before
+    showing it, so each row carries its checks, and ``checks`` counts the
+    answered rows by the worst of them: how many answers a passage or the
+    facts store supports, how many could not be checked, and how many a check
+    contradicts.
 
     ``stack`` is the named configuration a caller assembled from, recorded in
     the report so a results file says which configuration to select in the app
@@ -190,6 +216,7 @@ def evaluate(
             "refused": sum(1 for row in rows
                            if row["answer"]["abstention_reason"] in REFUSALS.values()),
             "summary": _rates(rows),
+            "checks": _checks(rows),
             "by_answerability": {
                 "unanswerable": _rates([r for r in rows if r["question_type"] == UNANSWERABLE]),
                 "answerable": _rates([r for r in rows if r["question_type"] != UNANSWERABLE]),
@@ -206,6 +233,9 @@ def evaluate(
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
+        # The company and year the question is about, which the answer is
+        # checked against whatever the row searches.
+        asked = replace(parsed, tickers=query.tickers, fiscal_years=query.fiscal_years)
         # After the benchmark's own ticker and year, so a row measured without
         # the metadata filter drops those too and searches what it measured.
         if stack is not None:
@@ -215,6 +245,13 @@ def evaluate(
             min_score=min_score, llm=llm, use_facts=use_facts,
             use_decomposition=use_decomposition, use_refusal=use_refusal, parsed=parsed,
         ))
+        # Checked as the app checks an answer before showing it, against the
+        # company and year the question is about, so a row carries what the
+        # answer card would say of it and the viewer (src.app.answers) has
+        # checks to show. A row measured without the metadata filter searches
+        # every filing, and the app still checks its answer against the
+        # sidebar's company and year, so that is the scope here too.
+        answer = verify_answer(answer, parsed=asked)
         return {"question_id": question.question_id, "run_id": run_id,
                 "question_type": question.question_type,
                 # Which route answered it. The Answer records the provider

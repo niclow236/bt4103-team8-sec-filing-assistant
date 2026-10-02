@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.app.answers import main, render_answer, write_answer_page
-from src.rag import record_verification, resolve_citations, verify_answer
+from src.rag import resolve_citations, verify_answer
 from src.rag.records import CitedSentence, Generation, GenerationConfig, GroundedAnswer
 from src.retrieval.records import RetrievedPassage
 
@@ -229,9 +229,25 @@ def test_nonnumeric_question_checks_figures_without_loading_facts(monkeypatch):
     def forbidden(*args):
         pytest.fail("Facts must not be read for a nonnumeric question")
     monkeypatch.setattr("src.rag.verify.load_facts", forbidden)
+    monkeypatch.setattr("src.rag.verify.cached_facts", forbidden)
     result = verify_answer(answer(question="Describe Apple's FY2024 results."))
     assert checks(result, "passage")
     assert not checks(result, "fact")
+
+
+def test_the_store_is_read_once_for_a_run_of_answers(store, monkeypatch):
+    # The evaluation harness checks every answer of a run. Read per answer,
+    # the whole store was loaded once for each of them.
+    from src.rag import numeric
+
+    numeric.cached_facts.cache_clear()
+    reads = []
+    real = numeric.load_facts
+    monkeypatch.setattr(numeric, "load_facts", lambda path: reads.append(path) or real(path))
+    results = [verify_answer(answer(), facts_file=store) for _ in range(3)]
+    assert [checks(result, "fact")[0].status for result in results] == ["supported"] * 3
+    assert len(reads) == 1
+    numeric.cached_facts.cache_clear()
 
 
 def test_paraphrase_is_not_claimed_to_be_semantically_verified(store):
@@ -269,30 +285,6 @@ def test_malformed_output_and_absent_sentence_records_are_flagged(store):
 def test_numeric_question_without_extractable_figures_is_unverified(store):
     result = verify_answer(answer("Revenue was five billion dollars."), facts_file=store)
     assert checks(result, "fact")[0].status == "unverified"
-
-
-def test_jsonl_records_preserve_question_config_evidence_and_denominators(store, tmp_path):
-    path = tmp_path / "results" / "checks.jsonl"
-    result = verify_answer(answer(), facts_file=store)
-    for run in ("baseline", "proposed"):
-        record_verification(result, path, question_id="q01", run_id=run)
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert [row["run_id"] for row in rows] == ["baseline", "proposed"]
-    assert rows[0]["question_id"] == "q01"
-    assert rows[0]["answer"]["config"]["model"] == "test-model"
-    assert rows[0]["answer"]["verification"]["counts"]["supported"] == 3
-    assert rows[0]["answer"]["verification"]["checks"][-1]["evidence"]
-    output = tmp_path / "answers.html"
-    main([str(path), "--output", str(output)])
-    assert output.read_text(encoding="utf-8").count("<article>") == 2
-
-
-def test_recording_requires_verification_and_question_identity(store, tmp_path):
-    with pytest.raises(ValueError, match="Verify"):
-        record_verification(answer(), tmp_path / "results", question_id="q", run_id="run")
-    with pytest.raises(ValueError, match="non-empty"):
-        record_verification(verify_answer(answer(), facts_file=store), tmp_path / "results",
-                            question_id="", run_id="run")
 
 
 def test_viewer_escapes_model_content_and_rejects_script_urls(tmp_path):

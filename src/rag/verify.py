@@ -14,7 +14,6 @@ establish entailment. No model, network call or facts download is needed.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -29,7 +28,7 @@ from .constants import (
     TABLE_SCALE,
     UNIT_ALIASES,
 )
-from .numeric import metrics_in
+from .numeric import cached_facts, metrics_in
 from .query import ParsedQuestion, parse_question
 from .records import Answer, SentenceCitations, VerificationCheck, VerificationResult
 
@@ -315,7 +314,11 @@ def verify_answer(
     frame, facts_error = None, None
     if numeric:
         try:
-            frame = load_facts(Path(facts_file))
+            # Through the facts route's cache. The evaluation harness checks
+            # every answer of a run, and each uncached read is the whole store.
+            path = Path(facts_file)
+            frame = (cached_facts(path, path.stat().st_mtime_ns) if path.exists()
+                     else load_facts(path))  # which says how to build it
             required = {"ticker", "fiscal_year", "concept", "unit", "value", "accession"}
             if not required.issubset(frame.columns):
                 raise ValueError("Facts store is missing required verification columns.")
@@ -393,23 +396,4 @@ def verify_answer(
     return replace(answer, verification=VerificationResult(parsed.question_type, tuple(checks)))
 
 
-def record_verification(answer: Answer, path: Path, *, question_id: str, run_id: str) -> None:
-    """Append one complete, JSON-safe question/run record for evaluation.
-
-    Call from the single writer of an evaluation run. Repeated question IDs are
-    allowed across runs; run_id distinguishes model/configuration comparisons.
-    I/O failures propagate so an experiment cannot silently lose its results.
-    """
-    if answer.verification is None:
-        raise ValueError("Verify the answer before recording it.")
-    if not question_id.strip() or not run_id.strip():
-        raise ValueError("question_id and run_id must be non-empty")
-    record = {"question_id": question_id, "run_id": run_id, "answer": answer.to_dict()}
-    line = json.dumps(record, ensure_ascii=False, allow_nan=False)
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(line + "\n")
-
-
-__all__ = ["record_verification", "verify_answer"]
+__all__ = ["verify_answer"]
