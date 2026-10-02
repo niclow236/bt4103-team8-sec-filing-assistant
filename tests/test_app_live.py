@@ -156,6 +156,26 @@ def test_live_app_verifies_against_the_sidebar_scope(monkeypatch):
     assert verified[0].fiscal_years == (2024,)
 
 
+def test_live_app_reads_the_question_with_the_facts_store_s_labels(monkeypatch):
+    # answer_question and the evaluation harness read a question with the
+    # store's labels as cues. The app read it without them, so a question
+    # naming a line item by its label was searched as prose in the app and as
+    # a figure question everywhere it was measured.
+    read = []
+    parse = app_module.parse_question
+    monkeypatch.setattr(app_module, "parse_question",
+                        lambda question, **options: read.append(options) or parse(
+                            question, **options))
+    _standing_in(monkeypatch)
+    # The first question to need the labels reads them from the store, which
+    # can take longer than AppTest's three seconds on a busy machine.
+    ui = AppTest.from_string(APP, default_timeout=30).run()
+    ui.text_input[0].set_value("What was Apple's gross profit in FY2024?").run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    assert read and all("facts_file" not in options for options in read)
+
+
 def test_live_app_searches_with_hybrid_unless_another_row_is_chosen(monkeypatch):
     # The row the app opens on is the one the 48 test questions were measured
     # best with (README, "How often the answers are right"), so a change of

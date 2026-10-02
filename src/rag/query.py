@@ -46,6 +46,7 @@ from .constants import (
     COUNT_AFTER,
     CURRENCY_BEFORE,
     FUTURE_CUES,
+    FIGURE_LINE_ITEM_CUES,
     FIGURE_METRIC_CUES,
     MAGNITUDE_AFTER,
     NUMERIC_CUES,
@@ -560,7 +561,12 @@ def _figure_text(question: str, scope: frozenset[str]) -> str:
     return " ".join(_YEAR.sub(" ", _SHORT_RANGE.sub(r"\1\2 \3 \1\4", text)).split())
 
 
-_FIGURE_METRIC_PATTERN = _alias_pattern(FIGURE_METRIC_CUES)
+# Matched against a question already reduced to its words, so a cue written
+# with punctuation ("stock-based", "property, plant and equipment") is reduced
+# the same way first.
+_FIGURE_METRIC_PATTERN = _alias_pattern(
+    (*FIGURE_METRIC_CUES, *(_label_words(cue) for cue in FIGURE_LINE_ITEM_CUES))
+)
 
 
 def _asks_for_label(text: str, pattern: re.Pattern[str]) -> bool:

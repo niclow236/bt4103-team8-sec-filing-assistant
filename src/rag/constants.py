@@ -505,6 +505,30 @@ FIGURE_METRIC_CUES = tuple(
     for alias in FINANCIAL_METRICS[key].aliases
 )
 
+# Lines of the three statements that the facts route does not answer, by the
+# names a question gives them. "What was Microsoft's accounts receivable in
+# fiscal year 2024?" asks for a figure, and none of its words was a cue, so it
+# was read as prose and searched with no lean toward tables: four of its
+# sixteen passages were tables, where a figure question gets twelve.
+# ``notebooks/answers/line_item_figures.py`` asks that question of every line
+# item here and every filing of a year.
+#
+# The XBRL label of a line is not what a question calls it ("Accounts
+# Receivable, after Allowance for Credit Loss, Current"), so the labels in the
+# facts store do not cover these. Like the two metrics above, each needs a
+# request for the figure: "how does Microsoft manage accounts receivable risk"
+# stays prose. "Share repurchases" was measured and left out, since a filing
+# reports the cash paid and the amount bought under its programme as two
+# figures and the question does not say which.
+FIGURE_LINE_ITEM_CUES = (
+    "income before income taxes", "income tax expense", "provision for income taxes",
+    "sales and marketing expense", "sales and marketing expenses",
+    "stock-based compensation", "share-based compensation",
+    "accounts receivable", "property and equipment", "property, plant and equipment",
+    "intangible assets", "capital expenditures", "purchases of property and equipment",
+    "interest paid",
+)
+
 # How the facts store writes a unit, and what this project calls it. The store
 # carries the XBRL unit, and writes a per-share unit as "USD per share" rather
 # than the "USD/shares" the taxonomy suggests, so both spellings are here: a

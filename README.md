@@ -1225,6 +1225,24 @@ only needs sentence-level entities. Possessive total questions match recognised
 company names. Comparative, temporal and unanswerable classifications keep
 their existing priority over numeric cues.
 
+A line of the statements that the facts route does not answer is a cue as
+well, by the name a question gives it: accounts receivable, income tax
+expense, stock-based compensation, capital expenditures and the others in
+`FIGURE_LINE_ITEM_CUES`. The XBRL label of such a line is not what a question
+calls it ("Accounts Receivable, after Allowance for Credit Loss, Current"), so
+the store's labels did not cover them, and "What was Microsoft's accounts
+receivable in fiscal year 2024?" was read as prose and searched with no lean
+toward tables. Like a stored label, each needs a request for the figure: "How
+does Microsoft manage accounts receivable risk?" stays factual.
+
+The app reads a question with the store's labels too. It used to pass
+`facts_file=None`, so a question naming a line item by its label, such as
+gross profit, was searched as prose in the app and as a figure question by
+`answer_question` and the evaluation harness. `filter_sidebar` reads a
+question the same way when it is not handed a parse. What both changes do to
+the answers is in
+[How often the answers are right](#how-often-the-answers-are-right).
+
 Accounts payable, inventories and net sales questions can use the facts route
 when a matching figure and supporting passage exist. Recognising another
 stored label enables numeric retrieval, but a direct facts answer still needs
@@ -1590,6 +1608,41 @@ route cites from, and not what the route answers. Run again after that change,
 both sets come out as they were under both retrievers: the same 756 and 752
 of the 825, the same 2,229 and 2,225 under every name, and each answer the
 same sentence as before.
+
+The facts route answers eleven line items. A filing reports many more, and a
+question about one of those is answered by a model from the passages. `python
+notebooks/answers/line_item_figures.py` asks the plain question for sixteen of
+them, such as "What was Cisco's accounts receivable in fiscal year 2024?", of
+every FY2024 filing whose store holds one figure for the line, 177 questions,
+and grades the answers against the store as the headline questions are graded.
+With Hybrid and `ministral-8b-2512`, one run on each side of the change to how
+a question is read (see [From a question to an answer](#from-a-question-to-an-answer)):
+
+| 177 line-item questions, FY2024, one run | Read as asking for a figure | Tables among the 16 passages, mean | Right | Right, to fewer digits | A wrong figure or none | Abstained |
+|---|---|---|---|---|---|---|
+| Before (`line-items-6-common-words-hybrid`) | 0 | 4.5 | 120 | 5 | 48 | 4 |
+| Read as figure questions (`line-items-7-figure-questions-hybrid`) | 162 | 11.7 | 145 | 2 | 24 | 6 |
+
+147 of the 177 are right where 125 were, and the wrong answers halve. 27
+questions became right and five stopped being. Two of the five are abstentions
+where the model had the figure before (Salesforce's purchases of property and
+equipment, Micron's capital expenditures), two are a neighbouring figure
+(Meta's depreciation of property and equipment for its depreciation and
+amortization, and Texas Instruments' tax rate for its tax expense), and one is
+Cisco's accounts receivable given as $6.7 billion with a second figure beside
+it. The model does not repeat itself, so a question or two of the difference
+in any one line is its own, as in the 48.
+
+Twelve of the sixteen names are the new cues. Gross profit, interest expense,
+depreciation and amortization and marketable securities are read as figure
+questions through the store's labels, which the app's path now reads with.
+The fifteen "share repurchases" questions are the ones still read as prose,
+on purpose: a filing reports the cash paid for repurchases and the amount
+bought under its programme as two figures, the question does not say which,
+and read as a figure question it was answered right less often.
+
+None of the 48 test questions and none of the 2,325 headline questions is read
+differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 

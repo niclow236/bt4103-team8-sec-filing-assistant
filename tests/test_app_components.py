@@ -236,6 +236,21 @@ def test_out_of_scope_mentions_warn_and_unknown_item_is_not_silently_dropped():
     assert not app.exception
 
 
+def test_sidebar_reads_an_unparsed_question_with_the_facts_store_s_labels(monkeypatch):
+    # The Query it returns is searched as it stands. Read without the labels,
+    # a question naming a line item by its label got no lean toward tables
+    # from the sidebar, while answer_question read it as asking for a figure.
+    import src.app.components as components
+
+    read = []
+    parse = components.parse_question
+    monkeypatch.setattr(components, "parse_question",
+                        lambda question, **options: read.append(options) or parse(
+                            question, **options))
+    sidebar()
+    assert read and all("facts_file" not in options for options in read)
+
+
 def test_sidebar_item_reaches_answer_retrieval_without_facts_bypass(monkeypatch):
     from src.rag.answer import answer_question
     from src.rag.query import parse_question

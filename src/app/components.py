@@ -213,7 +213,10 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
     if top_k < 1:
         raise ValueError("top_k must be positive")
     if parsed is None and question:
-        parsed = parse_question(question, known_tickers=companies, facts_file=None,
+        # With the facts store's labels as cues, as the app and answer_question
+        # read a question: the Query returned here is searched as it stands, so
+        # it has to lean toward tables for every question they read as a figure.
+        parsed = parse_question(question, known_tickers=companies,
                                 fiscal_years=(min(years), max(years)) if years else DEFAULT_FISCAL_YEARS)
     mentions = tuple(dict.fromkeys(item.upper() for group in _ITEM_MENTION.findall(question)
                                    for item in re.findall(r"\d{1,2}[a-z]?", group, re.IGNORECASE)))

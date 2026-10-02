@@ -36,6 +36,39 @@ def test_issue_89_figure_questions(question, ticker, year, tmp_path):
     assert parsed.to_query().table_boost == TABLE_BOOST
 
 
+@pytest.mark.parametrize("line_item", [
+    "accounts receivable", "income tax expense", "provision for income taxes",
+    "income before income taxes", "stock-based compensation", "share-based compensation",
+    "sales and marketing expense", "property and equipment", "property, plant and equipment",
+    "intangible assets", "capital expenditures", "purchases of property and equipment",
+    "interest paid",
+])
+def test_a_plain_question_about_a_statement_line_asks_for_a_figure(line_item):
+    # None of these was a cue, and no label in the facts store is worded this
+    # way, so the question was read as prose and searched with no lean toward
+    # tables. Labels are off here: these are read without the store.
+    parsed = _parse(f"What was Microsoft's {line_item} in fiscal year 2024?")
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+    assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+@pytest.mark.parametrize("question", [
+    "How does Microsoft manage accounts receivable risk?",
+    "What does Apple say about its capital expenditures plans for data centers?",
+    "How does Meta account for stock-based compensation?",
+    "Why did Amazon's provision for income taxes matter to its strategy?",
+    "How does Adobe amortize its intangible assets?",
+    # Left out on purpose: the cash paid and the amount bought under the
+    # programme are two figures, and the question does not say which.
+    "What were Cisco's share repurchases in fiscal year 2024?",
+])
+def test_a_statement_line_named_in_a_prose_question_stays_prose(question):
+    parsed = _parse(question)
+    assert parsed.wants_figures is False
+    assert parsed.to_query().table_boost == 1.0
+
+
 def test_inventory_risk_stays_a_prose_question(tmp_path):
     # Q32 of the test questions names inventory without asking for a figure.
     question = ("What factors did Amazon identify as creating significant inventory risk "

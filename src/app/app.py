@@ -56,7 +56,11 @@ def main() -> None:
                "Answers cite the filing passages used to generate them.")
 
     question = st.text_input("Question", placeholder="What did Apple report about revenue in FY2024?")
-    parsed = parse_question(question, facts_file=None) if question.strip() else None
+    # Read with the facts store's labels as cues, as answer_question and the
+    # evaluation harness read a question. Read without them, a question that
+    # names a line item by its label ("What was Apple's gross profit in
+    # FY2024?") was taken for prose and searched with no lean toward tables.
+    parsed = parse_question(question) if question.strip() else None
     query = filter_sidebar(question, parsed=parsed)
     with st.sidebar:
         # In the registry's order, each labelled with the run that measured it,
