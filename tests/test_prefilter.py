@@ -23,7 +23,7 @@ from src.retrieval.base import Retriever, matches, rank
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.dense import DenseRetriever
 from src.retrieval.hybrid import HybridRetriever
-from src.retrieval.records import Query
+from src.retrieval.records import Query, RetrievedPassage
 
 
 @pytest.fixture
@@ -120,6 +120,69 @@ def test_dense_ignores_the_keyword_text(dense):
     query = Query("AAA risk factors paragraph 0", top_k=5)
     keyword = replace(query, keyword_text="Revenue by segment")
     assert [p.chunk_id for p in dense.search(keyword)] == [p.chunk_id for p in dense.search(query)]
+
+
+# --- words most passages contain --------------------------------------------
+
+STATEMENT = "| Goodwill | 48,568 | 47,937 |"
+# Twelve passages of prose that share the words a question is asked in, each
+# with words of its own, so that the average word is rare and the floor
+# rank_bm25 gives a common one is worth having.
+PROSE = [
+    f"At the end of the year the board reviewed the value of the {plan} plan "
+    f"for {who} and {what}."
+    for plan, who, what in (
+        ("pension", "retirees", "actuaries"), ("hiring", "engineers", "campuses"),
+        ("leasing", "warehouses", "landlords"), ("hedging", "currencies", "forwards"),
+        ("licensing", "patents", "royalties"), ("marketing", "campaigns", "agencies"),
+        ("sourcing", "suppliers", "components"), ("staffing", "contractors", "shifts"),
+        ("pricing", "discounts", "resellers"), ("training", "managers", "courses"),
+        ("travel", "airlines", "hotels"), ("audit", "controls", "findings"),
+    )
+]
+
+
+def _keyword_index(*texts):
+    """A BM25 index over passages with these texts, all from one filing."""
+    return BM25Retriever([
+        asdict(RetrievedPassage(
+            chunk_id=f"0000000001-24-000001_part_ii_item_8_{number:03d}", text=text, score=0.0,
+            rank=1, retriever="bm25", ticker="AAA", company="AAA Corp", fiscal_year=2024,
+            item="8", title="Financial Statements", url="https://example.test/filing"))
+        for number, text in enumerate(texts)
+    ])
+
+
+def test_words_in_most_passages_do_not_outweigh_the_one_that_names_the_line_item():
+    """A statement row holds the line item and none of the words around it.
+
+    "the", "of", "at", "end", "year" and "value" are each in twelve of the
+    thirteen passages. Scored, as rank_bm25 scores them, the six together
+    outweigh "goodwill" and every prose passage ranks above the row that
+    answers the question.
+    """
+    index = _keyword_index(STATEMENT, *PROSE)
+    found = index.search(Query("What was the value of goodwill at the end of the year?", top_k=13))
+    assert found[0].text == STATEMENT
+    assert all(passage.score == 0 for passage in found[1:])
+
+
+def test_a_question_made_only_of_common_words_is_still_scored_on_them():
+    index = _keyword_index(STATEMENT, *PROSE)
+    found = index.search(Query("of the", top_k=13))
+    assert [passage.text for passage in found[:12] if passage.score > 0] == [
+        passage.text for passage in found[:12]]
+    assert found[12].text == STATEMENT and found[12].score == 0
+
+
+def test_the_common_words_are_the_corpus_s_own_not_a_list():
+    # "goodwill" in every passage tells none of them apart, and is left out as
+    # "the" is; a question about it is then scored on its other words.
+    index = _keyword_index(*(f"Goodwill and the {word} review." for word in ("first", "second")),
+                           "Goodwill impairment testing.")
+    found = index.search(Query("goodwill impairment", top_k=3))
+    assert found[0].text == "Goodwill impairment testing."
+    assert [passage.score for passage in found[1:]] == [0, 0]
 
 
 # --- weighting toward tables ------------------------------------------------

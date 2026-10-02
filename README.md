@@ -144,7 +144,7 @@ bt4103-team8-sec-filing-assistant/
 ├── notebooks/               # exploration and experiments
 │   ├── answers/             #   test questions and headline figures through the app's answer path, with results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
-│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words
 │   └── test_data/           #   the team's 48 test questions
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
@@ -872,9 +872,45 @@ What the lean does to the answers is in
 825 headline questions the model gave a wrong figure or none for 8 where it
 had for 28.
 
+A question is not scored on the words most passages contain. BM25 weighs a
+word by how rare it is, and Okapi's formula goes negative for a word in more
+than half the passages. `rank_bm25` does not leave such a word at nothing: it
+gives it a floor, a quarter of the average weight. On this corpus the floor is
+1.89 and ten words sit on it ("a", "and", "as", "for", "in", "of", "on",
+"our", "the", "to"), where "revenue" weighs 1.61 and "total" 1.04. So in "What
+was the total value of Goodwill at the end?" the two "the" and the "of"
+outweighed the line item, and a statement table, which holds "Goodwill" and
+none of those words, ranked below prose that holds them all: Salesforce's
+FY2023 balance sheet was 260th of the 397 passages in its filing.
+`BM25Retriever` now leaves those words out of a question. It counts them from
+the corpus when the index loads rather than keeping a list, so a re-chunked
+corpus gets its own, and a question made of nothing else is scored as before.
+
+`python notebooks/retrieval/common_words_comparison.py` scores the same
+questions both ways, with the table boost as shipped:
+
+| | BM25, every word | BM25, without the common words | Hybrid, every word | Hybrid, without the common words |
+|---|---|---|---|---|
+| Supporting chunk in the top 16 (1,490 benchmark questions) | 63.2% | 73.1% | 76.6% | 78.9% |
+| Reciprocal rank, mean | 0.320 | 0.403 | 0.455 | 0.472 |
+| Where tables support the question (1,086) | 690 | 826 | 889 | 920 |
+| Where tables and prose do (292) | 203 | 212 | 217 | 220 |
+| Where only prose does (112) | 48 | 51 | 36 | 35 |
+| Tables among the top 16, mean | 4.2 | 6.0 | 11.4 | 12.9 |
+| Expected figure in the top 16, hand-written (28) | 22 | 27 | 27 | 28 |
+| Its rank, median | 5.5 | 3 | 1 | 1 |
+| Prose: expected terms found, mean (20) | 0.980 | 0.980 | 0.994 | 0.994 |
+
+BM25 alone gains 148 benchmark questions and Hybrid 33, and Hybrid loses one
+of the 112 that only prose supports. The 28th hand-written figure is
+Salesforce's goodwill, which neither method had retrieved before. What that
+does to the answers is in
+[How often the answers are right](#how-often-the-answers-are-right).
+
 The `FINAL_K`, fusion-weight and search-text numbers in this README were
-measured with the boost off. `ParsedQuestion.to_query` now sets it for a figure
-question, so a re-run of those scripts reports with it on.
+measured with the boost off and every word of the question scored, and the
+table boost sweep above with every word scored. A re-run of those scripts
+reports with the boost on and the common words left out.
 
 `Query.top_k` defaults to 10, which suits Recall@10 and nDCG@10. The RAG stage
 asks for `FINAL_K`, 16, since that is what goes into the prompt.
@@ -1411,6 +1447,8 @@ numbers in a cell are the three runs:
 | Facts route changes, Hybrid (`4-statement-names-hybrid`) | 27, 27, 27 | 0, 0, 0 | 1, 1, 1 | 8 | 19 | 0.93, 0.91, 0.92 |
 | Second citation search, BM25 (`5-other-names-bm25`) | 26, 26, 25 | 1, 1, 1 | 1, 1, 2 | 8 | 18 | 0.87, 0.87, 0.87 |
 | Second citation search, Hybrid (`5-other-names-hybrid`) | 27, 27, 26 | 0, 0, 1 | 1, 1, 1 | 8 | 19 | 0.90, 0.93, 0.92 |
+| Common words left out, BM25 (`6-common-words-bm25`) | 26, 27, 26 | 2, 1, 2 | 0, 0, 0 | 8 | 19 | 0.88, 0.90, 0.88 |
+| Common words left out, Hybrid (`6-common-words-hybrid`) | 28, 28, 28 | 0, 0, 0 | 0, 0, 0 | 8 | 20 | 0.92, 0.93, 0.92 |
 
 The figure columns barely move between runs and the prose column moves by a
 point or two, so one figure question is a real difference and 0.02 of prose
@@ -1436,9 +1474,24 @@ either.
 
 The facts route changes below do not touch these 48: the route answers the
 same eight, and the other questions reach the model with the same passages as
-before. So the rows after the table boost are that state asked again, and
-the differences are the model's. With Hybrid it stated Google's marketable
-securities in one run of three, then in all three, then in two.
+before. So the three pairs of rows from the table boost to the second
+citation search are one state asked three times, and the differences are the
+model's. With Hybrid it stated Google's marketable securities in one run of
+three, then in all three, then in two.
+
+Leaving the common words out of the keyword search (see
+[Searching the indexes](#searching-the-indexes)) does change what the 48 are
+searched with. With Hybrid every figure is right in all three runs.
+Salesforce's goodwill is printed in the fifth passage, where no passage that
+prints it had been among the sixteen, and Google's marketable securities is
+stated every time. In one run of the three the goodwill answer gives an
+acquisition's goodwill first and the balance after it, which the check counts
+as right because the expected figure is stated. With BM25 alone the figure is
+among the passages for 19 of the 20 questions the model answers, from 18, and
+Google's marketable securities is now right. Salesforce's goodwill turns from
+an abstention into a wrong answer: BM25 now ranks an acquisition's table among
+the sixteen and the passage with the balance seventeenth, one past the cut,
+and the model reads the goodwill off the table it was given.
 
 Those 48 questions cover eight of the fifteen companies, and most are answered
 right. `python notebooks/answers/headline_figures.py` asks the plain question
@@ -1459,6 +1512,8 @@ out the same on every run.
 | Facts route changes, Hybrid (`headline-4-statement-names-hybrid`) | 752 | 8 | 0 | 1 | 1 | 760 |
 | Second citation search, BM25 (`headline-5-other-names-bm25`) | 752 | 3 | 0 | 1 | 6 | 755 |
 | Second citation search, Hybrid (`headline-5-other-names-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
+| Common words left out, BM25 (`headline-6-common-words-bm25`) | 752 | 3 | 0 | 2 | 5 | 755 |
+| Common words left out, Hybrid (`headline-6-common-words-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
 
 The other 63 have no single figure in the store to grade against: a software
 company has no inventories, some filers report no total for liabilities, and
@@ -1524,6 +1579,12 @@ reported income. BM25 gained 190, most of them revenue asked in a word the
 statement does not print: the dense half of Hybrid often gets from "revenue"
 to "net sales" on the first search, and a keyword search cannot.
 
+Leaving the common words out of the keyword search changes the search the
+route cites from, and not what the route answers. Run again after that change,
+both sets come out as they were under both retrievers: the same 756 and 752
+of the 825, the same 2,229 and 2,225 under every name, and each answer the
+same sentence as before.
+
 ## Streamlit app and components
 
 The real app reads the processed filings and indexes on this machine, searches
@@ -1542,8 +1603,9 @@ the metadata filter, so the first Ask also checks the dense index and loads the
 embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
 is BM25 alone and loads neither. The app opens on hybrid because, with the
 sidebar's filters applied, it gets more of the test questions' figures right
-than BM25: 26 of 28 against 23 before the table boost was set, and 26 or 27
-against 25 or 26 with it (see
+than BM25: 26 of 28 against 23 before the table boost was set, 26 or 27 against
+25 or 26 with it, and all 28 against 26 or 27 since the keyword search stopped
+scoring the commonest words (see
 [How often the answers are right](#how-often-the-answers-are-right)). A row
 measured without the metadata filter searches every filing, and the sidebar
 says so when one is picked. The model
