@@ -627,6 +627,60 @@ def test_net_sales_finds_the_statement_beyond_revenue_distractors(store, monkeyp
     assert result.citations[0].chunk_id == table.chunk_id
 
 
+def test_a_question_in_words_the_filing_does_not_use_still_finds_the_statement(
+        store, monkeypatch):
+    from src.retrieval.bm25 import BM25Retriever
+
+    # The same filing as above, asked for by the word the statement never
+    # uses: it prints "Total net sales", and the question says "revenue".
+    question = "What was Amazon's total revenue in fiscal year 2025?"
+    value = 716_924_000_000
+    path = store(_fact_row(ticker="AMZN", company="Amazon", fiscal_year=2025,
+                           value=float(value), raw_value=str(value),
+                           period_of_report="2025-12-31", period_end="2025-12-31",
+                           period_start="2025-01-01"))
+    table = _passage("Statement (in millions)\n| | 2025 |\n| Total net sales | 716,924 |",
+                     ticker="AMZN", company="Amazon", fiscal_year=2025)
+    chunks = [dataclasses.asdict(table)]
+    for index in range(200):
+        text = ("Total revenue discussion about annual performance and future business prospects."
+                if index < 60 else "Employees technology operations research strategy competition.")
+        chunks.append(dataclasses.asdict(_passage(
+            text=text, chunk_id=f"{ACCESSION}_item7_{index}", ticker="AMZN", company="Amazon",
+            fiscal_year=2025, content_type="prose")))
+    retriever = BM25Retriever(chunks)
+    fact = lookup_fact(question, ("AMZN",), (2025,), facts_file=path)
+    assert fact is not None
+    # A search for the question's own words does not reach the statement.
+    assert supporting_passage(fact, retriever, search_text="total revenue") is None
+    monkeypatch.setattr("src.rag.answer.generate", lambda *a, **k: pytest.fail("generated"))
+    result = answer_question(question, retriever, facts_file=path)
+    assert result.config.provider == FACTS_PROVIDER
+    assert "$716,924,000,000" in result.text
+    assert result.citations[0].chunk_id == table.chunk_id
+
+
+def test_a_passage_found_under_the_question_s_words_is_not_searched_for_again(store):
+    retriever = StubRetriever(_passage())
+    assert answer_from_facts(QUESTION, ("AAPL",), (2024,), retriever,
+                             facts_file=store()) is not None
+    query, = retriever.queries
+    assert query.keyword_text == "total revenue"
+
+
+def test_the_route_searches_once_more_under_the_other_names_then_gives_way(store):
+    # Nothing prints the figure, so there is nothing to cite under any name.
+    # One more search, not one per name: answer_question runs its own after.
+    retriever = StubRetriever(_passage(text="Revenue grew."))
+    assert answer_from_facts(QUESTION, ("AAPL",), (2024,), retriever,
+                             facts_file=store()) is None
+    asked, others = retriever.queries
+    assert asked.keyword_text == "total revenue"
+    assert others.keyword_text == "revenues revenue net sales"
+    assert (others.tickers, others.fiscal_years) == (("AAPL",), (2024,))
+    assert (others.top_k, others.table_boost) == (asked.top_k, asked.table_boost)
+
+
 def test_the_looked_up_answer_reaches_a_streaming_caller(store):
     seen = []
     answer = answer_question(QUESTION, StubRetriever(_passage()), llm=_never_called,

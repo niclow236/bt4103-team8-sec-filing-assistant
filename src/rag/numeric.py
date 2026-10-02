@@ -29,8 +29,9 @@ have anyway. The route only ever replaces an answer it can fully support.
 The answer it builds is this project's own sentence, not a model's, so it is
 recorded as having come from the facts store rather than from whichever model
 was configured -- see ``constants.FACTS_PROVIDER``. Nothing here calls a model,
-which is also why it returns in the time of one retrieval rather than the
-minutes a local model takes to read a prompt.
+which is also why it returns in the time of one retrieval, or two where the
+first finds nothing to cite, rather than the minutes a local model takes to
+read a prompt.
 """
 
 from __future__ import annotations
@@ -512,15 +513,32 @@ def answer_from_facts(
     retrieving and generating as usual. See the module docstring for what each
     step refuses and why. ``min_score`` is the caller's floor on a passage's
     score, applied here as the retrieval path applies it.
+
+    The passage is searched for under the name the question used for the line
+    item, and where that finds none, once more under its other names: the
+    figure is the same whatever the filer calls the line, and a question need
+    not use the filer's word for it.
     """
     started = perf_counter()
     fact = lookup_fact(question, tickers, fiscal_years, facts_file=facts_file, frame=frame)
     if fact is None:
         return None
+    asked = _longest_alias(fact.metric, question)
     passage = supporting_passage(
-        fact, retriever, top_k=top_k, min_score=min_score,
-        search_text=_longest_alias(fact.metric, question),
+        fact, retriever, top_k=top_k, min_score=min_score, search_text=asked,
     )
+    if passage is None:
+        # The filer may word the line differently from the question: Amazon's
+        # statement says "net sales", so a search for "total revenue" does not
+        # reach it. One more search, for the line item's other names together,
+        # before giving the question to a model.
+        others = " ".join(
+            alias for alias in FINANCIAL_METRICS[fact.metric].aliases if alias != asked
+        )
+        if others:
+            passage = supporting_passage(
+                fact, retriever, top_k=top_k, min_score=min_score, search_text=others,
+            )
     if passage is None:
         return None
 

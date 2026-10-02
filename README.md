@@ -1198,6 +1198,17 @@ ranks Amazon's income statement, which says "net sales", below the prose that
 uses the word. 50 is what Hybrid and a reranker already fetch for any smaller
 request, so it searches and scores nothing more.
 
+Where that search finds nothing to cite, the route searches once more, for
+the line item's other names together. A question need not use the filer's
+word: "What was Amazon's total revenue in fiscal year 2024?" is a search for
+"total revenue" and Amazon's statement prints "Total net sales", and only
+Adobe calls its accounts payable "trade payables". The figure is the same
+whatever the line is called, and the passage still has to print it in a row
+that names the line item, so the second search changes where the route looks
+and not what it accepts. It runs only after the first has found nothing, on a
+question that was on its way to a model, so an answer the route already gave
+cannot change.
+
 A passage prints the figure when it shows it at a scale it declares or beside
 a scale word, or in a table row that names the line item. A filer that reports
 in millions to one decimal place is matched in that form as well: Palo Alto
@@ -1398,6 +1409,8 @@ numbers in a cell are the three runs:
 | Table boost 1.2, Hybrid (`1-table-boost-hybrid`) | 26, 27, 26 | 1, 0, 1 | 1, 1, 1 | 8 | 19 | 0.93, 0.92, 0.95 |
 | Facts route changes, BM25 (`4-statement-names-bm25`) | 25, 25, 26 | 1, 1, 0 | 2, 2, 2 | 8 | 18 | 0.88, 0.88, 0.89 |
 | Facts route changes, Hybrid (`4-statement-names-hybrid`) | 27, 27, 27 | 0, 0, 0 | 1, 1, 1 | 8 | 19 | 0.93, 0.91, 0.92 |
+| Second citation search, BM25 (`5-other-names-bm25`) | 26, 26, 25 | 1, 1, 1 | 1, 1, 2 | 8 | 18 | 0.87, 0.87, 0.87 |
+| Second citation search, Hybrid (`5-other-names-hybrid`) | 27, 27, 26 | 0, 0, 1 | 1, 1, 1 | 8 | 19 | 0.90, 0.93, 0.92 |
 
 The figure columns barely move between runs and the prose column moves by a
 point or two, so one figure question is a real difference and 0.02 of prose
@@ -1423,9 +1436,9 @@ either.
 
 The facts route changes below do not touch these 48: the route answers the
 same eight, and the other questions reach the model with the same passages as
-before. So the last two rows are the table-boost state asked again, and the
-difference is the model's: with Hybrid it stated Google's marketable
-securities in all three runs this time, where it had in one.
+before. So the rows after the table boost are that state asked again, and
+the differences are the model's. With Hybrid it stated Google's marketable
+securities in one run of three, then in all three, then in two.
 
 Those 48 questions cover eight of the fifteen companies, and most are answered
 right. `python notebooks/answers/headline_figures.py` asks the plain question
@@ -1444,6 +1457,8 @@ out the same on every run.
 | Table boost 1.2, Hybrid (`headline-1-table-boost-hybrid`) | 651 | 87 | 5 | 8 | 11 | 743 |
 | Facts route changes, BM25 (`headline-4-statement-names-bm25`) | 747 | 3 | 0 | 1 | 11 | 750 |
 | Facts route changes, Hybrid (`headline-4-statement-names-hybrid`) | 752 | 8 | 0 | 1 | 1 | 760 |
+| Second citation search, BM25 (`headline-5-other-names-bm25`) | 752 | 3 | 0 | 1 | 6 | 755 |
+| Second citation search, Hybrid (`headline-5-other-names-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
 
 The other 63 have no single figure in the store to grade against: a software
 company has no inventories, some filers report no total for liabilities, and
@@ -1469,6 +1484,7 @@ asked. With Hybrid, as each change to the route went in:
 | Looking through 50 passages for the citation, not 20 (`headline-2-passage-depth-hybrid-no-model`) | 660 |
 | A figure printed to one decimal of a million (`headline-3-decimal-millions-hybrid-no-model`) | 692 |
 | The statements' own names for a line (`headline-4-statement-names-hybrid`) | 752 |
+| A second search, for the line item's other names (`headline-5-other-names-hybrid`) | 756 |
 
 The nine the deeper search added were answered by the model before: five right,
 one to fewer digits, two wrong and one abstained. The 32 the decimal form added
@@ -1478,10 +1494,35 @@ operating income (12), accounts payable (5) and cash (4), and the model had 46
 right, four to fewer digits, five wrong and five abstained. No step lost a
 question the route had answered before it.
 
-That leaves ten of the 762 to the model with Hybrid, and it gets eight right.
-The two it misses are Amazon's revenue for FY2024 and FY2025, asked as "total
-revenue": Amazon's statement says "net sales", and a search for the question's
-words does not reach it.
+Before the second search ten of the 762 were left to the model with Hybrid,
+and it got eight right. The two it missed were Amazon's revenue for FY2024 and
+FY2025, asked as "total revenue": Amazon's statement says "net sales", and a
+search for the question's words does not reach it. The second search does,
+and the route answers Amazon's revenue for all five years. The six still left
+to the model are four inventories and ServiceNow's accounts payable in two
+years, and it gets all six right, so every one of the 762 is answered right
+with Hybrid. BM25 leaves ten and the model misses seven of them, all
+inventories of Broadcom and Alphabet.
+
+Those 825 questions use one name for each line item, the first in
+`FINANCIAL_METRICS`. `--every-name` asks each filing once for every name a
+line item has there, 2,325 questions, to see whether the route copes with a
+question in words the filing does not use:
+
+| Every name of every line item, no model asked | Answered from the store, of the 2,237 it holds a figure for |
+|---|---|
+| Before the second search, BM25 (`headline-4-statement-names-bm25-every-name-no-model`) | 2,035 |
+| Before the second search, Hybrid (`headline-4-statement-names-hybrid-every-name-no-model`) | 2,164 |
+| With it, BM25 (`headline-5-other-names-bm25-every-name-no-model`) | 2,225 |
+| With it, Hybrid (`headline-5-other-names-hybrid-every-name-no-model`) | 2,229 |
+
+No question the route answered before was lost, and none of those answers
+changed. Of the 65 Hybrid gained, 43 were asked as "trade payables" of a filer
+that prints "accounts payable", 16 as "revenue", "revenues" or "total revenue"
+of Amazon and Cisco, and six as ServiceNow's operating or net loss in years it
+reported income. BM25 gained 190, most of them revenue asked in a word the
+statement does not print: the dense half of Hybrid often gets from "revenue"
+to "net sales" on the first search, and a keyword search cannot.
 
 ## Streamlit app and components
 

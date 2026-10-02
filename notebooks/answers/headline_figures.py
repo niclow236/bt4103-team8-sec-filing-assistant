@@ -26,7 +26,14 @@ question is graded only where the store holds one figure for it. Where it
 holds none (a software company has no inventories) or two that disagree, the
 question is still asked and is reported as having no store figure.
 
+A filer words a line one way and a question another: Amazon's statement says
+"net sales" and a question says "revenue". ``--every-name`` asks each
+question once for every name the line item has in ``FINANCIAL_METRICS``,
+instead of the first name only, which says whether the route copes with a
+question in words the filing does not use.
+
     python notebooks/answers/headline_figures.py --label facts-only
+    python notebooks/answers/headline_figures.py --every-name --label every-name
     python notebooks/answers/headline_figures.py --provider mistral --label hybrid
 
 Rows land in ``notebooks/answers/results/headline-<label>.csv``, one per
@@ -126,19 +133,26 @@ def states(text: str, expected: Decimal) -> str | None:
     return best
 
 
-def questions(frame) -> list[dict]:
-    """One question per filing and line item, with the store's figure for it."""
+def questions(frame, every_name: bool = False) -> list[dict]:
+    """One question per filing and line item, with the store's figure for it.
+
+    With ``every_name``, one per name the line item has rather than its first
+    name only.
+    """
     rows = []
     first, last = DEFAULT_FISCAL_YEARS
     for ticker in sorted(read_tickers()):
         company = COMPANY_ALIASES[ticker][0].title()
         for year in range(first, last + 1):
             for key, metric in FINANCIAL_METRICS.items():
-                question = QUESTION.format(company=company, metric=metric.aliases[0], year=year)
-                fact = lookup_fact(question, (ticker,), (year,), frame=frame)
-                rows.append({"id": f"{ticker}-{year}-{key}", "ticker": ticker, "fiscal_year": year,
-                             "metric": key, "question": question,
-                             "expected": None if fact is None else str(fact.value)})
+                names = metric.aliases if every_name else metric.aliases[:1]
+                for number, name in enumerate(names):
+                    question = QUESTION.format(company=company, metric=name, year=year)
+                    fact = lookup_fact(question, (ticker,), (year,), frame=frame)
+                    suffix = f"-{number}" if every_name else ""
+                    rows.append({"id": f"{ticker}-{year}-{key}{suffix}", "ticker": ticker,
+                                 "fiscal_year": year, "metric": key, "question": question,
+                                 "expected": None if fact is None else str(fact.value)})
     return rows
 
 
@@ -201,6 +215,8 @@ def main() -> None:
                         help="ask this provider what the facts route leaves; default: ask no model")
     parser.add_argument("--model", default=None,
                         help="one of that provider's models; default its own")
+    parser.add_argument("--every-name", action="store_true",
+                        help="ask with every name a line item has, not its first name only")
     parser.add_argument("--label", required=True,
                         help="names the results file: results/headline-<label>.csv")
     parser.add_argument("--report", action="store_true",
@@ -220,7 +236,7 @@ def main() -> None:
     except (ValueError, ProviderUnavailable) as error:
         parser.error(str(error))
     retriever = load_retriever(args.retriever)
-    asked = questions(load_facts())
+    asked = questions(load_facts(), every_name=args.every_name)
     model = f"asking {config.provider} {config.model}" if args.provider else "no model asked"
     print(f"{len(asked)} questions | retriever {retriever.name} | {model} | FINAL_K {FINAL_K}",
           flush=True)
@@ -232,7 +248,7 @@ def main() -> None:
             rows.append({**q, "outcome": outcome_of(answer, q["expected"]),
                          "answer": "" if answer is None else answer.text})
             if number % 55 == 0:
-                print(f"  {number} of {len(asked)}", flush=True)
+                print(f"  {number:,} of {len(asked):,}", flush=True)
     except (ProviderUnavailable, KeyboardInterrupt) as error:
         # The answers before it are kept, as app_path_accuracy.py keeps them.
         stopped = error
