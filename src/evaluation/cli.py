@@ -71,6 +71,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Search each question once, instead of once per filing for a question "
              "naming several companies or years. The without half of the #35 ablation.",
     )
+    parser.add_argument(
+        "--no-refusal", dest="use_refusal", action="store_const", const=False,
+        help="Search and ask a model about every question, instead of refusing one the "
+             "parser reads as asking for advice or a prediction, or as naming only "
+             "companies outside the corpus. The without half of that comparison.",
+    )
     args = parser.parse_args(argv)
     if args.top_k is not None and args.top_k < 1:
         parser.error("--top-k must be positive")
@@ -92,6 +98,7 @@ def main(argv: list[str] | None = None) -> None:
         for setting, value in (
             ("top_k", args.top_k), ("min_score", args.min_score),
             ("use_facts", args.use_facts), ("use_decomposition", args.use_decomposition),
+            ("use_refusal", args.use_refusal),
         )
         if value is not None
     }
@@ -108,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
                           run_id=args.run_id, min_score=stack.config.min_score,
                           top_k=stack.config.top_k, use_facts=stack.config.use_facts,
                           use_decomposition=stack.config.use_decomposition,
-                          stack=stack.config)
+                          use_refusal=stack.config.use_refusal, stack=stack.config)
         stopped = None
     except (RunStopped, RunInterrupted) as error:
         # The answers before the question the run stopped at, whether a

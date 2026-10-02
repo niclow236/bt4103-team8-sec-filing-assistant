@@ -21,6 +21,13 @@ from .prompt import build_prompt
 from .query import ParsedQuestion, parse_question
 from .records import Answer, AbstentionReason, GenerationConfig
 
+# What an unanswerable question is refused with, by why it is unanswerable
+# (``constants.UNANSWERABLE_BECAUSE``). "year" is not here: see answer_question.
+REFUSALS: dict[str, AbstentionReason] = {
+    "request": "beyond_the_filings",
+    "company": "company_not_in_corpus",
+}
+
 
 def answer_question(
     question: str,
@@ -35,9 +42,22 @@ def answer_question(
     facts_file: Path = FACTS_FILE,
     use_facts: bool = True,
     use_decomposition: bool = True,
+    use_refusal: bool = True,
     parsed: ParsedQuestion | None = None,
 ) -> Answer:
     """The shared entry point for the app and evaluation harness.
+
+    A question the parser reads as unanswerable for what it asks (advice, a
+    prediction, a current price) or for naming only companies the corpus holds
+    no filings for is refused before anything is searched. Searched, the first
+    kind gets sixteen passages about the company it names and the second
+    sixteen about other companies, and a model may then answer from them: asked
+    "Is Meta a good investment?" it described Meta's spending plans.
+    The refusal is an abstention with its own reason. A question naming only a
+    fiscal year outside the corpus is still searched, since a filing prints the
+    two years before its own, and so is one whose Query names a company: the
+    caller chose what to search. ``use_refusal=False`` searches everything,
+    which is the without half of that comparison.
 
     A supplied Query overrides automatic filters. ``min_score`` is an optional
     additional floor on this retriever's final scores (inclusive, like rank()).
@@ -79,6 +99,20 @@ def answer_question(
     if query.top_k < 1:
         raise ValueError("top_k must be positive when answering a question")
     config = config if config is not None else config_from_env()
+
+    because = parsed.unanswerable_because if use_refusal else None
+    if because == "company" and query.tickers:
+        # The caller chose a company to search by hand, as the app's sidebar
+        # lets a user do, and its filings may well mention the one named.
+        because = None
+    refusal = REFUSALS.get(because)
+    if refusal is not None:
+        answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(), passages=(),
+                        abstained=True, config=config, latency_ms=0.0,
+                        abstention_reason=refusal)
+        if on_token is not None:
+            on_token(answer.text)
+        return answer
 
     # The Query's filters rather than the parse's, so a caller that narrowed the
     # search by hand gets the figure for the company and year it asked about.

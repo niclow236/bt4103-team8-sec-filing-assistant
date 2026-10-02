@@ -384,3 +384,84 @@ def test_cli_rejects_bad_configuration_before_loading_indexes(args):
     with pytest.raises(SystemExit) as error:
         main(["--run-id", "test", "--output", "report.json", *args])
     assert error.value.code == 2
+
+
+# --- questions the corpus cannot answer ---------------------------------------
+
+class NeverSearch:
+    name = "dense"
+
+    def search(self, query, k=None):
+        pytest.fail("A refused question must not be searched")
+
+
+@pytest.mark.parametrize("question, reason", [
+    ("Should I buy Amazon stock?", "beyond_the_filings"),
+    # Asked of a model with sixteen passages about Meta, this one was answered
+    # with a description of its spending plans.
+    ("Is Meta a good investment?", "beyond_the_filings"),
+    ("What will Microsoft's revenue be next year?", "beyond_the_filings"),
+    ("What is Apple's current stock price?", "beyond_the_filings"),
+    # Searched, these get passages from the companies the corpus does hold.
+    ("What was Intel's total revenue in FY2024?", "company_not_in_corpus"),
+    ("What did NVIDIA report in 2023?", "company_not_in_corpus"),
+])
+def test_a_question_the_corpus_cannot_answer_is_refused_without_a_search(question, reason,
+                                                                         tmp_path):
+    result = answer_question(question, NeverSearch(), CONFIG, llm=NeverGenerate(),
+                             facts_file=tmp_path / "missing.parquet")
+    assert_abstention(result, reason)
+    assert result.latency_ms == 0
+
+
+@pytest.mark.parametrize("question", [
+    # The company is in the corpus and only the year is not. A filing prints
+    # the two years before its own, so the FY2021 statements may hold it.
+    "What was Apple's total revenue in FY2020?",
+    # One company in the corpus and one outside it: the first can be answered.
+    "How does Apple describe competition with NVIDIA?",
+    # About what a filing says of the future, which a filing does say.
+    "What did Apple say it expects next year?",
+])
+def test_a_question_some_filing_may_answer_is_still_searched(question, tmp_path):
+    model = Model()
+    result = answer_question(question, StaticRetriever([passage(ticker="AAPL")]), CONFIG,
+                             llm=model, facts_file=tmp_path / "missing.parquet")
+    assert model.calls and not result.abstained
+
+
+def test_a_company_chosen_by_hand_is_searched_whatever_the_question_named(tmp_path):
+    # The app's sidebar lets a user pick the company to search, and Apple's
+    # filings may well say something about Intel.
+    asked = "What does the filing say about Intel?"
+    model = Model()
+    result = answer_question(asked, StaticRetriever([passage(ticker="AAPL")]), CONFIG, llm=model,
+                             query=Query(asked, tickers=("AAPL",)),
+                             facts_file=tmp_path / "missing.parquet")
+    assert model.calls and not result.abstained
+    # Advice is refused whichever company is searched.
+    advice = "Should I buy Intel stock?"
+    refused = answer_question(advice, NeverSearch(), CONFIG, llm=NeverGenerate(),
+                              query=Query(advice, tickers=("AAPL",)),
+                              facts_file=tmp_path / "missing.parquet")
+    assert_abstention(refused, "beyond_the_filings")
+
+
+def test_refusal_is_off_for_the_without_half_of_the_comparison(tmp_path):
+    model = Model()
+    result = answer_question("Should I buy Amazon stock?", StaticRetriever([passage()]), CONFIG,
+                             llm=model, facts_file=tmp_path / "missing.parquet",
+                             use_refusal=False)
+    assert model.calls and not result.abstained
+
+
+def test_evaluation_counts_the_questions_it_refused():
+    asked = [replace(question(1), question="What does Apple say about its supply chain?"),
+             replace(question(2, "unanswerable", None), question="Should I buy Amazon stock?")]
+    report = evaluate(asked, StaticRetriever([passage()]), CONFIG, run_id="refusal",
+                      llm=Model())
+    assert (report["use_refusal"], report["refused"]) == (True, 1)
+    assert report["results"][1]["answer"]["abstention_reason"] == "beyond_the_filings"
+    without = evaluate(asked, StaticRetriever([passage()]), CONFIG, run_id="no-refusal",
+                       llm=Model(), use_refusal=False)
+    assert (without["use_refusal"], without["refused"]) == (False, 0)

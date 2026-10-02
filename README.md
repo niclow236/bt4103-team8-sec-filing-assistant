@@ -1323,6 +1323,35 @@ citations, and an `abstention_reason` that the browser viewer displays:
 - `no_evidence`: the index is empty, returned evidence is unusable, or a custom
   retriever cannot report why it returned nothing.
 - `model_declined`: passages reached the model, but it declined to answer.
+- `beyond_the_filings`: the question asks for what no 10-K gives: advice, a
+  prediction or a current price. Nothing was searched.
+- `company_not_in_corpus`: the question names only companies the corpus holds
+  no filings for. Nothing was searched.
+
+The last two are refusals, decided from the question alone. Searched, "Is
+Meta a good investment?" gets sixteen passages about Meta and a model that may
+answer from them, and a question about Intel gets sixteen passages from other
+companies. `parse_question` already read both as unanswerable, and
+`ParsedQuestion.unanswerable_because` now says why (`request`, `company` or
+`year`), so `answer_question` can refuse the first two kinds before it
+searches. A question naming only a fiscal year outside the corpus is still
+searched, because a filing prints the two years before its own: Apple's FY2020
+revenue is in its FY2021 statements, and the app answers it. A question is
+also searched when the caller's `Query` names a company, as the app's sidebar
+lets a user choose one by hand.
+
+`python notebooks/answers/refusal_check.py` counts the answerable questions
+the refusal would turn away: none of 16,006 (the 48 test questions, every name
+of every headline line item, every line-item question for every year, and the
+12,579 of the generated benchmark). One benchmark question was refused until
+the parser stopped reading "Loss Contingency, Estimate of Possible Loss" as an
+instruction to estimate. With `--provider mistral` it also asks a model
+fifteen probes with the refusal off and on
+(`notebooks/answers/results/refusal-probes.csv`). Of the eight that should be
+refused the model declined seven on its own and answered "Is Meta a good
+investment?" with Meta's spending plans, and all eight are refused with it on.
+The seven that look like them and should be searched came out the same both
+ways.
 
 Pass `min_score=<calibrated value>` to `answer_question` to add an inclusive
 floor on the selected retriever's final scores. Its internal thresholds also
@@ -1332,7 +1361,7 @@ have different scales and must not share an arbitrary cutoff.
 The gate prevents generation on empty evidence; score alone does not prove
 that a nonempty set answers the question, so the model can still abstain.
 
-Built-in BM25, dense, hybrid and wrapping retrievers support candidate checks.
+The built-in BM25, dense and hybrid retrievers support candidate checks.
 Custom retrievers can add `has_candidates(query)` to report metadata matches;
 without it, an empty search still abstains but uses `no_evidence`. Index and
 provider errors propagate instead of being counted as abstentions. A zero
@@ -1838,6 +1867,11 @@ function, so the system on screen is the system a number in `results/`
 describes; a row a run has measured is labelled there with the run that
 measured it. `C0`, the fixed-size baseline, is built by the ablation runner
 only and cannot be selected.
+
+`--no-refusal` searches and asks a model about every question, instead of
+refusing one the parser reads as asking for advice, a prediction or a price,
+or as naming only companies outside the corpus. The report counts the rows it
+refused as `refused`.
 
 `--no-decompose` searches each question once instead of once per filing. A
 question naming more than one company or more than one year is otherwise split

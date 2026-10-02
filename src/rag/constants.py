@@ -102,6 +102,15 @@ OUT_OF_SCOPE_ALIASES: dict[str, tuple[str, ...]] = {
 # would filter to years and let one company crowd out the other.
 QUESTION_TYPES = ("factual", "comparative", "temporal", "numeric", "unanswerable")
 
+# Why a question is unanswerable, which decides what is done about it. A
+# request for what no 10-K gives (advice, a prediction, a current price) and a
+# question naming only companies outside the corpus are refused without a
+# search: there is nothing to retrieve, and a search over the other companies
+# only hands a model passages to answer from. A question naming only a fiscal
+# year outside the corpus is still searched, because a filing prints the two
+# years before its own beside it.
+UNANSWERABLE_BECAUSE = ("request", "company", "year")
+
 # Phrases that set two things against each other. Whole-word, lower case.
 COMPARATIVE_CUES = (
     "compare", "comparison", "compared", "versus", "vs", "vs.", "relative to",

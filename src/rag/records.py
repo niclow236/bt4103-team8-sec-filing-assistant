@@ -61,13 +61,17 @@ from .constants import ABSTAIN_PHRASE
 
 
 AbstentionReason = Literal[
-    "below_threshold", "filters_excluded_all", "no_evidence", "model_declined"
+    "below_threshold", "filters_excluded_all", "no_evidence", "model_declined",
+    "beyond_the_filings", "company_not_in_corpus",
 ]
 ABSTENTION_MESSAGES = {
     "below_threshold": "No evidence met the retrieval score threshold.",
     "filters_excluded_all": "The selected filters excluded every indexed passage.",
     "no_evidence": "Retrieval returned no usable evidence.",
     "model_declined": "The retrieved evidence does not support an answer to this question.",
+    "beyond_the_filings": "A 10-K reports the past and gives no advice, so the filings "
+                          "cannot answer a request for advice, a prediction or a current price.",
+    "company_not_in_corpus": "The question names only a company the corpus holds no filings for.",
 }
 
 

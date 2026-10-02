@@ -58,6 +58,7 @@ from .constants import (
     REPORTING_VERBS,
     SEGMENT_ALIASES,
     TEMPORAL_CUES,
+    UNANSWERABLE_BECAUSE,
 )
 
 # A year as a question writes it. Four alternatives, tried in this order:
@@ -118,9 +119,11 @@ _LAW_BEFORE = re.compile(r"\bact\s+of\s+$", re.IGNORECASE)
 # A prediction verb used as a request: at the start, after a clause break, or
 # after "can you" / "could you" / "please". "what does Apple predict" has the
 # verb after a subject and is not a request.
+# Not before "of": "Loss Contingency, Estimate of Possible Loss" is a line
+# item's name, and the comma in it does not make "Estimate" an instruction.
 _PREDICTION_REQUEST = re.compile(
     r"(?:^|[,;:.?!]\s*|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+)"
-    r"(?:" + "|".join(PREDICTION_VERBS) + r")\b",
+    r"(?:" + "|".join(PREDICTION_VERBS) + r")\b(?!\s+of\b)",
     re.IGNORECASE,
 )
 
@@ -185,6 +188,14 @@ class ParsedQuestion:
     # ParsedQuestion built by hand, means the question itself. See
     # ``_search_text`` for what is removed and what stays.
     search_text: str | None = None
+    # Why an unanswerable question is one, and None for every other type:
+    # "request" where it asks for what no 10-K gives (advice, a prediction, a
+    # current price), "company" where it names only companies the corpus does
+    # not hold, "year" where it names only fiscal years it does not hold.
+    # ``answer_question`` refuses the first two without searching. It still
+    # searches for the third, since a filing prints the two years before its
+    # own beside it and FY2020 may be in the FY2021 statements.
+    unanswerable_because: str | None = None
 
     def __post_init__(self) -> None:
         if self.question_type not in QUESTION_TYPES:
@@ -192,6 +203,13 @@ class ParsedQuestion:
                 f"question_type must be one of {', '.join(QUESTION_TYPES)}, "
                 f"got {self.question_type!r}"
             )
+        if self.unanswerable_because not in (None, *UNANSWERABLE_BECAUSE):
+            raise ValueError(
+                f"unanswerable_because must be one of {', '.join(UNANSWERABLE_BECAUSE)}, "
+                f"got {self.unanswerable_because!r}"
+            )
+        if self.unanswerable_because is not None and self.question_type != "unanswerable":
+            raise ValueError("unanswerable_because is only for an unanswerable question")
         object.__setattr__(self, "tickers", tuple(self.tickers))
         object.__setattr__(self, "fiscal_years", tuple(self.fiscal_years))
         object.__setattr__(self, "unresolved", tuple(self.unresolved))
@@ -289,14 +307,20 @@ def parse_question(
         or (facts_file is not None and _mentions_fact_label(figure_text, facts_file))
     )
 
+    only_out_of_scope = bool(out_of_scope) and not tickers
+    only_bad_years = bool(bad_years) and not years
     question_type = _classify(
         question,
         n_tickers=len(tickers),
         n_years=len(years),
-        named_only_out_of_scope=bool(out_of_scope) and not tickers,
-        named_only_bad_years=bool(bad_years) and not years,
+        named_only_out_of_scope=only_out_of_scope,
+        named_only_bad_years=only_bad_years,
         wants_figures=wants_figures,
     )
+    because = None
+    if question_type == "unanswerable":
+        because = ("request" if _asks_beyond_the_filing(question)
+                   else "company" if only_out_of_scope else "year")
     return ParsedQuestion(
         question=question.strip(),
         question_type=question_type,
@@ -305,6 +329,7 @@ def parse_question(
         unresolved=tuple(out_of_scope) + tuple(bad_years),
         wants_figures=wants_figures,
         search_text=_search_text(question.strip(), tickers, years),
+        unanswerable_because=because,
     )
 
 

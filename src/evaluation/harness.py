@@ -18,6 +18,7 @@ from src.rag import (
     config_from_env,
     parse_question,
 )
+from src.rag.answer import REFUSALS
 from src.rag.records import Answer, GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
@@ -109,6 +110,7 @@ def evaluate(
     llm: Any | None = None,
     use_facts: bool = True,
     use_decomposition: bool = True,
+    use_refusal: bool = True,
     stack: Any | None = None,
 ) -> dict[str, Any]:
     """One configuration per run; count every completed question exactly once.
@@ -148,6 +150,12 @@ def evaluate(
     records the sub-questions its evidence came from, and ``decomposed`` counts
     the rows that were split, so a run says how many questions the row it is
     measuring could even apply to.
+
+    ``use_refusal`` is the same for the refusal of a question the parser reads
+    as asking for advice or a prediction, or as naming only companies outside
+    the corpus: False searches those too and leaves the abstaining to a model.
+    A refused row abstains with the reason that says so, and ``refused`` counts
+    them.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -176,8 +184,11 @@ def evaluate(
             "top_k": top_k,
             "use_facts": use_facts,
             "use_decomposition": use_decomposition,
+            "use_refusal": use_refusal,
             "routes": dict(sorted(Counter(row["route"] for row in rows).items())),
             "decomposed": sum(1 for row in rows if row["sub_questions"]),
+            "refused": sum(1 for row in rows
+                           if row["answer"]["abstention_reason"] in REFUSALS.values()),
             "summary": _rates(rows),
             "by_answerability": {
                 "unanswerable": _rates([r for r in rows if r["question_type"] == UNANSWERABLE]),
@@ -202,7 +213,7 @@ def evaluate(
         answer, attempts = _answer_with_retries(question, partial(
             answer_question, question.question, retriever, config, query=query,
             min_score=min_score, llm=llm, use_facts=use_facts,
-            use_decomposition=use_decomposition, parsed=parsed,
+            use_decomposition=use_decomposition, use_refusal=use_refusal, parsed=parsed,
         ))
         return {"question_id": question.question_id, "run_id": run_id,
                 "question_type": question.question_type,

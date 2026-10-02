@@ -150,9 +150,10 @@ def read_as_the_app_does(question: str):
     return parse_question(question)
 
 
-def ask(question: str, retriever, config, llm, last_request: list[float]):
+def ask(question: str, retriever, config, llm, last_request: list[float], **options):
     """One answer by the app's path, asked again where the provider was busy,
-    on the evaluation harness's terms."""
+    on the evaluation harness's terms. ``options`` go to ``answer_question``,
+    for a script that measures the path with one of its switches off."""
     parsed = read_as_the_app_does(question)
     for wait in (*RETRY_WAITS_S, None):
         gap = MIN_INTERVAL_S - (time.perf_counter() - last_request[0])
@@ -161,7 +162,8 @@ def ask(question: str, retriever, config, llm, last_request: list[float]):
         last_request[0] = started = time.perf_counter()
         try:
             answer = answer_question(question, retriever, config, llm=llm,
-                                     query=parsed.to_query(top_k=FINAL_K), parsed=parsed)
+                                     query=parsed.to_query(top_k=FINAL_K), parsed=parsed,
+                                     **options)
             return answer, time.perf_counter() - started
         except ProviderBusy as error:
             if wait is None:

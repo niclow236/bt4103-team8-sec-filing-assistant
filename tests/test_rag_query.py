@@ -558,6 +558,39 @@ def test_a_request_for_advice_a_prediction_or_a_price_is_unanswerable(question):
     assert _parse(question).question_type == "unanswerable"
 
 
+@pytest.mark.parametrize("question, because", [
+    ("Should I buy Microsoft stock?", "request"),
+    ("What will Apple's revenue be next year?", "request"),
+    ("What is Apple's stock price?", "request"),
+    ("What did NVIDIA report in 2023?", "company"),
+    ("What was Intel's revenue in 2023?", "company"),
+    ("What was Apple's revenue in 2015?", "year"),
+    # Advice about a company outside the corpus is refused as advice.
+    ("Should I buy Intel stock?", "request"),
+])
+def test_an_unanswerable_question_says_why_it_is_one(question, because):
+    parsed = _parse(question)
+    assert parsed.question_type == "unanswerable"
+    assert parsed.unanswerable_because == because
+
+
+def test_an_answerable_question_has_no_reason_to_be_refused():
+    assert _parse("What was Apple's revenue in FY2024?").unanswerable_because is None
+    with pytest.raises(ValueError, match="only for an unanswerable question"):
+        ParsedQuestion("q", "factual", (), (), (), False, unanswerable_because="request")
+    with pytest.raises(ValueError, match="unanswerable_because must be one of"):
+        ParsedQuestion("q", "unanswerable", (), (), (), False, unanswerable_because="mood")
+
+
+def test_a_prediction_word_inside_a_line_item_s_name_is_not_a_request():
+    # One of the 12,579 benchmark questions: the XBRL label holds "Estimate"
+    # after a comma, which read as an instruction to estimate.
+    parsed = _parse("What was Loss Contingency, Estimate of Possible Loss for INTU in FY2021?")
+    assert parsed.question_type != "unanswerable"
+    assert _parse("Given what Oracle reported, estimate its revenue going forward"
+                  ).question_type == "unanswerable"
+
+
 def test_a_prediction_verb_after_a_subject_asks_what_the_filing_predicts():
     assert _parse("What does Apple predict for its supply chain?").question_type == "factual"
 

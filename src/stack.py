@@ -17,9 +17,10 @@ generator and the answer-time settings as one object whose
 
 The ids are the ablation's own: C0 to C4 as ``src/evaluation/run.py`` has always
 defined them, moved here so the app can select one. ``Stack.answer`` applies the
-#34 and #35 switches from the configuration rather than from its caller, so a
-new ablation row for either is a line in this registry instead of an argument
-threaded through two commands.
+#34 and #35 switches, and the refusal of a question no filing can answer, from
+the configuration rather than from its caller, so a new ablation row for any
+of them is a line in this registry instead of an argument threaded through two
+commands.
 
 Nothing here imports Streamlit or argparse: the app and the two commands are
 callers of this module, never the other way round. The retriever imports are
@@ -69,6 +70,7 @@ class StackConfig:
     min_score: float | None = None   # an extra floor on this retriever's scale
     use_facts: bool = True           # #34: look a numeric question up first
     use_decomposition: bool = True   # #35: one search per filing
+    use_refusal: bool = True         # refuse, unsearched, what no filing answers
 
     def to_dict(self) -> dict[str, Any]:
         """The configuration as a results file records it."""
@@ -82,6 +84,7 @@ class StackConfig:
             "min_score": self.min_score,
             "use_facts": self.use_facts,
             "use_decomposition": self.use_decomposition,
+            "use_refusal": self.use_refusal,
         }
 
     def scoped(self, query: Query) -> Query:
@@ -220,6 +223,7 @@ class Stack:
             "min_score": self.config.min_score,
             "use_facts": self.config.use_facts,
             "use_decomposition": self.config.use_decomposition,
+            "use_refusal": self.config.use_refusal,
         }
         settings.update(overrides)
         # A row measured without the metadata filter searched the whole corpus,
@@ -255,7 +259,7 @@ def build_stack(
     ``parts`` is passed to ``build_retriever``, for a caller that builds more
     than one configuration and wants them to share the indexes.
     ``settings`` override the rest of the configuration -- ``top_k``,
-    ``min_score``, ``use_facts``, ``use_decomposition``.
+    ``min_score``, ``use_facts``, ``use_decomposition``, ``use_refusal``.
     """
     from dataclasses import replace as _replace
 
@@ -265,7 +269,8 @@ def build_stack(
     if retriever_key is not None:
         settings["retriever"] = retriever_key
     if settings:
-        allowed = {"retriever", "top_k", "min_score", "use_facts", "use_decomposition"}
+        allowed = {"retriever", "top_k", "min_score", "use_facts", "use_decomposition",
+                   "use_refusal"}
         unknown = set(settings) - allowed
         if unknown:
             raise ValueError(
