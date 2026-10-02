@@ -23,7 +23,7 @@ The test ran on 18 September 2026 on Mistral's free plan, with all 48 questions 
 
 ### 23 September 2026: `FINAL_K` at 8 against 16 (#85)
 
-Both Ministral models were re-run over the same 48 questions at the old `FINAL_K` of 8 and at the 16 that #85 settled on. The two `20260923-*` files in `results/` are the record.
+Both Ministral models were re-run over the same 48 questions at the old `FINAL_K` of 8 and at the 16 that #85 settled on. The two `20260923-*` run files the notebook writes to `results/` hold the rows.
 
 | | 14B @ 8 | 14B @ 16 | 8B @ 8 | 8B @ 16 |
 |---|---|---|---|---|
@@ -57,11 +57,11 @@ Then:
 **Running it with an AI agent** (Claude Code, Codex):
 - **The key must already be in `.env`.** Nobody is there to answer the notebook's hidden key prompt.
 - **Keep the agent out of `.env`.** In Claude Code, add `"permissions": {"deny": ["Read(**/.env)"]}` to your own `.claude/settings.local.json`. The notebook never prints the key.
-- **Don't commit the executed notebook.** The run's CSV in `results/` is the record.
+- **Don't commit the executed notebook or its results.** `results/` is git-ignored: the notebook writes it again on each machine that runs it.
 
 ## Results files
 
-Each run adds one file to `results/`, named for its time and models, such as `20260918-1239_ministral-14b-2512_ministral-8b-2512.csv`.
+Each run adds one file to `results/`, which is git-ignored, named for its time and models, such as `20260918-1239_ministral-14b-2512_ministral-8b-2512.csv`.
 
 - **Each run file has one row per answer:** the question, the expected answer, the model's answer, its timings and the automatic checks. Since #85 each row also carries `final_k`, the retrieval cutoff the run used, and `input_tokens`, the prompt's length as the provider counted it. The September files predate both columns, and the summary leaves them blank rather than guessing.
 - **`manual_correct` starts empty.** Mark each answer's correctness there by hand.

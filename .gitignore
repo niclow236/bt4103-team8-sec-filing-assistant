@@ -255,3 +255,22 @@ Thumbs.db
 # Terminal output saved by src/utils.py run logging. Records of one machine
 # run, not shared source.
 logs/
+
+# Results and other data files. Every one is written by a script or notebook
+# in this repo, so none is committed: run the code that writes a file to get
+# it on your machine. A results/ folder anywhere holds a run's output.
+results/
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.jsonl
+# Hand-written inputs that no code produces, so they stay in the repo.
+!notebooks/test_data/test_questions.csv
+!benchmark/questions.jsonl

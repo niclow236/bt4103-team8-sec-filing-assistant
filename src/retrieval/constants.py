@@ -146,7 +146,7 @@ BM25_B = 0.75
 #   prompt tokens (llama3.2), median  2,884    4,005    5,220    6,475
 #   prompt tokens, largest seen       3,550    4,984    6,306    7,703
 #
-# The committed final_k_sweep.csv and the hosted runs further down come from a
+# final_k_sweep.csv as measured and the hosted runs further down come from a
 # local build of the corpus that ranks the expected figure differently for 14
 # of the 28 figure questions. On it the figure reached the prompt for 18, 21,
 # 22 and 23 of the 28.

@@ -141,15 +141,15 @@ bt4103-team8-sec-filing-assistant/
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
-│   ├── answers/             #   test questions and headline figures through the app's answer path, with results/
-│   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
+│   ├── answers/             #   test questions and headline figures through the app's answer path; each writes a git-ignored results/
+│   ├── mistral/             #   hosted Mistral models through the real RAG path; writes a git-ignored results/
 │   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words
 │   └── test_data/           #   the team's 48 test questions
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
-├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id
+├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id (git-ignored)
 └── docs/                    # reports, minutes, references
     └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
 ```
@@ -773,8 +773,8 @@ loop over them.
 There was a fourth, a cross-encoder reranker (#21) that re-scored hybrid's top
 50 with `ms-marco-MiniLM-L-6-v2`. Nothing on the answer path used it, so it was
 measured before being wired in, and it did not put more answers in front of
-the model. `rerank_comparison.csv` and `rerank_comparison_xbrl.csv` in
-`notebooks/retrieval/results/` hold the rows:
+the model. `notebooks/retrieval/rerank_comparison.py`, as of `a9e8bf2`, writes
+the rows:
 
 | | Hybrid | Hybrid, reranked | Reranked, no table boost on its scores |
 |---|---|---|---|
@@ -945,7 +945,7 @@ checks that against real searches before it trusts it.
 | Prompt tokens, largest seen | 3,550 | 4,984 | 6,306 | 7,703 |
 
 The rows are on the corpus `search_text_comparison.csv` was measured on, except
-the AAPL and AMZN row. That row, the committed `final_k_sweep.csv` and the
+the AAPL and AMZN row. That row, `final_k_sweep.csv` as measured and the
 hosted runs below come from a local build that ranks the expected figure
 differently for 14 of the 28 figure questions; on it the figure reached the
 prompt for 18, 21, 22 and 23 of the 28.
@@ -1518,7 +1518,8 @@ Retrieval and the facts route are the same in every run, so the spread across
 runs is the model's.
 
 With `ministral-8b-2512` at `FINAL_K` 16, three runs of the 48 at each state of
-the code. Each row is a file in `notebooks/answers/results/`, and the three
+the code. Each row is a file `notebooks/answers/app_path_accuracy.py` writes to
+its git-ignored `results/` folder, named in brackets, and the three
 numbers in a cell are the three runs:
 
 | 48 test questions | Figures right, of 28 | Wrong figure or none | Abstained | From the facts store | Figure in the passages, of the 20 a model answered | Prose: expected terms in the answer |
