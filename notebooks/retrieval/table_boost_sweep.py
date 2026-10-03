@@ -191,30 +191,40 @@ def written_rows(bm25, dense, questions):
     return rows
 
 
+def supported_by(question, kind_of):
+    """Whether a benchmark question's supporting chunks are tables, prose or both."""
+    kinds = {kind_of[chunk_id] for chunk_id in question.supporting_chunk_ids}
+    return "tables" if kinds == {"table"} else "prose" if "table" not in kinds else "both"
+
+
+def at_final_k(question, name, passages):
+    """A benchmark question's metrics over the top FINAL_K of one search, and
+    how many of those passages are tables."""
+    top = passages[:FINAL_K]
+    metrics = score_question(
+        question,
+        RunResult.from_passages(question.question_id, top, retriever=name),
+        k=FINAL_K,
+    )
+    return {"recall": metrics["recall"], "ndcg": round(metrics["ndcg"], 4),
+            "mrr": round(metrics["mrr"], 4),
+            "tables": sum(passage.content_type == "table" for passage in top)}
+
+
 def generated_rows(bm25, dense, questions, kind_of):
     """One row per question and retriever, with the metrics at each boost side by side."""
     rows = []
     for number, question in enumerate(questions, start=1):
         query = generated_query(question)
-        kinds = {kind_of[chunk_id] for chunk_id in question.supporting_chunk_ids}
         by_retriever = defaultdict(dict)
         for name, boost, passages in searches(bm25, dense, query):
-            top = passages[:FINAL_K]
-            metrics = score_question(
-                question,
-                RunResult.from_passages(question.question_id, top, retriever=name),
-                k=FINAL_K,
-            )
             by_retriever[name].update({
-                f"recall@{boost}": metrics["recall"], f"ndcg@{boost}": round(metrics["ndcg"], 4),
-                f"mrr@{boost}": round(metrics["mrr"], 4),
-                f"tables@{boost}": sum(passage.content_type == "table" for passage in top),
-            })
+                f"{metric}@{boost}": value
+                for metric, value in at_final_k(question, name, passages).items()})
         for name, metrics in by_retriever.items():
             rows.append({"qid": question.question_id, "retriever": name,
                          "wants_figures": query.wants_figures,
-                         "supported_by": "tables" if kinds == {"table"} else
-                                         "prose" if "table" not in kinds else "both",
+                         "supported_by": supported_by(question, kind_of),
                          **metrics})
         if number % 250 == 0:
             print(f"  {number:,} of {len(questions):,}", flush=True)
@@ -269,13 +279,20 @@ def main() -> None:
     report(written_table, generated_table)
 
 
-def report(written_table, generated_table) -> None:
-    """Print the two summaries for a finished run."""
+def report(written_table, generated_table, summarize_benchmark=None) -> None:
+    """Print the two summaries for a finished run.
+
+    ``summarize_benchmark`` sums up the benchmark table. It is this script's
+    own unless another is given: ``common_words_comparison.py`` prints through
+    here with its own, since its table has a row per scoring where this one
+    has a column per boost.
+    """
+    summarize_benchmark = summarize_benchmark or summarize_generated
     with pd.option_context("display.width", 250, "display.max_columns", 20):
         print("\n--- 48 hand-written questions ---")
         print(summarize(written_table).T.to_string())
         print(f"\n--- XBRL benchmark (#24), scored with #25's metrics at {FINAL_K} ---")
-        print(summarize_generated(generated_table).to_string())
+        print(summarize_benchmark(generated_table).to_string())
 
 
 if __name__ == "__main__":

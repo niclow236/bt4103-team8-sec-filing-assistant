@@ -41,7 +41,6 @@ summaries print.
 
 from __future__ import annotations
 
-import copy
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -52,19 +51,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd  # noqa: E402
 
-from search_text_comparison import load_questions as load_written, measure, summarize  # noqa: E402
+from search_text_comparison import load_questions as load_written, measure  # noqa: E402
 from src.evaluation.benchmark import (  # noqa: E402
     DEFAULT_GENERATED_QUESTIONS_PATH,
     load_questions as load_generated,
 )
-from src.evaluation.metrics import score_question  # noqa: E402
-from src.evaluation.records import RunResult  # noqa: E402
 from src.rag.query import parse_question  # noqa: E402
 from src.retrieval.bm25 import BM25Retriever  # noqa: E402
 from src.retrieval.constants import BM25, CANDIDATE_K, DENSE, FINAL_K, HYBRID  # noqa: E402
 from src.retrieval.dense import DenseRetriever  # noqa: E402
 from src.retrieval.hybrid import HybridRetriever  # noqa: E402
-from table_boost_sweep import PER_FILING, Replayed, generated_query, sample_generated  # noqa: E402
+from table_boost_sweep import (  # noqa: E402
+    PER_FILING,
+    Replayed,
+    at_final_k,
+    generated_query,
+    report,
+    sample_generated,
+    supported_by,
+)
 
 RESULTS_DIR = ROOT / "notebooks" / "retrieval" / "results"
 WRITTEN_CSV = RESULTS_DIR / "common_words_comparison.csv"
@@ -72,13 +77,6 @@ XBRL_CSV = RESULTS_DIR / "common_words_comparison_xbrl.csv"
 
 EVERY_WORD = "every word"
 WITHOUT_COMMON = "without the common words"
-
-
-def scoring_every_word(bm25):
-    """The same index, scoring a question on all of its words, as it used to."""
-    every = copy.copy(bm25)
-    every._common = frozenset()
-    return every
 
 
 def searches(keyword, dense, query):
@@ -128,21 +126,11 @@ def generated_rows(keyword, dense, questions, kind_of):
     rows = []
     for number, question in enumerate(questions, start=1):
         query = generated_query(question)
-        kinds = {kind_of[chunk_id] for chunk_id in question.supporting_chunk_ids}
         for name, scoring, passages in searches(keyword, dense, query):
-            top = passages[:FINAL_K]
-            metrics = score_question(
-                question,
-                RunResult.from_passages(question.question_id, top, retriever=name),
-                k=FINAL_K,
-            )
             rows.append({"qid": question.question_id, "retriever": name, "scoring": scoring,
                          "wants_figures": query.wants_figures,
-                         "supported_by": "tables" if kinds == {"table"} else
-                                         "prose" if "table" not in kinds else "both",
-                         "recall": metrics["recall"], "ndcg": round(metrics["ndcg"], 4),
-                         "mrr": round(metrics["mrr"], 4),
-                         "tables": sum(passage.content_type == "table" for passage in top)})
+                         "supported_by": supported_by(question, kind_of),
+                         **at_final_k(question, name, passages)})
         if number % 250 == 0:
             print(f"  {number:,} of {len(questions):,}", flush=True)
     return rows
@@ -171,10 +159,10 @@ def summarize_generated(table):
 
 def main() -> None:
     bm25, dense = BM25Retriever.load(), DenseRetriever.load()
-    keyword = {EVERY_WORD: scoring_every_word(bm25), WITHOUT_COMMON: bm25}
+    keyword = {EVERY_WORD: bm25.scoring_every_word(), WITHOUT_COMMON: bm25}
     kind_of = {chunk["chunk_id"]: chunk["content_type"] for chunk in bm25.chunks}
     print(f"in more than half of the {len(bm25.chunks):,} passages, and not scored: "
-          f"{', '.join(sorted(bm25._common))}", flush=True)
+          f"{', '.join(sorted(bm25.common_words))}", flush=True)
 
     written = load_written()
     generated = sample_generated(load_generated(DEFAULT_GENERATED_QUESTIONS_PATH))
@@ -194,22 +182,13 @@ def main() -> None:
     written_table.to_csv(WRITTEN_CSV, index=False, encoding="utf-8-sig")
     generated_table.to_csv(XBRL_CSV, index=False, encoding="utf-8-sig")
     print("\nSaved", WRITTEN_CSV.relative_to(ROOT), "and", XBRL_CSV.relative_to(ROOT))
-    report(written_table, generated_table)
-
-
-def report(written_table, generated_table) -> None:
-    """Print the two summaries for a finished run."""
-    with pd.option_context("display.width", 250, "display.max_columns", 20):
-        print("\n--- 48 hand-written questions ---")
-        print(summarize(written_table).T.to_string())
-        print(f"\n--- XBRL benchmark (#24), scored with #25's metrics at {FINAL_K} ---")
-        print(summarize_generated(generated_table).to_string())
+    report(written_table, generated_table, summarize_generated)
 
 
 if __name__ == "__main__":
     # Re-print a finished run's summaries without searching again.
     if "--report" in sys.argv:
         report(pd.read_csv(WRITTEN_CSV, encoding="utf-8-sig"),
-               pd.read_csv(XBRL_CSV, encoding="utf-8-sig"))
+               pd.read_csv(XBRL_CSV, encoding="utf-8-sig"), summarize_generated)
     else:
         main()

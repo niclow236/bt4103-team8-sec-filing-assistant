@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -289,6 +289,17 @@ class ParsedQuestion:
         if top_k is not None:
             fields["top_k"] = top_k
         return Query(**fields)
+
+    def scoped_to(self, query: Query) -> ParsedQuestion:
+        """This reading in the companies and years ``query`` names.
+
+        What an answer is checked against, and what the app describes under
+        it. The two can differ from what the question named: the app's sidebar
+        lets a user change them, and the evaluation harness replaces them with
+        the benchmark's. One definition, so the app and the harness cannot
+        come to check an answer against different scopes.
+        """
+        return replace(self, tickers=query.tickers, fiscal_years=query.fiscal_years)
 
 
 def parse_question(

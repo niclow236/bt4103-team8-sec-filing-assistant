@@ -59,7 +59,7 @@ from .records import (
     VerificationCheck,
     VerificationResult,
 )
-from .verify import verify_answer
+from .verify import verify_answer, worst_check
 
 __all__ = [
     "Answer",
@@ -94,4 +94,5 @@ __all__ = [
     "resolve_citations",
     "stream",
     "verify_answer",
+    "worst_check",
 ]

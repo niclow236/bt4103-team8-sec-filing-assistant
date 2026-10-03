@@ -15,6 +15,7 @@ establish entailment. No model, network call or facts download is needed.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -412,4 +413,22 @@ def verify_answer(
     return replace(answer, verification=VerificationResult(parsed.question_type, tuple(checks)))
 
 
-__all__ = ["verify_answer"]
+# The statuses of a passage or fact check, the worst first.
+_WORST_FIRST = ("mismatch", "supported", "unverified")
+
+
+def worst_check(statuses: Iterable[str]) -> str:
+    """One word for an answer, from the statuses of its passage and fact checks.
+
+    The answer card marks a claim the same way: one mismatch outweighs any
+    support, and support outweighs a check that could not be made.
+    ``unchecked`` is an answer with no such check, which is one that states no
+    figure. The evaluation harness counts a run's answers by this word and the
+    measurement scripts record it for each answer, so the two cannot disagree
+    about what to call an answer.
+    """
+    found = set(statuses)
+    return next((status for status in _WORST_FIRST if status in found), "unchecked")
+
+
+__all__ = ["verify_answer", "worst_check"]

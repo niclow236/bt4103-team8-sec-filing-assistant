@@ -34,6 +34,7 @@ comparison whose rows differ in their tie-break is not measuring retrieval.
 
 from __future__ import annotations
 
+import copy
 import pickle
 import re
 from collections import Counter
@@ -214,6 +215,24 @@ class BM25Retriever:
         """
         kept = [token for token in tokens if token not in self._common]
         return kept or tokens
+
+    @property
+    def common_words(self) -> frozenset[str]:
+        """The words in more than half the passages, which no question is scored on."""
+        return self._common
+
+    def scoring_every_word(self) -> BM25Retriever:
+        """This index, scoring a question on all of its words, common ones too.
+
+        What the keyword search did before the common words were left out, for
+        a script that measures the difference
+        (``notebooks/retrieval/common_words_comparison.py``). The passages and
+        the fitted scores are shared with this one, not copied. Nothing on the
+        answer path asks for it.
+        """
+        every = copy.copy(self)
+        every._common = frozenset()
+        return every
 
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         """Return the highest-scoring passages matching the query filters.

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import streamlit as st
 
 from src.app.components import answer_card, filter_sidebar
@@ -84,8 +82,7 @@ def main() -> None:
 
     # The question as read, in the scope the sidebar ends up with: what the
     # answer is checked against and what the line under it describes.
-    scoped = (replace(parsed, tickers=query.tickers, fiscal_years=query.fiscal_years)
-              if parsed is not None else None)
+    scoped = parsed.scoped_to(query) if parsed is not None else None
     request = (question.strip(), query.tickers, query.fiscal_years, query.items, config_id)
     if st.button("Ask", type="primary", disabled=not question.strip()):
         # The answer as the model writes it, until the checked answer replaces

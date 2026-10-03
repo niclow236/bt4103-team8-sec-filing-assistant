@@ -12,7 +12,13 @@ from src.app.answers import main as view
 from src.app.answers import render_answer, write_answer_page
 from src.evaluation import BenchmarkQuestion, evaluate
 from src.evaluation.cli import main
-from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S, RunInterrupted, RunStopped
+from src.evaluation.harness import (
+    MAX_RETRY_WAIT_S,
+    RETRY_WAITS_S,
+    RunInterrupted,
+    RunStopped,
+    answer_with_retries,
+)
 from src.pipeline.chunk import iter_chunks
 from src.rag import (
     ProviderBusy,
@@ -315,6 +321,29 @@ def test_a_busy_provider_is_asked_again_before_it_stops_the_run(monkeypatch, cap
     assert report["results"][0]["attempts"] == len(RETRY_WAITS_S) + 1
     assert report["stopped"] is None
     assert f"1: {busy}; asking again in {RETRY_WAITS_S[0]}s" in caplog.text
+
+
+def test_the_retry_is_one_function_a_script_can_ask_through_too(monkeypatch, caplog):
+    # The measurement scripts under notebooks/answers/ each had this loop, and
+    # their own ask() returns more than an Answer.
+    waits = []
+    monkeypatch.setattr("src.evaluation.harness.sleep", waits.append)
+    busy = ProviderBusy("Mistral's rate limit was reached", retry_after=90)
+    asked = []
+
+    def ask():
+        asked.append(1)
+        if len(asked) == 1:
+            raise busy
+        return "an answer", 1.5
+
+    assert answer_with_retries("What happened?", ask) == (("an answer", 1.5), 2)
+    assert waits == [90]
+    assert f"What happened?: {busy}; asking again in 90s" in caplog.text
+    # The last attempt's error is raised, not waited out.
+    with pytest.raises(ProviderBusy):
+        answer_with_retries("q", lambda: (_ for _ in ()).throw(ProviderBusy("still busy")))
+    assert waits == [90, *RETRY_WAITS_S]
 
 
 def test_a_run_the_provider_stops_keeps_the_answers_before_it(monkeypatch):

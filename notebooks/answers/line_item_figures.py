@@ -41,7 +41,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd  # noqa: E402
 
-from app_path_accuracy import RESULTS_DIR, load_retriever, read_as_the_app_does  # noqa: E402
+from app_path_accuracy import (  # noqa: E402
+    RESULTS_DIR,
+    load_retriever,
+    read_as_the_app_does,
+    run_and_save,
+)
 from headline_figures import ask, checker_says, outcome_of  # noqa: E402
 from src.config import read_tickers  # noqa: E402
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS  # noqa: E402
@@ -156,8 +161,7 @@ def main() -> None:
     print(f"{len(asked)} questions | retriever {retriever.name} | asking {config.provider} "
           f"{config.model} | FINAL_K {FINAL_K}", flush=True)
 
-    rows, last_request, stopped = [], [0.0], None
-    try:
+    def answer_all(rows: list[dict], last_request: list[float]) -> None:
         for number, q in enumerate(asked, start=1):
             answer = ask(q["question"], retriever, config, llm, last_request)
             rows.append({**q, "outcome": outcome_of(answer, q["expected"]),
@@ -167,17 +171,8 @@ def main() -> None:
                          "answer": answer.text})
             if number % 10 == 0:
                 print(f"  {number:,} of {len(asked):,}", flush=True)
-    except (ProviderUnavailable, KeyboardInterrupt) as error:
-        # The answers before it are kept, as app_path_accuracy.py keeps them.
-        stopped = error
-    if rows:
-        table = pd.DataFrame(rows)
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        table.to_csv(results_csv, index=False, encoding="utf-8-sig")
-        print("\nSaved", results_csv.relative_to(ROOT))
-        print(summarize(table).to_string())
-    if stopped is not None:
-        sys.exit(f"stopped after {len(rows)} answers: {type(stopped).__name__}: {stopped}")
+
+    run_and_save(results_csv, answer_all, lambda table: print(summarize(table).to_string()))
 
 
 if __name__ == "__main__":

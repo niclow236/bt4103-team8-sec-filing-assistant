@@ -182,6 +182,21 @@ def test_the_common_words_are_the_corpus_s_own_not_a_list():
     found = index.search(Query("goodwill impairment", top_k=3))
     assert found[0].text == "Goodwill impairment testing."
     assert [passage.score for passage in found[1:]] == [0, 0]
+    assert "goodwill" in index.common_words and "impairment" not in index.common_words
+
+
+def test_an_index_can_be_asked_to_score_every_word_for_comparison():
+    # The comparison script measures the search as it was before the common
+    # words were left out, without reaching into the index to switch it.
+    index = _keyword_index(STATEMENT, *PROSE)
+    question = Query("What was the value of goodwill at the end of the year?", top_k=13)
+    every = index.scoring_every_word()
+    assert every.common_words == frozenset() and index.common_words
+    # Scored on "the" and "of" as well, the prose outranks the row that answers.
+    assert every.search(question)[0].text != STATEMENT
+    # The index it came from is unchanged, and the two share their passages.
+    assert index.search(question)[0].text == STATEMENT
+    assert every.chunks is index.chunks
 
 
 # --- weighting toward tables ------------------------------------------------

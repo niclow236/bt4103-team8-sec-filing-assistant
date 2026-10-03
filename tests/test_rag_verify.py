@@ -389,6 +389,23 @@ def test_a_table_without_a_declared_scale_is_unverified_not_mismatch(store):
         verify_answer(answer(claim, passages=[scaled]), facts_file=store), "passage")] == ["supported"]
 
 
+@pytest.mark.parametrize("statuses, word", [
+    # One mismatch marks the answer whatever else agrees with it.
+    (["supported", "mismatch", "unverified"], "mismatch"),
+    (["unverified", "supported"], "supported"),
+    (["unverified", "unverified"], "unverified"),
+    # No passage or fact check at all: the answer states no figure.
+    ([], "unchecked"),
+])
+def test_an_answer_is_summed_up_by_the_worst_of_its_checks(statuses, word):
+    # One definition for the evaluation harness, which counts a run's answers
+    # by this word, and the measurement scripts, which record it per answer.
+    from src.rag import worst_check
+
+    assert worst_check(statuses) == word
+    assert worst_check(iter(statuses)) == word
+
+
 # --- per-share amounts ----------------------------------------------------------
 
 EPS_TABLE = ("(in millions, except per share data)\n\n"

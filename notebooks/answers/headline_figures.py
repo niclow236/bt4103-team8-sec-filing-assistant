@@ -51,7 +51,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import time
 from decimal import Decimal
 from pathlib import Path
 
@@ -62,22 +61,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd  # noqa: E402
 
 from app_path_accuracy import (  # noqa: E402
-    MIN_INTERVAL_S,
     RESULTS_DIR,
     load_retriever,
+    paced,
     read_as_the_app_does,
+    run_and_save,
 )
 from src.config import read_tickers  # noqa: E402
-from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S  # noqa: E402
+from src.evaluation.harness import answer_with_retries  # noqa: E402
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS  # noqa: E402
 from src.rag import (  # noqa: E402
-    ProviderBusy,
     ProviderUnavailable,
     answer_question,
     chat_model,
     config_from_env,
-    parse_question,
     verify_answer,
+    worst_check,
 )
 from src.rag.constants import (  # noqa: E402
     COMPANY_ALIASES,
@@ -108,9 +107,10 @@ ROUNDING_LIMIT = Decimal("0.01")
 
 OUTCOMES = ("from the facts store", "model: right", "model: right, rounded",
             "model: wrong figure or none", "model: abstained", "left to a model")
-# What the checker says of an answer, the worst first: one mismatch marks the
-# claim whatever else is supported.
-CHECKER = ("mismatch", "supported")
+# What the checker says of an answer, in the order the summary prints them. A
+# run recorded before "unchecked" was told apart has those answers under
+# "unverified".
+CHECKER = ("supported", "unverified", "unchecked", "mismatch")
 
 
 class NotAsked(Exception):
@@ -175,25 +175,18 @@ def ask(question: str, retriever, config, llm, last_request: list[float]):
     """The answer by the app's path, or None where it was left to a model that
     this run does not ask."""
     parsed = read_as_the_app_does(question)
-    for wait in (*RETRY_WAITS_S, None):
+
+    def once():
         if not isinstance(llm, NoModel):
-            gap = MIN_INTERVAL_S - (time.perf_counter() - last_request[0])
-            if gap > 0:
-                time.sleep(gap)
-            last_request[0] = time.perf_counter()
+            paced(last_request)
         try:
             return answer_question(question, retriever, config, llm=llm,
                                    query=parsed.to_query(top_k=FINAL_K), parsed=parsed)
         except NotAsked:
             return None
-        except ProviderBusy as error:
-            if wait is None:
-                raise
-            wait = max(wait, error.retry_after or 0)
-            if wait > MAX_RETRY_WAIT_S:
-                raise
-            print(f"   busy ({error}); asking again in {wait:.0f}s", flush=True)
-            time.sleep(wait)
+
+    # Asked again where the provider was busy, on the evaluation harness's terms.
+    return answer_with_retries(question, once)[0]
 
 
 def outcome_of(answer, expected: str | None) -> str:
@@ -214,15 +207,17 @@ def checker_says(answer, question: str) -> str:
     "mismatch" where any check is one, since the card then marks the claim a
     mismatch whatever else agrees with it. "supported" where a passage or the
     facts store supports a figure and nothing contradicts one. "unverified"
-    otherwise. Blank for an abstention and for a question no model was asked,
-    which have nothing to check.
+    where a figure was checked and the check could not be made, and
+    "unchecked" where the answer states no figure to check. The words are the
+    evaluation harness's (``verify.worst_check``), which counts a run's
+    answers by them. Blank for an abstention and for a question no model was
+    asked, which have nothing to check.
     """
     if answer is None or answer.abstained:
         return ""
     checked = verify_answer(answer, parsed=read_as_the_app_does(question))
-    statuses = {check.status for check in checked.verification.checks
-                if check.kind in ("passage", "fact")}
-    return next((status for status in CHECKER if status in statuses), "unverified")
+    return worst_check(check.status for check in checked.verification.checks
+                       if check.kind in ("passage", "fact"))
 
 
 def with_no_store_figure(table: pd.DataFrame) -> pd.DataFrame:
@@ -254,8 +249,7 @@ def summarize_checker(table: pd.DataFrame) -> pd.DataFrame | None:
         return None
     return pd.crosstab(checked.outcome, checked.checker).reindex(
         index=[name for name in (*OUTCOMES, "no store figure") if (checked.outcome == name).any()],
-        columns=[name for name in ("supported", "unverified", "mismatch")
-                 if (checked.checker == name).any()], fill_value=0)
+        columns=[name for name in CHECKER if (checked.checker == name).any()], fill_value=0)
 
 
 def report(table: pd.DataFrame) -> None:
@@ -300,8 +294,7 @@ def main() -> None:
     print(f"{len(asked)} questions | retriever {retriever.name} | {model} | FINAL_K {FINAL_K}",
           flush=True)
 
-    rows, last_request, stopped = [], [0.0], None
-    try:
+    def answer_all(rows: list[dict], last_request: list[float]) -> None:
         for number, q in enumerate(asked, start=1):
             answer = ask(q["question"], retriever, config, llm, last_request)
             rows.append({**q, "outcome": outcome_of(answer, q["expected"]),
@@ -309,17 +302,8 @@ def main() -> None:
                          "answer": "" if answer is None else answer.text})
             if number % 55 == 0:
                 print(f"  {number:,} of {len(asked):,}", flush=True)
-    except (ProviderUnavailable, KeyboardInterrupt) as error:
-        # The answers before it are kept, as app_path_accuracy.py keeps them.
-        stopped = error
-    if rows:
-        table = pd.DataFrame(rows)
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        table.to_csv(results_csv, index=False, encoding="utf-8-sig")
-        print("\nSaved", results_csv.relative_to(ROOT))
-        report(table)
-    if stopped is not None:
-        sys.exit(f"stopped after {len(rows)} answers: {type(stopped).__name__}: {stopped}")
+
+    run_and_save(results_csv, answer_all, report)
 
 
 if __name__ == "__main__":

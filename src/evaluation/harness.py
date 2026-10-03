@@ -9,7 +9,7 @@ from dataclasses import replace
 from functools import partial
 from math import isfinite
 from time import sleep
-from typing import Any
+from typing import Any, TypeVar
 
 from src.rag import (
     ProviderBusy,
@@ -18,14 +18,19 @@ from src.rag import (
     config_from_env,
     parse_question,
     verify_answer,
+    worst_check,
 )
 from src.rag.answer import REFUSALS
-from src.rag.records import Answer, GenerationConfig
+from src.rag.records import GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from .records import BenchmarkQuestion, UNANSWERABLE
 
 logger = logging.getLogger(__name__)
+
+# What a caller of answer_with_retries asks for: an Answer in the harness, and
+# whatever a measurement script's own ask() returns.
+Asked = TypeVar("Asked")
 
 # How long to wait before asking a question again after a failure that asking
 # again may fix (``ProviderBusy``): a rate limit, a server error, a dropped
@@ -93,20 +98,21 @@ def _checks(rows: list[dict]) -> dict[str, int]:
     for row in rows:
         if row["answer"]["abstained"]:
             continue
-        statuses = {check["status"] for check in row["answer"]["verification"]["checks"]
-                    if check["kind"] in ("passage", "fact")}
-        worst[next((status for status in ("mismatch", "supported", "unverified")
-                    if status in statuses), "unchecked")] += 1
+        worst[worst_check(check["status"] for check in row["answer"]["verification"]["checks"]
+                          if check["kind"] in ("passage", "fact"))] += 1
     return dict(sorted(worst.items()))
 
 
-def _answer_with_retries(
-    question: BenchmarkQuestion, ask: Callable[[], Answer]
-) -> tuple[Answer, int]:
+def answer_with_retries(label: str, ask: Callable[[], Asked]) -> tuple[Asked, int]:
     """``ask()``, and how many times it was asked: again after each wait in
     ``RETRY_WAITS_S``, or the longer ``retry_after`` the error asks for, while
     it raises ``ProviderBusy``. A wait longer than ``MAX_RETRY_WAIT_S``, and the
-    last attempt's error, are not waited out: the error is raised."""
+    last attempt's error, are not waited out: the error is raised.
+
+    ``label`` names the question in the line logged before each wait. The
+    measurement scripts under ``notebooks/answers/`` ask through this too, so
+    a busy provider is waited out on the same terms wherever a run is made.
+    """
     for attempt, wait in enumerate(RETRY_WAITS_S, start=1):
         try:
             return ask(), attempt
@@ -114,7 +120,7 @@ def _answer_with_retries(
             wait = max(wait, error.retry_after or 0)
             if wait > MAX_RETRY_WAIT_S:
                 raise
-            logger.warning("%s: %s; asking again in %.0fs", question.question_id, error, wait)
+            logger.warning("%s: %s; asking again in %.0fs", label, error, wait)
             sleep(wait)
     return ask(), len(RETRY_WAITS_S) + 1
 
@@ -235,12 +241,12 @@ def evaluate(
             query = replace(query, fiscal_years=(question.fiscal_year,))
         # The company and year the question is about, which the answer is
         # checked against whatever the row searches.
-        asked = replace(parsed, tickers=query.tickers, fiscal_years=query.fiscal_years)
+        asked = parsed.scoped_to(query)
         # After the benchmark's own ticker and year, so a row measured without
         # the metadata filter drops those too and searches what it measured.
         if stack is not None:
             query = stack.scoped(query)
-        answer, attempts = _answer_with_retries(question, partial(
+        answer, attempts = answer_with_retries(question.question_id, partial(
             answer_question, question.question, retriever, config, query=query,
             min_score=min_score, llm=llm, use_facts=use_facts,
             use_decomposition=use_decomposition, use_refusal=use_refusal, parsed=parsed,

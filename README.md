@@ -1212,7 +1212,10 @@ Every one of the 56 was a right answer the store had just supplied. The
 checker is still weakest on line items the facts route does not cover: of the
 150 right answers in `line-items-9-final-hybrid` it marks 48 a mismatch, 62
 unverified and 40 supported, since no store concept is mapped for those lines
-and the cited passage has to tie the figure to the line item itself.
+and the cited passage has to tie the figure to the line item itself. In these
+rows an answer in which the checker found no figure to check is counted as
+unverified. The scripts now record such an answer as `unchecked`, the word
+the evaluation harness uses, so a run made since has that column as well.
 
 The evaluation harness checks every answer this way before it records it, so
 a saved run carries its checks. Write a run's answers and open them in a

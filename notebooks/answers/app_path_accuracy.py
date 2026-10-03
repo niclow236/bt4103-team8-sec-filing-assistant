@@ -62,9 +62,8 @@ from search_text_comparison import (  # noqa: E402
     load_questions,
     terms_mentioned,
 )
-from src.evaluation.harness import MAX_RETRY_WAIT_S, RETRY_WAITS_S  # noqa: E402
+from src.evaluation.harness import answer_with_retries  # noqa: E402
 from src.rag import (  # noqa: E402
-    ProviderBusy,
     ProviderUnavailable,
     answer_question,
     chat_model,
@@ -150,29 +149,55 @@ def read_as_the_app_does(question: str):
     return parse_question(question)
 
 
+def paced(last_request: list[float]) -> float:
+    """Wait out what is left of ``MIN_INTERVAL_S`` since the last request, and
+    return the time this one starts, which becomes the last."""
+    gap = MIN_INTERVAL_S - (time.perf_counter() - last_request[0])
+    if gap > 0:
+        time.sleep(gap)
+    last_request[0] = time.perf_counter()
+    return last_request[0]
+
+
 def ask(question: str, retriever, config, llm, last_request: list[float], **options):
-    """One answer by the app's path, asked again where the provider was busy,
-    on the evaluation harness's terms. ``options`` go to ``answer_question``,
-    for a script that measures the path with one of its switches off."""
+    """One answer by the app's path and the seconds it took, asked again where
+    the provider was busy by the evaluation harness's own retry
+    (``answer_with_retries``). ``options`` go to ``answer_question``, for a
+    script that measures the path with one of its switches off."""
     parsed = read_as_the_app_does(question)
-    for wait in (*RETRY_WAITS_S, None):
-        gap = MIN_INTERVAL_S - (time.perf_counter() - last_request[0])
-        if gap > 0:
-            time.sleep(gap)
-        last_request[0] = started = time.perf_counter()
-        try:
-            answer = answer_question(question, retriever, config, llm=llm,
-                                     query=parsed.to_query(top_k=FINAL_K), parsed=parsed,
-                                     **options)
-            return answer, time.perf_counter() - started
-        except ProviderBusy as error:
-            if wait is None:
-                raise
-            wait = max(wait, error.retry_after or 0)
-            if wait > MAX_RETRY_WAIT_S:
-                raise
-            print(f"   busy ({error}); asking again in {wait:.0f}s", flush=True)
-            time.sleep(wait)
+
+    def once():
+        started = paced(last_request)
+        answer = answer_question(question, retriever, config, llm=llm,
+                                 query=parsed.to_query(top_k=FINAL_K), parsed=parsed,
+                                 **options)
+        return answer, time.perf_counter() - started
+
+    return answer_with_retries(question, once)[0]
+
+
+def run_and_save(results_csv: Path, answer_all, show) -> None:
+    """Run ``answer_all(rows, last_request)``, which adds a row to ``rows`` for
+    each answer, save the rows to ``results_csv`` and ``show`` them as a table.
+
+    The answers before a provider failure or Ctrl-C are kept: a rate limit at
+    question 40 of a third run should not cost the two runs before it. The
+    rows are saved and shown as for a finished run, and the script then exits
+    saying where it stopped. The three scripts here end this way.
+    """
+    rows, last_request, stopped = [], [0.0], None
+    try:
+        answer_all(rows, last_request)
+    except (ProviderUnavailable, KeyboardInterrupt) as error:
+        stopped = error
+    if rows:
+        table = pd.DataFrame(rows)
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        table.to_csv(results_csv, index=False, encoding="utf-8-sig")
+        print("\nSaved", results_csv.relative_to(ROOT))
+        show(table)
+    if stopped is not None:
+        sys.exit(f"stopped after {len(rows)} answers: {type(stopped).__name__}: {stopped}")
 
 
 def outcome_of(row: dict) -> str:
@@ -275,22 +300,11 @@ def main() -> None:
     print(f"{len(questions)} questions, {args.runs} run(s) | retriever {retriever.name} | "
           f"{config.provider} {config.model} | FINAL_K {FINAL_K}", flush=True)
 
-    rows, last_request, stopped = [], [0.0], None
-    try:
+    def answer_all(rows: list[dict], last_request: list[float]) -> None:
         for number in range(1, args.runs + 1):
             run(questions, retriever, config, llm, number, last_request, rows)
-    except (ProviderUnavailable, KeyboardInterrupt) as error:
-        # The answers before it are kept: a rate limit at question 40 of a
-        # third run should not cost the two runs before it.
-        stopped = error
-    if rows:
-        table = pd.DataFrame(rows)
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        table.to_csv(results_csv, index=False, encoding="utf-8-sig")
-        print("\nSaved", results_csv.relative_to(ROOT))
-        print(summarize(table).to_string())
-    if stopped is not None:
-        sys.exit(f"stopped after {len(rows)} answers: {type(stopped).__name__}: {stopped}")
+
+    run_and_save(results_csv, answer_all, lambda table: print(summarize(table).to_string()))
 
 
 if __name__ == "__main__":
