@@ -21,7 +21,11 @@ keeps three things outside it, for as long as the process runs:
 - The answers. A question asked again with the same filters under the same
   configuration is given the answer it was given before, with no search and no
   model call, in the same browser session or another (`src/app/state.py`). A
-  failure is not kept, so a question that met a busy provider is asked again.
+  failure is not kept, so a question that met a busy provider is asked again,
+  and neither is an answer the model left malformed or cut short. Two sessions
+  that ask the same question at the same moment get one model call between
+  them: the second waits for the first's answer. Each configuration keeps its
+  128 most recently asked answers (`ANSWERS_KEPT`).
 
 A changed `.env`, a rebuilt index or a wish for a fresh answer to a remembered
 question needs the app restarted.

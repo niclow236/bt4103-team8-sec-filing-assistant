@@ -5,6 +5,9 @@ reach the memory this is about. These stand one in for ``build_stack``, one
 level down, so the app's own ``load_stack`` wraps it as it wraps a real one.
 """
 
+import threading
+from dataclasses import replace
+
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -20,6 +23,8 @@ from tests.sample_answers import sample_answer
 
 APP = "from src.app.app import main\nmain()"
 QUESTION = "What was Apple's revenue in FY2024?"
+# How long a test waits on a thread before calling it stuck.
+WAIT = 10
 
 
 class CountingStack:
@@ -84,6 +89,137 @@ def test_a_failure_is_not_remembered():
         remembered.answer(QUESTION, query=Query(QUESTION))
     assert remembered.answer(QUESTION, query=Query(QUESTION)).question == QUESTION
     assert len(stack.asked) == 2
+
+
+@pytest.mark.parametrize("broken", [
+    {"truncated": True},
+    {"parse_error": "the output was cut off before the JSON closed"},
+])
+def test_an_answer_the_model_did_not_finish_is_not_remembered(broken):
+    # Kept, a cut-off answer was every session's answer to that question until
+    # the app restarted, and the healthy one behind it was never reached.
+    class FirstBroken(CountingStack):
+        def answer(self, question, **overrides):
+            answer = super().answer(question, **overrides)
+            return replace(answer, **broken) if len(self.asked) == 1 else answer
+
+    stack = FirstBroken()
+    remembered = Remembered(stack)
+    first = remembered.answer(QUESTION, query=Query(QUESTION))
+    second = remembered.answer(QUESTION, query=Query(QUESTION))
+    assert first.truncated or first.parse_error      # shown for what it is
+    assert not second.truncated and second.parse_error is None
+    assert len(stack.asked) == 2
+    assert remembered.answer(QUESTION, query=Query(QUESTION)) is second
+    assert len(stack.asked) == 2
+
+
+class SlowStack(CountingStack):
+    """Answers only once ``release`` is set. ``arrived`` counts the requests
+    that have reached it, and ``most_at_once`` how many were inside together."""
+
+    def __init__(self, failures=()):
+        super().__init__(failures=failures)
+        self.arrived, self.release = threading.Semaphore(0), threading.Event()
+        self.inside = self.most_at_once = 0
+        self._count = threading.Lock()
+
+    def answer(self, question, **overrides):
+        with self._count:
+            self.inside += 1
+            self.most_at_once = max(self.most_at_once, self.inside)
+        self.arrived.release()
+        try:
+            assert self.release.wait(WAIT), "the test never released the stack"
+            return super().answer(question, **overrides)
+        finally:
+            with self._count:
+                self.inside -= 1
+
+
+def _in_threads(remembered, questions):
+    """Ask each question on a thread of its own: the threads, and the list
+    each puts what it got into, an answer or the error it met."""
+    got = [None] * len(questions)
+
+    def ask(index, question):
+        try:
+            got[index] = remembered.answer(question, query=Query(question))
+        except ProviderUnavailable as error:
+            got[index] = error
+
+    threads = [threading.Thread(target=ask, args=(index, question), daemon=True)
+               for index, question in enumerate(questions)]
+    for thread in threads:
+        thread.start()
+    return threads, got
+
+
+def _finish(threads):
+    for thread in threads:
+        thread.join(WAIT)
+    assert not any(thread.is_alive() for thread in threads)
+
+
+def test_two_sessions_asking_the_same_question_at_once_get_one_answer():
+    stack = SlowStack()
+    remembered = Remembered(stack)
+    threads, got = _in_threads(remembered, [QUESTION, QUESTION])
+    assert stack.arrived.acquire(timeout=WAIT)          # one is inside the stack
+    # The other must not get in while the first is there. It is given time
+    # to, and then the first is let finish.
+    assert not stack.arrived.acquire(timeout=0.3)
+    stack.release.set()
+    _finish(threads)
+    assert len(stack.asked) == 1 and stack.most_at_once == 1
+    assert got[0] is got[1] and got[0].question == QUESTION
+
+
+def test_different_questions_are_answered_at_the_same_time():
+    stack = SlowStack()
+    remembered = Remembered(stack)
+    other = "What was Apple's net income in FY2024?"
+    threads, got = _in_threads(remembered, [QUESTION, other])
+    # Both are inside the stack before either is released.
+    assert stack.arrived.acquire(timeout=WAIT) and stack.arrived.acquire(timeout=WAIT)
+    assert stack.most_at_once == 2
+    stack.release.set()
+    _finish(threads)
+    assert sorted(answer.question for answer in got) == sorted([QUESTION, other])
+
+
+def test_a_session_waiting_on_a_failure_asks_in_its_turn():
+    stack = SlowStack(failures=[ProviderUnavailable("Mistral's rate limit was reached")])
+    remembered = Remembered(stack)
+    threads, got = _in_threads(remembered, [QUESTION, QUESTION])
+    assert stack.arrived.acquire(timeout=WAIT)
+    stack.release.set()
+    _finish(threads)
+    # One met the failure, which was not kept. The other was woken, asked in
+    # its turn and was answered. They were never inside together.
+    errors = [item for item in got if isinstance(item, Exception)]
+    answers = [item for item in got if not isinstance(item, Exception)]
+    assert len(errors) == 1 and len(answers) == 1 and answers[0].question == QUESTION
+    assert len(stack.asked) == 2 and stack.most_at_once == 1
+    assert remembered.answer(QUESTION, query=Query(QUESTION)) is answers[0]
+    assert remembered._being_answered == {}
+
+
+def test_only_the_most_recently_asked_answers_are_kept():
+    stack = CountingStack()
+    remembered = Remembered(stack, limit=2)
+    one, two, three = (f"What was Apple's revenue in FY202{n}?" for n in (2, 3, 4))
+    remembered.answer(one, query=Query(one))
+    remembered.answer(two, query=Query(two))
+    remembered.answer(one, query=Query(one))          # one is now the more recent
+    remembered.answer(three, query=Query(three))      # so two is the one dropped
+    assert len(stack.asked) == 3
+    remembered.answer(one, query=Query(one))
+    assert len(stack.asked) == 3
+    remembered.answer(two, query=Query(two))
+    assert len(stack.asked) == 4
+    with pytest.raises(ValueError, match="limit must be at least 1"):
+        Remembered(stack, limit=0)
 
 
 def test_each_configuration_remembers_its_own_answers():
