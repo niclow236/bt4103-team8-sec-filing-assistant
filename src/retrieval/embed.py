@@ -713,7 +713,7 @@ def build(
         chunk_overlap=chunk_overlap,
     )
     write_manifest(manifest, manifest_file)
-    write_truncation_report(collection, chroma_dir)
+    write_truncation_report(collection, chroma_dir, model=model_name)
 
     after = _differences(held, corpus)
     print(f"index:    {chroma_dir}")
@@ -779,7 +779,11 @@ def check_index(
     return problems
 
 
-def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
+def write_truncation_report(
+    collection,
+    chroma_dir: Path,
+    model: str = EMBED_MODEL,
+) -> Path | None:
     """Say which vectors the encoder cut short, read back from the index itself.
 
     Loud on purpose. A truncated passage is not a failed one: it is indexed,
@@ -818,7 +822,7 @@ def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
     path.write_text(
         json.dumps(
             {
-                "model": EMBED_MODEL,
+                "model": model,
                 "max_tokens": EMBED_MAX_TOKENS,
                 "n_indexed": n_indexed,
                 "n_truncated": len(passages),
