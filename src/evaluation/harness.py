@@ -109,6 +109,7 @@ def evaluate(
     llm: Any | None = None,
     use_facts: bool = True,
     use_decomposition: bool = True,
+    stack: Any | None = None,
 ) -> dict[str, Any]:
     """One configuration per run; count every completed question exactly once.
 
@@ -127,6 +128,12 @@ def evaluate(
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
+
+    ``stack`` is the named configuration a caller assembled from, recorded in
+    the report so a results file says which configuration to select in the app
+    to see the same system (#43). It also decides whether each question's
+    filters are applied: a row measured without the metadata filter is answered
+    from a search of the whole corpus. The settings below decide the rest.
 
     ``use_facts`` is the with/without half of the numeric-routing ablation
     (#34): False sends every question to retrieval and generation. It matters
@@ -159,6 +166,10 @@ def evaluate(
         # naming the question the run stopped at and why, or None.
         return {
             "run_id": run_id,
+            # Which named configuration this run answered with (#43), so a
+            # report says what to select in the app to see the same system.
+            # None for a caller that assembled a stack of its own.
+            "stack": None if stack is None else stack.to_dict(),
             "retriever": retriever.name,
             "config": config.to_dict(),
             "min_score": min_score,
@@ -184,6 +195,10 @@ def evaluate(
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
+        # After the benchmark's own ticker and year, so a row measured without
+        # the metadata filter drops those too and searches what it measured.
+        if stack is not None:
+            query = stack.scoped(query)
         answer, attempts = _answer_with_retries(question, partial(
             answer_question, question.question, retriever, config, query=query,
             min_score=min_score, llm=llm, use_facts=use_facts,
