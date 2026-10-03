@@ -1257,11 +1257,14 @@ answer card is ready, or when the provider fails part way.
 question, and `parsed.describe()` says what it read. The app shows it under
 the answer, in the scope the sidebar ended with ("Question type: numeric ·
 Companies: AAPL · Fiscal years: FY2024"), so the user can see when the reading
-was wrong. Where a question was split into one search per filing, the same
-line names the filings (`Answer.sub_questions`). A company
-the corpus does not hold, such as Intel, is reported in `parsed.unresolved`
-rather than silently ignored. `build_prompt` numbers the passages as sources,
-puts the rules above them, and never shows the model a URL.
+was wrong. A question read as unanswerable and searched all the same says
+"unanswerable, searched in case a filing answers it", since the line sits
+under whatever answer a filing gave. Where a question was split into one
+search per filing, the same line names the filings (`Answer.sub_questions`).
+A company the corpus does not hold, such as Intel, is reported in
+`parsed.unresolved` rather than silently ignored. `build_prompt` numbers the
+passages as sources, puts the rules above them, and never shows the model a
+URL.
 
 Numeric cues include the metric aliases used by the facts router and the XBRL
 labels in `data/index/facts.parquet`. Newly supported labels need a request

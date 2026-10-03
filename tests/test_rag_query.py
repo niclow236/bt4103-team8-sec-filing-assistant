@@ -671,6 +671,21 @@ def test_describe_shows_every_decision_back_to_the_user():
     assert "Not in the corpus: NVIDIA, 2019" in lines
 
 
+@pytest.mark.parametrize("question, kind", [
+    # Searched, so the line sits under whatever answer a filing gave.
+    ("What were Microsoft's purchase obligations due next year in FY2024?",
+     "Question type: unanswerable, searched in case a filing answers it"),
+    ("What was Apple's revenue in 2015?",
+     "Question type: unanswerable, searched in case a filing answers it"),
+    # Refused, so there is no answer for the line to contradict.
+    ("Should I buy Microsoft stock?", "Question type: unanswerable"),
+    ("What was Intel's revenue in 2023?", "Question type: unanswerable"),
+    ("What was Apple's revenue in FY2024?", "Question type: numeric"),
+])
+def test_describe_says_when_an_unanswerable_reading_was_searched_anyway(question, kind):
+    assert _parse(question).describe()[0] == kind
+
+
 def test_describe_says_when_nothing_is_filtered():
     assert "Filters: none, searching every company and year" in _parse("What is a 10-K?").describe()
 

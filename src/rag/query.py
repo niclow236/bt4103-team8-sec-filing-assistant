@@ -252,8 +252,15 @@ class ParsedQuestion:
         than the filters mapping. The unresolved line is the one that earns
         its place, since it is the only way the user learns that the answer
         ignored a company they asked about.
+
+        A question read as unanswerable and searched all the same says so:
+        the line is shown under the answer a filing gave, and "unanswerable"
+        alone would contradict the answer above it.
         """
-        lines = [f"Question type: {self.question_type}"]
+        kind = self.question_type
+        if self.unanswerable_because in ("topic", "year"):
+            kind += ", searched in case a filing answers it"
+        lines = [f"Question type: {kind}"]
         if self.tickers:
             lines.append("Companies: " + ", ".join(self.tickers))
         if self.fiscal_years:
