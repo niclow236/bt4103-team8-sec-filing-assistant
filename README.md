@@ -136,6 +136,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
+│   ├── stack.py             # the named configurations, and the one way to build one
 │   └── app/                 # the app; so far the viewer for saved answers
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
 ├── tests/                   # the pytest suite (see Getting started)
@@ -791,8 +792,9 @@ and `MIN_RERANK_SCORE` stays unset. Reranking 50 candidates adds about 0.3 to
 0.9 seconds once the model is loaded, and the model is loaded once per process
 however `load_model` is called.
 
-The reranker is not yet a `--retriever` choice in the evaluation harness, so an
-ablation row for it has to be built in code for now.
+The reranker is a `--retriever` choice like the other three, since every
+retriever is built in one place (`src/stack.py`); an ablation row that uses it
+is a `--retriever rerank` or a line in that registry rather than code.
 
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`,
 `key_items_only`) are applied before scoring, not after, in every method. BM25
@@ -1303,8 +1305,12 @@ python -m streamlit run src/app/app.py
 
 Build the local indexes first if they do not exist (`python -m src.retrieval
 bm25` and `python -m src.retrieval embed`). The app checks each index against
-the current processed corpus before searching. BM25 is the default retrieval
-method; Hybrid also loads the dense index and embedding model. The model
+the current processed corpus before searching. The sidebar's Configuration box
+picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
+the metadata filter, so the first Ask also loads the dense index and the
+embedding model; C1 is BM25 alone and loads neither. A row measured without the
+metadata filter searches every filing, and the sidebar says so when one is
+picked. The model
 provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
 model by default, or Mistral's free API (`ministral-8b-2512`) with
 `LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds
@@ -1466,6 +1472,18 @@ counts them, so a run that mixes the two reads as what it is. Use `--no-facts`
 for `benchmark/generated.jsonl` in particular: those questions are generated
 from the same store the route answers from, so leaving it on measures the store
 against itself.
+
+`--config` selects a named configuration, `C1` to `C4` as `src/stack.py`
+defines them and `python -m src.evaluation.run` measures them, and sets the
+retriever and the metadata filter from it: a row measured without the filter is
+answered from a search of the whole corpus. `--retriever` and the switches
+below override what the configuration says, and the report records the
+configuration it answered with, including any override, under `stack`. The
+app's sidebar offers the same configurations and builds them through the same
+function, so the system on screen is the system a number in `results/`
+describes; a row a run has measured is labelled there with the run that
+measured it. `C0`, the fixed-size baseline, is built by the ablation runner
+only and cannot be selected.
 
 `--no-decompose` searches each question once instead of once per filing. A
 question naming more than one company or more than one year is otherwise split
