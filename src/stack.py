@@ -151,6 +151,7 @@ def build_retriever(
     key: str,
     *,
     processed_dir: Path = PROCESSED_DIR,
+    model: Any | None = None,
     parts: dict[str, Any] | None = None,
 ) -> Any:
     """The retriever a configuration names, loaded against the local corpus.
@@ -161,6 +162,11 @@ def build_retriever(
     call, so each index is read and verified once and the hybrid rows share
     it -- without one, a run that builds the bm25, dense and hybrid rows reads
     every index twice and holds two bge encoders.
+
+    ``model`` is not read. It was the reranker's cross-encoder, and it stays
+    in the signature only because #114 adds parameters on the line above it,
+    so taking it out here would conflict with that branch. It can go once both
+    have landed.
     """
     parts = {} if parts is None else parts
 
