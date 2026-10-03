@@ -13,7 +13,7 @@ So a configuration is named once, here, and everything else asks for it by id.
 :data:`STACKS` is the registry, :func:`build_retriever` is the only place a
 retriever is constructed, and :func:`build_stack` returns the retriever, the
 generator and the answer-time settings as one object whose
-:meth:`Stack.answer` is how every caller answers a question.
+:meth:`Stack.answer` is how the app answers a question.
 
 The ids are the ablation's own: C0 to C4 as ``src/evaluation/run.py`` has always
 defined them, moved here so the app can select one. ``Stack.answer`` applies the
@@ -202,10 +202,9 @@ def build_retriever(
 class Stack:
     """A built configuration: what retrieves, what generates, and how to ask it.
 
-    ``answer`` is the point of the class. Both the app and the harness call it
-    rather than calling ``answer_question`` with their own arguments, so the
-    switches a configuration sets cannot be applied in one and forgotten in
-    the other.
+    ``answer`` is how the app asks. The evaluation command passes the same
+    configuration's settings to ``evaluate``, which calls ``answer_question``
+    itself, and both take what a row searches from ``StackConfig.scoped``.
     """
 
     config: StackConfig
@@ -219,8 +218,7 @@ class Stack:
         ``overrides`` are passed to ``answer_question``: the app passes the
         ``query`` and ``parsed`` its sidebar built, and a caller may pass
         ``on_token`` to stream. A caller may also override a setting this
-        configuration names, which is how the harness applies a ``--min-score``
-        given on the command line; the configuration supplies every setting the
+        configuration names; the configuration supplies every setting the
         caller does not.
         """
         from .rag.answer import answer_question

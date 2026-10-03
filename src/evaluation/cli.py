@@ -9,7 +9,6 @@ from pathlib import Path
 from src.config import PROCESSED_DIR
 from src.rag import ProviderUnavailable
 from src.rag.constants import LLM_MODEL_ENV, LLM_PROVIDER_ENV, PROVIDERS
-from src.retrieval.constants import FINAL_K
 from src.stack import DEFAULT_STACK, RETRIEVERS, SELECTABLE, build_stack
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate
@@ -45,7 +44,8 @@ def main(argv: list[str] | None = None) -> None:
         help="Override the retriever this configuration names.",
     )
     parser.add_argument("--min-score", type=float, help="Additional floor on final retrieval scores")
-    parser.add_argument("--top-k", type=int, default=FINAL_K)
+    parser.add_argument("--top-k", type=int,
+                        help="Passages that reach the generator. Defaults to the configuration's.")
     parser.add_argument(
         "--provider", choices=PROVIDERS,
         help="Which provider answers: ollama, the local model, or mistral, the hosted API "
@@ -60,19 +60,19 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output", type=Path, required=True, help="JSON report including rates and answers")
     parser.add_argument("--answers", type=Path, help="Optional answer JSONL for the browser viewer")
     parser.add_argument(
-        "--no-facts", dest="use_facts", action="store_false",
+        "--no-facts", dest="use_facts", action="store_const", const=False,
         help="Send every question to retrieval and generation, instead of looking a "
              "numeric one up in the XBRL facts store first. The without half of the "
              "#34 ablation, and the honest setting for the generated XBRL benchmark, "
              "whose questions come from that same store.",
     )
     parser.add_argument(
-        "--no-decompose", dest="use_decomposition", action="store_false",
+        "--no-decompose", dest="use_decomposition", action="store_const", const=False,
         help="Search each question once, instead of once per filing for a question "
              "naming several companies or years. The without half of the #35 ablation.",
     )
     args = parser.parse_args(argv)
-    if args.top_k < 1:
+    if args.top_k is not None and args.top_k < 1:
         parser.error("--top-k must be positive")
     if args.min_score is not None and not isfinite(args.min_score):
         parser.error("--min-score must be finite")
@@ -83,12 +83,18 @@ def main(argv: list[str] | None = None) -> None:
     # The stack is assembled the one shared way (#43), and before the questions
     # load, so a mistyped LLM_PROVIDER or a missing MISTRAL_API_KEY stops the
     # run at once rather than after the indexes have been read.
+    # Only what was typed overrides the row. A switch left alone is the
+    # configuration's, so a row that turns the facts route off is not turned
+    # back on by this command's own defaults -- which would answer one id two
+    # ways, here and in the app.
     overrides: dict[str, object] = {
-        "top_k": args.top_k, "use_facts": args.use_facts,
-        "use_decomposition": args.use_decomposition,
+        setting: value
+        for setting, value in (
+            ("top_k", args.top_k), ("min_score", args.min_score),
+            ("use_facts", args.use_facts), ("use_decomposition", args.use_decomposition),
+        )
+        if value is not None
     }
-    if args.min_score is not None:
-        overrides["min_score"] = args.min_score
     try:
         stack = build_stack(
             args.config, processed_dir=args.processed_dir, provider=args.provider,

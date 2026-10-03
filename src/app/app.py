@@ -59,8 +59,8 @@ def main() -> None:
     parsed = parse_question(question, facts_file=None) if question.strip() else None
     query = filter_sidebar(question, parsed=parsed)
     with st.sidebar:
-        # Measured rows first, and labelled with the run that measured them, so
-        # the demo can be set to the configuration a reported number came from.
+        # In the registry's order, each labelled with the run that measured it,
+        # so the demo can be set to the configuration a reported number came from.
         runs = dict(measured())
         config_id = st.selectbox(
             "Configuration", SELECTABLE,

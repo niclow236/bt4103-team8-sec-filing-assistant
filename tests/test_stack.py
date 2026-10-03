@@ -243,7 +243,7 @@ def test_a_caller_may_add_what_the_configuration_does_not_name(monkeypatch):
 
 
 def test_a_caller_may_override_a_setting_the_configuration_names(monkeypatch):
-    # How the harness applies a --min-score given on the command line.
+    # A setting given at call time wins over the configuration's.
     seen = {}
     monkeypatch.setattr("src.rag.answer.answer_question",
                         lambda question, retriever, **kw: seen.update(kw))
@@ -404,3 +404,39 @@ def test_the_ablation_runner_takes_its_rows_from_the_registry():
         assert row["name"] == STACKS[config_id].name
         assert row["retriever"] == STACKS[config_id].retriever
         assert row["metadata_filter"] == STACKS[config_id].metadata_filter
+
+
+def test_the_evaluation_command_leaves_a_rows_settings_alone_unless_told(monkeypatch, tmp_path):
+    # A switch nobody typed is the row's. The command's own defaults used to
+    # replace it, so a row with the facts route off was answered with it on
+    # here and off in the app: one id, two systems.
+    import src.evaluation.cli as cli
+
+    monkeypatch.setitem(STACKS, "C5", replace(
+        STACKS["C4"], id="C5", top_k=8, min_score=0.2, use_facts=False,
+        use_decomposition=False))
+    monkeypatch.setattr(cli, "SELECTABLE", (*SELECTABLE, "C5"))
+    monkeypatch.setattr(cli, "build_stack", lambda *args, **kw: build_stack(
+        *args, retriever=StubRetriever(), llm=object(), **kw))
+    monkeypatch.setattr(cli, "load_questions", lambda *args, **kw: [])
+    ran = {}
+
+    def evaluate(questions, retriever, generation, **settings):
+        ran.update(settings)
+        return {"summary": {}, "by_answerability": {}, "results": []}
+
+    monkeypatch.setattr(cli, "evaluate", evaluate)
+    common = ["--run-id", "row", "--output", str(tmp_path / "report.json")]
+
+    cli.main(["--config", "C5", *common])
+    assert (ran["top_k"], ran["min_score"]) == (8, 0.2)
+    assert ran["use_facts"] is False and ran["use_decomposition"] is False
+    assert ran["stack"].to_dict()["use_facts"] is False
+
+    # What is typed still wins, and only that.
+    cli.main(["--config", "C5", "--top-k", "4", "--min-score", "0.5", *common])
+    assert (ran["top_k"], ran["min_score"]) == (4, 0.5)
+    assert ran["use_facts"] is False
+    cli.main(["--config", "C4", "--no-facts", *common])
+    assert ran["use_facts"] is False and ran["use_decomposition"] is True
+    assert ran["top_k"] == STACKS["C4"].top_k
