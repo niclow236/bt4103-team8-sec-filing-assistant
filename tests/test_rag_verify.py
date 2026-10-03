@@ -452,6 +452,84 @@ def test_a_per_share_row_in_the_filer_s_words_is_read_as_per_share():
     assert checks(last_year, "passage")[0].status == "mismatch"
 
 
+def test_a_dollar_total_beside_a_per_share_figure_is_not_dollars_a_share(tmp_path):
+    # Every "$" figure in a per-share claim was read as dollars a share, so the
+    # "$94 billion" here was checked against the store's earnings per share
+    # and a true sentence was marked a mismatch.
+    path = tmp_path / "facts.parquet"
+    pd.DataFrame([fact() | {"concept": "EarningsPerShareDiluted", "unit": "USD per share",
+                            "value": 6.08}]).to_parquet(path, index=False)
+    claim = "Apple's diluted EPS was $6.08 in FY2024, and it returned $94 billion to shareholders."
+    result = verify_answer(answer(claim, question="What was Apple's diluted EPS in FY2024?",
+                                  passages=[passage(claim)]), facts_file=path)
+    assert [(check.unit, check.status) for check in checks(result, "fact")] == [
+        ("USD/shares", "supported"), ("USD", "unverified")]
+
+
+ADOBE_TABLE = ("(in millions, except per share data)\n\n"
+               "| (in millions, except per share data) | 2024 | 2024 | 2023 | 2023 |\n"
+               "| --- | --- | --- | --- | --- |\n"
+               "| Net income | $ | 5,560 | $ | 5,428 |\n"
+               "| Diluted net income per share | $ | 12.36 | $ | 11.82 |")
+
+
+@pytest.fixture
+def adobe_store(tmp_path):
+    path = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        fact() | {"concept": "EarningsPerShareDiluted", "unit": "USD per share", "value": 12.36},
+        fact() | {"concept": "NetIncomeLoss", "value": 5_560_000_000},
+    ]).to_parquet(path, index=False)
+    return path
+
+
+@pytest.mark.parametrize("question, status", [
+    # Asked for earnings per share, the claim's figure is that line item's.
+    ("What was Apple's diluted EPS in FY2024?", "supported"),
+    # Asked in the claim's own words, or for net income, nothing says which
+    # per-share figure it is, so there is nothing to compare it with.
+    ("What was Apple's net income per share in FY2024?", "unverified"),
+    ("What was Apple's net income in FY2024?", "unverified"),
+])
+def test_net_income_per_share_is_not_checked_as_net_income(question, status, adobe_store):
+    # Four filers call earnings per share "net income per share". Without
+    # "basic" or "diluted" it names neither, and it does not name net income:
+    # read as net income, a right answer in those words was checked against
+    # the store's $5,560 million and marked a mismatch.
+    claim = "Apple's net income per share was $12.36 in fiscal year 2024."
+    result = verify_answer(answer(claim, question=question,
+                                  passages=[passage(ADOBE_TABLE, content_type="table")]),
+                           facts_file=adobe_store)
+    assert [check.status for check in checks(result, "passage")] == [status]
+    assert [check.status for check in checks(result, "fact")] == [status]
+
+
+def test_net_income_stated_beside_its_per_share_figure_is_still_checked(adobe_store):
+    claim = "Apple's net income was $5,560 million in fiscal year 2024."
+    result = verify_answer(
+        answer(claim, question="What was Apple's net income per share in FY2024?",
+               passages=[passage(ADOBE_TABLE, content_type="table")]),
+        facts_file=adobe_store)
+    assert [check.status for check in checks(result, "fact")] == ["supported"]
+
+
+def test_a_per_share_row_that_does_not_say_which_is_not_another_line_item_s(adobe_store):
+    # ServiceNow, Broadcom and Palo Alto print "Net income per share - diluted".
+    # Read as a net income row it was another line item's, so a right answer
+    # the store confirms was a mismatch against the row that prints it. It
+    # names no line item the checker knows, which leaves the claim unverified.
+    text = ("(in millions, except per share data)\n\n| | 2024 | 2023 |\n| --- | --- | --- |\n"
+            "| Net income | $5,560 | $5,428 |\n"
+            "| Net income per share - diluted | $12.36 | $11.82 |")
+    result = verify_answer(answer("Diluted earnings per share were $12.36 in fiscal year 2024.",
+                                  question="What was Apple's diluted EPS in FY2024?",
+                                  passages=[passage(text, content_type="table")]),
+                           facts_file=adobe_store)
+    check, = checks(result, "passage")
+    assert check.status == "unverified"
+    assert "does not name the line item" in check.reason
+
+
 # --- printed in the passage, and not tied to the line item or the year -----------
 
 # Texas Instruments' income statement runs over several passages, and the one

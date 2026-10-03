@@ -13,7 +13,7 @@ from ..retrieval.constants import FINAL_K
 from ..retrieval.facts import FACTS_FILE
 from ..retrieval.records import Query
 from .citations import resolve_citations
-from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS
+from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS, UnanswerableBecause
 from .decompose import search_decomposed
 from .generate import config_from_env, generate
 from .numeric import answer_from_facts
@@ -22,8 +22,9 @@ from .query import ParsedQuestion, parse_question
 from .records import Answer, AbstentionReason, GenerationConfig
 
 # What an unanswerable question is refused with, by why it is unanswerable
-# (``constants.UNANSWERABLE_BECAUSE``). "year" is not here: see answer_question.
-REFUSALS: dict[str, AbstentionReason] = {
+# (``constants.UNANSWERABLE_BECAUSE``). "topic" and "year" are not here: those
+# are searched, see answer_question.
+REFUSALS: dict[UnanswerableBecause, AbstentionReason] = {
     "request": "beyond_the_filings",
     "company": "company_not_in_corpus",
 }
@@ -47,17 +48,23 @@ def answer_question(
 ) -> Answer:
     """The shared entry point for the app and evaluation harness.
 
-    A question the parser reads as unanswerable for what it asks (advice, a
-    prediction, a current price) or for naming only companies the corpus holds
-    no filings for is refused before anything is searched. Searched, the first
-    kind gets sixteen passages about the company it names and the second
-    sixteen about other companies, and a model may then answer from them: asked
-    "Is Meta a good investment?" it described Meta's spending plans.
-    The refusal is an abstention with its own reason. A question naming only a
-    fiscal year outside the corpus is still searched, since a filing prints the
-    two years before its own, and so is one whose Query names a company: the
-    caller chose what to search. ``use_refusal=False`` searches everything,
-    which is the without half of that comparison.
+    A question the parser reads as asking for advice or a prediction, or for
+    a figure of a company the corpus holds no filings for, is refused before
+    anything is searched. Searched, the first kind gets sixteen passages about
+    the company it names and the second sixteen about other companies, and a
+    model may then answer from them: asked "Is Meta a good investment?" it
+    described Meta's spending plans. The refusal is an abstention with its own
+    reason.
+
+    Every other question is searched, the rest of what the parser reads as
+    unanswerable included, because a filing may answer it: one about a share
+    price, next year or a company outside the corpus (a 10-K prints the price
+    it paid for its own shares and the obligations due next year, and names
+    its competitors), and one naming only a fiscal year outside the corpus
+    (a filing prints the two years before its own). So is a question whose
+    Query names a company: the caller chose what to search.
+    ``use_refusal=False`` searches everything, which is the without half of
+    that comparison.
 
     A supplied Query overrides automatic filters. ``min_score`` is an optional
     additional floor on this retriever's final scores (inclusive, like rank()).

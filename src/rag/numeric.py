@@ -77,6 +77,12 @@ _SCALE_WORDS = {1_000: ("thousand", "thousands"),
 # a different number from a figure of 5.2.
 _SCALE_AFTER = re.compile(r"\s*(?:thousand|million|billion|trillion)s?\b", re.I)
 
+# "per share" straight after a line item's name, which makes it a per-share
+# amount and no longer the line item: "net income per share", "net loss per
+# share, basic and diluted", "net income per diluted share".
+_PER_SHARE_AFTER = re.compile(
+    r"\s+per\s+(?:(?:basic|diluted|common|ordinary)\s+)*share\b", re.I)
+
 # How a filing writes a negative: a minus sign, either side of the currency
 # symbol, or the accounting form, wrapping the figure in parentheses.
 _CURRENCY = r"(?:us\$|usd|s\$|sgd|eur|gbp|jpy|[$€£¥])"
@@ -193,6 +199,13 @@ def metrics_in(text: str) -> set[str]:
     "diluted net income per share" names earnings per share, and the "net
     income" in it does not name net income. A text that also says "net income"
     on its own names both.
+
+    A name with "per share" after it is a per-share amount of the line item
+    and not the line item. "Net income per share" is what several filers call
+    earnings per share, and without "basic" or "diluted" in front it does not
+    say which, so it names neither of those and not net income either. Read
+    as net income, a right answer in those words was checked against the
+    store's net income and marked a mismatch.
     """
     found = {
         key: [match.span() for alias in metric.aliases
@@ -207,7 +220,29 @@ def metrics_in(text: str) -> set[str]:
         )
 
     return {key for key, spans in found.items()
-            if any(not inside_another(key, span) for span in spans)}
+            if any(not inside_another(key, span) and not _per_share_amount(text, key, span)
+                   for span in spans)}
+
+
+def _per_share_amount(text: str, key: str, span: tuple[int, int]) -> bool:
+    """Whether the name at ``span`` is a line item's with "per share" after it."""
+    return (not FINANCIAL_METRICS[key].unit.endswith("/shares")
+            and _PER_SHARE_AFTER.match(text, span[1]) is not None)
+
+
+def names_a_per_share_amount(text: str) -> bool:
+    """Whether the text names a line item per share, as "net income per share" does.
+
+    For a text :func:`metrics_in` finds no line item in. Such a figure is a
+    per-share one of a line item the text does not pin down, so the checker
+    cannot say what to compare it with, and reading it as a plain dollar
+    amount would set "$12.36" against a table in millions and call it wrong.
+    """
+    return any(
+        _per_share_amount(text, key, match.span())
+        for key, metric in FINANCIAL_METRICS.items() for alias in metric.aliases
+        for match in re.finditer(r"\b" + re.escape(alias) + r"\b", text, re.I)
+    )
 
 
 def _longest_alias(metric: str, question: str) -> str:

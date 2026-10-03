@@ -74,8 +74,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--no-refusal", dest="use_refusal", action="store_const", const=False,
         help="Search and ask a model about every question, instead of refusing one the "
-             "parser reads as asking for advice or a prediction, or as naming only "
-             "companies outside the corpus. The without half of that comparison.",
+             "parser reads as asking for advice or a prediction, or for a figure of a "
+             "company outside the corpus. The without half of that comparison.",
     )
     args = parser.parse_args(argv)
     if args.top_k is not None and args.top_k < 1:

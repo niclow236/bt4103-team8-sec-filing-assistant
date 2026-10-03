@@ -773,7 +773,7 @@ loop over them.
 There was a fourth, a cross-encoder reranker (#21) that re-scored hybrid's top
 50 with `ms-marco-MiniLM-L-6-v2`. Nothing on the answer path used it, so it was
 measured before being wired in, and it did not put more answers in front of
-the model. `notebooks/retrieval/rerank_comparison.py`, as of `a9e8bf2`, writes
+the model. `notebooks/retrieval/rerank_comparison.py`, as of `ed62352`, writes
 the rows:
 
 | | Hybrid | Hybrid, reranked | Reranked, no table boost on its scores |
@@ -1177,11 +1177,19 @@ answers can use one company and year per sentence for an unambiguous check.
 Four rules keep the checker from flagging an answer it has the evidence for.
 A dollar amount for a per-share line item is dollars a share whether or not it
 says so, since a statement prints "$4.67" in the row and an answer writes "EPS
-of $4.67". The day in a written date ("September 30, 2023") is not a figure,
+of $4.67". One with a scale word after it, as in "it returned $94 billion to
+shareholders", is a dollar total and is read as one. The day in a written date
+("September 30, 2023") is not a figure,
 though its year still scopes the claim. A name inside a longer name of another
 line item is part of the longer one, so "diluted net income per share", which
 is what Adobe, Salesforce, Alphabet and Intuit call earnings per share, names
 earnings per share and not net income, to the router and the checker alike.
+Without "basic" or "diluted" in front, "net income per share" does not say
+which of the two it is, so it names neither, and it does not name net income:
+a claim in those words is checked as earnings per share where the question
+asked for that and is `unverified` otherwise, and a table row in those words
+("Net income per share - diluted", as ServiceNow, Broadcom and Palo Alto print
+it) is a row that names no line item.
 And where the facts store confirms a figure for the line item and year, a
 cited passage that prints it without tying it to them, in a table row that
 names no line item or in a sentence beside more than one year, leaves the
@@ -1357,35 +1365,56 @@ citations, and an `abstention_reason` that the browser viewer displays:
 - `no_evidence`: the index is empty, returned evidence is unusable, or a custom
   retriever cannot report why it returned nothing.
 - `model_declined`: passages reached the model, but it declined to answer.
-- `beyond_the_filings`: the question asks for what no 10-K gives: advice, a
-  prediction or a current price. Nothing was searched.
-- `company_not_in_corpus`: the question names only companies the corpus holds
-  no filings for. Nothing was searched.
+- `beyond_the_filings`: the question asks for advice, or for a prediction of
+  the assistant's own. Nothing was searched.
+- `company_not_in_corpus`: the question asks for a figure of a company the
+  corpus holds no filings for. Nothing was searched.
 
 The last two are refusals, decided from the question alone. Searched, "Is
 Meta a good investment?" gets sixteen passages about Meta and a model that may
-answer from them, and a question about Intel gets sixteen passages from other
-companies. `parse_question` already read both as unanswerable, and
-`ParsedQuestion.unanswerable_because` now says why (`request`, `company` or
-`year`), so `answer_question` can refuse the first two kinds before it
-searches. A question naming only a fiscal year outside the corpus is still
-searched, because a filing prints the two years before its own: Apple's FY2020
-revenue is in its FY2021 statements, and the app answers it. A question is
-also searched when the caller's `Query` names a company, as the app's sidebar
-lets a user choose one by hand.
+answer from them, and a question about Intel's revenue gets sixteen passages
+from other companies. `parse_question` already read both as unanswerable, and
+`ParsedQuestion.unanswerable_because` now says why (`request`, `company`,
+`topic` or `year`), so `answer_question` can refuse the first two kinds before
+it searches.
+
+The other two kinds are still searched, because a filing may answer them. A
+refusal that is wrong costs the answer, and a search that finds nothing costs
+one abstention by the model. `topic` is a question about a share price, about
+next year, or about a company outside the corpus that is not asked for a
+figure of its own. The words do not tell "What is Apple's current stock
+price?" from "What average share price did Apple pay for repurchases in
+FY2024?", which Item 5 answers, or "What will Microsoft's revenue be next
+year?" from "What were Microsoft's purchase obligations due next year in
+FY2024?", which the contractual obligations table answers. The filings the
+corpus holds also name the companies it does not, as competitors, suppliers
+and customers, so "Which companies named NVIDIA as a competitor in FY2024?"
+is a question about them. `year` is a question naming only a fiscal year
+outside the corpus: a filing prints the two years before its own, so Apple's
+FY2020 revenue is in its FY2021 statements and the app answers it, and it
+says what falls due in the years after. A question is also searched when the
+caller's `Query` names a company, as the app's sidebar lets a user choose one
+by hand.
 
 `python notebooks/answers/refusal_check.py` counts the answerable questions
 the refusal would turn away: none of 16,006 (the 48 test questions, every name
 of every headline line item, every line-item question for every year, and the
 12,579 of the generated benchmark). One benchmark question was refused until
 the parser stopped reading "Loss Contingency, Estimate of Possible Loss" as an
-instruction to estimate. With `--provider mistral` it also asks a model
-fifteen probes with the refusal off and on
-(`notebooks/answers/results/refusal-probes.csv`). Of the eight that should be
-refused the model declined seven on its own and answered "Is Meta a good
-investment?" with Meta's spending plans, and all eight are refused with it on.
-The seven that look like them and should be searched came out the same both
-ways.
+instruction to estimate. Those sets hold no question about a repurchase price
+or an obligation due next year, which is how an earlier rule that refused on
+those words passed the same count, so four such questions are among the
+script's probes now. The script prints how each probe is read: six that
+should be refused, and fifteen that should be searched.
+
+With `--provider mistral` it also asks a model each probe with the refusal off
+and on. That was run on fifteen probes, under the earlier rule. Of the six
+that are still refused, the model declined five on its own and answered "Is
+Meta a good investment?" with Meta's spending plans. It also declined the two
+that are now searched instead, "What will Microsoft's revenue be next year?"
+and "What is Apple's current stock price?", so searching them shows a user
+the same abstention. The seven that were always searched came out the same
+both ways. The six probes added since have not been asked of a model.
 
 Pass `min_score=<calibrated value>` to `answer_question` to add an inclusive
 floor on the selected retriever's final scores. Its internal thresholds also
@@ -1925,9 +1954,9 @@ measured it. `C0`, the fixed-size baseline, is built by the ablation runner
 only and cannot be selected.
 
 `--no-refusal` searches and asks a model about every question, instead of
-refusing one the parser reads as asking for advice, a prediction or a price,
-or as naming only companies outside the corpus. The report counts the rows it
-refused as `refused`.
+refusing one the parser reads as asking for advice or a prediction, or for a
+figure of a company outside the corpus. The report counts the rows it refused
+as `refused`.
 
 `--no-decompose` searches each question once instead of once per filing. A
 question naming more than one company or more than one year is otherwise split
@@ -1939,12 +1968,14 @@ rows that were split, so the comparison says how many questions it could apply
 to at all.
 
 Every answer is put through `verify_answer` before it is recorded, against the
-company and year it was searched in, as the app checks an answer before
-showing it. The report's `checks` counts the answered rows by the worst of
-their passage and fact checks: `mismatch`, `supported`, `unverified`, or
-`unchecked` for an answer that states no figure. That is what the answer card
-shows for each, so a run says how many of its answers a user would see
-flagged. The facts store is read once for the run.
+company and year the question is about, as the app checks an answer before
+showing it. That holds under a configuration measured without the metadata
+filter too: it searches every filing, and its answer is still checked against
+the benchmark's company and year. The report's `checks` counts the answered
+rows by the worst of their passage and fact checks: `mismatch`, `supported`,
+`unverified`, or `unchecked` for an answer that states no figure. That is what
+the answer card shows for each, so a run says how many of its answers a user
+would see flagged. The facts store is read once for the run.
 
 ## Team and course
 

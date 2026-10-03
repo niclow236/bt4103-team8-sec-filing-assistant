@@ -560,13 +560,35 @@ def test_a_request_for_advice_a_prediction_or_a_price_is_unanswerable(question):
 
 @pytest.mark.parametrize("question, because", [
     ("Should I buy Microsoft stock?", "request"),
-    ("What will Apple's revenue be next year?", "request"),
-    ("What is Apple's stock price?", "request"),
-    ("What did NVIDIA report in 2023?", "company"),
-    ("What was Intel's revenue in 2023?", "company"),
-    ("What was Apple's revenue in 2015?", "year"),
+    ("Predict Apple's revenue next year", "request"),
     # Advice about a company outside the corpus is refused as advice.
     ("Should I buy Intel stock?", "request"),
+    # An outside company's own figure: a possessive, or the subject after an
+    # auxiliary.
+    ("What was Intel's revenue in 2023?", "company"),
+    ("How many employees did NVIDIA have in FY2024?", "company"),
+    ("How much revenue did Tesla report in FY2023?", "company"),
+    # The words that mark a price or the future are also in questions a filing
+    # answers: the contractual obligations table, remaining performance
+    # obligations, Item 5's repurchases and the cover page.
+    ("What will Apple's revenue be next year?", "topic"),
+    ("What is Apple's stock price?", "topic"),
+    ("What were Microsoft's purchase obligations due next year in FY2024?", "topic"),
+    ("How much of Oracle's remaining performance obligations will be recognized in the "
+     "next fiscal year, as of FY2024?", "topic"),
+    ("What average share price did Apple pay for repurchases in FY2024?", "topic"),
+    ("What was the market capitalization of Apple's stock held by non-affiliates in FY2024?",
+     "topic"),
+    # A company outside the corpus that the filings inside it are asked about,
+    # or whose own figure is not what is asked for.
+    ("Which companies named NVIDIA as a competitor in FY2024?", "topic"),
+    ("What did the filings disclose about supply agreements with Intel in FY2023?", "topic"),
+    ("Which companies reported revenue from Intel as a customer in FY2024?", "topic"),
+    ("Did any company mention Qualcomm's patents?", "topic"),
+    ("What did NVIDIA report in 2023?", "topic"),
+    ("What was Apple's revenue in 2015?", "year"),
+    # A year after the corpus is outside it like one before, and is searched.
+    ("What will Apple's revenue be in fiscal 2026?", "year"),
 ])
 def test_an_unanswerable_question_says_why_it_is_one(question, because):
     parsed = _parse(question)

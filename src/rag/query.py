@@ -59,6 +59,7 @@ from .constants import (
     SEGMENT_ALIASES,
     TEMPORAL_CUES,
     UNANSWERABLE_BECAUSE,
+    UnanswerableBecause,
 )
 
 # A year as a question writes it. Four alternatives, tried in this order:
@@ -148,6 +149,15 @@ _DESCRIBED_BEFORE = re.compile(
 )
 _DESCRIBING_FORMS = frozenset({"expected", "anticipated"})
 
+# A company named as the one a figure belongs to is the subject of its clause,
+# after an auxiliary: "did NVIDIA have", "does Intel report". The other way is
+# the possessive, "Intel's total revenue" (``_POSSESSIVE_AFTER``). Named any
+# other way, as in "revenue from Intel" or "named NVIDIA as a competitor", the
+# company is what some other filing is being asked about.
+_SUBJECT_BEFORE = re.compile(
+    r"\b(?:did|does|do|has|have|had|is|are|was|were|will|would|can|could)\s+$", re.IGNORECASE
+)
+
 # Applied after recognised company names and possessives have been removed.
 # Arbitrary words before "total" could swallow "the rationale behind Apple’s".
 _ASKS_TOTAL = re.compile(
@@ -189,13 +199,17 @@ class ParsedQuestion:
     # ``_search_text`` for what is removed and what stays.
     search_text: str | None = None
     # Why an unanswerable question is one, and None for every other type:
-    # "request" where it asks for what no 10-K gives (advice, a prediction, a
-    # current price), "company" where it names only companies the corpus does
-    # not hold, "year" where it names only fiscal years it does not hold.
+    # "request" where it asks for advice or a prediction, "company" where it
+    # asks for a figure of a company the corpus does not hold, "topic" where
+    # it is about a share price, next year or a company outside the corpus,
+    # and "year" where it names only fiscal years the corpus does not hold.
     # ``answer_question`` refuses the first two without searching. It still
-    # searches for the third, since a filing prints the two years before its
-    # own beside it and FY2020 may be in the FY2021 statements.
-    unanswerable_because: str | None = None
+    # searches for the other two, since a filing may answer either: one prints
+    # the price it paid for its own shares and what it owes next year, names
+    # the companies it competes with, and prints the two years before its
+    # own, so FY2020 may be in the FY2021 statements. See
+    # ``constants.UNANSWERABLE_BECAUSE``.
+    unanswerable_because: UnanswerableBecause | None = None
 
     def __post_init__(self) -> None:
         if self.question_type not in QUESTION_TYPES:
@@ -317,10 +331,16 @@ def parse_question(
         named_only_bad_years=only_bad_years,
         wants_figures=wants_figures,
     )
-    because = None
+    because: UnanswerableBecause | None = None
     if question_type == "unanswerable":
-        because = ("request" if _asks_beyond_the_filing(question)
-                   else "company" if only_out_of_scope else "year")
+        if _asks_for_advice_or_a_prediction(question):
+            because = "request"
+        elif only_out_of_scope and wants_figures and _names_whose_figure(question, out_of_scope):
+            because = "company"
+        elif only_out_of_scope or _asks_beyond_the_filing(question):
+            because = "topic"
+        else:
+            because = "year"
     return ParsedQuestion(
         question=question.strip(),
         question_type=question_type,
@@ -650,18 +670,48 @@ def _reports_on_the_filing(question: str) -> bool:
     return False
 
 
+def _asks_for_advice_or_a_prediction(question: str) -> bool:
+    """Whether the question asks the engine for advice or a prediction of its own.
+
+    The two requests no filing answers however they are worded: "based on
+    what Apple disclosed, predict next quarter's revenue" still asks for a
+    prediction. These are the questions ``answer_question`` refuses unsearched.
+    """
+    return bool(_any_cue(question, ADVICE_CUES) or _PREDICTION_REQUEST.search(question))
+
+
+def _names_whose_figure(question: str, names: Iterable[str]) -> bool:
+    """Whether one of ``names``, as the question writes them, is the company
+    whose figure it asks for: a possessive, or the subject after an auxiliary.
+
+    "What was Intel's total revenue?" and "How many employees did NVIDIA
+    have?" ask for an outside company's own figure, which no filing in the
+    corpus reports. "Which companies reported revenue from Intel as a
+    customer?" asks the filings the corpus does hold about Intel.
+    """
+    for name in names:
+        for match in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", question):
+            if (_POSSESSIVE_AFTER.match(question, match.end())
+                    or _SUBJECT_BEFORE.search(question[:match.start()])):
+                return True
+    return False
+
+
 def _asks_beyond_the_filing(question: str) -> bool:
     """Whether the question asks for something no 10-K can give.
 
     Three things a filing cannot give: advice, a new prediction, and what it
-    does not carry -- a current price, next year. The first two are refused
-    however the question is worded, because "based on what Apple disclosed,
-    predict next quarter's revenue" still asks for a prediction. The third is
-    refused only when the question asks for the thing itself: with a
+    does not carry -- a current price, next year. The first two are read this
+    way however the question is worded (``_asks_for_advice_or_a_prediction``).
+    The third only when the question asks for the thing itself: with a
     reporting verb in it, "what risks did Apple disclose about its stock
     price" is a question about Item 1A, and the noun is just its topic.
+
+    The third reading is a guess from the words, and filings do print some
+    share prices and some of next year: ``parse_question`` records it as
+    "topic", which is searched, and the first two as "request", which is not.
     """
-    if _any_cue(question, ADVICE_CUES) or _PREDICTION_REQUEST.search(question):
+    if _asks_for_advice_or_a_prediction(question):
         return True
     if _reports_on_the_filing(question):
         return False

@@ -461,18 +461,20 @@ class NeverSearch:
     # Asked of a model with sixteen passages about Meta, this one was answered
     # with a description of its spending plans.
     ("Is Meta a good investment?", "beyond_the_filings"),
-    ("What will Microsoft's revenue be next year?", "beyond_the_filings"),
-    ("What is Apple's current stock price?", "beyond_the_filings"),
+    ("Based on what Apple disclosed, predict next quarter's revenue", "beyond_the_filings"),
     # Searched, these get passages from the companies the corpus does hold.
     ("What was Intel's total revenue in FY2024?", "company_not_in_corpus"),
-    ("What did NVIDIA report in 2023?", "company_not_in_corpus"),
+    ("How many employees did NVIDIA have in FY2024?", "company_not_in_corpus"),
 ])
 def test_a_question_the_corpus_cannot_answer_is_refused_without_a_search(question, reason,
                                                                          tmp_path):
+    said = []
     result = answer_question(question, NeverSearch(), CONFIG, llm=NeverGenerate(),
-                             facts_file=tmp_path / "missing.parquet")
+                             facts_file=tmp_path / "missing.parquet", on_token=said.append)
     assert_abstention(result, reason)
     assert result.latency_ms == 0
+    # The app streams, and a refusal reaches the page as its one sentence, once.
+    assert said == [ABSTAIN_PHRASE]
 
 
 @pytest.mark.parametrize("question", [
@@ -483,6 +485,24 @@ def test_a_question_the_corpus_cannot_answer_is_refused_without_a_search(questio
     "How does Apple describe competition with NVIDIA?",
     # About what a filing says of the future, which a filing does say.
     "What did Apple say it expects next year?",
+    # "next year" and a share price are in questions a filing answers: the
+    # contractual obligations table, remaining performance obligations, Item
+    # 5's repurchases and the cover page. Refused on those words, each of
+    # these got no answer where main gave one.
+    "What were Microsoft's purchase obligations due next year in FY2024?",
+    "How much of Oracle's remaining performance obligations will be recognized in the "
+    "next fiscal year, as of FY2024?",
+    "What average share price did Apple pay for repurchases in FY2024?",
+    "What was the market capitalization of Apple's stock held by non-affiliates in FY2024?",
+    # So the two that no filing answers are searched too, and left to the model.
+    "What will Microsoft's revenue be next year?",
+    "What is Apple's current stock price?",
+    # A company outside the corpus, asked about in the filings inside it.
+    "Which companies named NVIDIA as a competitor in FY2024?",
+    "What did the filings disclose about supply agreements with Intel in FY2023?",
+    "Which companies reported revenue from Intel as a customer in FY2024?",
+    # Named, with no figure of its own asked for: the model has to abstain.
+    "What did NVIDIA report in 2023?",
 ])
 def test_a_question_some_filing_may_answer_is_still_searched(question, tmp_path):
     model = Model()
@@ -514,6 +534,25 @@ def test_refusal_is_off_for_the_without_half_of_the_comparison(tmp_path):
                              llm=model, facts_file=tmp_path / "missing.parquet",
                              use_refusal=False)
     assert model.calls and not result.abstained
+
+
+@pytest.mark.parametrize("argv, expected", [
+    ([], True),
+    (["--no-refusal"], False),
+])
+def test_the_evaluation_command_can_turn_the_refusal_off(monkeypatch, tmp_path, argv, expected):
+    import src.evaluation.cli as cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
+    monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
+    monkeypatch.setattr(cli, "evaluate", lambda *a, **k: seen.update(k) or
+                        {"summary": {}, "by_answerability": {}, "results": []})
+    cli.main(["q.jsonl", "--retriever", "bm25", "--run-id", "r",
+              "--output", str(tmp_path / "report.json"), "--provider", "ollama", *argv])
+    assert seen["use_refusal"] is expected
+    # The report's ``stack`` is built from the same value, so it says so too.
+    assert seen["stack"].use_refusal is expected
 
 
 def test_evaluation_counts_the_questions_it_refused():

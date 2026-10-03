@@ -178,7 +178,7 @@ def evaluate(
     measuring could even apply to.
 
     ``use_refusal`` is the same for the refusal of a question the parser reads
-    as asking for advice or a prediction, or as naming only companies outside
+    as asking for advice or a prediction, or for a figure of a company outside
     the corpus: False searches those too and leaves the abstaining to a model.
     A refused row abstains with the reason that says so, and ``refused`` counts
     them.

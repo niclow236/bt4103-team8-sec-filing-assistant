@@ -16,7 +16,7 @@ thing in one place, and changes by getting a new id.
 from __future__ import annotations
 
 import re
-from typing import NamedTuple
+from typing import Literal, NamedTuple, get_args
 
 # --- companies --------------------------------------------------------------
 # The names a question might use for each company in config/companies.txt,
@@ -102,14 +102,29 @@ OUT_OF_SCOPE_ALIASES: dict[str, tuple[str, ...]] = {
 # would filter to years and let one company crowd out the other.
 QUESTION_TYPES = ("factual", "comparative", "temporal", "numeric", "unanswerable")
 
-# Why a question is unanswerable, which decides what is done about it. A
-# request for what no 10-K gives (advice, a prediction, a current price) and a
-# question naming only companies outside the corpus are refused without a
-# search: there is nothing to retrieve, and a search over the other companies
-# only hands a model passages to answer from. A question naming only a fiscal
-# year outside the corpus is still searched, because a filing prints the two
-# years before its own beside it.
-UNANSWERABLE_BECAUSE = ("request", "company", "year")
+# Why a question is unanswerable, which decides what is done about it.
+#
+# - request: it asks for advice or for a prediction of the engine's own.
+#   Refused without a search, however it is worded.
+# - company: it asks for a figure of a company the corpus holds no filings
+#   for ("What was Intel's total revenue?"). Refused without a search: a
+#   search over the other companies only hands a model passages to answer
+#   from.
+# - topic: it is about something no filing in the corpus reports as its own
+#   subject: a share price, next year, a company outside the corpus. Still
+#   searched, because the words cannot tell a request for today's price from
+#   a question a filing answers. A 10-K prints the average price paid for
+#   repurchased shares, the market value of the shares non-affiliates hold
+#   and the obligations due next year, and the filings the corpus holds name
+#   the companies it does not as competitors, suppliers and customers.
+# - year: it names only fiscal years outside the corpus. Still searched: a
+#   filing prints the two years before its own beside it, and what falls due
+#   in the years after it.
+#
+# Where a question is searched, a model that finds no answer in the passages
+# abstains, which costs a search. A refusal that is wrong costs the answer.
+UnanswerableBecause = Literal["request", "company", "topic", "year"]
+UNANSWERABLE_BECAUSE: tuple[UnanswerableBecause, ...] = get_args(UnanswerableBecause)
 
 # Phrases that set two things against each other. Whole-word, lower case.
 COMPARATIVE_CUES = (
@@ -155,6 +170,12 @@ NUMERIC_CUES = (
 # own; the question has to be asking for the thing rather than asking what
 # the filing said about it. ``query.py`` combines these four tables to make
 # that call, and the rule is written out there.
+#
+# Only the first two tables decide a refusal. The nouns and the future
+# phrases are a guess from the words, and a filing answers some questions
+# that carry them ("What average share price did Apple pay for repurchases?",
+# "What were Microsoft's purchase obligations due next year?"), so those are
+# searched and left to the model: see ``UNANSWERABLE_BECAUSE``.
 
 # Requests for advice. Always unanswerable: no reading of the filing turns
 # "should I buy" into a question about what it says.
@@ -461,7 +482,10 @@ HOSTED_TIMEOUT_S = 120
 # Adobe, Salesforce, Alphabet and Intuit call earnings per share "net income
 # per share", which holds another line item's name. ``numeric.metrics_in``
 # reads a name inside a longer one as part of the longer one, so "diluted net
-# income per share" names earnings per share and not net income.
+# income per share" names earnings per share and not net income. Plain "net
+# income per share" is left out on purpose: it does not say basic or diluted,
+# so the route would be choosing one for the user. ``metrics_in`` reads it as
+# a per-share amount that names no line item here, and not as net income.
 
 
 class Metric(NamedTuple):

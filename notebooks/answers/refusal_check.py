@@ -1,10 +1,10 @@
 """Whether refusing unanswerable questions ever refuses one that has an answer.
 
-``answer_question`` refuses a question the parser reads as asking for advice,
-a prediction or a current price, or as naming only companies the corpus holds
-no filings for, without searching (``answer.REFUSALS``). That is only safe if
-the parser never reads an answerable question that way, since a refused
-question gets no answer at all where a searched one would have got one.
+``answer_question`` refuses a question the parser reads as asking for advice
+or a prediction, or for a figure of a company the corpus holds no filings
+for, without searching (``answer.REFUSALS``). That is only safe if the parser
+never reads an answerable question that way, since a refused question gets no
+answer at all where a searched one would have got one.
 
 This reads every question there is an answer for and counts the ones that
 would be refused. No index is loaded and no model is asked:
@@ -63,12 +63,12 @@ from src.retrieval.facts import load_facts  # noqa: E402
 TEST_QUESTIONS = ROOT / "notebooks" / "test_data" / "test_questions.csv"
 PROBES_CSV = RESULTS_DIR / "refusal-probes.csv"
 
-# Questions no filing in the corpus answers, and the reason each is refused.
+# Questions no filing in the corpus answers, and the reason each is refused:
+# advice, a prediction asked of the engine, and a figure of a company the
+# corpus holds no filings for.
 SHOULD_REFUSE = {
     "Should I buy Amazon stock?": "beyond_the_filings",
     "Is Meta a good investment?": "beyond_the_filings",
-    "What will Microsoft's revenue be next year?": "beyond_the_filings",
-    "What is Apple's current stock price?": "beyond_the_filings",
     "Based on what Apple disclosed, predict next quarter's revenue": "beyond_the_filings",
     "What was Intel's total revenue in FY2024?": "company_not_in_corpus",
     "What was Tesla's net income in FY2023?": "company_not_in_corpus",
@@ -84,6 +84,23 @@ SHOULD_SEARCH = (
     "Compare Intel and Apple revenue in FY2024",
     # Only the year is outside the corpus, and the FY2021 statements print FY2020.
     "What was Apple's total revenue in FY2020?",
+    # A filing answers each of these four: the contractual obligations table,
+    # remaining performance obligations, Item 5's repurchases and the cover
+    # page. None of the answerable sets above holds a question like them, so
+    # a rule that refused on "next year" or a share price passed that count
+    # and still refused all four.
+    "What were Microsoft's purchase obligations due next year in FY2024?",
+    "How much of Oracle's remaining performance obligations will be recognized in the "
+    "next fiscal year, as of FY2024?",
+    "What average share price did Apple pay for repurchases in FY2024?",
+    "What was the market capitalization of Apple's stock held by non-affiliates in FY2024?",
+    # No filing answers these two. The words do not tell them from the four
+    # above, so they are searched and the abstaining is left to the model.
+    "What will Microsoft's revenue be next year?",
+    "What is Apple's current stock price?",
+    # A company outside the corpus, asked about in the filings inside it.
+    "Which companies named NVIDIA as a competitor in FY2024?",
+    "What did the filings disclose about supply agreements with Intel in FY2023?",
 )
 
 

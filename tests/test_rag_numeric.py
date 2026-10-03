@@ -145,6 +145,13 @@ def test_the_scope_guard_does_not_block_the_per_share_metrics(question, expected
     ("| Net income | $ | 4,822 | $ | 5,260 |", {"net_income"}),
     ("Net income was $4,822 million, or diluted net income per share of $10.02.",
      {"net_income", "diluted_eps"}),
+    # With "per share" after it and neither "basic" nor "diluted" before, the
+    # name is a per-share amount that does not say which, and not net income.
+    ("Net income per share was $12.36.", set()),
+    ("| Net income per share - basic | $ | 1.16 | $ | 0.61 |", set()),
+    ("| Net loss per share, basic and diluted | $ | -5.18 |", set()),
+    ("Net income per diluted share", set()),
+    ("Net income was $4,822 million, and net income per share was $10.02.", {"net_income"}),
 ])
 def test_a_name_inside_a_longer_name_of_another_line_item_is_part_of_it(text, expected):
     # Adobe, Salesforce, Alphabet and Intuit call earnings per share "net

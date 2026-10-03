@@ -70,8 +70,9 @@ ABSTENTION_MESSAGES = {
     "no_evidence": "Retrieval returned no usable evidence.",
     "model_declined": "The retrieved evidence does not support an answer to this question.",
     "beyond_the_filings": "A 10-K reports the past and gives no advice, so the filings "
-                          "cannot answer a request for advice, a prediction or a current price.",
-    "company_not_in_corpus": "The question names only a company the corpus holds no filings for.",
+                          "cannot answer a request for advice or a prediction.",
+    "company_not_in_corpus": "The question asks for a figure of a company the corpus holds "
+                             "no filings for.",
 }
 
 

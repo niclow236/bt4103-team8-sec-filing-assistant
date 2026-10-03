@@ -28,7 +28,7 @@ from .constants import (
     TABLE_SCALE,
     UNIT_ALIASES,
 )
-from .numeric import cached_facts, metrics_in
+from .numeric import cached_facts, metrics_in, names_a_per_share_amount
 from .query import ParsedQuestion, parse_question
 from .records import Answer, SentenceCitations, VerificationCheck, VerificationResult
 
@@ -117,10 +117,13 @@ def _figures(text: str, *, scale: Decimal = Decimal(1), unit: str = "", ignore_y
         magnitude = _SCALES.get((match["scale"] or "").lower(), scale)
         currency = (match["currency"] or "").strip().upper()
         kind = {"$": "USD", "US$": "USD", "€": "EUR", "£": "GBP"}.get(currency, currency)
-        if kind and unit == f"{kind}/shares":
+        if kind and unit == f"{kind}/shares" and not match["scale"]:
             # A dollar amount for a per-share line item is dollars a share. A
             # statement prints "$4.67" in the row and an answer writes "EPS of
-            # $4.67", and neither is followed by "per share".
+            # $4.67", and neither is followed by "per share". Not one with a
+            # scale word after it: nothing is "$94 billion" a share, and an
+            # answer that gives EPS and then a dollar total in one sentence
+            # had the total checked against the per-share figure.
             kind = unit
         kind = kind or unit
         suffix_unit = (match["unit"] or "").lower()
@@ -344,7 +347,15 @@ def verify_answer(
                              else "Citation or claim needs review; numeric agreement alone does not establish entailment.",
                              evidence=exact))
         tickers, years = _scope(claim, parsed, cited)
-        metrics = _metrics(claim) or _metrics(answer.question)
+        metrics = _metrics(claim)
+        if not metrics:
+            # The question's line item, where the claim names none of its own.
+            # A claim that says "net income per share" states a per-share
+            # figure, so the question's line item is its own only where that
+            # is a per-share one too: asked for net income, it is not.
+            metrics = _metrics(answer.question)
+            if names_a_per_share_amount(claim):
+                metrics = {m for m in metrics if _METRICS[m][2].endswith("/shares")}
         metric = next(iter(metrics)) if len(metrics) == 1 else None
         default_unit = _METRICS[metric][2] if metric else ""
         figures = _figures(claim, unit=default_unit)
@@ -355,7 +366,12 @@ def verify_answer(
             # item and year claimed: it is there, and it is not support.
             untied = []
             # Ambiguous scope cannot become a pass through coincidental values.
-            ambiguous = len(tickers) != 1 or len(years) != 1 or len(metrics) > 1
+            # "Net income per share" with no "basic" or "diluted" names a
+            # per-share figure and not which, so there is no line item to
+            # compare it with: unknown, like two line items in one claim.
+            ambiguous = (len(tickers) != 1 or len(years) != 1 or len(metrics) > 1
+                         or (not metrics and names_a_per_share_amount(
+                             claim + " " + answer.question)))
             if not ambiguous:
                 for passage in cited:
                     if passage.ticker not in tickers:
