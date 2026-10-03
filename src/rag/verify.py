@@ -80,15 +80,20 @@ _SEVERAL_YEARS = ("The facts store confirms this figure, and a cited sentence pr
 # and the answer marked a mismatch with the store it had just agreed with.
 #
 # In any case, since "september 30, 2023" and a heading's "SEPTEMBER 30, 2023"
-# are the same date and left the same 30 behind. Except "may", which has to
-# be "May" or "MAY": in lower case it is the verb, and "the top 10 may be
-# affected" does not name the tenth of May.
+# are the same date and left the same 30 behind. Except "may", which in lower
+# case is also the verb: "the top 10 may be affected" does not name the tenth
+# of May. So "May" and "MAY" are the month wherever a day stands beside them,
+# and "may" only with the year as well, "may 31, 2024" or "31 may 2024", which
+# the verb is never followed by.
 _MONTH = (r"(?:(?i:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|June?|July?|Aug(?:ust)?|"
           r"Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)|May|MAY)\.?")
 _ORDINAL = r"(?i:st|nd|rd|th)?"
+_YEAR_AFTER = r",?\s+(?:19|20)\d{2}\b"
 _WRITTEN_DATES = re.compile(
-    rf"\b{_MONTH}\s+\d{{1,2}}{_ORDINAL}\b(?:,?\s+(?:19|20)\d{{2}}\b)?"
-    rf"|\b\d{{1,2}}{_ORDINAL}\s+{_MONTH}(?!\w)(?:,?\s+(?:19|20)\d{{2}}\b)?"
+    rf"\b{_MONTH}\s+\d{{1,2}}{_ORDINAL}\b(?:{_YEAR_AFTER})?"
+    rf"|\b\d{{1,2}}{_ORDINAL}\s+{_MONTH}(?!\w)(?:{_YEAR_AFTER})?"
+    rf"|\bmay\s+\d{{1,2}}{_ORDINAL}{_YEAR_AFTER}"
+    rf"|\b\d{{1,2}}{_ORDINAL}\s+may{_YEAR_AFTER}"
 )
 
 
@@ -433,7 +438,9 @@ def worst_check(checks: Iterable[VerificationCheck | Mapping[str, Any]]) -> str:
     that could not be checked, in the same sentence or in a different one:
     taken over the whole answer at once, one supported claim made an answer
     "supported" whatever else it stated. ``unchecked`` is an answer with no
-    such check, which is one that states no figure.
+    such check, which is one to a question that asks for no figure and that
+    states none. A question that asks for one and gets an answer without it
+    has a figureless ``unverified`` check, so that answer is ``unverified``.
 
     ``checks`` are an answer's, as records or as the dicts a saved row holds.
     The evaluation harness counts a run's answers by this word and the

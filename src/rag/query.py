@@ -43,6 +43,7 @@ from .constants import (
     BEYOND_FILING_NOUNS,
     COMPANY_ALIASES,
     COMPARATIVE_CUES,
+    CORPORATE_SUFFIXES,
     COUNT_AFTER,
     CURRENCY_BEFORE,
     FUTURE_CUES,
@@ -51,10 +52,12 @@ from .constants import (
     MAGNITUDE_AFTER,
     NUMERIC_CUES,
     OUT_OF_SCOPE_ALIASES,
+    OWNING_VERBS,
     PREDICTION_VERBS,
     QUANTITY_BEFORE,
     QUESTION_TYPES,
     QUESTION_SCAFFOLDING,
+    RELATION_NOUNS,
     REPORTING_VERBS,
     SEGMENT_ALIASES,
     TEMPORAL_CUES,
@@ -122,8 +125,11 @@ _LAW_BEFORE = re.compile(r"\bact\s+of\s+$", re.IGNORECASE)
 # verb after a subject and is not a request.
 # Not before "of": "Loss Contingency, Estimate of Possible Loss" is a line
 # item's name, and the comma in it does not make "Estimate" an instruction.
+# Nor is the full stop that ends a corporate suffix a clause break: "what did
+# Apple Inc. estimate" has its verb after a subject like any other.
 _PREDICTION_REQUEST = re.compile(
-    r"(?:^|[,;:.?!]\s*|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+)"
+    r"(?:^|" + "".join(rf"(?<!\b{suffix})" for suffix in CORPORATE_SUFFIXES) + r"[,;:.?!]\s*"
+    r"|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+)"
     r"(?:" + "|".join(PREDICTION_VERBS) + r")\b(?!\s+of\b)",
     re.IGNORECASE,
 )
@@ -149,13 +155,23 @@ _DESCRIBED_BEFORE = re.compile(
 )
 _DESCRIBING_FORMS = frozenset({"expected", "anticipated"})
 
-# A company named as the one a figure belongs to is the subject of its clause,
-# after an auxiliary: "did NVIDIA have", "does Intel report". The other way is
-# the possessive, "Intel's total revenue" (``_POSSESSIVE_AFTER``). Named any
-# other way, as in "revenue from Intel" or "named NVIDIA as a competitor", the
-# company is what some other filing is being asked about.
+# A company named as the one a figure belongs to is named in one of three
+# ways. As the subject of a verb that makes the figure its own, after an
+# auxiliary: "did NVIDIA have", "does Intel report". As a possessive, "Intel's
+# total revenue" (``_POSSESSIVE_AFTER``). Or after "of", "the total revenue of
+# Intel". Named any other way, the company is what some other filing is being
+# asked about: "revenue from Intel", "named NVIDIA as a competitor", "did
+# NVIDIA account for more than 10% of any company's revenue", "customers of
+# Intel".
 _SUBJECT_BEFORE = re.compile(
-    r"\b(?:did|does|do|has|have|had|is|are|was|were|will|would|can|could)\s+$", re.IGNORECASE
+    r"\b(?:did|does|do|has|have|had|will|would|can|could)\s+$", re.IGNORECASE
+)
+_OWNS_AFTER = re.compile(r"\s+(?:" + "|".join(OWNING_VERBS) + r")", re.IGNORECASE)
+_OF_BEFORE = re.compile(r"\b(\w+)\s+of\s+$", re.IGNORECASE)
+# What follows the company when it ends its phrase. "purchases of NVIDIA chips"
+# goes on to name something else, which the figure belongs to.
+_PHRASE_ENDS_AFTER = re.compile(
+    r"\s*(?:$|[?,.;:]|\s(?:in|for|during|as|at|over|across)\b|\s(?:FY)?\d)", re.IGNORECASE
 )
 
 # Applied after recognised company names and possessives have been removed.
@@ -245,6 +261,23 @@ class ParsedQuestion:
             active["fiscal_year"] = list(self.fiscal_years)
         return active
 
+    @property
+    def refused(self) -> UnanswerableBecause | None:
+        """Why this reading is refused without a search, or None where it is searched.
+
+        Advice and a prediction are refused whatever is searched. An outside
+        company's own figure is refused unless a company is named to search:
+        a reading scoped to one chosen by hand (``scoped_to``), as the app's
+        sidebar lets a user choose, is searched, since that company's filings
+        may well mention the one the question named. A topic or a year the
+        corpus may not hold is always searched. The one place this is decided,
+        so the line under an answer cannot disagree with what was done.
+        """
+        because = self.unanswerable_because
+        if because == "request" or (because == "company" and not self.tickers):
+            return because
+        return None
+
     def describe(self) -> tuple[str, ...]:
         """One line per thing the parser decided, for showing under the answer.
 
@@ -255,10 +288,11 @@ class ParsedQuestion:
 
         A question read as unanswerable and searched all the same says so:
         the line is shown under the answer a filing gave, and "unanswerable"
-        alone would contradict the answer above it.
+        alone would contradict the answer above it. Whether it is searched is
+        ``refused``'s to say, which is what ``answer_question`` acts on.
         """
         kind = self.question_type
-        if self.unanswerable_because in ("topic", "year"):
+        if self.unanswerable_because is not None and self.refused is None:
             kind += ", searched in case a filing answers it"
         lines = [f"Question type: {kind}"]
         if self.tickers:
@@ -700,17 +734,27 @@ def _asks_for_advice_or_a_prediction(question: str) -> bool:
 
 def _names_whose_figure(question: str, names: Iterable[str]) -> bool:
     """Whether one of ``names``, as the question writes them, is the company
-    whose figure it asks for: a possessive, or the subject after an auxiliary.
+    whose figure it asks for: a possessive, the subject of a verb that makes
+    the figure its own, or the company after "of".
 
-    "What was Intel's total revenue?" and "How many employees did NVIDIA
-    have?" ask for an outside company's own figure, which no filing in the
-    corpus reports. "Which companies reported revenue from Intel as a
-    customer?" asks the filings the corpus does hold about Intel.
+    "What was Intel's total revenue?", "How many employees did NVIDIA have?"
+    and "What was the total revenue of Intel?" ask for an outside company's
+    own figure, which no filing in the corpus reports. "Which companies
+    reported revenue from Intel as a customer?" and "Did NVIDIA account for
+    more than 10% of any company's revenue?" ask the filings the corpus does
+    hold about them. A wording this does not list, "Intel revenue in FY2024?",
+    is searched, and declining it is left to the model.
     """
     for name in names:
         for match in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", question):
-            if (_POSSESSIVE_AFTER.match(question, match.end())
-                    or _SUBJECT_BEFORE.search(question[:match.start()])):
+            before, end = question[:match.start()], match.end()
+            if _POSSESSIVE_AFTER.match(question, end):
+                return True
+            if _SUBJECT_BEFORE.search(before) and _OWNS_AFTER.match(question, end):
+                return True
+            of = _OF_BEFORE.search(before)
+            if (of and of.group(1).lower() not in RELATION_NOUNS
+                    and _PHRASE_ENDS_AFTER.match(question, end)):
                 return True
     return False
 

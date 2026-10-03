@@ -1217,11 +1217,13 @@ and the cited passage has to tie the figure to the line item itself.
 
 These rows were recorded under an earlier rule for summing an answer up, and a
 run made since uses the evaluation harness's (`verify.worst_check`), which
-differs in two ways. An answer in which the checker found no figure to check
-was counted as unverified, and is now `unchecked`. And one supported figure
-made a whole answer supported, where an answer is now counted by its worst
-figure, so one that also states a figure the checker could not check is
-unverified. The facts route's answers state one figure each, so their rows
+differs in one way that reaches them. One supported figure made a whole answer
+supported, where an answer is now counted by its worst figure, so one that
+also states a figure the checker could not check is unverified. (The harness's
+`unchecked` does not come into it: it is for a question that asks for no
+figure, and every question in these two sets asks for one, so an answer
+without a figure is unverified under either rule.) The facts route's answers
+state one figure each, so their rows
 are the same under either rule. For the answers a model wrote, the supported
 counts above are an upper bound: a new run can move an answer from supported
 to unverified and not the other way.
@@ -1391,7 +1393,15 @@ answer from them, and a question about Intel's revenue gets sixteen passages
 from other companies. `parse_question` already read both as unanswerable, and
 `ParsedQuestion.unanswerable_because` now says why (`request`, `company`,
 `topic` or `year`), so `answer_question` can refuse the first two kinds before
-it searches.
+it searches. A figure is an outside company's own when the question names the
+company as its owner: by a possessive ("Intel's revenue"), after "of" ("the
+revenue of Intel"), or as the subject of a verb of having or reporting ("how
+many employees did NVIDIA have"). Named any other way the company is a topic.
+"Did NVIDIA account for more than 10% of any company's revenue?" asks the
+filings in the corpus about their customers, and a wording the rule does not
+list, "Intel revenue in FY2024?", is searched and left to the model.
+`ParsedQuestion.refused` is the one place that says whether a reading is
+refused, so the line under an answer and what was done cannot disagree.
 
 The other two kinds are still searched, because a filing may answer them. A
 refusal that is wrong costs the answer, and a search that finds nothing costs
@@ -1419,8 +1429,8 @@ the parser stopped reading "Loss Contingency, Estimate of Possible Loss" as an
 instruction to estimate. Those sets hold no question about a repurchase price
 or an obligation due next year, which is how an earlier rule that refused on
 those words passed the same count, so four such questions are among the
-script's probes now. The script prints how each probe is read: six that
-should be refused, and fifteen that should be searched.
+script's probes now. The script prints how each probe is read: seven that
+should be refused, and nineteen that should be searched.
 
 With `--provider mistral` it also asks a model each probe with the refusal off
 and on. That was run on fifteen probes, under the earlier rule. Of the six
@@ -1429,7 +1439,7 @@ Meta a good investment?" with Meta's spending plans. It also declined the two
 that are now searched instead, "What will Microsoft's revenue be next year?"
 and "What is Apple's current stock price?", so searching them shows a user
 the same abstention. The seven that were always searched came out the same
-both ways. The six probes added since have not been asked of a model.
+both ways. The eleven probes added since have not been asked of a model.
 
 Pass `min_score=<calibrated value>` to `answer_question` to add an inclusive
 floor on the selected retriever's final scores. Its internal thresholds also
@@ -1995,8 +2005,10 @@ check contradicts it, `supported` where a passage or the facts store supports
 it, and `unverified` otherwise, and an answer is counted as its worst figure:
 `mismatch` first, then `unverified`, then `supported`. So a supported answer
 is one whose every figure is supported, and one supported claim does not hide
-another that could not be checked. `unchecked` is an answer that states no
-figure. A run then says how many of its answers a user would see flagged, and
+another that could not be checked. `unchecked` is an answer to a question that
+asks for no figure and states none; a question that asks for one and is
+answered without it is `unverified`. A run then says how many of its answers
+a user would see flagged, and
 how many hold a figure nothing confirmed. The facts store is read once for the
 run.
 

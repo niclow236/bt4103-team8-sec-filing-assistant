@@ -73,6 +73,7 @@ SHOULD_REFUSE = {
     "What was Intel's total revenue in FY2024?": "company_not_in_corpus",
     "What was Tesla's net income in FY2023?": "company_not_in_corpus",
     "How many employees did NVIDIA have in FY2024?": "company_not_in_corpus",
+    "What was the total revenue of Intel in FY2024?": "company_not_in_corpus",
 }
 # Questions that share their words and that a filing does answer, or may.
 SHOULD_SEARCH = (
@@ -101,6 +102,14 @@ SHOULD_SEARCH = (
     # A company outside the corpus, asked about in the filings inside it.
     "Which companies named NVIDIA as a competitor in FY2024?",
     "What did the filings disclose about supply agreements with Intel in FY2023?",
+    # The full stop of a corporate suffix is not a clause break, so the verb
+    # after it is the company's and not an instruction.
+    "What did Apple Inc. estimate as its effective tax rate for fiscal 2024?",
+    "What did Microsoft Corp. project for capital expenditures in FY2024?",
+    # An outside company as some filing's customer, not as the figure's owner.
+    "Did NVIDIA account for more than 10% of any company's revenue in FY2024?",
+    # Its own figure, in a wording the rule does not list: left to the model.
+    "Intel revenue in FY2024?",
 )
 
 

@@ -192,6 +192,30 @@ ADVICE_CUES = (
 # predict for its supply chain" asks what the filing predicts and does not.
 PREDICTION_VERBS = ("predict", "forecast", "project", "estimate", "extrapolate", "guess")
 
+# The abbreviations a company's legal name ends in. The full stop after one is
+# part of the name, not the end of a clause, so the verb after "Apple Inc." is
+# not read as an instruction. Lower case, without the stop.
+CORPORATE_SUFFIXES = ("inc", "corp", "co", "ltd")
+
+# What a company does to a figure that makes the figure its own: "how many
+# employees did NVIDIA have", "what did Intel report". Stems, matched at the
+# start of the word after the company's name. Any other verb leaves the
+# company as something a filing in the corpus may be asked about, as in "did
+# NVIDIA account for more than 10% of any company's revenue", so the list
+# errs towards a search.
+OWNING_VERBS = (
+    "have", "has", "had", "report", "earn", "make", "made", "generate", "spend", "spent",
+    "pay", "paid", "employ", "post", "record", "own", "hold", "held", "owe", "invest",
+    "book", "recogni", "incur", "lose", "lost",
+)
+
+# Nouns that name a relationship with the company after "of", rather than a
+# figure of its own: "customers of Intel", "a supplier of NVIDIA".
+RELATION_NOUNS = (
+    "customer", "customers", "supplier", "suppliers", "competitor", "competitors",
+    "partner", "partners", "vendor", "vendors",
+)
+
 # Nouns for things a 10-K does not carry. Unanswerable when asked for
 # directly, and a topic like any other when the question asks what the filing
 # said about them.

@@ -113,11 +113,10 @@ def answer_question(
         raise ValueError("top_k must be positive when answering a question")
     config = config if config is not None else config_from_env()
 
-    because = parsed.unanswerable_because if use_refusal else None
-    if because == "company" and query.tickers:
-        # The caller chose a company to search by hand, as the app's sidebar
-        # lets a user do, and its filings may well mention the one named.
-        because = None
+    # Read in the companies the Query names: a caller that chose one to search
+    # by hand, as the app's sidebar lets a user do, is not refused for naming
+    # another (``ParsedQuestion.refused``).
+    because = parsed.scoped_to(query).refused if use_refusal else None
     refusal = REFUSALS.get(because)
     if refusal is not None:
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(), passages=(),

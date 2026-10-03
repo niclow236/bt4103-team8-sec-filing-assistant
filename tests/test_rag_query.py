@@ -686,6 +686,27 @@ def test_describe_says_when_an_unanswerable_reading_was_searched_anyway(question
     assert _parse(question).describe()[0] == kind
 
 
+def test_describe_and_the_refusal_are_one_decision():
+    # A company picked by hand makes an outside company's figure a search
+    # (the app's sidebar), and the line under the answer has to say so:
+    # decided in two places, it read "unanswerable" under an answer.
+    reading = _parse("What was Intel's revenue in 2023?")
+    assert reading.refused == "company"
+    by_hand = reading.scoped_to(Query(reading.question, tickers=("AAPL",)))
+    assert by_hand.refused is None
+    assert by_hand.describe()[0] == (
+        "Question type: unanswerable, searched in case a filing answers it")
+    # Advice is refused whichever company is searched.
+    advice = _parse("Should I buy Intel stock?")
+    assert advice.scoped_to(Query(advice.question, tickers=("AAPL",))).refused == "request"
+    # And every reason a reading can be refused for has its abstention.
+    from src.rag.answer import REFUSALS
+    refused_for = {_parse(q).refused for q in (
+        "Should I buy Intel stock?", "What was Intel's revenue in 2023?",
+        "What was Apple's revenue in 2015?", "What is Apple's current stock price?")}
+    assert refused_for - {None} == set(REFUSALS)
+
+
 def test_describe_says_when_nothing_is_filtered():
     assert "Filters: none, searching every company and year" in _parse("What is a 10-K?").describe()
 

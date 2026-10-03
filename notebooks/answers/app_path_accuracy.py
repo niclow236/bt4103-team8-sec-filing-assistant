@@ -183,21 +183,30 @@ def run_and_save(results_csv: Path, answer_all, show) -> None:
     The answers before a provider failure or Ctrl-C are kept: a rate limit at
     question 40 of a third run should not cost the two runs before it. The
     rows are saved and shown as for a finished run, and the script then exits
-    saying where it stopped. The three scripts here end this way.
+    saying where it stopped and where they went. The three scripts here end
+    this way.
+
+    A stopped run is saved beside ``results_csv``, as ``<name>.partial.csv``,
+    and never over it: ``results/`` is not in git, so a finished file of the
+    same label is the only copy, and four rows of a rerun stopped at question
+    5 would have replaced it.
     """
     rows, last_request, stopped = [], [0.0], None
     try:
         answer_all(rows, last_request)
     except (ProviderUnavailable, KeyboardInterrupt) as error:
         stopped = error
+    saved = results_csv if stopped is None else results_csv.with_suffix(".partial.csv")
     if rows:
         table = pd.DataFrame(rows)
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        table.to_csv(results_csv, index=False, encoding="utf-8-sig")
-        print("\nSaved", results_csv.relative_to(ROOT))
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(saved, index=False, encoding="utf-8-sig")
+        print("\nSaved", saved.relative_to(ROOT) if saved.is_relative_to(ROOT) else saved)
         show(table)
     if stopped is not None:
-        sys.exit(f"stopped after {len(rows)} answers: {type(stopped).__name__}: {stopped}")
+        where = f", saved as {saved.name}" if rows else ""
+        sys.exit(f"stopped after {len(rows)} answers{where}: "
+                 f"{type(stopped).__name__}: {stopped}")
 
 
 def outcome_of(row: dict) -> str:

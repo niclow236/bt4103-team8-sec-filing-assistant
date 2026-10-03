@@ -107,9 +107,9 @@ ROUNDING_LIMIT = Decimal("0.01")
 
 OUTCOMES = ("from the facts store", "model: right", "model: right, rounded",
             "model: wrong figure or none", "model: abstained", "left to a model")
-# What the checker says of an answer, in the order the summary prints them. A
-# run recorded before "unchecked" was told apart has those answers under
-# "unverified".
+# What the checker says of an answer, in the order the summary prints them:
+# the evaluation harness's four words. Every question here asks for a figure,
+# so an answer without one is "unverified" and "unchecked" stays at zero.
 CHECKER = ("supported", "unverified", "unchecked", "mismatch")
 
 
@@ -207,7 +207,9 @@ def checker_says(answer, question: str) -> str:
     "mismatch" where a check contradicts any figure the answer states.
     "unverified" where none does and some figure could not be checked.
     "supported" where a passage or the facts store supports every figure, and
-    "unchecked" where the answer states no figure to check. The words and the
+    "unchecked" where the question asks for no figure and the answer states
+    none; every question here asks for one, so an answer without a figure is
+    "unverified". The words and the
     rule are the evaluation harness's (``verify.worst_check``), which counts a
     run's answers by them. Blank for an abstention and for a question no model
     was asked, which have nothing to check.

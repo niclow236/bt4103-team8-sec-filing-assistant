@@ -683,6 +683,11 @@ def test_a_single_year_sentence_still_supports_beside_a_two_year_one(store):
     "Revenue was $5.2 billion at 28 sep 2024.",
     "Revenue was $5.2 billion as of 28TH SEPTEMBER 2024.",
     "Revenue was $5.2 billion as of MAY 31.",
+    # "may" in lower case with a year beside it is the month: the verb is
+    # never followed by a day and a year, or by a year after a day.
+    "Revenue was $5.2 billion as of may 31, 2024.",
+    "Revenue was $5.2 billion at 31 may 2024.",
+    "Revenue was $5.2 billion as of may 31st 2024.",
 ])
 def test_the_day_of_a_written_date_is_not_a_figure(claim, store):
     # Read as one, the 28 was checked against FY2024 revenue, and an answer
@@ -702,6 +707,13 @@ def test_may_in_lower_case_is_the_verb_and_not_a_month(store):
                                   passages=[passage("Revenue was $5.2 billion.")]),
                            facts_file=store)
     assert [check.figure for check in checks(result, "fact")] == ["$5.2 billion", "10"]
+    # Nor is it a month with a day after it and no year: "may 5" can be the
+    # verb before a figure.
+    claim = "Revenue was $5.2 billion, and costs may 5 to 10 times exceed it."
+    result = verify_answer(answer(claim,
+                                  passages=[passage("Revenue was $5.2 billion.")]),
+                           facts_file=store)
+    assert [check.figure for check in checks(result, "fact")] == ["$5.2 billion", "5", "10"]
 
 
 def test_a_date_does_not_hide_the_figures_around_it(store):

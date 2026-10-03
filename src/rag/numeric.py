@@ -185,6 +185,13 @@ def cached_facts(path: Path, mtime_ns: int):
     return load_facts(path)
 
 
+@lru_cache(maxsize=None)
+def _alias(alias: str) -> re.Pattern[str]:
+    """A metric's alias as a whole word or phrase, in any case: the one pattern
+    every reader of a question or a claim finds it by."""
+    return re.compile(r"\b" + re.escape(alias) + r"\b", re.I)
+
+
 def metrics_in(text: str) -> set[str]:
     """Every metric whose words appear in the text, by whole-word match.
 
@@ -209,7 +216,7 @@ def metrics_in(text: str) -> set[str]:
     """
     found = {
         key: [match.span() for alias in metric.aliases
-              for match in re.finditer(r"\b" + re.escape(alias) + r"\b", text, re.I)]
+              for match in _alias(alias).finditer(text)]
         for key, metric in FINANCIAL_METRICS.items()
     }
 
@@ -241,7 +248,7 @@ def names_a_per_share_amount(text: str) -> bool:
     return any(
         _per_share_amount(text, key, match.span())
         for key, metric in FINANCIAL_METRICS.items() for alias in metric.aliases
-        for match in re.finditer(r"\b" + re.escape(alias) + r"\b", text, re.I)
+        for match in _alias(alias).finditer(text)
     )
 
 
@@ -249,7 +256,7 @@ def _longest_alias(metric: str, question: str) -> str:
     """The longest of the metric's aliases that the question actually uses."""
     matched = [
         alias for alias in FINANCIAL_METRICS[metric].aliases
-        if re.search(r"\b" + re.escape(alias) + r"\b", question, re.I)
+        if _alias(alias).search(question)
     ]
     return max(matched, key=len)
 
@@ -269,7 +276,7 @@ def _asks_only_for(question: str, alias: str) -> bool:
     segment names would have to grow one name at a time across fifteen
     companies and would still be a list of the ones somebody thought of.
     """
-    rest = re.sub(r"\b" + re.escape(alias) + r"\b", " ", question, flags=re.I)
+    rest = _alias(alias).sub(" ", question)
     rest = _ENTITY_NAMES.sub(" ", rest)
     words = re.findall(r"[A-Za-z0-9']+", rest)
     return all(_is_scaffolding(word) for word in words)

@@ -93,7 +93,9 @@ def _checks(rows: list[dict]) -> dict[str, int]:
     or the facts store supports it, and unverified otherwise, and an answer is
     counted by its worst figure. So ``supported`` is an answer every figure of
     which is supported, and one supported claim does not hide another that
-    could not be checked. ``unchecked`` is an answer that states no figure.
+    could not be checked. ``unchecked`` is an answer to a question that asks for
+    no figure and states none: one that was asked for a figure and gave none is
+    ``unverified``, since the checker records that there was nothing to check.
     Abstentions state nothing and are not counted.
     """
     worst: Counter[str] = Counter()

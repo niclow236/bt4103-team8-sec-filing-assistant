@@ -528,6 +528,9 @@ class NeverSearch:
     # Searched, these get passages from the companies the corpus does hold.
     ("What was Intel's total revenue in FY2024?", "company_not_in_corpus"),
     ("How many employees did NVIDIA have in FY2024?", "company_not_in_corpus"),
+    ("What was the total revenue of Intel in FY2024?", "company_not_in_corpus"),
+    # The suffix's full stop does not excuse a request made after it.
+    ("Based on Apple Inc. filings, predict next year revenue", "beyond_the_filings"),
 ])
 def test_a_question_the_corpus_cannot_answer_is_refused_without_a_search(question, reason,
                                                                          tmp_path):
@@ -566,6 +569,16 @@ def test_a_question_the_corpus_cannot_answer_is_refused_without_a_search(questio
     "Which companies reported revenue from Intel as a customer in FY2024?",
     # Named, with no figure of its own asked for: the model has to abstain.
     "What did NVIDIA report in 2023?",
+    # The full stop of "Inc." or "Corp." is not a clause break, so the verb
+    # after it is the company's and not an instruction to the engine.
+    "What did Apple Inc. estimate as its effective tax rate for fiscal 2024?",
+    "What did Microsoft Corp. project for capital expenditures in FY2024?",
+    # An outside company as some filing's customer, supplier or product: the
+    # figure asked for is the filing's, not the outside company's own.
+    "Did NVIDIA account for more than 10% of any company's revenue in FY2024?",
+    "Did Samsung account for more than 10% of net sales in FY2024?",
+    "How much were purchases of NVIDIA chips in FY2024?",
+    "How much revenue came from customers of Intel in FY2024?",
 ])
 def test_a_question_some_filing_may_answer_is_still_searched(question, tmp_path):
     model = Model()
@@ -576,8 +589,9 @@ def test_a_question_some_filing_may_answer_is_still_searched(question, tmp_path)
 
 def test_a_company_chosen_by_hand_is_searched_whatever_the_question_named(tmp_path):
     # The app's sidebar lets a user pick the company to search, and Apple's
-    # filings may well say something about Intel.
-    asked = "What does the filing say about Intel?"
+    # filings may well say something about Intel, even about its revenue.
+    asked = "What was Intel's total revenue in FY2024?"
+    assert parse_question(asked, facts_file=None).refused == "company"
     model = Model()
     result = answer_question(asked, StaticRetriever([passage(ticker="AAPL")]), CONFIG, llm=model,
                              query=Query(asked, tickers=("AAPL",)),
