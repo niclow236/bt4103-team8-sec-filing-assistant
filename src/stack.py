@@ -149,6 +149,10 @@ def build_retriever(
     key: str,
     *,
     processed_dir: Path = PROCESSED_DIR,
+    chroma_dir: Path | None = None,
+    embedding_model: str | None = None,
+    embedding_dimensions: int | None = None,
+    embedding_query_prefix: str | None = None,
     model: Any | None = None,
     parts: dict[str, Any] | None = None,
 ) -> Any:
@@ -167,7 +171,15 @@ def build_retriever(
 
     def part(name: str, load: Any) -> Any:
         if name not in parts:
-            parts[name] = load(processed_dir=processed_dir)
+            kwargs = {"processed_dir": processed_dir}
+            if name == "dense" and chroma_dir is not None:
+                kwargs.update(
+                    chroma_dir=chroma_dir,
+                    embedding_model=embedding_model,
+                    embedding_dimensions=embedding_dimensions,
+                    query_prefix=embedding_query_prefix,
+                )
+            parts[name] = load(**kwargs)
         return parts[name]
 
     from .retrieval.bm25 import BM25Retriever
@@ -244,6 +256,10 @@ def build_stack(
     config_id: str = DEFAULT_STACK,
     *,
     processed_dir: Path = PROCESSED_DIR,
+    chroma_dir: Path | None = None,
+    embedding_model: str | None = None,
+    embedding_dimensions: int | None = None,
+    embedding_query_prefix: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     retriever_key: str | None = None,
@@ -291,7 +307,15 @@ def build_stack(
     built_llm = llm if llm is not None else chat_model(generation)
     built_retriever = (
         retriever if retriever is not None
-        else build_retriever(config.retriever, processed_dir=processed_dir, parts=parts)
+        else build_retriever(
+            config.retriever,
+            processed_dir=processed_dir,
+            chroma_dir=chroma_dir,
+            embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
+            embedding_query_prefix=embedding_query_prefix,
+            parts=parts,
+        )
     )
     return Stack(
         config=config, retriever=built_retriever, generation=generation, llm=built_llm,

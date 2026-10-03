@@ -1497,6 +1497,28 @@ to at all.
 Evaluation rows include citation checks; run `verify_answer` separately when
 numeric verification is also needed.
 
+### Embedding and generation ablations
+
+Issue #46 compares three embedding configurations and both answer providers.
+The experiment registry keeps the model, index directory, provider and model
+name in configuration rather than in the experiment code:
+
+```bash
+python -m src.evaluation.model_ablation embedding \
+  --prepare-indexes --run-id embeddings-20261003
+python -m src.evaluation.model_ablation generation \
+  benchmark/generated.jsonl --run-id providers-20261003
+```
+
+The embedding matrix contains E1 BGE base, E2 MiniLM and E3 E5 base. The
+generation matrix contains G1 local Ollama and G2 hosted Mistral. Each run
+writes one `report.json` per configuration plus `summary.csv` and
+`summary.json` under `results/<run-id>/`. The summary uses the same comparison
+columns as the C-row matrix and records the provider, model and embedding
+configuration for every row. E1-E3 use separate dense-index directories, so
+changing an embedding model cannot mix incompatible vectors. The provider run
+requires Ollama for G1 and `MISTRAL_API_KEY` for G2.
+
 ## Team and course
 
 BT4103 Business Analytics Capstone, Team 8, AY26/27 Semester 1, supervised by A/Prof Oh Hyelim. The main milestones are the requirements presentation in Week 6, the interim presentation in Week 9, and the final presentation in Week 13, with deliverables handed over the following week.

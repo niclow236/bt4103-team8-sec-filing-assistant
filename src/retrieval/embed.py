@@ -269,7 +269,11 @@ def _use_threads(threads: int | None) -> int | None:
     return resolved
 
 
-def _load_model(threads: int | None = None):
+def _load_model(
+    threads: int | None = None,
+    model_name: str = EMBED_MODEL,
+    expected_dimensions: int | None = EMBED_DIMENSIONS,
+):
     """Import and load the encoder, late and with a usable failure.
 
     sentence-transformers pulls in torch, which is seconds of import time and a
@@ -289,7 +293,7 @@ def _load_model(threads: int | None = None):
         ) from error
 
     used = _use_threads(threads)
-    model = SentenceTransformer(EMBED_MODEL)
+    model = SentenceTransformer(model_name)
     # Renamed in sentence-transformers 6.0; the old name still works but warns.
     # Asked for by name so the module runs on either side of that rename, since
     # requirements.txt pins a version but a teammate's venv may predate it.
@@ -297,13 +301,13 @@ def _load_model(threads: int | None = None):
         model, "get_sentence_embedding_dimension"
     )
     width = measure()
-    if width != EMBED_DIMENSIONS:
+    if expected_dimensions is not None and width != expected_dimensions:
         # Two checkpoints of one family produce vectors that are not comparable,
         # and a dimension mismatch is the one case Chroma will not catch for us:
         # it accepts whatever the first add() gives it and rejects the rest.
         raise RuntimeError(
-            f"{EMBED_MODEL} produces {width}-dimensional vectors but "
-            f"constants.EMBED_DIMENSIONS says {EMBED_DIMENSIONS}. Change one to "
+            f"{model_name} produces {width}-dimensional vectors but "
+            f"the configured embedding dimension is {expected_dimensions}. Change one to "
             f"match the other before building an index."
         )
     return model, used
@@ -452,6 +456,8 @@ def build(
     chroma_dir: Path = CHROMA_DIR,
     processed_dir: Path = PROCESSED_DIR,
     sort_window: int = EMBED_SORT_WINDOW,
+    model_name: str | None = None,
+    dimensions: int | None = None,
 ) -> IndexManifest:
     """Bring the index in ``chroma_dir`` up to date with ``processed_dir``.
 
@@ -498,6 +504,9 @@ def build(
     system, twice, at 86% built. Disk is cheap here and memory is not: the
     second walk costs seconds against an encode measured in hours.
     """
+    custom_model = model_name is not None or dimensions is not None
+    model_name = EMBED_MODEL if model_name is None else model_name
+    dimensions = EMBED_DIMENSIONS if dimensions is None else dimensions
     if batch_size < 1 or sort_window < 1:
         raise ValueError(
             f"batch_size and sort_window must be at least 1, got {batch_size} and "
@@ -556,12 +565,12 @@ def build(
         held = _scan(collection)
         # Refused rather than repaired: every vector would change, possibly its
         # width too, and that is a decision to make on purpose.
-        foreign = sum(1 for entry in held.values() if entry[2] != EMBED_MODEL)
+        foreign = sum(1 for entry in held.values() if entry[2] != model_name)
         if foreign:
-            models = sorted({str(entry[2]) for entry in held.values() if entry[2] != EMBED_MODEL})
+            models = sorted({str(entry[2]) for entry in held.values() if entry[2] != model_name})
             raise RuntimeError(
                 f"{foreign:,} of the {len(held):,} vectors in {chroma_dir} were not "
-                f"encoded by {EMBED_MODEL} (found: {', '.join(models)}; 'None' means "
+                f"encoded by {model_name} (found: {', '.join(models)}; 'None' means "
                 f"built before this stage recorded the model). Mixing encoders in "
                 f"one index makes their scores incomparable. Rebuild it:\n"
                 f"  python -m src.retrieval embed --rebuild"
@@ -598,8 +607,13 @@ def build(
         if model is None:
             # Loaded on the first batch rather than up front, so a run with
             # nothing to do never pays for torch.
-            print(f"loading {EMBED_MODEL} ...")
-            model, used_threads = _load_model(threads)
+            print(f"loading {model_name} ...")
+            if not custom_model:
+                model, used_threads = _load_model(threads)
+            else:
+                model, used_threads = _load_model(
+                    threads, model_name=model_name, expected_dimensions=dimensions
+                )
             print(f"encoding on {used_threads} threads")
             started = time.perf_counter()
 
@@ -631,12 +645,12 @@ def build(
             documents=[row["text"] for row in batch],
             metadatas=[
                 {**metadata_for(row), DIGEST_FIELD: digest,
-                 TOKENS_FIELD: count, MODEL_FIELD: EMBED_MODEL}
+                 TOKENS_FIELD: count, MODEL_FIELD: model_name}
                 for row, digest, count in zip(batch, digests, counts)
             ],
         )
         for row, digest in zip(batch, digests):
-            held[row["chunk_id"]] = (digest, row["accession_no"], EMBED_MODEL)
+            held[row["chunk_id"]] = (digest, row["accession_no"], model_name)
         done += len(batch)
         replaced += len(replacing)
 
@@ -693,8 +707,8 @@ def build(
         n_passages=len(held),
         n_filings=len({entry[1] for entry in held.values()}),
         built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        model=EMBED_MODEL,
-        dimensions=EMBED_DIMENSIONS,
+        model=model_name,
+        dimensions=dimensions,
         chunk_budget=chunk_budget,
         chunk_overlap=chunk_overlap,
     )
@@ -717,6 +731,8 @@ def build(
 def check_index(
     chroma_dir: Path = CHROMA_DIR,
     processed_dir: Path = PROCESSED_DIR,
+    model: str | None = None,
+    dimensions: int | None = None,
 ) -> list[str]:
     """Every reason the index in ``chroma_dir`` should not be searched.
 
@@ -738,16 +754,18 @@ def check_index(
             f"last build that changed it did not finish. Run: python -m src.retrieval embed"
         ]
 
-    problems = manifest.mismatches(model=EMBED_MODEL, dimensions=EMBED_DIMENSIONS)
+    expected_model = model or EMBED_MODEL
+    expected_dimensions = dimensions or EMBED_DIMENSIONS
+    problems = manifest.mismatches(model=expected_model, dimensions=expected_dimensions)
 
     collection = open_collection(chroma_dir, create=False)
     if collection is None:
         return problems + [f"a manifest exists but there is no collection in {chroma_dir}"]
     held = _scan(collection)
 
-    foreign = sum(1 for entry in held.values() if entry[2] != EMBED_MODEL)
+    foreign = sum(1 for entry in held.values() if entry[2] != expected_model)
     if foreign:
-        problems.append(f"{foreign:,} vectors were not encoded by {EMBED_MODEL}")
+        problems.append(f"{foreign:,} vectors were not encoded by {expected_model}")
 
     index_fingerprint = fingerprint_of(entry[0] or "" for entry in held.values())
     if index_fingerprint != manifest.corpus_fingerprint:
