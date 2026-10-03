@@ -87,19 +87,20 @@ def _rates(rows: list[dict]) -> dict[str, Any]:
 
 
 def _checks(rows: list[dict]) -> dict[str, int]:
-    """Answered rows by the worst status among their passage and fact checks.
+    """Answered rows by the worst of the figures each states (``verify.worst_check``).
 
-    The answer card marks a claim the same way: one mismatch outweighs any
-    support, and support outweighs a check that could not be made.
-    ``unchecked`` is an answer that states no figure. Abstentions state nothing
-    and are not counted.
+    A figure is a mismatch if a check contradicts it, supported if a passage
+    or the facts store supports it, and unverified otherwise, and an answer is
+    counted by its worst figure. So ``supported`` is an answer every figure of
+    which is supported, and one supported claim does not hide another that
+    could not be checked. ``unchecked`` is an answer that states no figure.
+    Abstentions state nothing and are not counted.
     """
     worst: Counter[str] = Counter()
     for row in rows:
         if row["answer"]["abstained"]:
             continue
-        worst[worst_check(check["status"] for check in row["answer"]["verification"]["checks"]
-                          if check["kind"] in ("passage", "fact"))] += 1
+        worst[worst_check(row["answer"]["verification"]["checks"])] += 1
     return dict(sorted(worst.items()))
 
 
@@ -159,9 +160,9 @@ def evaluate(
 
     Every answer is put through ``verify_answer`` as the app puts it before
     showing it, so each row carries its checks, and ``checks`` counts the
-    answered rows by the worst of them: how many answers a passage or the
-    facts store supports, how many could not be checked, and how many a check
-    contradicts.
+    answered rows by the worst of the figures each states: how many answers a
+    check contradicts, how many state a figure that could not be checked, and
+    how many have every figure supported by a passage or the facts store.
 
     ``stack`` is the named configuration a caller assembled from, recorded in
     the report so a results file says which configuration to select in the app

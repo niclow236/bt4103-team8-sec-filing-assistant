@@ -89,7 +89,10 @@ def answer_question(
 
     ``parsed`` is the question already read, for a caller that has one -- the
     harness builds its Query from one -- so that reading it twice is a choice
-    rather than the only option.
+    rather than the only option. It has to be a reading of this question, as
+    ``verify_answer`` and the app's sidebar require of theirs: the reading
+    decides the refusal and the route, so one left over from another question
+    would refuse this one unsearched, or look up a figure it never asked for.
 
     Empty retrieval never builds a prompt or calls a model. Built-in indexes
     distinguish empty filters from rejected scores using metadata, without
@@ -102,6 +105,9 @@ def answer_question(
     if min_score is not None and not isfinite(min_score):
         raise ValueError("min_score must be finite or None")
     parsed = parsed if parsed is not None else parse_question(question, facts_file=facts_file)
+    # parse_question strips, so a question with space around it matches its own reading.
+    if parsed.question != question.strip():
+        raise ValueError("parsed question must match the question")
     query = query if query is not None else parsed.to_query(top_k=FINAL_K)
     if query.top_k < 1:
         raise ValueError("top_k must be positive when answering a question")

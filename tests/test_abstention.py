@@ -25,6 +25,7 @@ from src.rag import (
     ProviderUnavailable,
     answer_question,
     config_from_env,
+    parse_question,
     verify_answer,
 )
 from src.rag.constants import ABSTAIN_PHRASE
@@ -294,6 +295,39 @@ def test_harness_checks_an_answer_against_the_benchmark_s_company_under_any_row(
     assert other["checks"] == {"mismatch": 1}
 
 
+class StatingAll(Model):
+    """A chat model that answers every question with all of ``sentences``."""
+
+    def __init__(self, *sentences):
+        super().__init__()
+        self.sentences = sentences
+
+    def stream(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        yield AIMessageChunk(content=json.dumps({
+            "answerable": True,
+            "sentences": [{"text": text, "sources": [1]} for text in self.sentences],
+        }))
+
+
+def test_harness_does_not_count_a_partly_unverified_answer_as_supported():
+    # One sentence the cited passage supports, and a second the checker cannot
+    # check because it names two years. Taken over the whole answer at once,
+    # the first sentence's support made the answer "supported".
+    cited = StaticRetriever([passage(text="Revenue was $5.2 billion.")])
+    report = evaluate([question(1)], cited, CONFIG, run_id="run",
+                      llm=StatingAll("Revenue was $5.2 billion.",
+                                     "Revenue was $4.0 billion in 2023 and 2024."))
+    checks = report["results"][0]["answer"]["verification"]["checks"]
+    assert [(check["sentence_index"], check["status"]) for check in checks
+            if check["kind"] == "passage"] == [(0, "supported"), (1, "unverified")]
+    assert report["checks"] == {"unverified": 1}
+    # With both sentences supported, the answer is.
+    both = evaluate([question(1)], cited, CONFIG, run_id="run",
+                    llm=StatingAll("Revenue was $5.2 billion.", "Revenue was $5.2 billion."))
+    assert both["checks"] == {"supported": 1}
+
+
 class Failing(Model):
     """A chat model whose requests after the first ``after`` raise ``error``
     ``times`` times, then answer again."""
@@ -555,6 +589,23 @@ def test_a_company_chosen_by_hand_is_searched_whatever_the_question_named(tmp_pa
                               query=Query(advice, tickers=("AAPL",)),
                               facts_file=tmp_path / "missing.parquet")
     assert_abstention(refused, "beyond_the_filings")
+
+
+def test_a_reading_of_another_question_is_not_answered_with(tmp_path):
+    # The reading decides the refusal and the route. One left over from another
+    # question would refuse this one without a search.
+    stale = parse_question("Should I buy Amazon stock?", facts_file=None)
+    asked = "What does Apple say about its supply chain?"
+    with pytest.raises(ValueError, match="parsed question must match the question"):
+        answer_question(asked, NeverSearch(), CONFIG, llm=NeverGenerate(), parsed=stale,
+                        facts_file=tmp_path / "missing.parquet")
+    # Space around the question is not another question: parse_question strips.
+    spaced = f"  {asked}  "
+    model = Model()
+    result = answer_question(spaced, StaticRetriever([passage(ticker="AAPL")]), CONFIG,
+                             llm=model, parsed=parse_question(spaced, facts_file=None),
+                             facts_file=tmp_path / "missing.parquet")
+    assert model.calls and not result.abstained
 
 
 def test_refusal_is_off_for_the_without_half_of_the_comparison(tmp_path):

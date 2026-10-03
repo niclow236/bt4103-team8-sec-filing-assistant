@@ -271,10 +271,10 @@ logs/
 # the old one only where nothing behind it moved: a hosted model does not
 # repeat its answers, and another commit or another build of the indexes ranks
 # passages differently. The files behind the numbers in the README were
-# committed and then removed, so they are in the history:
-# `git log --diff-filter=D --format=%h -- <path>` gives the commit that
-# removed one, and `git show <commit>^:<path>` prints it. A results/ folder
-# anywhere holds a run's output.
+# committed and then removed, so they are in the history.
+# notebooks/removed-results.json lists each with its row count, its SHA-256
+# and the git object that holds it, and `git cat-file -p <git_blob>` prints
+# one. A results/ folder anywhere holds a run's output.
 results/
 *.csv
 *.tsv

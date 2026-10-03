@@ -1,14 +1,20 @@
 """Issue #32: adversarial numeric checks, saved evaluation results and visible UI."""
 
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import pandas as pd
 import pytest
 
 from src.app.answers import main, render_answer, write_answer_page
-from src.rag import resolve_citations, verify_answer
-from src.rag.records import CitedSentence, Generation, GenerationConfig, GroundedAnswer
+from src.rag import resolve_citations, verify_answer, worst_check
+from src.rag.records import (
+    CitedSentence,
+    Generation,
+    GenerationConfig,
+    GroundedAnswer,
+    VerificationCheck,
+)
 from src.retrieval.records import RetrievedPassage
 
 
@@ -389,21 +395,51 @@ def test_a_table_without_a_declared_scale_is_unverified_not_mismatch(store):
         verify_answer(answer(claim, passages=[scaled]), facts_file=store), "passage")] == ["supported"]
 
 
-@pytest.mark.parametrize("statuses, word", [
+@pytest.mark.parametrize("found, word", [
+    # The two checks of one figure are companions: the store confirming what a
+    # table with no scale cannot is support, as for a facts-route answer.
+    ([("passage", "unverified", 0, "$5.2 billion"), ("fact", "supported", 0, "$5.2 billion")],
+     "supported"),
+    # A supported figure does not carry one that could not be checked, in
+    # another sentence or beside it in the same one.
+    ([("fact", "supported", 0, "$5.2 billion"), ("passage", "unverified", 1, "$4.0 billion")],
+     "unverified"),
+    ([("fact", "supported", 0, "$6.08"), ("fact", "unverified", 0, "$94 billion")],
+     "unverified"),
     # One mismatch marks the answer whatever else agrees with it.
-    (["supported", "mismatch", "unverified"], "mismatch"),
-    (["unverified", "supported"], "supported"),
-    (["unverified", "unverified"], "unverified"),
-    # No passage or fact check at all: the answer states no figure.
+    ([("fact", "supported", 0, "$5.2 billion"), ("passage", "mismatch", 0, "$5.2 billion"),
+      ("fact", "unverified", 1, "$4.0 billion")], "mismatch"),
+    # A numeric question answered with no figure at all gets one check, on no figure.
+    ([("fact", "unverified", None, None)], "unverified"),
+    # Checks that are not about a figure do not count, and neither does nothing.
+    ([("groundedness", "unverified", 0, None), ("output", "unverified", None, None)],
+     "unchecked"),
     ([], "unchecked"),
 ])
-def test_an_answer_is_summed_up_by_the_worst_of_its_checks(statuses, word):
+def test_an_answer_is_summed_up_by_its_worst_figure(found, word):
     # One definition for the evaluation harness, which counts a run's answers
     # by this word, and the measurement scripts, which record it per answer.
-    from src.rag import worst_check
+    records = [VerificationCheck(kind, status, sentence, "the claim", "the reason", figure)
+               for kind, status, sentence, figure in found]
+    assert worst_check(records) == word
+    # As the dicts a saved row holds, which is what the harness counts from.
+    assert worst_check(asdict(record) for record in records) == word
 
-    assert worst_check(statuses) == word
-    assert worst_check(iter(statuses)) == word
+
+def test_a_supported_sentence_does_not_hide_an_unverified_one(store):
+    # The first sentence is supported by the passage and the store. The second
+    # names two years, so the checker cannot say which the figure belongs to.
+    structured = GroundedAnswer(answerable=True, sentences=(
+        CitedSentence(text="Revenue was $5.2 billion.", sources=(1,)),
+        CitedSentence(text="Revenue was $4.0 billion in 2023 and 2024.", sources=(1,)),
+    ))
+    generation = Generation(text=structured.render(), answer=structured,
+                            raw=structured.model_dump_json(), config=CONFIG, latency_ms=1.0,
+                            input_tokens=10, output_tokens=10, stop_reason="stop")
+    result = verify_answer(resolve_citations(QUESTION, generation, [passage()]), facts_file=store)
+    assert {check.sentence_index: check.status for check in checks(result, "passage")} == {
+        0: "supported", 1: "unverified"}
+    assert worst_check(result.verification.checks) == "unverified"
 
 
 # --- per-share amounts ----------------------------------------------------------
@@ -640,6 +676,13 @@ def test_a_single_year_sentence_still_supports_beside_a_two_year_one(store):
     "Revenue was $5.2 billion for the year ended Sept. 28, 2024.",
     "Revenue was $5.2 billion at 28 September 2024.",
     "Revenue was $5.2 billion as of December 31.",
+    # In any case: a model writes lower case, and a table heading capitals.
+    "Revenue was $5.2 billion as of september 28, 2024.",
+    "Revenue was $5.2 billion as of SEPTEMBER 28, 2024.",
+    "Revenue was $5.2 billion for the year ended sept. 28, 2024.",
+    "Revenue was $5.2 billion at 28 sep 2024.",
+    "Revenue was $5.2 billion as of 28TH SEPTEMBER 2024.",
+    "Revenue was $5.2 billion as of MAY 31.",
 ])
 def test_the_day_of_a_written_date_is_not_a_figure(claim, store):
     # Read as one, the 28 was checked against FY2024 revenue, and an answer
@@ -649,6 +692,16 @@ def test_the_day_of_a_written_date_is_not_a_figure(claim, store):
     assert [check.figure for check in checks(result, "fact")] == ["$5.2 billion"]
     assert [check.status for check in checks(result, "fact")] == ["supported"]
     assert [check.status for check in checks(result, "passage")] == ["supported"]
+
+
+def test_may_in_lower_case_is_the_verb_and_not_a_month(store):
+    # Matched in any case like the other months, "10 may" would be the tenth
+    # of May, and a number in front of the verb would be hidden from the
+    # checker. It is read as a figure, as it was before.
+    result = verify_answer(answer("Revenue was $5.2 billion, of which up to 10 may be deferred.",
+                                  passages=[passage("Revenue was $5.2 billion.")]),
+                           facts_file=store)
+    assert [check.figure for check in checks(result, "fact")] == ["$5.2 billion", "10"]
 
 
 def test_a_date_does_not_hide_the_figures_around_it(store):

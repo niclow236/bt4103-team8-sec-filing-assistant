@@ -144,7 +144,8 @@ bt4103-team8-sec-filing-assistant/
 │   ├── answers/             #   test questions and headline figures through the app's answer path; each writes a git-ignored results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path; writes a git-ignored results/
 │   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words
-│   └── test_data/           #   the team's 48 test questions
+│   ├── test_data/           #   the team's 48 test questions
+│   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
@@ -1212,10 +1213,18 @@ Every one of the 56 was a right answer the store had just supplied. The
 checker is still weakest on line items the facts route does not cover: of the
 150 right answers in `line-items-9-final-hybrid` it marks 48 a mismatch, 62
 unverified and 40 supported, since no store concept is mapped for those lines
-and the cited passage has to tie the figure to the line item itself. In these
-rows an answer in which the checker found no figure to check is counted as
-unverified. The scripts now record such an answer as `unchecked`, the word
-the evaluation harness uses, so a run made since has that column as well.
+and the cited passage has to tie the figure to the line item itself.
+
+These rows were recorded under an earlier rule for summing an answer up, and a
+run made since uses the evaluation harness's (`verify.worst_check`), which
+differs in two ways. An answer in which the checker found no figure to check
+was counted as unverified, and is now `unchecked`. And one supported figure
+made a whole answer supported, where an answer is now counted by its worst
+figure, so one that also states a figure the checker could not check is
+unverified. The facts route's answers state one figure each, so their rows
+are the same under either rule. For the answers a model wrote, the supported
+counts above are an upper bound: a new run can move an answer from supported
+to unverified and not the other way.
 
 The evaluation harness checks every answer this way before it records it, so
 a saved run carries its checks. Write a run's answers and open them in a
@@ -1552,7 +1561,10 @@ runs is the model's.
 With `ministral-8b-2512` at `FINAL_K` 16, three runs of the 48 at each state of
 the code. Each row is a file `notebooks/answers/app_path_accuracy.py` writes to
 its git-ignored `results/` folder, named in brackets, and the three
-numbers in a cell are the three runs:
+numbers in a cell are the three runs. The files these rows were read from were
+committed and then removed. `notebooks/removed-results.json` lists every such
+file with its row count, its SHA-256 and the git object that holds it, so
+`git cat-file -p <git_blob>` prints the one a number came from:
 
 | 48 test questions | Figures right, of 28 | Wrong figure or none | Abstained | From the facts store | Figure in the passages, of the 20 a model answered | Prose: expected terms in the answer |
 |---|---|---|---|---|---|---|
@@ -1975,10 +1987,15 @@ company and year the question is about, as the app checks an answer before
 showing it. That holds under a configuration measured without the metadata
 filter too: it searches every filing, and its answer is still checked against
 the benchmark's company and year. The report's `checks` counts the answered
-rows by the worst of their passage and fact checks: `mismatch`, `supported`,
-`unverified`, or `unchecked` for an answer that states no figure. That is what
-the answer card shows for each, so a run says how many of its answers a user
-would see flagged. The facts store is read once for the run.
+rows by the worst of the figures each states. A figure is a `mismatch` where a
+check contradicts it, `supported` where a passage or the facts store supports
+it, and `unverified` otherwise, and an answer is counted as its worst figure:
+`mismatch` first, then `unverified`, then `supported`. So a supported answer
+is one whose every figure is supported, and one supported claim does not hide
+another that could not be checked. `unchecked` is an answer that states no
+figure. A run then says how many of its answers a user would see flagged, and
+how many hold a figure nothing confirmed. The facts store is read once for the
+run.
 
 ## Team and course
 

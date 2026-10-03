@@ -15,10 +15,12 @@ establish entailment. No model, network call or facts download is needed.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 from ..retrieval.facts import FACTS_FILE, current_year, load_facts
 from .constants import (
@@ -76,11 +78,17 @@ _SEVERAL_YEARS = ("The facts store confirms this figure, and a cited sentence pr
 # 2022". Its day is not a figure. Read as one, the 30 in "total assets were
 # $352,583 million as of September 30, 2023" was checked against total assets
 # and the answer marked a mismatch with the store it had just agreed with.
-_MONTH = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|"
-          r"Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?")
+#
+# In any case, since "september 30, 2023" and a heading's "SEPTEMBER 30, 2023"
+# are the same date and left the same 30 behind. Except "may", which has to
+# be "May" or "MAY": in lower case it is the verb, and "the top 10 may be
+# affected" does not name the tenth of May.
+_MONTH = (r"(?:(?i:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|June?|July?|Aug(?:ust)?|"
+          r"Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)|May|MAY)\.?")
+_ORDINAL = r"(?i:st|nd|rd|th)?"
 _WRITTEN_DATES = re.compile(
-    rf"\b{_MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?\b(?:,?\s+(?:19|20)\d{{2}}\b)?"
-    rf"|\b\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}(?!\w)(?:,?\s+(?:19|20)\d{{2}}\b)?"
+    rf"\b{_MONTH}\s+\d{{1,2}}{_ORDINAL}\b(?:,?\s+(?:19|20)\d{{2}}\b)?"
+    rf"|\b\d{{1,2}}{_ORDINAL}\s+{_MONTH}(?!\w)(?:,?\s+(?:19|20)\d{{2}}\b)?"
 )
 
 
@@ -413,22 +421,34 @@ def verify_answer(
     return replace(answer, verification=VerificationResult(parsed.question_type, tuple(checks)))
 
 
-# The statuses of a passage or fact check, the worst first.
-_WORST_FIRST = ("mismatch", "supported", "unverified")
+def worst_check(checks: Iterable[VerificationCheck | Mapping[str, Any]]) -> str:
+    """One word for an answer, from its passage and fact checks.
 
+    Each figure first. Its passage check and its fact check are companions: a
+    mismatch outweighs support, and support outweighs a check that could not
+    be made, as where the facts store confirms a figure that a cited table
+    prints without a scale. Then the answer, by its worst figure: ``mismatch``
+    if any figure is one, else ``unverified`` if any figure is left without
+    support, else ``supported``. A supported figure does not carry another
+    that could not be checked, in the same sentence or in a different one:
+    taken over the whole answer at once, one supported claim made an answer
+    "supported" whatever else it stated. ``unchecked`` is an answer with no
+    such check, which is one that states no figure.
 
-def worst_check(statuses: Iterable[str]) -> str:
-    """One word for an answer, from the statuses of its passage and fact checks.
-
-    The answer card marks a claim the same way: one mismatch outweighs any
-    support, and support outweighs a check that could not be made.
-    ``unchecked`` is an answer with no such check, which is one that states no
-    figure. The evaluation harness counts a run's answers by this word and the
+    ``checks`` are an answer's, as records or as the dicts a saved row holds.
+    The evaluation harness counts a run's answers by this word and the
     measurement scripts record it for each answer, so the two cannot disagree
     about what to call an answer.
     """
-    found = set(statuses)
-    return next((status for status in _WORST_FIRST if status in found), "unchecked")
+    figures: dict[tuple[Any, Any], set[str]] = {}
+    for check in checks:
+        read = check.get if isinstance(check, Mapping) else partial(getattr, check)
+        if read("kind") in ("passage", "fact"):
+            figures.setdefault((read("sentence_index"), read("figure")), set()).add(read("status"))
+    each = {next((status for status in ("mismatch", "supported") if status in found), "unverified")
+            for found in figures.values()}
+    return next((status for status in ("mismatch", "unverified", "supported") if status in each),
+                "unchecked")
 
 
 __all__ = ["verify_answer", "worst_check"]

@@ -202,22 +202,20 @@ def outcome_of(answer, expected: str | None) -> str:
 
 
 def checker_says(answer, question: str) -> str:
-    """What the app's checker makes of an answer, as the answer card shows it.
+    """What the app's checker makes of an answer, in one word.
 
-    "mismatch" where any check is one, since the card then marks the claim a
-    mismatch whatever else agrees with it. "supported" where a passage or the
-    facts store supports a figure and nothing contradicts one. "unverified"
-    where a figure was checked and the check could not be made, and
-    "unchecked" where the answer states no figure to check. The words are the
-    evaluation harness's (``verify.worst_check``), which counts a run's
-    answers by them. Blank for an abstention and for a question no model was
-    asked, which have nothing to check.
+    "mismatch" where a check contradicts any figure the answer states.
+    "unverified" where none does and some figure could not be checked.
+    "supported" where a passage or the facts store supports every figure, and
+    "unchecked" where the answer states no figure to check. The words and the
+    rule are the evaluation harness's (``verify.worst_check``), which counts a
+    run's answers by them. Blank for an abstention and for a question no model
+    was asked, which have nothing to check.
     """
     if answer is None or answer.abstained:
         return ""
     checked = verify_answer(answer, parsed=read_as_the_app_does(question))
-    return worst_check(check.status for check in checked.verification.checks
-                       if check.kind in ("passage", "fact"))
+    return worst_check(checked.verification.checks)
 
 
 def with_no_store_figure(table: pd.DataFrame) -> pd.DataFrame:
