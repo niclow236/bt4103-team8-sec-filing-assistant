@@ -402,6 +402,30 @@ def _writing_step(answer: Answer) -> str:
     return f"Written by {answer.config.model}"
 
 
+def _writing_detail(answer: Answer) -> list[str]:
+    """The lines under the writing step: what wrote the answer, or what was never asked to.
+
+    An answer that asked no model still carries the provider and model that
+    were picked. Listed as "Provider" and "Model" under "No model was asked",
+    they read as what had answered, so they are said to have been picked and
+    not asked. A figure from the facts store names the store.
+    """
+    config = answer.config
+    took = None if answer.latency_ms is None else f"{answer.latency_ms / 1000:.2f}s"
+    if config.provider == FACTS_PROVIDER:
+        lines = [f"Looked up in the facts store ({config.model}), with no model asked."]
+        return lines + ([f"The lookup took {took}"] if took else [])
+    if not answer.passages:
+        return [f"{config.model} ({config.provider}) was picked and not asked."]
+    lines = [f"Provider: {config.provider} · Model: {config.model} · "
+             f"Prompt: {config.prompt_template_id}"]
+    if took:
+        lines.append(f"Generation took {took}")
+    if answer.truncated or answer.parse_error:
+        lines.append("The output was cut off or malformed, so the answer is incomplete.")
+    return lines
+
+
 def _checking_step(answer: Answer) -> str:
     """What the checking step of the trace says happened."""
     if answer.verification is None:
@@ -457,12 +481,8 @@ def retrieval_trace(answer: Answer, parsed: ParsedQuestion, config: StackConfig,
                                                "No passage was retrieved."))
 
     with st.expander(_writing_step(answer), type="step", icon=":material/edit_note:"):
-        st.caption(f"Provider: {answer.config.provider} · Model: {answer.config.model} · "
-                   f"Prompt: {answer.config.prompt_template_id}")
-        if answer.latency_ms is not None:
-            st.caption(f"Generation took {answer.latency_ms / 1000:.2f}s")
-        if answer.truncated or answer.parse_error:
-            st.caption("The output was cut off or malformed, so the answer is incomplete.")
+        for line in _writing_detail(answer):
+            st.caption(line)
 
     checks = () if answer.verification is None else answer.verification.checks
     with st.expander(_checking_step(answer), type="step", icon=":material/fact_check:"):

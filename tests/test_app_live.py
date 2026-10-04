@@ -336,6 +336,9 @@ def test_ask_page_lists_the_passages_an_answer_was_written_from(monkeypatch):
         ":gray-badge[:material/edit_note: test (ollama)]",
     ]
     assert [heading.value for heading in ui.main.subheader] == ["Answer", "Retrieval trace"]
+    lines = _trace(ui)[1]
+    assert "Provider: ollama · Model: test · Prompt: grounded_v4" in lines
+    assert "Generation took 0.00s" in lines
 
 
 def test_ask_page_states_an_abstention_and_still_shows_its_trace(monkeypatch):
@@ -367,6 +370,11 @@ def test_ask_page_says_a_refused_question_was_not_searched(monkeypatch):
     assert not ui.main.dataframe
     # Nothing wrote it, so the row above names no model.
     assert len(_summary(ui)) == 2
+    # And under "No model was asked" the model picked is said to be unasked.
+    # Listed there as "Provider" and "Model", it read as what had answered.
+    lines = _trace(ui)[1]
+    assert "test (ollama) was picked and not asked." in lines
+    assert not any(line.startswith(("Provider:", "Generation took")) for line in lines)
 
 
 def test_ask_with_no_question_asks_nothing(monkeypatch):
@@ -515,6 +523,9 @@ def test_a_figure_from_the_facts_store_needs_no_key_for_the_provider_picked(
     assert not ui.error
     assert len(ui.get("html")) == 1
     assert ":gray-badge[:material/edit_note: facts store, no model]" in _summary(ui)
+    lines = _trace(ui)[1]
+    assert "Looked up in the facts store (xbrl), with no model asked." in lines
+    assert not any(line.startswith("Provider:") for line in lines)
 
 
 def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_stack):
