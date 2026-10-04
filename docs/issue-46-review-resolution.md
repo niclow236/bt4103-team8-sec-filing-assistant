@@ -1,7 +1,7 @@
 # PR 114 review fixes
 
 Checked against issue [46](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/46)
-and all 34 inline comments from jarrenoh and niclow236 on
+and all 38 inline comments from jarrenoh and niclow236 on
 [PR 114](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/pull/114).
 The feature branch includes the latest main at `4e12c91`.
 
@@ -19,9 +19,17 @@ The feature branch includes the latest main at `4e12c91`.
 | 4173938981, 4173938994 | README commands name the generated benchmark, show its prerequisites, sample across the full file and pass --no-facts. Documentation distinguishes smoke samples from final measurements. |
 | 4173938999, 4173939003 | Embedding queries use the C-row query helper with metadata filtering, including numeric cues. Reports retain passage IDs, scores and timed searches; index preparation time is recorded when measured. |
 | 4173939007, 4173939029 | Both stopped and interrupted provider runs save completed rows, report the stop reason and write both summaries before raising. Missing keys produce short CLI errors. Successful runs print the table and path; custom-index failure advice preserves corpus and output paths. |
-| 4173939013, 4173939025 | Both matrices share parts within a run, without process-global stale caches. Custom processed directories reach benchmark validation, preparation and stack assembly. |
+| 4173939013, 4173939025 | Both matrices share parts within a run, without process-global stale caches. Custom processed directories reach benchmark validation and stack assembly; preparing the fixed E-indexes is restricted to the default corpus, as the follow-up review explains below. |
 | 4173939036 | Both provider rows use the application's pinned model constants. |
 | 4173939450 | Each E-index is measured through filtered hybrid and filtered dense-only retrieval, with separate rows and reports so fusion cannot hide an encoder comparison. |
+
+The follow-up review on 4 October identified four further comments:
+
+| Review comments (discussion IDs) | Resolution and regression coverage |
+|---|---|
+| 4176147674, 4176147682 | CLI preparation rejects a non-default corpus before benchmark loading or index mutation. Direct calls to prepare_embedding_indexes use the same guard. A real synthetic Chroma index test checks that its vector IDs and manifest bytes remain unchanged, with and without rebuilding; a relative path resolving to the default corpus is accepted. |
+| 4176147684 | Missing-index errors put the E2/E3 preparation command first, label it as applying to those indexes, and explain that subsequent advice applies to the default dense index or BM25. The suggested preparation uses the default corpus, including when an evaluation against another corpus fails. Tests check message order, both error types and shell-quoted paths. |
+| 4176147689 | E2/E3 now use sibling directories data/index/chroma-E2 and data/index/chroma-E3, with sidecars outside Chroma's default directory. Registry tests verify the layout; the synthetic three-encoder integration test uses it. The README explains relocating previously built indexes and sidecars without re-encoding. |
 
 Tests use deterministic encoders and synthetic filings; they do not measure real
 model quality. This checkout has no processed corpus or built indexes, so real

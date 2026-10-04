@@ -61,10 +61,10 @@ EMBEDDING_EXPERIMENTS = (
         "Represent this sentence for searching relevant passages: ", "", 512,
     ),
     EmbeddingExperiment(
-        "E2", "MiniLM", "sentence-transformers/all-MiniLM-L6-v2", "data/index/chroma/E2", 384, "", "", 256,
+        "E2", "MiniLM", "sentence-transformers/all-MiniLM-L6-v2", "data/index/chroma-E2", 384, "", "", 256,
     ),
     EmbeddingExperiment(
-        "E3", "E5 base", "intfloat/e5-base-v2", "data/index/chroma/E3", 768, "query: ", "passage: ", 512,
+        "E3", "E5 base", "intfloat/e5-base-v2", "data/index/chroma-E3", 768, "query: ", "passage: ", 512,
     ),
 )
 GENERATION_EXPERIMENTS = (
@@ -232,8 +232,17 @@ def _default_generation_stack(
     )
 
 
+def _require_default_corpus(processed_dir: Path) -> None:
+    if processed_dir.resolve() != PROCESSED_DIR.resolve():
+        raise ValueError(
+            "--prepare-indexes brings data/index/chroma, the app's own index, in line "
+            "with --processed-dir and removes every other vector; use the default corpus"
+        )
+
+
 def prepare_embedding_indexes(processed_dir: Path, *, rebuild: bool = False) -> dict[str, float]:
-    """Incrementally prepare each E-index; return elapsed build time per model."""
+    """Incrementally prepare the default corpus's E-indexes; return build times."""
+    _require_default_corpus(processed_dir)
     from src.retrieval import embed
 
     times = {}
@@ -265,7 +274,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--results-root", type=Path, default=RESULTS_ROOT)
     parser.add_argument("--processed-dir", type=Path, default=PROCESSED_DIR)
-    parser.add_argument("--prepare-indexes", action="store_true", help="Incrementally prepare E1-E3 indexes.")
+    parser.add_argument("--prepare-indexes", action="store_true", help="Incrementally prepare E1-E3 indexes from the default corpus.")
     parser.add_argument("--rebuild-indexes", action="store_true", help="Re-encode E-indexes; requires --prepare-indexes.")
     parser.add_argument("--top-k", type=int, help="Override embedding depth (default 10); generation uses C4's budget.")
     parser.add_argument("--limit", type=int, help="Evenly sample this many questions over the full file.")
@@ -282,6 +291,11 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--top-k and index preparation options apply only to embedding")
     if args.rebuild_indexes and not args.prepare_indexes:
         parser.error("--rebuild-indexes requires --prepare-indexes")
+    if args.prepare_indexes:
+        try:
+            _require_default_corpus(args.processed_dir)
+        except ValueError as error:
+            parser.error(str(error))
     try:
         run_dir = available_run_dir(args.results_root, args.run_id)
     except (ValueError, FileExistsError) as error:
@@ -302,10 +316,15 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as error:
             command = shell_join([
                 "python", "-m", "src.evaluation.model_ablation", "embedding", str(args.questions),
-                "--prepare-indexes", "--processed-dir", str(args.processed_dir),
+                "--prepare-indexes", "--processed-dir", str(PROCESSED_DIR),
                 "--results-root", str(args.results_root), "--run-id", _safe_run_id(args.run_id),
             ])
-            parser.error(f"{error}; prepare E-indexes with {command}")
+            parser.error(
+                "an index the E rows need is not ready. If it is E2 or E3, prepare it "
+                f"from the default corpus with:\n  {command}\n"
+                "The advice below names the command for the default index and for BM25.\n"
+                f"{error}"
+            )
     else:
         try:
             run_generation_ablation(

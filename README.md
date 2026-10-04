@@ -2050,11 +2050,21 @@ time (`build_ms`), including loading and validation; a current index can have
 no new passages to encode. A run without preparation leaves that field null.
 
 `--prepare-indexes` is incremental and resumes interrupted builds. E1 reuses
-`data/index/chroma`; E2 and E3 have their own directories. Incompatible models
+`data/index/chroma`; E2 and E3 use sibling directories `data/index/chroma-E2`
+and `data/index/chroma-E3`, with their manifests beside them. Incompatible models
 are refused, and prefixes participate in vector digests and manifest checks.
 Add `--rebuild-indexes` only when re-encoding is intended, such as after changing
-a model or token limit. `--processed-dir` is passed to benchmark validation,
-index preparation and both matrices' retrievers.
+a model or token limit. Index preparation only accepts the default corpus
+`data/processed` (including a path that resolves to it). Combining
+`--prepare-indexes` with another `--processed-dir` is refused before any files
+are read or changed: preparing a smaller corpus would remove passages from the
+app's own E1 index. Without preparation, `--processed-dir` reaches benchmark
+validation and both matrices' retrievers, which still require the fixed indexes
+to match that corpus; it does not select separate indexes for a second corpus.
+If E2/E3 indexes were already built at `data/index/chroma/E2` or `E3`, move
+their directories and their adjacent `.manifest.json` and `.truncated.json`
+files to the new sibling names before running again; moving existing indexes
+does not require re-encoding.
 
 G1 is local Ollama with the pinned default `llama3.2:3b`; G2 is hosted Mistral
 with the app's pinned `ministral-8b-2512`. They share retrieval indexes and use

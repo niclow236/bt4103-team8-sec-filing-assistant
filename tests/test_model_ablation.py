@@ -136,6 +136,7 @@ def test_embedding_index_preparation_uses_each_registry_configuration(monkeypatc
     import src.evaluation.model_ablation as module
 
     calls = []
+    monkeypatch.setattr(module, "PROCESSED_DIR", tmp_path / "processed")
     monkeypatch.setattr(
         "src.retrieval.embed.build",
         lambda **kwargs: calls.append(kwargs),
@@ -307,6 +308,8 @@ def test_cli_rejects_bad_options_before_loading_or_building(monkeypatch, tmp_pat
         ["embedding", "--run-id", "valid", "--limit", "0"],
         ["embedding", "--run-id", "valid", "--top-k", "0"],
         ["embedding", "--run-id", "valid", "--rebuild-indexes"],
+        ["embedding", "--run-id", "valid", "--prepare-indexes",
+         "--processed-dir", str(tmp_path / "other")],
         ["generation", "--run-id", "valid", "--top-k", "10"],
     ):
         with pytest.raises(SystemExit) as error:
@@ -359,6 +362,7 @@ def test_real_embedding_matrix_keeps_encoders_prefixes_and_token_limits_separate
     from dataclasses import replace
 
     monkeypatch.setattr(module, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(module, "PROCESSED_DIR", corpus)
     encoded = []
     class Encoder:
         def __init__(self, model_name, dimensions):
@@ -399,3 +403,109 @@ def test_real_embedding_matrix_keeps_encoders_prefixes_and_token_limits_separate
     assert all(text.startswith(("passage: ", "query: ")) for text in e5_texts)
     assert any(text.startswith("query: ") for text in e5_texts)
     assert all(not text.startswith("None") for _, text in encoded)
+
+
+def test_custom_corpus_preparation_preserves_the_apps_real_index(monkeypatch, corpus, tmp_path, fake_model):
+    import pytest
+    import src.evaluation.model_ablation as module
+    from src.retrieval import embed
+
+    monkeypatch.setattr(module, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(module, "PROCESSED_DIR", corpus)
+    chroma = tmp_path / EMBEDDING_EXPERIMENTS[0].index_dir
+    embed.build(chroma_dir=chroma, processed_dir=corpus)
+    manifest_path = embed.manifest_file_for(chroma)
+    before_manifest = manifest_path.read_bytes()
+    collection = embed.open_collection(chroma)
+    before_ids = set(collection.get(include=[])["ids"])
+    before_encodes = fake_model.calls
+    other_corpus = tmp_path / "one-filing"
+    other_corpus.mkdir()
+    filing = next(corpus.glob("*/*.json"))
+    (other_corpus / filing.name).write_bytes(filing.read_bytes())
+
+    for rebuild in (False, True):
+        options = ["embedding", "questions.jsonl", "--prepare-indexes", "--processed-dir", str(other_corpus),
+                   "--results-root", str(tmp_path / "results"), "--run-id", "other-corpus"]
+        if rebuild:
+            options.append("--rebuild-indexes")
+        with pytest.raises(SystemExit) as error:
+            module.main(options)
+        assert error.value.code == 2
+        with pytest.raises(ValueError, match="use the default corpus"):
+            module.prepare_embedding_indexes(other_corpus, rebuild=rebuild)
+        assert manifest_path.read_bytes() == before_manifest
+        assert set(collection.get(include=[])["ids"]) == before_ids
+        assert fake_model.calls == before_encodes
+        assert not (tmp_path / "results").exists()
+    assert embed.check_index(chroma, corpus) == []
+
+
+def test_preparation_accepts_relative_path_to_default_corpus(monkeypatch, tmp_path):
+    import src.evaluation.model_ablation as module
+
+    default = tmp_path / "processed"
+    default.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(module, "PROCESSED_DIR", default)
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    prepared = []
+    monkeypatch.setattr(module, "prepare_embedding_indexes", lambda path, **kw: prepared.append(path) or {})
+    monkeypatch.setattr(module, "_default_embedding_stack", lambda *args, **kwargs: _stack(args[0]))
+    module.main(["embedding", "--prepare-indexes", "--processed-dir", "./processed",
+                 "--results-root", str(tmp_path / "results"), "--run-id", "relative"])
+    assert len(prepared) == 1
+    assert prepared[0].resolve() == default
+
+
+def test_auxiliary_embedding_indexes_are_siblings_of_app_index():
+    from pathlib import Path
+    from src.retrieval.embed import manifest_file_for, truncation_file_for
+
+    app, *others = [Path(experiment.index_dir) for experiment in EMBEDDING_EXPERIMENTS]
+    assert [path.name for path in others] == ["chroma-E2", "chroma-E3"]
+    for index in others:
+        assert index.parent == app.parent
+        assert not index.is_relative_to(app)
+        assert manifest_file_for(index).parent == app.parent
+        assert truncation_file_for(index).parent == app.parent
+
+
+def test_index_error_advice_distinguishes_auxiliary_dense_and_bm25(monkeypatch, tmp_path, capsys):
+    import pytest
+    import src.evaluation.model_ablation as module
+
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    for detail in (
+        "Dense index at data/index/chroma-E2 cannot be searched: no manifest. Run: python -m src.retrieval embed",
+        "BM25 index does not match the corpus. Rebuild it: python -m src.retrieval bm25",
+    ):
+        def unavailable(*args, **kwargs):
+            raise ValueError(detail)
+        monkeypatch.setattr(module, "_default_embedding_stack", unavailable)
+        with pytest.raises(SystemExit) as error:
+            module.main(["embedding", "questions.jsonl", "--results-root", str(tmp_path), "--run-id", "missing"])
+        assert error.value.code == 2
+        message = capsys.readouterr().err
+        assert message.index("src.evaluation.model_ablation embedding") < message.index(detail)
+        assert "If it is E2 or E3" in message
+        assert "default index and for BM25" in message
+        assert detail in message
+        assert not (tmp_path / "missing").exists()
+
+
+def test_custom_corpus_error_recommends_preparing_only_default_corpus(monkeypatch, tmp_path, capsys):
+    import pytest
+    from shlex import join
+    import src.evaluation.model_ablation as module
+
+    default = tmp_path / "default corpus"
+    monkeypatch.setattr(module, "PROCESSED_DIR", default)
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    def unavailable(*args, **kwargs):
+        raise ValueError("BM25 index does not match the corpus")
+    monkeypatch.setattr(module, "_default_embedding_stack", unavailable)
+    with pytest.raises(SystemExit):
+        module.main(["embedding", "questions.jsonl", "--processed-dir", str(tmp_path / "other corpus"),
+                     "--results-root", str(tmp_path / "results"), "--run-id", "missing"])
+    assert join(["--processed-dir", str(default)]) in capsys.readouterr().err
