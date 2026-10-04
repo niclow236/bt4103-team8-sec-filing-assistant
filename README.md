@@ -1979,14 +1979,21 @@ their own cited passages; correctness compares the response with the gold
 answer, accepting equivalent wording and numeric units. Both scores range from
 0 to 1, with reasons recorded per question. These are model judgements, so
 inspect the reasons and compare with human review before treating them as gold
-labels. Without `--judge`, answered questions have null semantic scores rather
-than treating numeric verification or token overlap as semantic proof.
-Abstention correctness is determined from benchmark answerability (1 on an
-unanswerable question, 0 otherwise), and answering an unanswerable question has
-correctness 0. Faithfulness is null for abstentions because they assert no
-claims. A judge provider failure or invalid response keeps the completed answer
-and records `judge_failed`, its error, and null unscored values. Judge identity,
-rubric and configuration are recorded; judge latency and API cost appear in
+labels. Use `--judge` for the per-question semantic scoring required by #47;
+without it, faithfulness and correctness are null on every row, including
+abstentions. Numeric verification and token overlap are not semantic proof.
+The separate `answerability_correct` metric always records whether the answer
+abstained exactly where the benchmark says it should (1 if so, 0 otherwise).
+Only with `--judge`, abstention correctness is 1 on an unanswerable question
+and 0 otherwise, and answering an unanswerable question has correctness 0.
+Faithfulness is null for abstentions because they assert no claims.
+Invalid or truncated scores from a working judge record `judge_failed` and
+leave semantic scores unscored. A judge provider outage or configuration error
+stops the run with a partial report; retryable failures follow the normal
+retry policy. The already completed answer and its resources are retained,
+including on Ctrl-C during judging. The CLI prints quality means and scored/total
+denominators so missing scoring is visible. Judge identity, rubric and
+configuration are recorded; judge latency and API cost appear in
 `judge_overhead`, separately from query resources.
 
 Citation precision is the number of correctly cited distinct chunk IDs divided

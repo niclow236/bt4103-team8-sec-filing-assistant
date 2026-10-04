@@ -7,10 +7,10 @@ from dataclasses import dataclass, replace
 from math import isfinite
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src.rag.generate import ProviderUnavailable, _provider, chat_model
-from src.rag.constants import MAX_OUTPUT_TOKENS
+from src.rag.generate import _provider, chat_model
+from src.rag.constants import MAX_OUTPUT_TOKENS, OLLAMA
 from src.rag.records import Answer, GenerationConfig
 from .records import BenchmarkQuestion, UNANSWERABLE
 
@@ -27,6 +27,10 @@ contradictions, omitted required parts and incorrect company/year. An answer
 to an unanswerable question has correctness 0. A supported but irrelevant
 answer can be faithful and incorrect. Do not substitute token overlap or
 numeric consistency for semantic judgement."""
+
+
+class JudgeInvalid(ValueError):
+    """A working judge returned invalid or truncated scores."""
 
 
 class Judgement(BaseModel):
@@ -87,14 +91,18 @@ class LLMJudge:
             if unavailable is not None:
                 raise unavailable from error
             raise
-        parsed = response.get("parsed")
-        if response.get("parsing_error") is not None or parsed is None:
-            raise ProviderUnavailable("Judge returned invalid structured scores")
-        scores = Judgement.model_validate(parsed).model_dump()
         raw = response.get("raw")
         metadata = getattr(raw, "response_metadata", None) or {}
-        if metadata.get("finish_reason", metadata.get("done_reason")) in {"length", "model_length"}:
-            raise ProviderUnavailable("Judge response was truncated")
+        # Use the provider's own stop handling, including retryable API errors.
+        if provider.stop_reason(metadata, self.config, True) in {"length", "model_length"}:
+            raise JudgeInvalid("Judge response was truncated")
+        parsed = response.get("parsed")
+        if response.get("parsing_error") is not None or parsed is None:
+            raise JudgeInvalid("Judge returned invalid structured scores")
+        try:
+            scores = Judgement.model_validate(parsed).model_dump()
+        except ValidationError as error:
+            raise JudgeInvalid("Judge returned invalid structured scores") from error
         usage = getattr(raw, "usage_metadata", None) or {}
         return scores | {"input_tokens": usage.get("input_tokens"),
                          "output_tokens": usage.get("output_tokens")}
@@ -151,7 +159,7 @@ def query_cost(provider: str, usages: list[dict[str, Any]], *, attempts: int,
     output_tokens = observed_output if attempts == len(usages) else None
     # No model call or local inference incurs no hosted token charge. This
     # does not price electricity, hardware or elapsed compute time.
-    if attempts == 0 or provider == "ollama":
+    if attempts == 0 or provider == OLLAMA:
         usd, reason = 0.0, None
     elif attempts != len(usages):
         usd, reason = None, "failed_attempt_usage_unknown"
@@ -172,7 +180,8 @@ def query_cost(provider: str, usages: list[dict[str, Any]], *, attempts: int,
 def quality_summary(rows: list[dict]) -> dict[str, Any]:
     """Macro means with explicit denominators; nulls are never zero-filled."""
     result = {}
-    for key in ("faithfulness", "correctness", "citation_precision", "citation_recall"):
+    for key in ("faithfulness", "correctness", "answerability_correct",
+                "citation_precision", "citation_recall"):
         values = [r["quality"][key] for r in rows if r["quality"][key] is not None]
         result[key] = {"mean": sum(values) / len(values) if values else None,
                        "scored": len(values), "total": len(rows)}

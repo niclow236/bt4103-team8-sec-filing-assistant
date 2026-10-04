@@ -5,12 +5,10 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from collections.abc import Callable, Iterable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from math import isfinite
 from time import perf_counter, sleep
 from typing import Any, TypeVar
-
-from pydantic import ValidationError
 
 from src.rag import (
     ProviderBusy,
@@ -27,7 +25,7 @@ from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from .records import BenchmarkQuestion, UNANSWERABLE
 from .quality import (
-    Judgement, TokenPrices, citation_scores, quality_summary, query_cost, resource_summary,
+    JudgeInvalid, LLMJudge, TokenPrices, citation_scores, quality_summary, query_cost, resource_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,6 +158,29 @@ def answer_with_retries(label: str, ask: Callable[[], Asked]) -> tuple[Asked, in
     return ask(), len(RETRY_WAITS_S) + 1
 
 
+@dataclass
+class _ModelCalls:
+    """Calls, observed usage and retry-inclusive time for one model stage."""
+
+    calls: int = 0
+    usages: list[dict[str, Any]] = field(default_factory=list)
+    ms: float = 0.0
+
+    def ask(self, label: str, ask: Callable[[], Asked],
+            usage: Callable[[Asked], dict[str, Any]]) -> tuple[Asked, int]:
+        def call():
+            self.calls += 1
+            result = ask()
+            self.usages.append(usage(result))
+            return result
+
+        started = perf_counter()
+        try:
+            return answer_with_retries(label, call)
+        finally:
+            self.ms += (perf_counter() - started) * 1000
+
+
 def evaluate(
     questions: Iterable[BenchmarkQuestion],
     retriever: Retriever,
@@ -173,7 +194,7 @@ def evaluate(
     use_decomposition: bool = True,
     use_refusal: bool = True,
     stack: Any | None = None,
-    judge: Any | None = None,
+    judge: LLMJudge | None = None,
     token_prices: TokenPrices | None = None,
     judge_token_prices: TokenPrices | None = None,
 ) -> dict[str, Any]:
@@ -230,12 +251,14 @@ def evaluate(
     them.
 
     ``judge`` optionally scores semantic faithfulness and gold correctness;
-    absent it, semantic scores are null except deterministic answerability
-    correctness. Numeric checks remain separate. Citation precision/recall,
+    absent it, semantic scores are null on every row. A separate
+    ``answerability_correct`` metric scores abstention decisions on every row.
+    Numeric checks remain separate. Citation precision/recall,
     stage timings and token usage are always recorded. ``token_prices`` and
     ``judge_token_prices`` are explicit USD rates per million tokens. Unknown
     usage/prices produce null hosted cost. Judge resources are recorded
-    separately; a judge provider failure keeps the completed answer unscored.
+    separately. Invalid judge output leaves an answer unscored; an unavailable
+    or interrupted judge stops the run, retaining that completed answer.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -289,9 +312,7 @@ def evaluate(
         # One question asked and answered, as its row in the report.
         started = perf_counter()
         timed = _TimedRetriever(retriever)
-        usages = []
-        model_calls = 0
-        generation_ms = 0.0
+        generation_calls = _ModelCalls()
         parsed = parse_question(question.question)
         query = parsed.to_query(top_k=top_k)
         if question.ticker is not None:
@@ -312,22 +333,13 @@ def evaluate(
         attempts = 1
 
         def ask_model(run: Callable[[], Generation]) -> Generation:
-            nonlocal attempts, generation_ms, model_calls
-
-            def call():
-                nonlocal model_calls
-                model_calls += 1
-                generation = run()
-                usages.append({"input_tokens": generation.input_tokens,
-                               "output_tokens": generation.output_tokens})
-                return generation
-
-            before = perf_counter()
-            try:
-                generation, attempts = answer_with_retries(question.question_id, call)
-                return generation
-            finally:
-                generation_ms += (perf_counter() - before) * 1000
+            nonlocal attempts
+            generation, attempts = generation_calls.ask(
+                question.question_id, run,
+                lambda result: {"input_tokens": result.input_tokens,
+                                "output_tokens": result.output_tokens},
+            )
+            return generation
 
         answer = answer_question(
             question.question, timed, config, query=query, min_score=min_score,
@@ -342,56 +354,56 @@ def evaluate(
         # sidebar's company and year, so that is the scope here too.
         answer = verify_answer(answer, parsed=asked)
         total_ms = (perf_counter() - started) * 1000
+        answerable = question.question_type != UNANSWERABLE
         quality = citation_scores(question, answer) | {
             "faithfulness": None, "correctness": None, "method": "not_scored",
+            "answerability_correct": float(answer.abstained != answerable),
             "faithfulness_reason": None, "correctness_reason": None,
             "error": None,
         }
-        judge_usages = []
-        judge_calls = 0
-        judge_ms = 0.0
+        judge_calls = _ModelCalls()
+        judge_stopped = None
         if answer.abstained:
             # No factual claims to ground; do not reward vacuous faithfulness.
-            quality.update(correctness=float(question.question_type == UNANSWERABLE),
-                           method="abstention", correctness_reason="Benchmark answerability")
+            quality.update(method="abstention")
+            if judge is not None:
+                quality.update(correctness=float(not answerable),
+                               correctness_reason="Benchmark answerability")
         elif judge is not None:
-            def judge_call():
-                nonlocal judge_calls
-                judge_calls += 1
-                result = judge(question, answer)
-                judge_usages.append(result)
-                return result
-
-            before = perf_counter()
             try:
-                result, _ = answer_with_retries(question.question_id + ":judge", judge_call)
-                quality.update(Judgement.model_validate({
-                    key: result[key] for key in Judgement.model_fields
-                }).model_dump(), method="llm_judge")
-            except (ProviderUnavailable, ValidationError) as error:
-                # A judge failure does not discard an already completed answer.
+                result, _ = judge_calls.ask(
+                    question.question_id + ":judge", lambda: judge(question, answer),
+                    lambda result: {"input_tokens": result.get("input_tokens"),
+                                    "output_tokens": result.get("output_tokens")},
+                )
+                # LLMJudge validates scores once, at the provider boundary.
+                quality.update({key: result[key] for key in
+                                ("faithfulness", "correctness", "faithfulness_reason",
+                                 "correctness_reason")}, method="llm_judge")
+            except JudgeInvalid as error:
                 quality.update(method="judge_failed", error=str(error))
-            finally:
-                judge_ms = (perf_counter() - before) * 1000
-        if not answer.abstained and question.question_type == UNANSWERABLE:
+            except (ProviderUnavailable, KeyboardInterrupt) as error:
+                judge_stopped = error
+                quality.update(method="judge_failed",
+                               error="interrupted" if isinstance(error, KeyboardInterrupt) else str(error))
+        if judge is not None and not answer.abstained and not answerable:
             quality.update(correctness=0.0, correctness_reason="Answered an unanswerable question")
-            if quality["method"] == "not_scored":
-                quality["method"] = "answerability"
-        cost = query_cost(config.provider, usages, attempts=model_calls, prices=token_prices)
+        cost = query_cost(config.provider, generation_calls.usages,
+                          attempts=generation_calls.calls, prices=token_prices)
         judge_provider = config.provider if judge is None else judge.config.provider
-        judge_cost = query_cost(judge_provider, judge_usages, attempts=judge_calls,
+        judge_cost = query_cost(judge_provider, judge_calls.usages, attempts=judge_calls.calls,
                                 prices=judge_token_prices)
-        return {"question_id": question.question_id, "run_id": run_id,
+        row = {"question_id": question.question_id, "run_id": run_id,
                 "expected_answer": question.expected_answer,
                 "supporting_chunk_ids": list(question.supporting_chunk_ids),
                 "quality": quality,
                 # No reranker exists in the current stack; fusion is retrieval.
                 "latency_ms": {"retrieve": timed.latency_ms, "rerank": 0.0,
-                               "generate": generation_ms, "total": total_ms,
-                               "other": max(0.0, total_ms - timed.latency_ms - generation_ms)},
+                               "generate": generation_calls.ms, "total": total_ms,
+                               "other": max(0.0, total_ms - timed.latency_ms - generation_calls.ms)},
                 "rerank_enabled": False,
                 "cost": cost,
-                "judge_overhead": {"latency_ms": judge_ms, "cost": judge_cost},
+                "judge_overhead": {"latency_ms": judge_calls.ms, "cost": judge_cost},
                 "question_type": question.question_type,
                 # Which route answered it. The Answer records the provider
                 # that produced it, and a looked-up answer says "facts"
@@ -403,6 +415,12 @@ def evaluate(
                 # provider was busy: how often a hosted free plan was.
                 "attempts": attempts,
                 "answer": answer.to_dict()}
+        if judge_stopped is not None:
+            # The answer and its paid model call completed before judging failed.
+            # Keep them in the partial report before the outer handler stops it.
+            rows.append(row)
+            raise judge_stopped
+        return row
 
     for question in questions:
         try:

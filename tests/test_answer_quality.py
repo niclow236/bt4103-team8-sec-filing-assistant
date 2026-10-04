@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from src.evaluation.cli import main
 from src.evaluation.harness import RunStopped, evaluate
 from src.evaluation.quality import (
-    Judgement, LLMJudge, RUBRIC_ID, TokenPrices, citation_scores, query_cost,
+    JudgeInvalid, Judgement, LLMJudge, RUBRIC_ID, TokenPrices, citation_scores, query_cost,
 )
 from src.evaluation.records import BenchmarkQuestion
 from src.rag.citations import resolve_citations
@@ -147,7 +147,7 @@ def test_judge_compares_gold_and_only_cited_evidence_and_records_schema():
 
 
 def test_judge_invalid_response_and_identity_fail_explicitly():
-    with pytest.raises(ProviderUnavailable, match="invalid structured"):
+    with pytest.raises(JudgeInvalid, match="invalid structured"):
         judge(JudgeModel(error=ValueError("bad JSON")))(question(), answer())
     model = JudgeModel()
     model.model = "wrong-model"
@@ -346,7 +346,7 @@ def test_cli_rejects_invalid_evaluation_options_before_loading(flags, tmp_path, 
     assert error.value.code == 2
 
 
-def test_cli_writes_quality_and_separate_judge_cost(tmp_path, monkeypatch):
+def test_cli_writes_quality_and_separate_judge_cost(tmp_path, monkeypatch, capsys):
     # Exercise CLI wiring and the real harness, with no corpus or provider calls.
     settings = SimpleNamespace(min_score=None, top_k=8, use_facts=False,
                                use_decomposition=False, use_refusal=False)
@@ -367,3 +367,205 @@ def test_cli_writes_quality_and_separate_judge_cost(tmp_path, monkeypatch):
     assert row["cost"]["usd"] == pytest.approx(.00032)
     assert row["judge_overhead"]["cost"]["usd"] == pytest.approx(.00029)
     assert row["quality"]["method"] == "llm_judge"
+    assert json.loads(capsys.readouterr().out)["quality"] == report["quality"]
+
+
+@pytest.mark.parametrize("abstain", [False, True])
+@pytest.mark.parametrize("judged", [False, True])
+def test_correctness_never_averages_unjudged_abstentions(abstain, judged):
+    questions = [question(), question("q2"), question("q3", unanswerable=True)]
+    report = evaluate(questions, Retriever(), CONFIG, run_id="quality",
+                      llm=Model(abstain=abstain), judge=judge() if judged else None)
+    decisions = [0, 0, 1] if abstain else [1, 1, 0]
+    assert [r["quality"]["answerability_correct"] for r in report["results"]] == decisions
+    assert report["quality"]["answerability_correct"] == {
+        "mean": sum(decisions)/3, "scored": 3, "total": 3}
+    correctness = report["quality"]["correctness"]
+    if judged:
+        assert correctness == {"mean": 1/3, "scored": 3, "total": 3}
+    else:
+        assert correctness == {"mean": None, "scored": 0, "total": 3}
+        assert all(r["quality"]["correctness"] is None for r in report["results"])
+
+
+@pytest.mark.parametrize("bad_scores", [{"faithfulness": .5}, {
+    "faithfulness": 2, "correctness": 1, "faithfulness_reason": "x", "correctness_reason": "x"}])
+def test_judge_validates_missing_and_invalid_scores_at_its_boundary(bad_scores):
+    with pytest.raises(JudgeInvalid, match="invalid structured"):
+        judge(JudgeModel(parsed=bad_scores))(question(), answer())
+
+
+@pytest.mark.parametrize("provider,metadata", [
+    ("ollama", {"done_reason": "length"}),
+    ("ollama", {"done_reason": "model_length"}),
+    ("mistral", {"finish_reason": "length"}),
+    ("mistral", {"finish_reason": "model_length"}),
+])
+def test_truncated_judge_response_leaves_answer_unscored(provider, metadata):
+    class CutJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            result = super().invoke(messages, **kwargs)
+            result["raw"].response_metadata = metadata
+            return result
+
+    report = evaluate([question()], Retriever(), CONFIG, run_id="quality",
+                      llm=Model(), judge=judge(CutJudge(), provider))
+    row = report["results"][0]
+    assert row["quality"]["method"] == "judge_failed"
+    assert "truncated" in row["quality"]["error"]
+    assert row["quality"]["correctness"] is None
+    assert report["stopped"] is None and report["quality"]["correctness"]["scored"] == 0
+
+
+def test_unreachable_judge_stops_and_keeps_completed_answer_and_cost():
+    class DownJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            self.calls.append(messages)
+            raise ProviderUnavailable("Ollama has no model 'judge-test'")
+
+    model, retriever = DownJudge(), Retriever()
+    with pytest.raises(RunStopped) as stopped:
+        evaluate([question(), question("q2")], retriever, replace(CONFIG, provider="mistral"),
+                 run_id="quality", llm=Model(), judge=judge(model),
+                 token_prices=TokenPrices(1, 1))
+    report = stopped.value.report
+    assert report["stopped"]["question_id"] == "q1"
+    assert len(model.calls) == retriever.calls == len(report["results"]) == 1
+    row = report["results"][0]
+    assert not row["answer"]["abstained"] and row["quality"]["method"] == "judge_failed"
+    assert row["cost"]["usd"] == pytest.approx(.00012)
+    assert report["quality"]["correctness"] == {"mean": None, "scored": 0, "total": 1}
+
+
+def test_candidate_diagnostics_count_as_retrieval(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("src.evaluation.harness.perf_counter", lambda: clock[0])
+
+    class Empty(Retriever):
+        def has_candidates(self, query):
+            clock[0] += .05
+            return True
+
+    row = evaluate([question()], Empty([]), CONFIG, run_id="quality",
+                   use_decomposition=False)["results"][0]
+    assert row["answer"]["abstention_reason"] == "below_threshold"
+    assert row["latency_ms"]["retrieve"] == pytest.approx(50)
+
+
+@pytest.mark.parametrize("flags,model,shares_llm", [([], "test", True),
+    (["--judge-model", "other"], "other", False)])
+def test_cli_builds_the_judge_it_records(flags, model, shares_llm, tmp_path, monkeypatch):
+    settings = SimpleNamespace(min_score=None, top_k=8, use_facts=False,
+                               use_decomposition=False, use_refusal=False)
+    settings.to_dict = lambda: {"key": "test"}
+    settings.scoped = lambda query: query
+    stack = SimpleNamespace(config=settings, generation=CONFIG, retriever=Retriever(), llm=Model())
+    built = []
+
+    def spy(config, *, llm=None):
+        built.append((config, llm))
+        return judge()
+
+    monkeypatch.setattr("src.evaluation.cli.build_stack", lambda *a, **k: stack)
+    monkeypatch.setattr("src.evaluation.cli.load_questions", lambda *a, **k: [question()])
+    monkeypatch.setattr("src.evaluation.cli.LLMJudge", spy)
+    main(["--run-id", "quality", "--output", str(tmp_path/"report.json"), "--judge", *flags])
+    (config, llm), = built
+    assert (config.model, config.prompt_template_id) == (model, RUBRIC_ID)
+    assert (llm is stack.llm) is shares_llm
+
+
+@pytest.mark.parametrize("failure", ["busy", "http429", "finish_error"])
+def test_busy_judge_retries_with_wait_time_and_unknown_failed_usage(monkeypatch, failure):
+    clock = [0.0]
+    monkeypatch.setattr("src.evaluation.harness.perf_counter", lambda: clock[0])
+    monkeypatch.setattr("src.evaluation.harness.sleep", lambda duration: clock.__setitem__(0, clock[0]+duration))
+
+    class BusyJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            if not self.calls and failure != "finish_error":
+                self.calls.append(messages)
+                if failure == "busy":
+                    raise ProviderBusy("busy")
+                request = httpx.Request("POST", "https://api.mistral.ai/v1/chat/completions")
+                response = httpx.Response(429, request=request, json={"message": "rate limit"})
+                raise httpx.HTTPStatusError("rate limit", request=request, response=response)
+            result = super().invoke(messages, **kwargs)
+            result["raw"].response_metadata = {"finish_reason": "error" if len(self.calls)==1 else "stop"}
+            return result
+
+    model = BusyJudge(clock=clock)
+    retriever = Retriever()
+    row = evaluate([question()], retriever, CONFIG, run_id="quality", llm=Model(),
+                   judge=judge(model, "mistral"), judge_token_prices=TokenPrices(1, 1))["results"][0]
+    assert row["quality"]["method"] == "llm_judge" and len(model.calls) == 2
+    assert retriever.calls == row["cost"]["model_calls"] == 1
+    assert row["judge_overhead"]["cost"]["model_calls"] == 2
+    assert row["judge_overhead"]["cost"]["reason"] == "failed_attempt_usage_unknown"
+    assert row["judge_overhead"]["latency_ms"] == pytest.approx(10800 if failure=="finish_error" else 10400)
+
+
+def test_rejected_judge_key_maps_to_provider_failure_and_stops():
+    class Rejected(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            request = httpx.Request("POST", "https://api.mistral.ai/v1/chat/completions")
+            response = httpx.Response(401, request=request, json={"message": "invalid API key"})
+            raise httpx.HTTPStatusError("refused", request=request, response=response)
+
+    with pytest.raises(RunStopped, match="Mistral refused the API key") as error:
+        evaluate([question(), question("q2")], Retriever(), CONFIG, run_id="quality",
+                 llm=Model(), judge=judge(Rejected(), "mistral"))
+    assert len(error.value.report["results"]) == 1
+
+
+def test_interrupted_judge_retry_keeps_paid_answer_and_partial_cli_report(tmp_path, monkeypatch, capsys):
+    class BusyJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            raise ProviderBusy("busy")
+
+    def interrupt(duration):
+        raise KeyboardInterrupt
+
+    settings = SimpleNamespace(min_score=None, top_k=8, use_facts=False,
+                               use_decomposition=False, use_refusal=False)
+    settings.to_dict = lambda: {"key": "test"}
+    settings.scoped = lambda query: query
+    stack = SimpleNamespace(config=settings, generation=replace(CONFIG, provider="mistral"),
+                            retriever=Retriever(), llm=Model())
+    monkeypatch.setattr("src.evaluation.harness.sleep", interrupt)
+    monkeypatch.setattr("src.evaluation.cli.build_stack", lambda *a, **k: stack)
+    monkeypatch.setattr("src.evaluation.cli.load_questions", lambda *a, **k: [question(), question("q2")])
+    monkeypatch.setattr("src.evaluation.cli.LLMJudge", lambda *a, **k: judge(BusyJudge(), "mistral"))
+    output = tmp_path/"partial.json"
+    with pytest.raises(SystemExit, match="KeyboardInterrupt"):
+        main(["--run-id", "quality", "--output", str(output), "--judge",
+              "--input-usd-per-million", "1", "--output-usd-per-million", "1"])
+    report = json.loads(output.read_text())
+    assert report["stopped"]["question_id"] == "q1" and len(report["results"]) == 1
+    row = report["results"][0]
+    assert row["quality"]["error"] == "interrupted" and row["quality"]["method"] == "judge_failed"
+    assert row["cost"]["usd"] == pytest.approx(.00012)
+    assert row["judge_overhead"]["cost"]["reason"] == "failed_attempt_usage_unknown"
+    assert json.loads(capsys.readouterr().out)["quality"]["correctness"]["scored"] == 0
+
+
+def test_judge_outage_cli_exits_unsuccessfully_with_zero_score_coverage(tmp_path, monkeypatch, capsys):
+    class DownJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            raise ProviderUnavailable("judge offline")
+
+    settings = SimpleNamespace(min_score=None, top_k=8, use_facts=False,
+                               use_decomposition=False, use_refusal=False)
+    settings.to_dict = lambda: {"key": "test"}
+    settings.scoped = lambda query: query
+    stack = SimpleNamespace(config=settings, generation=CONFIG, retriever=Retriever(), llm=Model())
+    monkeypatch.setattr("src.evaluation.cli.build_stack", lambda *a, **k: stack)
+    monkeypatch.setattr("src.evaluation.cli.load_questions", lambda *a, **k: [question(), question("q2")])
+    monkeypatch.setattr("src.evaluation.cli.LLMJudge", lambda *a, **k: judge(DownJudge()))
+    output = tmp_path/"partial.json"
+    with pytest.raises(SystemExit, match="judge offline"):
+        main(["--run-id", "quality", "--output", str(output), "--judge"])
+    report = json.loads(output.read_text())
+    assert report["stopped"]["question_id"] == "q1"
+    assert [r["question_id"] for r in report["results"]] == ["q1"]
+    assert json.loads(capsys.readouterr().out)["quality"]["faithfulness"]["scored"] == 0

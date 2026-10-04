@@ -163,6 +163,7 @@ def main(argv: list[str] | None = None) -> None:
         args.answers.write_text("".join(json.dumps(row) + "\n" for row in report["results"]),
                                 encoding="utf-8")
     print(json.dumps({"summary": report["summary"],
+                      "quality": report.get("quality"),
                       "by_answerability": report["by_answerability"]}, indent=2))
     if stopped is not None:
         # The note goes right after the advice it is about, not after the path.
