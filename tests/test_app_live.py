@@ -308,6 +308,26 @@ def test_ask_page_shows_the_filters_a_question_resolved_to_before_it_is_asked(mo
     assert ":gray-badge[every company]" in _badges(ui)[0]
 
 
+def test_ask_page_names_what_a_question_named_that_the_corpus_does_not_hold(monkeypatch):
+    # "every company" stood alone under a question about Tesla, beside a
+    # sidebar that said Tesla was not in the corpus (review of #119).
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui.text_input[0].set_value("What was Tesla's revenue in FY2024?").run()
+    assert not ui.exception
+    assert _badges(ui)[0].endswith(
+        ":orange-badge[not in the corpus: Tesla] :violet-badge[unanswerable question]")
+    assert ui.sidebar.warning[0].value == "Not in the corpus: Tesla"
+    # A year the corpus does not hold is named the same way, which is why the
+    # year beside it reads "every fiscal year".
+    ui.text_input[0].set_value("What was Apple's revenue in FY2015?").run()
+    assert ":gray-badge[every fiscal year]" in _badges(ui)[0]
+    assert ":orange-badge[not in the corpus: FY2015]" in _badges(ui)[0]
+    # Nothing is added where the corpus holds all the question named.
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    assert "orange-badge" not in _badges(ui)[0]
+
+
 def test_ask_page_shows_no_filters_for_a_row_that_applies_none(monkeypatch):
     _standing_in(monkeypatch)
     ui = AppTest.from_file(APP, default_timeout=30).run()

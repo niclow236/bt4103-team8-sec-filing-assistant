@@ -247,10 +247,16 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
     sidebar ends up with, so a filter changed by hand shows here too. An axis
     with nothing selected says that every value is searched, so that an
     empty filter cannot be mistaken for a missed one.
+
+    A company or year the question named that the corpus does not hold is
+    named here too, as the sidebar names it. Without it "every company" stood
+    alone under a question about Tesla, as if the question had named none.
     """
     parts = [" ".join(f":blue-badge[{value}]" for value in values) or f":gray-badge[{every}]"
              for values, every in _scope(query)]
     if parsed is not None:
+        if parsed.unresolved:
+            parts.append(f":orange-badge[not in the corpus: {', '.join(parsed.unresolved)}]")
         parts.append(f":violet-badge[{parsed.question_type} question]")
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
