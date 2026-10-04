@@ -136,7 +136,7 @@ class FakeModel:
 def fake_model(monkeypatch):
     """Replace the encoder for the test; the model it returns can be told to fail."""
     model = FakeModel()
-    monkeypatch.setattr(embed, "_load_model", lambda threads=None: (model, 1))
+    monkeypatch.setattr(embed, "_load_model", lambda threads=None, **_: (model, 1))
     return model
 
 
