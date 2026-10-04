@@ -88,7 +88,7 @@ class AnswerModels:
     # Provider to the model it would answer with, in the order they are offered.
     models: dict[str, str]
     default: str                   # the provider ``.env`` names, which a page opens on
-    # Provider to why it could not write an answer as things stand, in its own
+    # Provider to why it could not write an answer as things stand, in a few
     # words: a missing key, a setting it cannot read. Absent where it could.
     unready: dict[str, str]
     problem: str | None = None     # why ``.env``'s own choice could not be used, if it could not
@@ -109,8 +109,10 @@ def answer_models() -> AnswerModels:
 
     ``unready`` is what each provider's own check refuses, asked of its
     settings alone (``check_provider``): no client is built and nothing is
-    sent. A provider that is not ready can still be picked, since a question
-    the facts store answers asks no model.
+    sent. It holds what is wrong and not the check's advice, which is written
+    for a command: a page says for itself what to do. A provider that is not
+    ready can still be picked, since a question the facts store answers asks
+    no model.
     """
     models, unready = {}, {}
     for provider in PROVIDERS:
@@ -118,7 +120,9 @@ def answer_models() -> AnswerModels:
         models[provider] = config.model
         try:
             check_provider(config)
-        except (ProviderUnavailable, ValueError) as error:
+        except ProviderUnavailable as error:
+            unready[provider] = error.reason
+        except ValueError as error:
             unready[provider] = str(error)
     try:
         return AnswerModels(models, config_from_env().provider, unready)

@@ -506,6 +506,12 @@ def test_the_check_refuses_a_missing_key_in_the_words_the_build_does(tmp_path, v
     with pytest.raises(ProviderUnavailable) as checked:
         check_provider(_mistral_config(), dotenv=path)
     assert str(checked.value) == str(built.value)
+    # What is wrong, apart from the advice, for a caller with its own to give.
+    assert checked.value.reason == "MISTRAL_API_KEY is not set"
+    assert checked.value.reason in str(checked.value)
+    # A failure that names no reason gives its whole message for one.
+    assert ProviderUnavailable("Ollama did not answer").reason == "Ollama did not answer"
+    assert ProviderBusy("busy", retry_after=2.0).reason == "busy"
 
 
 def test_the_check_reads_the_settings_and_builds_no_client(tmp_path, monkeypatch):

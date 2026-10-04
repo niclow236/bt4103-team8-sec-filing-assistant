@@ -87,7 +87,18 @@ from .records import Generation, GenerationConfig, GroundedAnswer, render_senten
 
 class ProviderUnavailable(RuntimeError):
     """The model cannot answer: no server or connection, no such model, a missing
-    or refused key, a rate limit or a used-up quota, or no response in time."""
+    or refused key, a rate limit or a used-up quota, or no response in time.
+
+    ``reason`` is what is wrong on its own, in a few words, without the advice
+    the message goes on to give. It is for a caller with advice of its own:
+    the app says it beside the provider picked, where "restart the notebook
+    or command" is not what there is to do. The whole message, where a
+    failure names none.
+    """
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason if reason is not None else message
 
 
 class ProviderBusy(ProviderUnavailable):
@@ -442,11 +453,13 @@ def _mistral_settings(
     if not key:
         # A key pasted into .env after a blank MISTRAL_API_KEY= line was read
         # is not seen, since a variable that is set wins over .env, even "".
+        lacks = f"{MISTRAL_API_KEY_ENV} is not set"
         raise ProviderUnavailable(
-            f"the provider is {MISTRAL!r} but {MISTRAL_API_KEY_ENV} is not set: make a key with "
+            f"the provider is {MISTRAL!r} but {lacks}: make a key with "
             f"your own account at {MISTRAL_CONSOLE} (API Keys) and put it in your .env, as "
             f"'Setting up Mistral' in the README says, then restart the notebook or command so "
-            f"the key is read, or {_ANSWER_LOCALLY}"
+            f"the key is read, or {_ANSWER_LOCALLY}",
+            reason=lacks,
         )
     # The address given to the client in every case, so a setting read from
     # ``environ`` is not passed over for the process's own MISTRAL_BASE_URL,

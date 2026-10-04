@@ -1832,7 +1832,7 @@ the configuration is loaded. So Mistral with no key still answers "What was
 Apple's total revenue in FY2024?", and a question that does need the model
 fails with the provider's own message. The box does not wait for that. As
 soon as a provider that cannot answer is picked, it says under it what the
-provider lacks, in the words the error would use.
+provider lacks and what to do about it.
 An explicit Item filter is enforced for numeric questions too. When the
 question, the filters, the configuration or the answer model change, the app
 hides the prior answer until Ask is pressed again. While a model is answering, its prose is written to the page as it

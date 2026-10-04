@@ -281,12 +281,14 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration")
     return config_id
 
 
-# Each provider as the picker names it, and what choosing it means for the
-# person asking: where the model runs, what it needs, and how long it takes.
+# Each provider as the picker names it, what choosing it means for the person
+# asking (where the model runs, what it needs, how long it takes), and the
+# README section that sets it up.
 _PROVIDERS = {
-    OLLAMA: ("Ollama", "on this computer, with no key. An answer can take minutes on a laptop."),
+    OLLAMA: ("Ollama", "on this computer, with no key. An answer can take minutes on a laptop.",
+             "Setting up Ollama"),
     MISTRAL: ("Mistral", "on Mistral's API, with the MISTRAL_API_KEY in your .env. "
-                         "An answer takes seconds."),
+                         "An answer takes seconds.", "Setting up Mistral"),
 }
 
 
@@ -302,10 +304,10 @@ def provider_picker(models: Mapping[str, str], default: str, *,
     changes nothing in ``.env``.
 
     Two things are said under it, as soon as they are true and not when Ask
-    is pressed: what the provider picked lacks, and ``problem``, what was
-    wrong with ``.env``'s own choice. A provider that lacks something can
-    still be picked: a figure the facts store looks up asks no model.
-    Returns the provider picked.
+    is pressed: what the provider picked lacks, with what to do about it in
+    the app, and ``problem``, what was wrong with ``.env``'s own choice. A
+    provider that lacks something can still be picked: a figure the facts
+    store looks up asks no model. Returns the provider picked.
     """
     with st.sidebar:
         provider = st.segmented_control(
@@ -315,12 +317,18 @@ def provider_picker(models: Mapping[str, str], default: str, *,
                  "LLM_MODEL names the model of the provider .env selects; the "
                  "other one answers with its default.",
         )
-        st.caption(f"{models[provider]}, {_PROVIDERS[provider][1]}")
-        lacks = (unready or {}).get(provider)
-        if lacks:
-            st.warning(f"{_PROVIDERS[provider][0]} cannot write an answer yet: {lacks}. "
-                       "A figure the facts store holds is still answered.",
-                       icon=":material/key_off:")
+        label, means, setup = _PROVIDERS[provider]
+        st.caption(f"{models[provider]}, {means}")
+        unready = unready or {}
+        if provider in unready:
+            # Short, and with no icon: the sidebar is narrow, and a warning
+            # that ran to twenty lines pushed the Configuration box below it
+            # off the screen.
+            ready = [_PROVIDERS[other][0] for other in models if other not in unready]
+            instead = f", or pick {' or '.join(ready)}" if ready else ""
+            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. Fix it in "
+                       f"`.env` (README, {setup}) and restart the app{instead}. "
+                       "A figure the facts store holds is still answered.")
         if problem:
             st.warning(problem)
     return provider

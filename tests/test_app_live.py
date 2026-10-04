@@ -561,14 +561,24 @@ def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypat
     ui = AppTest.from_file(APP, default_timeout=30).run()
     assert not ui.sidebar.warning                      # Ollama needs no key
     ui.sidebar.button_group[0].set_value("mistral").run()
-    said = ui.sidebar.warning[0].value
-    assert said.startswith("Mistral cannot write an answer yet: ")
-    assert "MISTRAL_API_KEY is not set" in said
-    assert said.endswith("A figure the facts store holds is still answered.")
-    # A key that arrives is seen on the next rerun, with no restart.
+    # What is wrong and what to do about it in the app, in a few lines: the
+    # whole command-line error ran to twenty in a sidebar this narrow.
+    assert [warning.value for warning in ui.sidebar.warning] == [
+        "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Fix it in `.env` "
+        "(README, Setting up Mistral) and restart the app, or pick Ollama. "
+        "A figure the facts store holds is still answered."]
+    # A key set in the process is seen on the next rerun.
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     ui.run()
     assert not ui.exception and not ui.sidebar.warning
+    # The other provider is offered only where it could answer.
+    monkeypatch.delenv("MISTRAL_API_KEY")
+    monkeypatch.setenv("LLM_NUM_GPU", "many")
+    ui.run()
+    assert ui.sidebar.warning[0].value == (
+        "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Fix it in `.env` "
+        "(README, Setting up Mistral) and restart the app. "
+        "A figure the facts store holds is still answered.")
 
 
 # --- Streamlit's file watcher and a library's lazy modules ----------------------

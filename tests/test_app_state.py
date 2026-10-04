@@ -390,11 +390,11 @@ def test_answer_models_says_what_each_provider_lacks_and_builds_no_client(monkey
     # nothing else: no client library imported, no client built.
     from src.rag.generate import _mistral_client
 
-    lacks = state_module.answer_models().unready
-    assert list(lacks) == ["mistral"] and "MISTRAL_API_KEY is not set" in lacks["mistral"]
+    # What is wrong and none of the advice, which is written for a command.
+    assert state_module.answer_models().unready == {"mistral": "MISTRAL_API_KEY is not set"}
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     assert state_module.answer_models().unready == {}
     monkeypatch.setenv("LLM_NUM_GPU", "many")
-    lacks = state_module.answer_models().unready
-    assert list(lacks) == ["ollama"] and "LLM_NUM_GPU must be a whole number" in lacks["ollama"]
+    assert state_module.answer_models().unready == {
+        "ollama": "LLM_NUM_GPU must be a whole number of layers, got 'many'"}
     assert _mistral_client.cache_info().currsize == 0
