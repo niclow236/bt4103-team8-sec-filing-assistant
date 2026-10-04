@@ -1505,9 +1505,9 @@ name in configuration rather than in the experiment code:
 
 ```bash
 python -m src.evaluation.model_ablation embedding \
-  --prepare-indexes --run-id embeddings-20261003
+  benchmark/generated.jsonl --prepare-indexes --limit 14 --run-id embeddings-20261003
 python -m src.evaluation.model_ablation generation \
-  benchmark/generated.jsonl --run-id providers-20261003
+  benchmark/generated.jsonl --limit 14 --run-id providers-20261003
 ```
 
 The embedding matrix contains E1 BGE base, E2 MiniLM and E3 E5 base. The

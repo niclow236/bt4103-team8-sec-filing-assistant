@@ -153,6 +153,7 @@ def build_retriever(
     embedding_model: str | None = None,
     embedding_dimensions: int | None = None,
     embedding_query_prefix: str | None = None,
+    embedding_passage_prefix: str | None = None,
     model: Any | None = None,
     parts: dict[str, Any] | None = None,
 ) -> Any:
@@ -170,17 +171,22 @@ def build_retriever(
     parts = {} if parts is None else parts
 
     def part(name: str, load: Any) -> Any:
-        if name not in parts:
+        slot = name if name != "dense" or chroma_dir is None else f"dense:{chroma_dir}"
+        if slot not in parts:
             kwargs = {"processed_dir": processed_dir}
             if name == "dense" and chroma_dir is not None:
                 kwargs.update(
                     chroma_dir=chroma_dir,
                     embedding_model=embedding_model,
                     embedding_dimensions=embedding_dimensions,
-                    query_prefix=embedding_query_prefix,
+                    passage_prefix=embedding_passage_prefix or "",
                 )
-            parts[name] = load(**kwargs)
-        return parts[name]
+                if embedding_query_prefix is not None:
+                    kwargs["query_prefix"] = embedding_query_prefix
+            elif name == "dense" and (embedding_model or embedding_dimensions):
+                raise ValueError("embedding_model and embedding_dimensions need chroma_dir")
+            parts[slot] = load(**kwargs)
+        return parts[slot]
 
     from .retrieval.bm25 import BM25Retriever
 
@@ -260,6 +266,7 @@ def build_stack(
     embedding_model: str | None = None,
     embedding_dimensions: int | None = None,
     embedding_query_prefix: str | None = None,
+    embedding_passage_prefix: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     retriever_key: str | None = None,
@@ -314,6 +321,7 @@ def build_stack(
             embedding_model=embedding_model,
             embedding_dimensions=embedding_dimensions,
             embedding_query_prefix=embedding_query_prefix,
+            embedding_passage_prefix=embedding_passage_prefix,
             parts=parts,
         )
     )

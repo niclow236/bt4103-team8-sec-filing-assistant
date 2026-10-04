@@ -152,7 +152,7 @@ def context_header(row: Mapping[str, Any]) -> str:
     )
 
 
-def embed_text(row: Mapping[str, Any]) -> str:
+def embed_text(row: Mapping[str, Any], passage_prefix: str = PASSAGE_PREFIX) -> str:
     """What actually goes to the encoder: prefix, header, then the passage.
 
     ``PASSAGE_PREFIX`` is empty for bge, which asks for a prefix on the query
@@ -163,12 +163,12 @@ def embed_text(row: Mapping[str, Any]) -> str:
     matters that this function is pure: hand it the same row twice and the
     stale-index check has to get the same string back both times.
     """
-    return f"{PASSAGE_PREFIX}{context_header(row)}{row['text']}"
+    return f"{passage_prefix}{context_header(row)}{row['text']}"
 
 
-def digest_of(row: Mapping[str, Any]) -> str:
+def digest_of(row: Mapping[str, Any], passage_prefix: str = PASSAGE_PREFIX) -> str:
     """The digest a current vector for this passage would carry."""
-    return passage_digest(row["chunk_id"], embed_text(row))
+    return passage_digest(row["chunk_id"], embed_text(row, passage_prefix))
 
 
 def metadata_for(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -408,7 +408,10 @@ def _scan(collection) -> dict[str, tuple[str | None, str | None, str | None]]:
     return held
 
 
-def _corpus_digests(processed_dir: Path) -> tuple[dict[str, str], set, int]:
+def _corpus_digests(
+    processed_dir: Path,
+    passage_prefix: str = PASSAGE_PREFIX,
+) -> tuple[dict[str, str], set, int]:
     """Walk the corpus once: each passage's digest, the chunker settings seen,
     and the row count.
 
@@ -420,7 +423,7 @@ def _corpus_digests(processed_dir: Path) -> tuple[dict[str, str], set, int]:
     n_rows = 0
     for row in iter_chunks(processed_dir=processed_dir):
         n_rows += 1
-        digests[row["chunk_id"]] = digest_of(row)
+        digests[row["chunk_id"]] = digest_of(row, passage_prefix)
         settings.add((row.get("chunk_budget"), row.get("chunk_overlap")))
     return digests, settings, n_rows
 
@@ -458,6 +461,8 @@ def build(
     sort_window: int = EMBED_SORT_WINDOW,
     model_name: str | None = None,
     dimensions: int | None = None,
+    passage_prefix: str = PASSAGE_PREFIX,
+    max_tokens: int | None = None,
 ) -> IndexManifest:
     """Bring the index in ``chroma_dir`` up to date with ``processed_dir``.
 
@@ -520,7 +525,7 @@ def build(
 
     # First walk, over the whole corpus whatever the filters say: the digests
     # are what every decision below is made against.
-    corpus, settings, n_rows = _corpus_digests(processed_dir)
+    corpus, settings, n_rows = _corpus_digests(processed_dir, passage_prefix)
     if not n_rows:
         raise RuntimeError(
             f"No passages found in {processed_dir}. Run the chunk stage first: "
@@ -617,7 +622,7 @@ def build(
             print(f"encoding on {used_threads} threads")
             started = time.perf_counter()
 
-        texts = [embed_text(row) for row in batch]
+        texts = [embed_text(row, passage_prefix) for row in batch]
         # Tokenising a batch about to be encoded anyway costs a fraction of the
         # encode. The count goes onto the vector: bge reads EMBED_MAX_TOKENS and
         # silently drops the rest, so this is the only record that a vector
@@ -713,7 +718,13 @@ def build(
         chunk_overlap=chunk_overlap,
     )
     write_manifest(manifest, manifest_file)
-    write_truncation_report(collection, chroma_dir, model=model_name)
+    max_tokens = max_tokens or (
+        int(getattr(model, "max_seq_length", EMBED_MAX_TOKENS))
+        if model is not None else EMBED_MAX_TOKENS
+    )
+    write_truncation_report(
+        collection, chroma_dir, model=model_name, max_tokens=max_tokens
+    )
 
     after = _differences(held, corpus)
     print(f"index:    {chroma_dir}")
@@ -733,6 +744,7 @@ def check_index(
     processed_dir: Path = PROCESSED_DIR,
     model: str | None = None,
     dimensions: int | None = None,
+    passage_prefix: str = PASSAGE_PREFIX,
 ) -> list[str]:
     """Every reason the index in ``chroma_dir`` should not be searched.
 
@@ -773,7 +785,7 @@ def check_index(
             "the manifest does not describe the vectors beside it; rebuild the index"
         )
 
-    corpus, _, _ = _corpus_digests(processed_dir)
+    corpus, _, _ = _corpus_digests(processed_dir, passage_prefix)
     if index_fingerprint != fingerprint_of(corpus.values()):
         problems.append(f"the index does not match the corpus: {_describe(_differences(held, corpus))}")
     return problems
@@ -783,6 +795,7 @@ def write_truncation_report(
     collection,
     chroma_dir: Path,
     model: str = EMBED_MODEL,
+    max_tokens: int = EMBED_MAX_TOKENS,
 ) -> Path | None:
     """Say which vectors the encoder cut short, read back from the index itself.
 
@@ -800,7 +813,7 @@ def write_truncation_report(
     """
     path = truncation_file_for(chroma_dir)
     found = collection.get(
-        where={TOKENS_FIELD: {"$gt": EMBED_MAX_TOKENS}}, include=["metadatas"]
+        where={TOKENS_FIELD: {"$gt": max_tokens}}, include=["metadatas"]
     )
     if not found["ids"]:
         path.unlink(missing_ok=True)
@@ -823,7 +836,7 @@ def write_truncation_report(
         json.dumps(
             {
                 "model": model,
-                "max_tokens": EMBED_MAX_TOKENS,
+                "max_tokens": max_tokens,
                 "n_indexed": n_indexed,
                 "n_truncated": len(passages),
                 "n_truncated_tables": tables,

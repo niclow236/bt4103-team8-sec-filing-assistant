@@ -100,6 +100,7 @@ class DenseRetriever:
         embedding_model: str | None = None,
         embedding_dimensions: int | None = None,
         query_prefix: str = QUERY_PREFIX,
+        passage_prefix: str = "",
     ) -> None:
         self.collection = collection
         self.manifest = manifest
@@ -107,6 +108,7 @@ class DenseRetriever:
         self.embedding_model = embedding_model
         self.embedding_dimensions = embedding_dimensions
         self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._model = None
 
     @classmethod
@@ -119,6 +121,7 @@ class DenseRetriever:
         embedding_model: str | None = None,
         embedding_dimensions: int | None = None,
         query_prefix: str = QUERY_PREFIX,
+        passage_prefix: str = "",
     ) -> DenseRetriever:
         """Open the index in ``chroma_dir``, or refuse it and say why.
 
@@ -144,6 +147,7 @@ class DenseRetriever:
                 processed_dir,
                 model=embedding_model or embed_stage.EMBED_MODEL,
                 dimensions=embedding_dimensions or embed_stage.EMBED_DIMENSIONS,
+                passage_prefix=passage_prefix,
             )
             if problems:
                 detail = "\n".join(f"  - {problem}" for problem in problems)
@@ -164,6 +168,7 @@ class DenseRetriever:
             embedding_model=embedding_model,
             embedding_dimensions=embedding_dimensions,
             query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
 
     def has_candidates(self, query: Query) -> bool:
