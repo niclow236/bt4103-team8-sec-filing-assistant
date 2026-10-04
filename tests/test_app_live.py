@@ -16,7 +16,7 @@ import src.app.state as state_module
 import src.rag.query as query_module
 import src.rag.verify as verify_module
 from src.config import PROJECT_ROOT
-from src.rag.constants import ABSTAIN_PHRASE
+from src.rag.constants import ABSTAIN_PHRASE, FACTS_PROVIDER, FACTS_SOURCE, FACTS_TEMPLATE_ID
 from src.rag.generate import ProviderUnavailable
 from src.rag.records import GenerationConfig
 from src.stack import DEFAULT_STACK, SELECTABLE, stack_config
@@ -362,6 +362,25 @@ def test_ask_page_lists_the_passages_an_answer_was_written_from(monkeypatch):
     assert "Generation took 0.00s" in lines
 
 
+def _from_facts(question, *args, **kwargs):
+    """The sample answer as the facts store gives one: looked up, with no model."""
+    return replace(sample_answer(question),
+                   config=GenerationConfig(FACTS_PROVIDER, FACTS_SOURCE, FACTS_TEMPLATE_ID))
+
+
+def test_ask_page_says_a_figure_came_from_the_facts_store(monkeypatch):
+    # The labels every figure answered from the facts store gets. No test
+    # reached them: with the check for the facts store changed to one that
+    # never held, the app's tests still passed (review of #119).
+    ui = _ask(monkeypatch, _from_facts)
+    assert _summary(ui)[-1] == ":gray-badge[:material/edit_note: facts store, no model]"
+    steps, lines = _trace(ui)
+    assert steps[2] == "Answered from the facts store, with no model"
+    assert "Looked up in the facts store (xbrl), with no model asked." in lines
+    assert "The lookup took 0.00s" in lines
+    assert not any(line.startswith(("Provider:", "Generation took")) for line in lines)
+
+
 def test_ask_page_states_an_abstention_and_still_shows_its_trace(monkeypatch):
     def declined(question, *args, **kwargs):
         return replace(sample_answer(question), text=ABSTAIN_PHRASE, abstained=True,
@@ -579,20 +598,13 @@ def test_a_figure_from_the_facts_store_needs_no_key_for_the_provider_picked(
     # Mistral picked and no key every Ask was refused, a figure the facts
     # store looks up with no model among them (review of #119).
     import src.rag.answer as answer_module
-    from src.rag.constants import FACTS_PROVIDER, FACTS_SOURCE, FACTS_TEMPLATE_ID
 
-    def looked_up(question, tickers, fiscal_years, retriever, **kwargs):
-        return replace(sample_answer(question), config=GenerationConfig(
-            FACTS_PROVIDER, FACTS_SOURCE, FACTS_TEMPLATE_ID))
-
-    monkeypatch.setattr(answer_module, "answer_from_facts", looked_up)
+    monkeypatch.setattr(answer_module, "answer_from_facts", _from_facts)
     ui = _ask_mistral("What was Apple's revenue in FY2024?")
     assert not ui.error
     assert len(ui.get("html")) == 1
     assert ":gray-badge[:material/edit_note: facts store, no model]" in _summary(ui)
-    lines = _trace(ui)[1]
-    assert "Looked up in the facts store (xbrl), with no model asked." in lines
-    assert not any(line.startswith("Provider:") for line in lines)
+    assert _trace(ui)[0][2] == "Answered from the facts store, with no model"
 
 
 def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_stack):

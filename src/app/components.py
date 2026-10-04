@@ -16,6 +16,7 @@ from dataclasses import replace
 from hashlib import sha256
 from html import escape
 import re
+from typing import Literal
 from urllib.parse import urlsplit
 
 import streamlit as st
@@ -340,9 +341,26 @@ def provider_picker(models: Mapping[str, str], default: str, *,
     return provider
 
 
-def _written_by(answer: Answer) -> str:
-    """Who wrote the answer: the facts store, or a provider's model."""
+def _writer(answer: Answer) -> Literal["facts", "model"] | None:
+    """What wrote ``answer``: the facts store, the model picked, or None where nothing was asked to.
+
+    Asked here and nowhere else. The row above an answer and the two halves
+    of the trace's writing step each used to ask it in words of their own:
+    the provider's name, ``answer.passages``, ``answer.passages or not
+    answer.abstained``. They agree on every answer the pipeline makes, and
+    would have stopped agreeing the day one of them was changed alone.
+
+    A model is asked whenever a passage was found to ask it about. One that
+    was asked and declined to answer is still "model".
+    """
     if answer.config.provider == FACTS_PROVIDER:
+        return "facts"
+    return "model" if answer.passages else None
+
+
+def _written_by(answer: Answer) -> str:
+    """Who wrote the answer, for the row above it: the facts store, or a provider's model."""
+    if _writer(answer) == "facts":
         return "facts store, no model"
     return f"{answer.config.model} ({answer.config.provider})"
 
@@ -356,7 +374,7 @@ def answer_summary(answer: Answer, config: StackConfig, seconds: float) -> None:
             st.badge("Answered", icon=":material/check_circle:", color="green")
         st.badge(f"{config.id} · {config.name}", icon=":material/tune:", color="gray")
         # Nothing wrote an answer that was refused or found no passage.
-        if answer.passages or not answer.abstained:
+        if _writer(answer) is not None:
             st.badge(_written_by(answer), icon=":material/edit_note:", color="gray")
         # The first Ask of a process includes loading the indexes, and a
         # repeated question takes none.
@@ -407,9 +425,10 @@ def _search_step(answer: Answer, config: StackConfig, rows: Sequence[Mapping]) -
 
 def _writing_step(answer: Answer) -> str:
     """What the writing step of the trace says happened."""
-    if answer.config.provider == FACTS_PROVIDER:
+    writer = _writer(answer)
+    if writer == "facts":
         return "Answered from the facts store, with no model"
-    if not answer.passages:
+    if writer is None:
         return "No model was asked"
     if answer.abstained:
         return f"{answer.config.model} found no answer in the passages"
@@ -424,12 +443,12 @@ def _writing_detail(answer: Answer) -> list[str]:
     they read as what had answered, so they are said to have been picked and
     not asked. A figure from the facts store names the store.
     """
-    config = answer.config
+    config, writer = answer.config, _writer(answer)
     took = None if answer.latency_ms is None else f"{answer.latency_ms / 1000:.2f}s"
-    if config.provider == FACTS_PROVIDER:
+    if writer == "facts":
         lines = [f"Looked up in the facts store ({config.model}), with no model asked."]
         return lines + ([f"The lookup took {took}"] if took else [])
-    if not answer.passages:
+    if writer is None:
         return [f"{config.model} ({config.provider}) was picked and not asked."]
     lines = [f"Provider: {config.provider} · Model: {config.model} · "
              f"Prompt: {config.prompt_template_id}"]
