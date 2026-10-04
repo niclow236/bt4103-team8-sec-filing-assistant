@@ -26,4 +26,7 @@ The feature branch includes the latest main at `4e12c91`.
 Tests use deterministic encoders and synthetic filings; they do not measure real
 model quality. This checkout has no processed corpus or built indexes, so real
 E1–E3/G1–G2 measurements required to close issue 46 remain to be run using the
-README commands. No GitHub comments or review threads have been changed.
+README commands. After implementation commit `73ac53b` was pushed, each of the
+28 review threads received a change explanation and was marked resolved.
+These resolutions cover the review findings; final model measurements are
+still pending.
