@@ -25,7 +25,7 @@ def _text(value) -> str:
 
 
 def _answer_data(value) -> tuple[Mapping, str | None, str | None]:
-    """Accept an Answer, its dictionary, or a record_verification JSONL row."""
+    """Accept an Answer, its dictionary, or a row of an evaluation run's answers."""
     data = value if isinstance(value, Mapping) else value.to_dict()
     if "answer" in data:
         return data["answer"], data.get("question_id"), data.get("run_id")
@@ -221,7 +221,7 @@ def write_answer_page(answers, output: Path) -> Path:
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("results", type=Path, help="JSONL written by record_verification")
+    parser.add_argument("results", type=Path, help="answers JSONL written by python -m src.evaluation --answers")
     parser.add_argument("--output", type=Path, default=Path("logs/answers.html"))
     args = parser.parse_args(argv)
     records = []

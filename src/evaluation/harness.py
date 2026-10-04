@@ -9,7 +9,7 @@ from dataclasses import replace
 from functools import partial
 from math import isfinite
 from time import sleep
-from typing import Any
+from typing import Any, TypeVar
 
 from src.rag import (
     ProviderBusy,
@@ -17,13 +17,20 @@ from src.rag import (
     answer_question,
     config_from_env,
     parse_question,
+    verify_answer,
+    worst_check,
 )
-from src.rag.records import Answer, GenerationConfig
+from src.rag.answer import REFUSALS
+from src.rag.records import GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from .records import BenchmarkQuestion, UNANSWERABLE
 
 logger = logging.getLogger(__name__)
+
+# What a caller of answer_with_retries asks for: an Answer in the harness, and
+# whatever a measurement script's own ask() returns.
+Asked = TypeVar("Asked")
 
 # How long to wait before asking a question again after a failure that asking
 # again may fix (``ProviderBusy``): a rate limit, a server error, a dropped
@@ -79,13 +86,36 @@ def _rates(rows: list[dict]) -> dict[str, Any]:
     }
 
 
-def _answer_with_retries(
-    question: BenchmarkQuestion, ask: Callable[[], Answer]
-) -> tuple[Answer, int]:
+def _checks(rows: list[dict]) -> dict[str, int]:
+    """Answered rows by the worst of the figures each states (``verify.worst_check``).
+
+    A figure is a mismatch if a check contradicts it, supported if a passage
+    or the facts store supports it, and unverified otherwise, and an answer is
+    counted by its worst figure. So ``supported`` is an answer every figure of
+    which is supported, and one supported claim does not hide another that
+    could not be checked. ``unchecked`` is an answer to a question that asks for
+    no figure and states none: one that was asked for a figure and gave none is
+    ``unverified``, since the checker records that there was nothing to check.
+    Abstentions state nothing and are not counted.
+    """
+    worst: Counter[str] = Counter()
+    for row in rows:
+        if row["answer"]["abstained"]:
+            continue
+        worst[worst_check(row["answer"]["verification"]["checks"])] += 1
+    return dict(sorted(worst.items()))
+
+
+def answer_with_retries(label: str, ask: Callable[[], Asked]) -> tuple[Asked, int]:
     """``ask()``, and how many times it was asked: again after each wait in
     ``RETRY_WAITS_S``, or the longer ``retry_after`` the error asks for, while
     it raises ``ProviderBusy``. A wait longer than ``MAX_RETRY_WAIT_S``, and the
-    last attempt's error, are not waited out: the error is raised."""
+    last attempt's error, are not waited out: the error is raised.
+
+    ``label`` names the question in the line logged before each wait. The
+    measurement scripts under ``notebooks/answers/`` ask through this too, so
+    a busy provider is waited out on the same terms wherever a run is made.
+    """
     for attempt, wait in enumerate(RETRY_WAITS_S, start=1):
         try:
             return ask(), attempt
@@ -93,7 +123,7 @@ def _answer_with_retries(
             wait = max(wait, error.retry_after or 0)
             if wait > MAX_RETRY_WAIT_S:
                 raise
-            logger.warning("%s: %s; asking again in %.0fs", question.question_id, error, wait)
+            logger.warning("%s: %s; asking again in %.0fs", label, error, wait)
             sleep(wait)
     return ask(), len(RETRY_WAITS_S) + 1
 
@@ -109,6 +139,7 @@ def evaluate(
     llm: Any | None = None,
     use_facts: bool = True,
     use_decomposition: bool = True,
+    use_refusal: bool = True,
     stack: Any | None = None,
 ) -> dict[str, Any]:
     """One configuration per run; count every completed question exactly once.
@@ -129,6 +160,12 @@ def evaluate(
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
 
+    Every answer is put through ``verify_answer`` as the app puts it before
+    showing it, so each row carries its checks, and ``checks`` counts the
+    answered rows by the worst of the figures each states: how many answers a
+    check contradicts, how many state a figure that could not be checked, and
+    how many have every figure supported by a passage or the facts store.
+
     ``stack`` is the named configuration a caller assembled from, recorded in
     the report so a results file says which configuration to select in the app
     to see the same system (#43). It also decides whether each question's
@@ -148,6 +185,12 @@ def evaluate(
     records the sub-questions its evidence came from, and ``decomposed`` counts
     the rows that were split, so a run says how many questions the row it is
     measuring could even apply to.
+
+    ``use_refusal`` is the same for the refusal of a question the parser reads
+    as asking for advice or a prediction, or for a figure of a company outside
+    the corpus: False searches those too and leaves the abstaining to a model.
+    A refused row abstains with the reason that says so, and ``refused`` counts
+    them.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -176,9 +219,13 @@ def evaluate(
             "top_k": top_k,
             "use_facts": use_facts,
             "use_decomposition": use_decomposition,
+            "use_refusal": use_refusal,
             "routes": dict(sorted(Counter(row["route"] for row in rows).items())),
             "decomposed": sum(1 for row in rows if row["sub_questions"]),
+            "refused": sum(1 for row in rows
+                           if row["answer"]["abstention_reason"] in REFUSALS.values()),
             "summary": _rates(rows),
+            "checks": _checks(rows),
             "by_answerability": {
                 "unanswerable": _rates([r for r in rows if r["question_type"] == UNANSWERABLE]),
                 "answerable": _rates([r for r in rows if r["question_type"] != UNANSWERABLE]),
@@ -195,15 +242,25 @@ def evaluate(
             query = replace(query, tickers=(question.ticker,))
         if question.fiscal_year is not None:
             query = replace(query, fiscal_years=(question.fiscal_year,))
+        # The company and year the question is about, which the answer is
+        # checked against whatever the row searches.
+        asked = parsed.scoped_to(query)
         # After the benchmark's own ticker and year, so a row measured without
         # the metadata filter drops those too and searches what it measured.
         if stack is not None:
             query = stack.scoped(query)
-        answer, attempts = _answer_with_retries(question, partial(
+        answer, attempts = answer_with_retries(question.question_id, partial(
             answer_question, question.question, retriever, config, query=query,
             min_score=min_score, llm=llm, use_facts=use_facts,
-            use_decomposition=use_decomposition, parsed=parsed,
+            use_decomposition=use_decomposition, use_refusal=use_refusal, parsed=parsed,
         ))
+        # Checked as the app checks an answer before showing it, against the
+        # company and year the question is about, so a row carries what the
+        # answer card would say of it and the viewer (src.app.answers) has
+        # checks to show. A row measured without the metadata filter searches
+        # every filing, and the app still checks its answer against the
+        # sidebar's company and year, so that is the scope here too.
+        answer = verify_answer(answer, parsed=asked)
         return {"question_id": question.question_id, "run_id": run_id,
                 "question_type": question.question_type,
                 # Which route answered it. The Answer records the provider

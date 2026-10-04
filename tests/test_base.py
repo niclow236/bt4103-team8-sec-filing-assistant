@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from src.pipeline.chunk import iter_chunks
-from src.retrieval.base import WrappingRetriever, candidates, matches, rank
+from src.retrieval.base import candidates, matches, rank, reorder
 from src.retrieval.constants import PREFILTER_FIELDS
 from src.retrieval.records import Query
 
@@ -45,10 +45,9 @@ def test_a_query_without_filters_admits_every_row():
         (Query("q", items=("1A",)), row(), row(item=None)),
         (Query("q", content_type="table"), row(content_type="table"), row()),
         (Query("q", content_type="prose"), row(), row(content_type="table")),
-        (Query("q", key_items_only=True), row(), row(is_key_section=False)),
     ],
     ids=["ticker", "fiscal_year", "no_fiscal_year", "item", "no_item",
-         "table", "prose", "is_key_section"],
+         "table", "prose"],
 )
 def test_each_filter_admits_and_excludes(query, admitted, excluded):
     assert matches(admitted, query)
@@ -71,7 +70,7 @@ def test_filters_on_different_fields_must_all_hold():
 def test_every_prefilter_field_can_be_set_from_a_query():
     """The fields #22 names are the fields a Query can restrict, no more and no fewer."""
     every = Query("q", tickers=("A",), fiscal_years=(2024,), items=("1",),
-                  content_type="table", key_items_only=True)
+                  content_type="table")
     assert set(every.filters) == set(PREFILTER_FIELDS)
 
 
@@ -84,7 +83,6 @@ QUERIES = [
     Query("q", tickers=("AAA", "CCC"), fiscal_years=(2024,)),
     Query("q", items=("1a", "7")),
     Query("q", content_type="table"),
-    Query("q", key_items_only=True),
     Query("q", tickers=("BBB",), fiscal_years=(2023,), items=("8",), content_type="table"),
 ]
 
@@ -151,30 +149,15 @@ def test_a_boost_that_is_not_positive_is_refused(boost):
 
 # --- the boost through a second stage ---------------------------------------
 
-
-class Inner:
-    """A first stage that returns one prose and one table passage, prose first."""
-
-    name = "bm25"
-
-    def search(self, query, k=None):
-        return rank([(row(chunk_id="prose"), 2.0), (row(chunk_id="table", content_type="table"), 1.0)],
-                    retriever=self.name, k=k)
-
-
-class Logits(WrappingRetriever):
-    """Scores the way a cross-encoder can: below zero, prose ahead of the table."""
-
-    name = "rerank"
-
-    def score(self, query, passages):
-        return [-1.0 if passage.content_type == "table" else -0.8 for passage in passages]
-
-
 def test_a_second_stage_applies_the_querys_boost_to_its_own_scores():
-    """Re-scoring throws the first stage's boost away, so the wrapper applies it again."""
-    plain = Logits(Inner()).search(Query("q", top_k=2))
-    boosted = Logits(Inner()).search(Query("q", top_k=2, table_boost=2.0))
+    """Re-scoring throws the first stage's boost away, so reorder applies it again."""
+    found = rank([(row(chunk_id="prose"), 2.0), (row(chunk_id="table", content_type="table"), 1.0)],
+                 retriever="bm25")
+    # Scores that run below zero, prose ahead of the table.
+    scored = [(p, -1.0 if p.content_type == "table" else -0.8) for p in found]
+    plain = reorder(scored, retriever="second")
+    boosted = reorder(scored, retriever="second", table_boost=2.0)
     assert [p.chunk_id for p in plain] == ["prose", "table"]
     assert [p.chunk_id for p in boosted] == ["table", "prose"]
     assert boosted[0].score == pytest.approx(-0.5)
+    assert boosted[0].sources == ("bm25",)

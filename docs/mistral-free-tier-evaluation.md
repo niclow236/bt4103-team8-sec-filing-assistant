@@ -3,7 +3,7 @@
 **Date:** 18 September 2026
 **Branch:** `testing-mistral`, started from `feature/rag-generate` at `d1548ff`
 **Notebook:** [`notebooks/mistral/mistral_generation_test.ipynb`](../notebooks/mistral/mistral_generation_test.ipynb)
-**Results:** [`notebooks/mistral/results/`](../notebooks/mistral/results/)
+**Results:** written by the notebook to `notebooks/mistral/results/`, which is git-ignored; run the notebook to get them
 
 ## Summary
 
@@ -28,7 +28,7 @@ The team has no budget, so the question was whether a free, open-source model se
 Everything except the model is the project's own code, imported unchanged from `src/`:
 
 1. `parse_question` reads the question.
-2. The hybrid retriever (BM25 and dense, fused by reciprocal rank, top 8, no reranker yet) finds passages.
+2. The hybrid retriever (BM25 and dense, fused by reciprocal rank, top 8) finds passages.
 3. `build_prompt` renders the `grounded_v4` prompt.
 4. The answer is constrained to the `GroundedAnswer` JSON schema, which holds every cited source number to 1–8.
 5. The answer is validated and rendered as prose with `[n]` markers.
@@ -150,10 +150,10 @@ The list answers were close across models. The low scores all come from Q13, Q14
 ## Next steps
 
 1. **Improve retrieval of financial-statement figures.** Options, with this notebook re-run after each change to measure it:
-   - Reranking.
-   - The table boost (`TABLE_BOOST`, still 1.0 pending #24).
+   - Reranking. Update, 2 October: measured and removed. Re-scoring hybrid's top 50 with the cross-encoder put the expected figure in the top 16 for 27 of the 28 figure questions, where hybrid alone has 28 (README, "Searching the indexes").
+   - The table boost (`TABLE_BOOST`, still 1.0 pending #24). Update, 2 October: set to 1.2 by `notebooks/retrieval/table_boost_sweep.py`, which put the expected figure in the top 16 for 27 of the 28 figure questions, from 23.
    - Answering figure questions from the XBRL facts table that `src/retrieval/facts.py` builds.
-2. **Grade by hand.** Fill in the `manual_correct` column of the two run files in [`notebooks/mistral/results/`](../notebooks/mistral/results/) to confirm the automatic checks.
+2. **Grade by hand.** Fill in the `manual_correct` column of the two run files the notebook writes to `notebooks/mistral/results/` to confirm the automatic checks.
 3. **Tighten how figures are written.** Either strengthen rule 4 or check the figures after generation. The app also needs to render or strip the markdown bold.
 4. **Add Mistral as a provider in `src/rag/generate.py`.** Done in #106:
    - `ChatMistralAI` sits behind the same chat-model interface, with the answer schema sent as a strict `json_schema` response format.
@@ -172,10 +172,10 @@ The list answers were close across models. The low scores all come from Q13, Q14
 
 ## Reproducing
 
-See [`notebooks/mistral/MISTRAL_TEST_OVERVIEW.md`](../notebooks/mistral/MISTRAL_TEST_OVERVIEW.md) for setup, including the data the notebook needs, adding your own API key to `.env`, and turning off training on your data. Each run sets its two models in the notebook's settings cell.
+See [`notebooks/mistral/MISTRAL_TEST_OVERVIEW.md`](../notebooks/mistral/MISTRAL_TEST_OVERVIEW.md) for setup, including the data the notebook needs, adding your own API key to `.env`, and turning off training on your data. Each run sets its two models in the notebook's settings cell. The notebook writes these files to `notebooks/mistral/results/`, which is git-ignored, so each run's files stay on the machine that ran it:
 
 | File | Contents |
 |---|---|
-| [`20260918-1239_ministral-14b-2512_ministral-8b-2512.csv`](../notebooks/mistral/results/20260918-1239_ministral-14b-2512_ministral-8b-2512.csv) | First run: every answer, with its timings and checks |
-| [`20260918-2000_voxtral-small-2507_codestral-2508.csv`](../notebooks/mistral/results/20260918-2000_voxtral-small-2507_codestral-2508.csv) | Second run, same columns |
-| [`comparison.csv`](../notebooks/mistral/results/comparison.csv) | The four models side by side: the tables in this report |
+| `20260918-1239_ministral-14b-2512_ministral-8b-2512.csv` | First run: every answer, with its timings and checks |
+| `20260918-2000_voxtral-small-2507_codestral-2508.csv` | Second run, same columns |
+| `comparison.csv` | The four models side by side: the tables in this report |

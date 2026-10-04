@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -43,20 +43,26 @@ from .constants import (
     BEYOND_FILING_NOUNS,
     COMPANY_ALIASES,
     COMPARATIVE_CUES,
+    CORPORATE_SUFFIXES,
     COUNT_AFTER,
     CURRENCY_BEFORE,
     FUTURE_CUES,
+    FIGURE_LINE_ITEM_CUES,
     FIGURE_METRIC_CUES,
     MAGNITUDE_AFTER,
     NUMERIC_CUES,
     OUT_OF_SCOPE_ALIASES,
+    OWNING_VERBS,
     PREDICTION_VERBS,
     QUANTITY_BEFORE,
     QUESTION_TYPES,
     QUESTION_SCAFFOLDING,
+    RELATION_NOUNS,
     REPORTING_VERBS,
     SEGMENT_ALIASES,
     TEMPORAL_CUES,
+    UNANSWERABLE_BECAUSE,
+    UnanswerableBecause,
 )
 
 # A year as a question writes it. Four alternatives, tried in this order:
@@ -117,9 +123,14 @@ _LAW_BEFORE = re.compile(r"\bact\s+of\s+$", re.IGNORECASE)
 # A prediction verb used as a request: at the start, after a clause break, or
 # after "can you" / "could you" / "please". "what does Apple predict" has the
 # verb after a subject and is not a request.
+# Not before "of": "Loss Contingency, Estimate of Possible Loss" is a line
+# item's name, and the comma in it does not make "Estimate" an instruction.
+# Nor is the full stop that ends a corporate suffix a clause break: "what did
+# Apple Inc. estimate" has its verb after a subject like any other.
 _PREDICTION_REQUEST = re.compile(
-    r"(?:^|[,;:.?!]\s*|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+)"
-    r"(?:" + "|".join(PREDICTION_VERBS) + r")\b",
+    r"(?:^|" + "".join(rf"(?<!\b{suffix})" for suffix in CORPORATE_SUFFIXES) + r"[,;:.?!]\s*"
+    r"|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+)"
+    r"(?:" + "|".join(PREDICTION_VERBS) + r")\b(?!\s+of\b)",
     re.IGNORECASE,
 )
 
@@ -143,6 +154,25 @@ _DESCRIBED_BEFORE = re.compile(
     r"(?:['’]s|\b(?:is|are|be|been|its|their|the|an?))\s+$", re.IGNORECASE
 )
 _DESCRIBING_FORMS = frozenset({"expected", "anticipated"})
+
+# A company named as the one a figure belongs to is named in one of three
+# ways. As the subject of a verb that makes the figure its own, after an
+# auxiliary: "did NVIDIA have", "does Intel report". As a possessive, "Intel's
+# total revenue" (``_POSSESSIVE_AFTER``). Or after "of", "the total revenue of
+# Intel". Named any other way, the company is what some other filing is being
+# asked about: "revenue from Intel", "named NVIDIA as a competitor", "did
+# NVIDIA account for more than 10% of any company's revenue", "customers of
+# Intel".
+_SUBJECT_BEFORE = re.compile(
+    r"\b(?:did|does|do|has|have|had|will|would|can|could)\s+$", re.IGNORECASE
+)
+_OWNS_AFTER = re.compile(r"\s+(?:" + "|".join(OWNING_VERBS) + r")", re.IGNORECASE)
+_OF_BEFORE = re.compile(r"\b(\w+)\s+of\s+$", re.IGNORECASE)
+# What follows the company when it ends its phrase. "purchases of NVIDIA chips"
+# goes on to name something else, which the figure belongs to.
+_PHRASE_ENDS_AFTER = re.compile(
+    r"\s*(?:$|[?,.;:]|\s(?:in|for|during|as|at|over|across)\b|\s(?:FY)?\d)", re.IGNORECASE
+)
 
 # Applied after recognised company names and possessives have been removed.
 # Arbitrary words before "total" could swallow "the rationale behind Apple’s".
@@ -184,6 +214,18 @@ class ParsedQuestion:
     # ParsedQuestion built by hand, means the question itself. See
     # ``_search_text`` for what is removed and what stays.
     search_text: str | None = None
+    # Why an unanswerable question is one, and None for every other type:
+    # "request" where it asks for advice or a prediction, "company" where it
+    # asks for a figure of a company the corpus does not hold, "topic" where
+    # it is about a share price, next year or a company outside the corpus,
+    # and "year" where it names only fiscal years the corpus does not hold.
+    # ``answer_question`` refuses the first two without searching. It still
+    # searches for the other two, since a filing may answer either: one prints
+    # the price it paid for its own shares and what it owes next year, names
+    # the companies it competes with, and prints the two years before its
+    # own, so FY2020 may be in the FY2021 statements. See
+    # ``constants.UNANSWERABLE_BECAUSE``.
+    unanswerable_because: UnanswerableBecause | None = None
 
     def __post_init__(self) -> None:
         if self.question_type not in QUESTION_TYPES:
@@ -191,6 +233,13 @@ class ParsedQuestion:
                 f"question_type must be one of {', '.join(QUESTION_TYPES)}, "
                 f"got {self.question_type!r}"
             )
+        if self.unanswerable_because not in (None, *UNANSWERABLE_BECAUSE):
+            raise ValueError(
+                f"unanswerable_because must be one of {', '.join(UNANSWERABLE_BECAUSE)}, "
+                f"got {self.unanswerable_because!r}"
+            )
+        if self.unanswerable_because is not None and self.question_type != "unanswerable":
+            raise ValueError("unanswerable_because is only for an unanswerable question")
         object.__setattr__(self, "tickers", tuple(self.tickers))
         object.__setattr__(self, "fiscal_years", tuple(self.fiscal_years))
         object.__setattr__(self, "unresolved", tuple(self.unresolved))
@@ -212,6 +261,23 @@ class ParsedQuestion:
             active["fiscal_year"] = list(self.fiscal_years)
         return active
 
+    @property
+    def refused(self) -> UnanswerableBecause | None:
+        """Why this reading is refused without a search, or None where it is searched.
+
+        Advice and a prediction are refused whatever is searched. An outside
+        company's own figure is refused unless a company is named to search:
+        a reading scoped to one chosen by hand (``scoped_to``), as the app's
+        sidebar lets a user choose, is searched, since that company's filings
+        may well mention the one the question named. A topic or a year the
+        corpus may not hold is always searched. The one place this is decided,
+        so the line under an answer cannot disagree with what was done.
+        """
+        because = self.unanswerable_because
+        if because == "request" or (because == "company" and not self.tickers):
+            return because
+        return None
+
     def describe(self) -> tuple[str, ...]:
         """One line per thing the parser decided, for showing under the answer.
 
@@ -219,8 +285,16 @@ class ParsedQuestion:
         than the filters mapping. The unresolved line is the one that earns
         its place, since it is the only way the user learns that the answer
         ignored a company they asked about.
+
+        A question read as unanswerable and searched all the same says so:
+        the line is shown under the answer a filing gave, and "unanswerable"
+        alone would contradict the answer above it. Whether it is searched is
+        ``refused``'s to say, which is what ``answer_question`` acts on.
         """
-        lines = [f"Question type: {self.question_type}"]
+        kind = self.question_type
+        if self.unanswerable_because is not None and self.refused is None:
+            kind += ", searched in case a filing answers it"
+        lines = [f"Question type: {kind}"]
         if self.tickers:
             lines.append("Companies: " + ", ".join(self.tickers))
         if self.fiscal_years:
@@ -257,6 +331,17 @@ class ParsedQuestion:
             fields["top_k"] = top_k
         return Query(**fields)
 
+    def scoped_to(self, query: Query) -> ParsedQuestion:
+        """This reading in the companies and years ``query`` names.
+
+        What an answer is checked against, and what the app describes under
+        it. The two can differ from what the question named: the app's sidebar
+        lets a user change them, and the evaluation harness replaces them with
+        the benchmark's. One definition, so the app and the harness cannot
+        come to check an answer against different scopes.
+        """
+        return replace(self, tickers=query.tickers, fiscal_years=query.fiscal_years)
+
 
 def parse_question(
     question: str,
@@ -288,14 +373,26 @@ def parse_question(
         or (facts_file is not None and _mentions_fact_label(figure_text, facts_file))
     )
 
+    only_out_of_scope = bool(out_of_scope) and not tickers
+    only_bad_years = bool(bad_years) and not years
     question_type = _classify(
         question,
         n_tickers=len(tickers),
         n_years=len(years),
-        named_only_out_of_scope=bool(out_of_scope) and not tickers,
-        named_only_bad_years=bool(bad_years) and not years,
+        named_only_out_of_scope=only_out_of_scope,
+        named_only_bad_years=only_bad_years,
         wants_figures=wants_figures,
     )
+    because: UnanswerableBecause | None = None
+    if question_type == "unanswerable":
+        if _asks_for_advice_or_a_prediction(question):
+            because = "request"
+        elif only_out_of_scope and wants_figures and _names_whose_figure(question, out_of_scope):
+            because = "company"
+        elif only_out_of_scope or _asks_beyond_the_filing(question):
+            because = "topic"
+        else:
+            because = "year"
     return ParsedQuestion(
         question=question.strip(),
         question_type=question_type,
@@ -304,15 +401,8 @@ def parse_question(
         unresolved=tuple(out_of_scope) + tuple(bad_years),
         wants_figures=wants_figures,
         search_text=_search_text(question.strip(), tickers, years),
+        unanswerable_because=because,
     )
-
-
-def build_query(question: str, *, top_k: int | None = None, **options: Any) -> Query:
-    """Parse a question and return only its Query, for a caller that wants nothing else.
-
-    ``options`` are passed to :func:`parse_question`.
-    """
-    return parse_question(question, **options).to_query(top_k=top_k)
 
 
 @lru_cache(maxsize=1)
@@ -560,7 +650,12 @@ def _figure_text(question: str, scope: frozenset[str]) -> str:
     return " ".join(_YEAR.sub(" ", _SHORT_RANGE.sub(r"\1\2 \3 \1\4", text)).split())
 
 
-_FIGURE_METRIC_PATTERN = _alias_pattern(FIGURE_METRIC_CUES)
+# Matched against a question already reduced to its words, so a cue written
+# with punctuation ("stock-based", "property, plant and equipment") is reduced
+# the same way first.
+_FIGURE_METRIC_PATTERN = _alias_pattern(
+    (*FIGURE_METRIC_CUES, *(_label_words(cue) for cue in FIGURE_LINE_ITEM_CUES))
+)
 
 
 def _asks_for_label(text: str, pattern: re.Pattern[str]) -> bool:
@@ -627,18 +722,58 @@ def _reports_on_the_filing(question: str) -> bool:
     return False
 
 
+def _asks_for_advice_or_a_prediction(question: str) -> bool:
+    """Whether the question asks the engine for advice or a prediction of its own.
+
+    The two requests no filing answers however they are worded: "based on
+    what Apple disclosed, predict next quarter's revenue" still asks for a
+    prediction. These are the questions ``answer_question`` refuses unsearched.
+    """
+    return bool(_any_cue(question, ADVICE_CUES) or _PREDICTION_REQUEST.search(question))
+
+
+def _names_whose_figure(question: str, names: Iterable[str]) -> bool:
+    """Whether one of ``names``, as the question writes them, is the company
+    whose figure it asks for: a possessive, the subject of a verb that makes
+    the figure its own, or the company after "of".
+
+    "What was Intel's total revenue?", "How many employees did NVIDIA have?"
+    and "What was the total revenue of Intel?" ask for an outside company's
+    own figure, which no filing in the corpus reports. "Which companies
+    reported revenue from Intel as a customer?" and "Did NVIDIA account for
+    more than 10% of any company's revenue?" ask the filings the corpus does
+    hold about them. A wording this does not list, "Intel revenue in FY2024?",
+    is searched, and declining it is left to the model.
+    """
+    for name in names:
+        for match in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", question):
+            before, end = question[:match.start()], match.end()
+            if _POSSESSIVE_AFTER.match(question, end):
+                return True
+            if _SUBJECT_BEFORE.search(before) and _OWNS_AFTER.match(question, end):
+                return True
+            of = _OF_BEFORE.search(before)
+            if (of and of.group(1).lower() not in RELATION_NOUNS
+                    and _PHRASE_ENDS_AFTER.match(question, end)):
+                return True
+    return False
+
+
 def _asks_beyond_the_filing(question: str) -> bool:
     """Whether the question asks for something no 10-K can give.
 
     Three things a filing cannot give: advice, a new prediction, and what it
-    does not carry -- a current price, next year. The first two are refused
-    however the question is worded, because "based on what Apple disclosed,
-    predict next quarter's revenue" still asks for a prediction. The third is
-    refused only when the question asks for the thing itself: with a
+    does not carry -- a current price, next year. The first two are read this
+    way however the question is worded (``_asks_for_advice_or_a_prediction``).
+    The third only when the question asks for the thing itself: with a
     reporting verb in it, "what risks did Apple disclose about its stock
     price" is a question about Item 1A, and the noun is just its topic.
+
+    The third reading is a guess from the words, and filings do print some
+    share prices and some of next year: ``parse_question`` records it as
+    "topic", which is searched, and the first two as "request", which is not.
     """
-    if _any_cue(question, ADVICE_CUES) or _PREDICTION_REQUEST.search(question):
+    if _asks_for_advice_or_a_prediction(question):
         return True
     if _reports_on_the_filing(question):
         return False

@@ -72,6 +72,12 @@ TAXONOMY = "us-gaap"
 ANNUAL_MIN_DAYS = 350
 ANNUAL_MAX_DAYS = 380
 
+# The shortest form a figure is looked for in when it is printed to one decimal
+# place of a million ("56.9", not "1.5"). A whole figure needs
+# three characters; a decimal is given one more, because a short decimal is a
+# percentage or a rate in most tables that hold one.
+TENTHS_MIN_CHARS = 4
+
 # What is kept from each fact. The first group identifies the filing it came
 # from, which is what makes a stored figure citable; the second is the figure
 # itself; the third is the period it covers, which is what stops a comparative
@@ -298,6 +304,15 @@ def printed_forms_by_scale(raw_value) -> dict[int, set[str]]:
     millions, which #34 does. :func:`printed_forms` is the pooled view for a
     caller that does not.
 
+    A statement in millions can be printed to a decimal place as well. Palo
+    Alto Networks' are, so its total assets of 10241600000 appear as
+    "10,241.6" and never as a whole number of millions. A figure that is not
+    whole at the million scale but comes out to one place there is offered in
+    that form too, where it is at least four characters: "1.5" is in every
+    table. Only at that scale, since it is the one a statement is printed to a
+    decimal in. :func:`rag.numeric.prints_figure` asks more of a decimal
+    form than of a whole one before it takes it as the figure.
+
     A figure that is a round number at no scale was printed as a decimal --
     earnings per share to the cent, a rate to a few places -- and is offered
     at scale 1 as it stands and rounded to two places, which is how a
@@ -339,6 +354,13 @@ def printed_forms_by_scale(raw_value) -> dict[int, set[str]]:
             rounds = True
             whole = int(scaled)
             kept = {needle for needle in (str(whole), f"{whole:,}") if len(needle) >= 3}
+            if kept:
+                forms[divisor] = kept
+        elif divisor == 1_000_000 and scaled * 10 == (scaled * 10).to_integral_value():
+            # To one place of a million, as a filer reporting in millions to
+            # a decimal prints it.
+            kept = {needle for needle in (f"{scaled:.1f}", f"{scaled:,.1f}")
+                    if len(needle) >= TENTHS_MIN_CHARS}
             if kept:
                 forms[divisor] = kept
     # A figure with no needle yet was either round at no scale, or round only

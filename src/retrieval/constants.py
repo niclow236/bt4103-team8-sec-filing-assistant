@@ -1,10 +1,10 @@
 """Fixed values that tune the retrieval stage.
 
 Kept apart from the retrievers the same way ``src/pipeline/constants.py`` is
-kept apart from the stages, and for a sharper reason here: BM25, dense, hybrid
-and reranking are built by different people at the same time, and every one of
-them needs the candidate depth, the model name and the fusion constants. Four
-modules holding four copies of ``k = 50`` is four numbers to change when the
+kept apart from the stages, and for a sharper reason here: BM25, dense and
+hybrid are built by different people at the same time, and every one of
+them needs the candidate depth, the model name and the fusion constants. Three
+modules holding three copies of ``k = 50`` is three numbers to change when the
 sweep says 80, and a comparison that is silently unfair the one time somebody
 misses one.
 
@@ -26,16 +26,15 @@ from __future__ import annotations
 from src.config import BM25_INDEX_FILE, CHROMA_DIR, INDEX_DIR
 
 # --- the methods being compared ---------------------------------------------
-# The four retrievers the ablation runs, named once here so that the string on
+# The three retrievers the ablation runs, named once here so that the string on
 # a RetrievedPassage, the key in FUSION_WEIGHTS and the row label in the results
 # table cannot drift apart. These are the exact values RetrievedPassage.retriever
 # is documented to take.
 BM25 = "bm25"
 DENSE = "dense"
 HYBRID = "hybrid"
-RERANK = "rerank"
 
-RETRIEVERS = (BM25, DENSE, HYBRID, RERANK)
+RETRIEVERS = (BM25, DENSE, HYBRID)
 
 # --- embedding model --------------------------------------------------------
 # The corpus was already cut for this class of model. CHUNK_CHAR_BUDGET is 1,800
@@ -119,11 +118,9 @@ BM25_K1 = 1.5
 BM25_B = 0.75
 
 # --- how deep to retrieve, and how much to keep -----------------------------
-# Broad, then narrow. Each method returns CANDIDATE_K, the union is fused, the
-# reranker scores that set, and FINAL_K passages reach the generator. Retrieving
-# FINAL_K directly measures worse (Snowflake finance-RAG, cited in #21): the
-# passage that answers the question is often outside a first-stage top-8 and
-# only a reranker that has seen it can pull it up.
+# Broad, then narrow. Each method returns CANDIDATE_K, the union is fused, and
+# FINAL_K passages reach the generator. A passage one method ranks thirtieth
+# can still reach the prompt when the other ranks it high.
 #
 # 50 and 8 were the architecture's numbers (§3, §5). FINAL_K was also a context
 # budget, because a laptop's Ollama could not read a larger prompt; a hosted
@@ -149,7 +146,7 @@ BM25_B = 0.75
 #   prompt tokens (llama3.2), median  2,884    4,005    5,220    6,475
 #   prompt tokens, largest seen       3,550    4,984    6,306    7,703
 #
-# The committed final_k_sweep.csv and the hosted runs further down come from a
+# final_k_sweep.csv as measured and the hosted runs further down come from a
 # local build of the corpus that ranks the expected figure differently for 14
 # of the 28 figure questions. On it the figure reached the prompt for 18, 21,
 # 22 and 23 of the 28.
@@ -257,29 +254,8 @@ FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
 # "CONSOLIDATED BALANCE SHEETS" in its own text, so BM25 finds the passage it
 # used to miss, and the agreement equal weights reward is now agreement worth
 # having. The knob stays because the sweep is cheap to re-run when the corpus
-# or the reranker (#21) changes; it is set to the pair that measured best.
+# changes; it is set to the pair that measured best.
 FIGURE_FUSION_WEIGHTS = {BM25: 1.0, DENSE: 1.0}
-
-# --- reranking --------------------------------------------------------------
-# A cross-encoder reads the question and the passage together and scores the
-# pair, which is what lets it catch relevance a bi-encoder misses -- at a cost
-# that only makes sense on a candidate set this small. ms-marco-MiniLM-L-6-v2 is
-# the standard baseline: 22M parameters, CPU-viable, and the model most reported
-# rerank numbers are measured against, which makes ours comparable to theirs.
-# bge-reranker-base is the stronger and slower alternative if the interim
-# results say reranking is where the gain is.
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-# Query-passage pairs per forward pass. Throughput only, like EMBED_BATCH_SIZE.
-RERANK_BATCH_SIZE = 32
-
-# The pair -- question and passage together -- must fit the cross-encoder's
-# window, and the question spends part of it. A 1,800-character passage is about
-# 450 tokens, leaving roughly 60 for the question, so a long decomposed
-# sub-question can push a pair over and the tail of the passage is dropped.
-# Truncation here is the model's own and silent, which is why the limit is
-# written down: if reranking underperforms on long questions, look here first.
-RERANK_MAX_TOKENS = 512
 
 # --- score thresholds -------------------------------------------------------
 # Floors below which a passage is dropped rather than returned weakly.
@@ -302,12 +278,9 @@ RERANK_MAX_TOKENS = 512
 # threshold set by reasoning rather than by #26's sweep would cut either
 # everything or nothing. RRF scores are tiny and bounded -- one method at rank 1
 # gives 1/61 -- so a threshold there is really a "how many methods agreed" test.
-# The cross-encoder emits logits, roughly -11 to +11, where 0 is the natural
-# indifference point and the only one of the four with a meaningful prior.
 MIN_BM25_SCORE: float | None = None
 MIN_DENSE_SCORE: float | None = None
 MIN_FUSED_SCORE: float | None = None
-MIN_RERANK_SCORE: float | None = None
 
 # --- filters ----------------------------------------------------------------
 # The corpus is fifteen peers in one industry over five years, so metadata is a
@@ -322,21 +295,72 @@ MIN_RERANK_SCORE: float | None = None
 # Those two are filtered above it, as passages.py does. A Query whose items or
 # content_type are passed to iter_chunks and forgotten is not an error -- it
 # just searches a corpus four times wider than the question asked for.
-PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type", "is_key_section")
+PREFILTER_FIELDS = ("ticker", "fiscal_year", "item", "content_type")
 
 # A multiplier on the score of a table passage when the question is numeric, so
 # "what was revenue in FY2024" leans toward the passages that keep figures under
-# their row and column labels. 1.0 is off, which is where it starts: this is the
-# most tempting knob in the file to set by intuition and the easiest to fool
-# yourself with, since boosting tables always looks better on the handful of
-# numeric questions you happen to try. #24 generates the mechanical XBRL
-# benchmark precisely so this can be set from data.
+# their row and column labels. 1.0 is off, which is where it stayed until it
+# could be measured: this is the most tempting knob in the file to set by
+# intuition and the easiest to fool yourself with, since boosting tables always
+# looks better on the handful of numeric questions you happen to try. #24
+# generated the mechanical XBRL benchmark precisely so this could be set from
+# data.
+#
+# `notebooks/retrieval/table_boost_sweep.py` is that measurement: 20 benchmark
+# questions from each of the 75 filings and the 48 hand-written ones, cut at
+# FINAL_K, with the boost applied as shipped, which is to a question the parser
+# reads as asking for a figure and to no other.
+#
+# It has been run twice. The first run, with BM25 scoring every word of the
+# question, chose 1.2: hybrid found the supporting chunk for 1,142 of the 1,490
+# benchmark questions there, 1,028 with the boost off, and both that and the
+# reciprocal rank peaked at 1.2. BM25 then stopped scoring the words most
+# passages contain (bm25.py), which moved the scores the boost multiplies, so
+# the sweep was run again. These are the second run's numbers:
+#
+#   boost                              1.0   1.05    1.1   1.15    1.2   1.25    1.5    2.0
+#   XBRL benchmark, hybrid (1,490 questions)
+#     supporting chunk in the top 16  0.754  0.779  0.783  0.786  0.789  0.788  0.787  0.777
+#     reciprocal rank, mean           0.340  0.418  0.461  0.471  0.472  0.470  0.463  0.459
+#     supported by tables (1,086)     0.779  0.820  0.834  0.843  0.847  0.851  0.861  0.870
+#     by tables and prose (292)       0.757  0.760  0.760  0.747  0.753  0.740  0.719  0.675
+#     by prose alone (112)            0.500  0.438  0.348  0.339  0.312  0.304  0.250  0.134
+#     tables among the 16, mean         6.4    9.4   11.5   12.4   12.9   13.2   14.0   14.8
+#   the same, BM25 alone
+#     supporting chunk in the top 16  0.695  0.710  0.717  0.723  0.731  0.733  0.752  0.762
+#   48 hand-written questions, hybrid
+#     expected figure in the top 16   27/28  28/28  28/28  28/28  28/28  28/28  28/28  28/28
+#     its rank, median                  3.5      2      1      1      1      1      1      1
+#     prose terms found, mean         0.994  0.994  0.994  0.994  0.994  0.994  0.994  0.994
+#
+# 1.2 is still the value, for what the hybrid rows show. The supporting chunk
+# reaches the prompt for 1,175 of the 1,490 benchmark questions instead of
+# 1,123, and its reciprocal rank goes from 0.340 to 0.472: both peak at 1.2 and
+# neither rises past it. What the lean costs keeps rising, though. A figure
+# printed only in prose loses its passage more often at every step, so past
+# 1.2 there is more to lose and nothing left to gain. At 1.2 the trade is 74
+# questions gained where a table holds the figure, none lost there, and 21 lost
+# of the 112 where only prose does. The boost buys less than it did, because
+# the keyword search now finds many of those tables without it. On the
+# hand-written questions the expected figure reaches the prompt for all 28
+# instead of 27 and its median rank goes from 3.5 to 1; the 20 prose questions,
+# two of which the parser reads as asking for a figure, do not move.
+#
+# The steps are small because a cosine similarity is. Dense scores sit in a
+# narrow band (the score thresholds above put an off-topic query's best passage
+# at 0.45 and an answerable one's at 0.68 to 0.74), so a multiplier of 1.2 is
+# enough to carry a loosely related table past the best prose passage. BM25's
+# scores spread wider, which is why BM25 alone is still gaining at 2.0. One
+# value serves both, set where hybrid peaks, because hybrid is what the harness
+# measures and what the app searches with by default. The right value follows
+# the scale of the scores it multiplies, so re-run the sweep when the embedding
+# model changes (#46) or the corpus is re-chunked.
 #
 # It reaches the retrievers as ``Query(table_boost=TABLE_BOOST)``, set by
 # whatever decides the question is numeric, and never as a retriever default:
 # a boost applied to every question is a thumb on the scale for prose questions
 # too. ``Query(content_type="table")`` is the hard version -- tables only.
-TABLE_BOOST = 1.0
+TABLE_BOOST = 1.2
 
 # --- where indexes live -----------------------------------------------------
 # Imported from src.config, which owns every project path, and named here so a
@@ -344,15 +368,14 @@ TABLE_BOOST = 1.0
 # in exactly one place. INDEX_DIR holds both: bm25.pkl is a single file, Chroma
 # wants a directory of its own.
 __all__ = [
-    "BM25", "DENSE", "HYBRID", "RERANK", "RETRIEVERS",
+    "BM25", "DENSE", "HYBRID", "RETRIEVERS",
     "EMBED_MODEL", "EMBED_DIMENSIONS", "EMBED_MAX_TOKENS", "EMBED_BATCH_SIZE", "EMBED_SORT_WINDOW",
     "EMBED_NORMALIZE", "DISTANCE_METRIC", "QUERY_PREFIX", "PASSAGE_PREFIX",
     "CONTEXT_HEADER",
     "BM25_K1", "BM25_B",
     "CANDIDATE_K", "FINAL_K",
     "RRF_K", "FUSION_WEIGHTS", "FIGURE_FUSION_WEIGHTS",
-    "RERANK_MODEL", "RERANK_BATCH_SIZE", "RERANK_MAX_TOKENS",
-    "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE", "MIN_RERANK_SCORE",
+    "MIN_BM25_SCORE", "MIN_DENSE_SCORE", "MIN_FUSED_SCORE",
     "PREFILTER_FIELDS", "TABLE_BOOST",
     "INDEX_DIR", "BM25_INDEX_FILE", "CHROMA_DIR",
 ]

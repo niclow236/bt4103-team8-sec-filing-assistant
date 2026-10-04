@@ -80,7 +80,8 @@ def test_a_configuration_serialises_for_a_results_file():
     data = STACKS["C4"].to_dict()
     assert data["id"] == "C4" and data["retriever"] == "hybrid"
     assert set(data) == {"id", "name", "retriever", "chunking", "metadata_filter",
-                         "top_k", "min_score", "use_facts", "use_decomposition"}
+                         "top_k", "min_score", "use_facts", "use_decomposition",
+                         "use_refusal"}
     json.dumps(data)
 
 
@@ -91,13 +92,16 @@ def test_building_a_configuration_carries_its_settings_onto_the_stack():
     assert isinstance(stack, Stack)
     assert stack.config.id == "C4"
     assert stack.config.use_facts is True and stack.config.use_decomposition is True
+    assert stack.config.use_refusal is True
     assert stack.generation.provider in {"ollama", "mistral"}
 
 
 def test_settings_given_at_build_time_override_the_configuration():
-    stack = _stack("C4", top_k=3, min_score=0.5, use_facts=False, use_decomposition=False)
+    stack = _stack("C4", top_k=3, min_score=0.5, use_facts=False, use_decomposition=False,
+                   use_refusal=False)
     assert (stack.config.top_k, stack.config.min_score) == (3, 0.5)
     assert stack.config.use_facts is False and stack.config.use_decomposition is False
+    assert stack.config.use_refusal is False
     # The registry itself is untouched by a build.
     assert STACKS["C4"].top_k != 3 and STACKS["C4"].use_facts is True
 
@@ -153,7 +157,7 @@ def test_overriding_the_retriever_does_not_load_the_one_it_replaced(monkeypatch)
     assert stack.retriever == "<bm25>"
 
 
-@pytest.mark.parametrize("key", ["", "bm52", "reranker", "bm25-fixed-size"])
+@pytest.mark.parametrize("key", ["", "bm52", "rerank", "bm25-fixed-size"])
 def test_build_retriever_refuses_a_key_it_cannot_build(key):
     with pytest.raises(ValueError, match="unknown retriever"):
         build_retriever(key)
@@ -161,11 +165,10 @@ def test_build_retriever_refuses_a_key_it_cannot_build(key):
 
 def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
     # Each key reaches its own constructor, and asking for BM25 does not load
-    # the dense index or a cross-encoder.
+    # the dense index.
     import src.retrieval.bm25 as bm25_module
     import src.retrieval.dense as dense_module
     import src.retrieval.hybrid as hybrid_module
-    import src.retrieval.rerank as rerank_module
 
     loaded = []
     monkeypatch.setattr(bm25_module.BM25Retriever, "load",
@@ -174,8 +177,6 @@ def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
                         classmethod(lambda cls, **kw: loaded.append("dense") or "DENSE"))
     monkeypatch.setattr(hybrid_module, "HybridRetriever",
                         lambda a, b: loaded.append("hybrid") or "HYBRID")
-    monkeypatch.setattr(rerank_module, "CrossEncoderReranker",
-                        lambda inner, model=None: loaded.append("rerank") or "RERANK")
 
     assert build_retriever("bm25") == "BM25"
     assert loaded == ["bm25"]
@@ -185,9 +186,6 @@ def test_build_retriever_knows_every_key_a_configuration_can_name(monkeypatch):
     loaded.clear()
     assert build_retriever("hybrid") == "HYBRID"
     assert loaded == ["bm25", "dense", "hybrid"]
-    loaded.clear()
-    assert build_retriever("rerank") == "RERANK"
-    assert loaded[-1] == "rerank"
 
 
 def test_configurations_built_with_the_same_parts_share_their_indexes(monkeypatch):
@@ -229,6 +227,10 @@ def test_a_stack_answers_with_its_own_settings(monkeypatch):
     assert seen["min_score"] == 0.25
     assert seen["use_facts"] is False
     assert seen["use_decomposition"] is True
+    assert seen["use_refusal"] is True
+    # A row that searches what it would otherwise refuse does so in the app too.
+    _stack("C4", use_refusal=False).answer("Should I buy Apple stock?")
+    assert seen["use_refusal"] is False
 
 
 def test_a_caller_may_add_what_the_configuration_does_not_name(monkeypatch):
@@ -385,10 +387,7 @@ def test_neither_the_app_nor_the_commands_construct_a_retriever():
 
     from src.config import PROJECT_ROOT
 
-    # Reranker is the alias src/retrieval/rerank.py also exports, so naming
-    # only the class would miss a file that imported it under that name.
-    classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever",
-               "CrossEncoderReranker", "Reranker")
+    classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever")
     for relative in ("src/app/app.py", "src/evaluation/cli.py"):
         source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         for name in classes:
@@ -414,7 +413,7 @@ def test_the_evaluation_command_leaves_a_rows_settings_alone_unless_told(monkeyp
 
     monkeypatch.setitem(STACKS, "C5", replace(
         STACKS["C4"], id="C5", top_k=8, min_score=0.2, use_facts=False,
-        use_decomposition=False))
+        use_decomposition=False, use_refusal=False))
     monkeypatch.setattr(cli, "SELECTABLE", (*SELECTABLE, "C5"))
     monkeypatch.setattr(cli, "build_stack", lambda *args, **kw: build_stack(
         *args, retriever=StubRetriever(), llm=object(), **kw))
@@ -431,6 +430,7 @@ def test_the_evaluation_command_leaves_a_rows_settings_alone_unless_told(monkeyp
     cli.main(["--config", "C5", *common])
     assert (ran["top_k"], ran["min_score"]) == (8, 0.2)
     assert ran["use_facts"] is False and ran["use_decomposition"] is False
+    assert ran["use_refusal"] is False
     assert ran["stack"].to_dict()["use_facts"] is False
 
     # What is typed still wins, and only that.
@@ -439,4 +439,8 @@ def test_the_evaluation_command_leaves_a_rows_settings_alone_unless_told(monkeyp
     assert ran["use_facts"] is False
     cli.main(["--config", "C4", "--no-facts", *common])
     assert ran["use_facts"] is False and ran["use_decomposition"] is True
+    assert ran["use_refusal"] is True
     assert ran["top_k"] == STACKS["C4"].top_k
+    cli.main(["--config", "C4", "--no-refusal", *common])
+    assert ran["use_refusal"] is False and ran["use_facts"] is True
+    assert ran["stack"].to_dict()["use_refusal"] is False

@@ -2,7 +2,8 @@
 
 The sparse baseline the dense and hybrid rows are measured against, so what
 matters most here is that its numbers mean the same thing from one query to the
-next. Two decisions follow from that.
+next. Two decisions follow from that, and a third from what a question is made
+of.
 
 The index is fitted once, over the whole corpus, and never refitted per query.
 BM25 scores a passage against the statistics of the collection it sits in -- how
@@ -15,6 +16,15 @@ stops discriminating. The scale moves with the filter too, which would leave
 ``MIN_BM25_SCORE`` uncalibratable and the ablation's rows incomparable. So the
 filter chooses which scores are returned, never which scores are computed.
 
+The same floor is why a question is not scored on the words most passages
+contain. Fitted over the whole corpus, "the", "of", "and" and seven more are
+each in over half the passages, and the floor rank_bm25 gives them is worth
+more than "revenue" is. A question is mostly such words, so they outweighed
+the line item it asked about, and a statement table, which holds the line
+item and none of them, sank below prose that holds them all.
+``BM25Retriever._scored`` leaves them out, and
+``notebooks/retrieval/common_words_comparison.py`` measures what that does.
+
 The ordering, the floor, the rank numbering and the projection into
 ``RetrievedPassage`` all come from ``base.py``, as does the metadata filter.
 This module contributes tokenization, the fit, and the index on disk; anything
@@ -24,8 +34,10 @@ comparison whose rows differ in their tie-break is not measuring retrieval.
 
 from __future__ import annotations
 
+import copy
 import pickle
 import re
+from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -93,6 +105,13 @@ class BM25Retriever:
         # matches nothing. build() refuses one; a hand-made or truncated index
         # file can still produce one, and search() answers it with no results.
         self._bm25 = BM25Okapi(self._tokens, k1=BM25_K1, b=BM25_B) if self._tokens else None
+        # The words in more than half the passages, which _scored leaves out of
+        # a question. Counted here rather than read back from rank_bm25's IDF
+        # table, so the rule does not rest on how the library marks them.
+        held = Counter(token for tokens in self._tokens for token in set(tokens))
+        self._common = frozenset(
+            token for token, passages in held.items() if passages > len(self._tokens) / 2
+        )
 
     @classmethod
     def build(
@@ -177,6 +196,44 @@ class BM25Retriever:
         """Check metadata without applying a relevance threshold."""
         return any(matches(chunk, query) for chunk in self.chunks)
 
+    def _scored(self, tokens: list[str]) -> list[str]:
+        """The words of a question that tell one passage from another.
+
+        Okapi's IDF is negative for a word in more than half the passages, and
+        rank_bm25 scores such a word at a floor instead: ``epsilon *
+        average_idf``, a quarter of the average weight. On this corpus that is
+        1.89 for each of "the", "of", "and", "to", "in", "for", "a", "as", "on"
+        and "our", against 1.61 for "revenue" and 1.04 for "total". In "What
+        was the total value of Goodwill at the end?" the two "the" and the
+        "of" then count for more than the line item, and Salesforce's balance
+        sheet, which holds "Goodwill" and none of them, ranked 260th of the 397
+        passages in its filing. Left out, such a word counts for nothing, which
+        is what the formula gives one in exactly half the passages.
+
+        A question made only of such words is scored on them, as before: there
+        is nothing else to rank by.
+        """
+        kept = [token for token in tokens if token not in self._common]
+        return kept or tokens
+
+    @property
+    def common_words(self) -> frozenset[str]:
+        """The words in more than half the passages, which no question is scored on."""
+        return self._common
+
+    def scoring_every_word(self) -> BM25Retriever:
+        """This index, scoring a question on all of its words, common ones too.
+
+        What the keyword search did before the common words were left out, for
+        a script that measures the difference
+        (``notebooks/retrieval/common_words_comparison.py``). The passages and
+        the fitted scores are shared with this one, not copied. Nothing on the
+        answer path asks for it.
+        """
+        every = copy.copy(self)
+        every._common = frozenset()
+        return every
+
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         """Return the highest-scoring passages matching the query filters.
 
@@ -198,7 +255,9 @@ class BM25Retriever:
         if not candidates:
             return []
 
-        scores = self._bm25.get_scores(tokenize(query.keyword_text or query.text))
+        scores = self._bm25.get_scores(
+            self._scored(tokenize(query.keyword_text or query.text))
+        )
         return rank(
             ((chunk, float(scores[position])) for position, chunk in candidates),
             retriever=self.name,

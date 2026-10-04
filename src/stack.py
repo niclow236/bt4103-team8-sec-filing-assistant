@@ -17,15 +17,15 @@ generator and the answer-time settings as one object whose
 
 The ids are the ablation's own: C0 to C4 as ``src/evaluation/run.py`` has always
 defined them, moved here so the app can select one. ``Stack.answer`` applies the
-#34 and #35 switches from the configuration rather than from its caller, so a
-new ablation row for either is a line in this registry instead of an argument
-threaded through two commands.
+#34 and #35 switches, and the refusal of a question no filing can answer, from
+the configuration rather than from its caller, so a new ablation row for any
+of them is a line in this registry instead of an argument threaded through two
+commands.
 
 Nothing here imports Streamlit or argparse: the app and the two commands are
 callers of this module, never the other way round. The retriever imports are
 inside the functions because loading the dense index pulls in sentence
-transformers and the reranker loads a cross-encoder, and a caller asking for
-BM25 should pay for neither.
+transformers, and a caller asking for BM25 should not pay for that.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ RESULTS_ROOT = PROJECT_ROOT / "results"
 # C0 baseline, which is built by the ablation runner rather than here: it
 # re-cuts the corpus into fixed-size windows, so it belongs with the run that
 # needs it and not in the path the app shares.
-RETRIEVERS = ("bm25", "dense", "hybrid", "rerank")
+RETRIEVERS = ("bm25", "dense", "hybrid")
 
 
 @dataclass(frozen=True)
@@ -70,6 +70,7 @@ class StackConfig:
     min_score: float | None = None   # an extra floor on this retriever's scale
     use_facts: bool = True           # #34: look a numeric question up first
     use_decomposition: bool = True   # #35: one search per filing
+    use_refusal: bool = True         # refuse, unsearched, what no filing answers
 
     def to_dict(self) -> dict[str, Any]:
         """The configuration as a results file records it."""
@@ -83,6 +84,7 @@ class StackConfig:
             "min_score": self.min_score,
             "use_facts": self.use_facts,
             "use_decomposition": self.use_decomposition,
+            "use_refusal": self.use_refusal,
         }
 
     def scoped(self, query: Query) -> Query:
@@ -159,14 +161,17 @@ def build_retriever(
 ) -> Any:
     """The retriever a configuration names, loaded against the local corpus.
 
-    The one place a retriever is constructed. ``model`` is a cross-encoder
-    already in memory, for the reranker, so a caller that reuses one across
-    configurations is not made to load it twice. ``parts`` is the same for the
-    indexes: a dict this fills with the BM25 and dense retrievers it loads. A
-    caller that builds several configurations over one ``processed_dir`` passes
-    the same dict to every call, so each index is read and verified once and
-    the hybrid rows share it -- without one, a run that builds the bm25, dense
-    and hybrid rows reads every index twice and holds two bge encoders.
+    The one place a retriever is constructed. ``parts`` is a dict this fills
+    with the BM25 and dense retrievers it loads. A caller that builds several
+    configurations over one ``processed_dir`` passes the same dict to every
+    call, so each index is read and verified once and the hybrid rows share
+    it -- without one, a run that builds the bm25, dense and hybrid rows reads
+    every index twice and holds two bge encoders.
+
+    ``model`` is not read. It was the reranker's cross-encoder, and it stays
+    in the signature only because #114 adds parameters on the line above it,
+    so taking it out here would conflict with that branch. It can go once both
+    have landed.
     """
     parts = {} if parts is None else parts
 
@@ -200,16 +205,11 @@ def build_retriever(
 
     from .retrieval.hybrid import HybridRetriever
 
-    if key in ("hybrid", "rerank"):
-        hybrid = HybridRetriever(
+    if key == "hybrid":
+        return HybridRetriever(
             part("bm25", BM25Retriever.load),
             part("dense", DenseRetriever.load),
         )
-        if key == "hybrid":
-            return hybrid
-        from .retrieval.rerank import CrossEncoderReranker
-
-        return CrossEncoderReranker(hybrid, model=model)
 
     raise ValueError(
         f"unknown retriever {key!r}; expected one of {', '.join(RETRIEVERS)}"
@@ -247,6 +247,7 @@ class Stack:
             "min_score": self.config.min_score,
             "use_facts": self.config.use_facts,
             "use_decomposition": self.config.use_decomposition,
+            "use_refusal": self.config.use_refusal,
         }
         settings.update(overrides)
         # A row measured without the metadata filter searched the whole corpus,
@@ -287,7 +288,7 @@ def build_stack(
     ``parts`` is passed to ``build_retriever``, for a caller that builds more
     than one configuration and wants them to share the indexes.
     ``settings`` override the rest of the configuration -- ``top_k``,
-    ``min_score``, ``use_facts``, ``use_decomposition``.
+    ``min_score``, ``use_facts``, ``use_decomposition``, ``use_refusal``.
     """
     from dataclasses import replace as _replace
 
@@ -297,7 +298,8 @@ def build_stack(
     if retriever_key is not None:
         settings["retriever"] = retriever_key
     if settings:
-        allowed = {"retriever", "top_k", "min_score", "use_facts", "use_decomposition"}
+        allowed = {"retriever", "top_k", "min_score", "use_facts", "use_decomposition",
+                   "use_refusal"}
         unknown = set(settings) - allowed
         if unknown:
             raise ValueError(

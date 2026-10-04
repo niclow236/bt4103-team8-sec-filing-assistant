@@ -2,7 +2,7 @@
 
 Kept apart from the retrievers that build them, the same way
 ``src/pipeline/records.py`` is kept apart from the stages, so that BM25, dense
-retrieval, hybrid fusion, reranking, the RAG engine and the evaluation harness
+retrieval, hybrid fusion, the RAG engine and the evaluation harness
 can all agree on one shape without importing each other. A retriever imports
 this module; nothing here imports a retriever.
 
@@ -136,7 +136,7 @@ class RetrievedPassage:
     text: str             # the passage as stored, never with a context header prepended
     score: float          # the retriever's own scale; comparable within a method, not across
     rank: int             # position in this result set, 1 being the best
-    # Which method produced this: "bm25", "dense", "hybrid", "rerank". Carried on
+    # Which method produced this: "bm25", "dense", "hybrid". Carried on
     # the passage rather than tracked alongside it, because the evaluation
     # harness runs several methods over the same question and has to attribute
     # every passage it is handed without threading extra state through the call.
@@ -297,7 +297,6 @@ class Query:
     fiscal_years: tuple[int, ...] = ()
     items: tuple[str, ...] = ()       # "1A", "7", ...; matched case-insensitively
     content_type: str | None = None   # "prose" or "table"; None allows both
-    key_items_only: bool = False      # the Items the project leans on: 1, 1A, 7, 7A, 8
     # How far to lean toward table passages without excluding prose: a
     # multiplier on a table passage's score, applied before the cut to k. 1.0 is
     # off. Not a filter, so it is not in ``filters`` -- it changes the order
@@ -354,6 +353,4 @@ class Query:
             active["item"] = [item.upper() for item in self.items]
         if self.content_type:
             active["content_type"] = self.content_type
-        if self.key_items_only:
-            active["is_key_section"] = True
         return active

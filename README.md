@@ -105,7 +105,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── chunk.py         #   stage 3
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
-│   ├── retrieval/           # BM25, dense, hybrid, reranking
+│   ├── retrieval/           # BM25, dense, hybrid
 │   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
 │   │   ├── cli.py           #   the command line: embed, bm25, facts, check, benchmark
 │   │   ├── base.py          #   the Retriever contract, the metadata pre-filter, ranking helpers
@@ -115,7 +115,6 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── dense.py         #   searches the dense index
 │   │   ├── bm25.py          #   builds and searches the BM25 index
 │   │   ├── hybrid.py        #   fuses BM25 and dense results by reciprocal rank
-│   │   ├── rerank.py        #   re-scores fused candidates with a cross-encoder
 │   │   └── facts.py         #   XBRL figures from EDGAR into a table
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
@@ -142,14 +141,16 @@ bt4103-team8-sec-filing-assistant/
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
-│   ├── mistral/             #   hosted Mistral models through the real RAG path, with results/
-│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text
-│   └── test_data/           #   the team's 48 test questions
+│   ├── answers/             #   test questions and headline figures through the app's answer path; each writes a git-ignored results/
+│   ├── mistral/             #   hosted Mistral models through the real RAG path; writes a git-ignored results/
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words
+│   ├── test_data/           #   the team's 48 test questions
+│   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
-├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id
+├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id (git-ignored)
 └── docs/                    # reports, minutes, references
     └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
 ```
@@ -762,7 +763,7 @@ for passage in hybrid.search(query):
     passage.rank, passage.score, passage.chunk_id, passage.sources
 ```
 
-Four methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
+Three methods are built. `BM25Retriever` scores keywords, `DenseRetriever`
 searches the bge vectors in Chroma, and `HybridRetriever` asks each of them for
 their top 50 (`CANDIDATE_K`) and fuses the two lists by reciprocal rank, so
 their scores, which are on different scales, are never compared directly. A
@@ -770,40 +771,44 @@ fused passage records in `sources` which methods returned it. All of them
 satisfy the `Retriever` protocol in `base.py`, so the evaluation harness can
 loop over them.
 
-`CrossEncoderReranker` is the fourth, and it wraps one of the other three
-rather than replacing it:
+There was a fourth, a cross-encoder reranker (#21) that re-scored hybrid's top
+50 with `ms-marco-MiniLM-L-6-v2`. Nothing on the answer path used it, so it was
+measured before being wired in, and it did not put more answers in front of
+the model. `notebooks/retrieval/rerank_comparison.py`, as of `ed62352`, writes
+the rows:
 
-```python
-from src.retrieval.rerank import CrossEncoderReranker
+| | Hybrid | Hybrid, reranked | Reranked, no table boost on its scores |
+|---|---|---|---|
+| Expected figure in the top 16, hand-written (28) | 28 | 27 | 27 |
+| Its rank, median | 1 | 4.5 | 5 |
+| Prose: expected terms found, mean (20) | 0.994 | 0.961 | 0.961 |
+| Supporting chunk in the top 16 (225 benchmark questions, 3 from each filing) | 180 | 184 | 174 |
+| Reciprocal rank, mean | 0.501 | 0.362 | 0.319 |
+| Tables among the top 16, mean | 13.0 | 9.4 | 6.4 |
 
-reranked = CrossEncoderReranker(hybrid)      # or the BM25 or dense retriever
-for passage in reranked.search(query):
-    passage.rank, passage.score, passage.sources   # sources still name the inner methods
-```
+On the benchmark it gained 11 questions and lost 7, which 225 questions cannot
+tell from no change, and it moved the passages hybrid had found down the list.
+On the hand-written questions it lost Salesforce's goodwill. It also took a
+median of 9 seconds a question on the team laptop while two other runs shared
+its cores. So the reranker and the wrapper class it was built on were removed
+rather than left unused. The script that measured it went with them, since it
+cannot run without the class, and is in the history as
+`notebooks/retrieval/rerank_comparison.py`.
 
-It asks the retriever it wraps for `CANDIDATE_K` candidates, scores each
-question-and-passage pair with `ms-marco-MiniLM-L-6-v2`, and returns the top k
-of its own ranking. That is the broad-then-narrow shape: the passage that
-answers a question is often outside a first-stage top 8, and only a second
-stage that has seen it can pull it up. On the Apple supply-chain question it
-does, promoting two passages the fused ranking had outside its top 8. Scores
-are the cross-encoder's logits, so they are on none of the other three scales
-and `MIN_RERANK_SCORE` stays unset. Reranking 50 candidates adds about 0.3 to
-0.9 seconds once the model is loaded, and the model is loaded once per process
-however `load_model` is called.
-
-The reranker is a `--retriever` choice like the other three, since every
-retriever is built in one place (`src/stack.py`); an ablation row that uses it
-is a `--retriever rerank` or a line in that registry rather than code.
-
-The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`,
-`key_items_only`) are applied before scoring, not after, in every method. BM25
+The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`)
+are applied before scoring, not after, in every method. BM25
 scores only the passages the filters admit, and the dense retriever passes them
 to Chroma as a `where` clause, so a query pinned to Microsoft's FY2024 filing
 gets its top k from that filing rather than from whatever survives a
 corpus-wide top k. This matters more here than in most corpora: fifteen peers
 across five years write near-identical risk factors, and semantic similarity
 alone would happily return the right paragraph from the wrong year.
+
+A fifth filter, restricting a search to the key Items (1, 1A, 7, 7A and 8),
+was removed. Nothing set it, and measured on Hybrid it found less: the
+supporting chunk was in the top 16 for 284 of 375 benchmark questions (five
+from each filing) where the unrestricted search has 298, with Oracle's falling
+from 19 of 25 to 3, and the 48 test questions came out the same either way.
 
 A question that asks for a figure is fused with its own weights,
 `FIGURE_FUSION_WEIGHTS`, which `rag/query.py` selects by setting
@@ -822,7 +827,7 @@ questions rather than helping: the expected figure reached the top 8 for 20 of
 barely moved. Carrying each statement's title into its passages (#88) is what
 changed it: a balance sheet passage now holds the words "CONSOLIDATED BALANCE
 SHEETS", so BM25 finds the table it used to miss. The sweep is worth re-running
-when the corpus changes, or against a reranked ranking rather than a fused one.
+when the corpus changes.
 
 Those numbers, and the search-text ones further down, were measured at the
 `FINAL_K` of 8 that was in force at the time. Both scripts report at whatever
@@ -830,9 +835,92 @@ Those numbers, and the search-text ones further down, were measured at the
 
 `table_boost` leans a query toward table passages without excluding prose, by
 raising a table passage's score before the cut to k. It is off by default and is
-set by `rag/query.py` only for questions that ask for a figure.
-`retrieval.constants.TABLE_BOOST` is still 1.0, which is also off, until the
-XBRL benchmark (#24) gives a value measured rather than guessed.
+set by `rag/query.py` only for questions that ask for a figure, to
+`retrieval.constants.TABLE_BOOST`, which is 1.2.
+
+That constant stayed at 1.0, which is also off, until the XBRL benchmark (#24)
+could give a value measured rather than guessed. `python
+notebooks/retrieval/table_boost_sweep.py` is the measurement: 20 benchmark
+questions from each of the 75 filings and the 48 test questions, cut at
+`FINAL_K`, with the boost applied only where the parser reads a request for a
+figure, as the shipped code applies it. It was run twice. The first run, with
+every word of a question scored by the keyword search, chose 1.2: hybrid
+found the supporting chunk for 76.6% of the benchmark there against 69.0% with
+the boost off. The table below is the second run, after the keyword search
+stopped scoring the words most passages contain (further down), which is the
+search the boost now sits on:
+
+| Table boost | 1.0 | 1.05 | 1.1 | 1.15 | 1.2 | 1.25 | 1.5 | 2.0 |
+|---|---|---|---|---|---|---|---|---|
+| Supporting chunk in the top 16, hybrid (1,490 benchmark questions) | 75.4% | 77.9% | 78.3% | 78.6% | 78.9% | 78.8% | 78.7% | 77.7% |
+| Reciprocal rank, mean | 0.340 | 0.418 | 0.461 | 0.471 | 0.472 | 0.470 | 0.463 | 0.459 |
+| Where tables support the question (1,086) | 77.9% | 82.0% | 83.4% | 84.3% | 84.7% | 85.1% | 86.1% | 87.0% |
+| Where tables and prose do (292) | 75.7% | 76.0% | 76.0% | 74.7% | 75.3% | 74.0% | 71.9% | 67.5% |
+| Where only prose does (112) | 50.0% | 43.8% | 34.8% | 33.9% | 31.2% | 30.4% | 25.0% | 13.4% |
+| Tables among the top 16, mean | 6.4 | 9.4 | 11.5 | 12.4 | 12.9 | 13.2 | 14.0 | 14.8 |
+| Supporting chunk in the top 16, BM25 alone | 69.5% | 71.0% | 71.7% | 72.3% | 73.1% | 73.3% | 75.2% | 76.2% |
+| Expected figure in the top 16, hand-written (28) | 27 | 28 | 28 | 28 | 28 | 28 | 28 | 28 |
+| Its rank, median | 3.5 | 2 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Prose: expected terms found, mean (20) | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 |
+
+Hybrid's hit rate and reciprocal rank still both peak at 1.2 and neither rises
+past it, while the cost keeps rising: a figure printed only in prose loses its
+passage more often at every step. At 1.2 the benchmark gains 74 questions
+where a table holds the figure and loses 21 of the 112 where only prose does.
+The boost buys less than it did, 3.5 points of hit rate where it bought 7.6,
+because the keyword search now finds many of those tables without it.
+The steps are small because a cosine similarity is: dense scores sit in a
+narrow band, about 0.45 for an off-topic query's best passage and 0.68 to 0.74
+for an answerable one's, so a multiplier of 1.2 is enough to carry a loosely
+related table past the best prose passage. BM25's scores spread wider, which
+is why BM25 alone is still gaining at 2.0; one value serves both, set where
+hybrid peaks. Re-run the sweep when the embedding model changes or the corpus
+is re-chunked, since the right value follows the scale of the scores it
+multiplies.
+
+What the lean does to the answers is in
+[How often the answers are right](#how-often-the-answers-are-right): on the
+825 headline questions the model gave a wrong figure or none for 8 where it
+had for 28.
+
+A question is not scored on the words most passages contain. BM25 weighs a
+word by how rare it is, and Okapi's formula goes negative for a word in more
+than half the passages. `rank_bm25` does not leave such a word at nothing: it
+gives it a floor, a quarter of the average weight. On this corpus the floor is
+1.89 and ten words sit on it ("a", "and", "as", "for", "in", "of", "on",
+"our", "the", "to"), where "revenue" weighs 1.61 and "total" 1.04. So in "What
+was the total value of Goodwill at the end?" the two "the" and the "of"
+outweighed the line item, and a statement table, which holds "Goodwill" and
+none of those words, ranked below prose that holds them all: Salesforce's
+FY2023 balance sheet was 260th of the 397 passages in its filing.
+`BM25Retriever` now leaves those words out of a question. It counts them from
+the corpus when the index loads rather than keeping a list, so a re-chunked
+corpus gets its own, and a question made of nothing else is scored as before.
+
+`python notebooks/retrieval/common_words_comparison.py` scores the same
+questions both ways, with the table boost as shipped:
+
+| | BM25, every word | BM25, without the common words | Hybrid, every word | Hybrid, without the common words |
+|---|---|---|---|---|
+| Supporting chunk in the top 16 (1,490 benchmark questions) | 63.2% | 73.1% | 76.6% | 78.9% |
+| Reciprocal rank, mean | 0.320 | 0.403 | 0.455 | 0.472 |
+| Where tables support the question (1,086) | 690 | 826 | 889 | 920 |
+| Where tables and prose do (292) | 203 | 212 | 217 | 220 |
+| Where only prose does (112) | 48 | 51 | 36 | 35 |
+| Tables among the top 16, mean | 4.2 | 6.0 | 11.4 | 12.9 |
+| Expected figure in the top 16, hand-written (28) | 22 | 27 | 27 | 28 |
+| Its rank, median | 5.5 | 3 | 1 | 1 |
+| Prose: expected terms found, mean (20) | 0.980 | 0.980 | 0.994 | 0.994 |
+
+BM25 alone gains 148 benchmark questions and Hybrid 33, and Hybrid loses one
+of the 112 that only prose supports. The 28th hand-written figure is
+Salesforce's goodwill, which neither method had retrieved before. What that
+does to the answers is in
+[How often the answers are right](#how-often-the-answers-are-right).
+
+The `FINAL_K`, fusion-weight and search-text numbers in this README were
+measured with the boost off and every word of the question scored. A re-run of
+those scripts reports with the boost on and the common words left out.
 
 `Query.top_k` defaults to 10, which suits Recall@10 and nDCG@10. The RAG stage
 asks for `FINAL_K`, 16, since that is what goes into the prompt.
@@ -858,7 +946,7 @@ checks that against real searches before it trusts it.
 | Prompt tokens, largest seen | 3,550 | 4,984 | 6,306 | 7,703 |
 
 The rows are on the corpus `search_text_comparison.csv` was measured on, except
-the AAPL and AMZN row. That row, the committed `final_k_sweep.csv` and the
+the AAPL and AMZN row. That row, `final_k_sweep.csv` as measured and the
 hosted runs below come from a local build that ranks the expected figure
 differently for 14 of the 28 figure questions; on it the figure reached the
 prompt for 18, 21, 22 and 23 of the 28.
@@ -1087,46 +1175,98 @@ multi-company or multi-year sentences, calculations and unsupported number
 notation need review; they are not silently marked supported. Comparative
 answers can use one company and year per sentence for an unambiguous check.
 
-Save a result for each question and configuration, then show the browser UI:
+Four rules keep the checker from flagging an answer it has the evidence for.
+A dollar amount for a per-share line item is dollars a share whether or not it
+says so, since a statement prints "$4.67" in the row and an answer writes "EPS
+of $4.67". One with a scale word after it, as in "it returned $94 billion to
+shareholders", is a dollar total and is read as one. The day in a written date
+("September 30, 2023") is not a figure,
+though its year still scopes the claim. A name inside a longer name of another
+line item is part of the longer one, so "diluted net income per share", which
+is what Adobe, Salesforce, Alphabet and Intuit call earnings per share, names
+earnings per share and not net income, to the router and the checker alike.
+Without "basic" or "diluted" in front, "net income per share" does not say
+which of the two it is, so it names neither, and it does not name net income:
+a claim in those words is checked as earnings per share where the question
+asked for that and is `unverified` otherwise, and a table row in those words
+("Net income per share - diluted", as ServiceNow, Broadcom and Palo Alto print
+it) is a row that names no line item.
+And where the facts store confirms a figure for the line item and year, a
+cited passage that prints it without tying it to them, in a table row that
+names no line item or in a sentence beside more than one year, leaves the
+passage check `unverified` with the reason, not `mismatch`. Where the store
+cannot confirm the figure such a passage is a mismatch, as before.
 
-```python
-from pathlib import Path
-from src.rag import record_verification
-from src.app.answers import write_answer_page
+What the answer card showed for the answers to the 825 headline questions,
+with Hybrid, before those rules and with them:
 
-record_verification(
-    answer, Path("logs/verification.jsonl"),
-    question_id="q001", run_id="hybrid-llama3.2-baseline",
-)
-write_answer_page([answer], Path("logs/answers.html"))
-```
+| What the checker says of an answer | Supported | Unverified | Mismatch |
+|---|---|---|---|
+| The facts route's 756 answers, before (`headline-6-common-words-hybrid-checked`) | 700 | 0 | 56 |
+| The same, with the rules (`headline-9-final-hybrid`) | 756 | 0 | 0 |
+| The 6 a model answered right, before | 1 | 0 | 5 |
+| The same, with the rules | 3 | 0 | 3 |
+| The 29 answered where the store has no single figure to grade, before | 1 | 17 | 11 |
+| The same, with the rules | 8 | 16 | 5 |
 
-Open `logs/answers.html` in a browser. Warnings appear above the answer, with
-expandable check details and source passages. To review an entire saved run:
+Every one of the 56 was a right answer the store had just supplied. The
+checker is still weakest on line items the facts route does not cover: of the
+150 right answers in `line-items-9-final-hybrid` it marks 48 a mismatch, 62
+unverified and 40 supported, since no store concept is mapped for those lines
+and the cited passage has to tie the figure to the line item itself.
+
+These rows were recorded under an earlier rule for summing an answer up, and a
+run made since uses the evaluation harness's (`verify.worst_check`), which
+differs in one way that reaches them. One supported figure made a whole answer
+supported, where an answer is now counted by its worst figure, so one that
+also states a figure the checker could not check is unverified. (The harness's
+`unchecked` does not come into it: it is for a question that asks for no
+figure, and every question in these two sets asks for one, so an answer
+without a figure is unverified under either rule.) The facts route's answers
+state one figure each, so their rows
+are the same under either rule. For the answers a model wrote, the supported
+counts above are an upper bound: a new run can move an answer from supported
+to unverified and not the other way.
+
+The evaluation harness checks every answer this way before it records it, so
+a saved run carries its checks. Write a run's answers and open them in a
+browser:
 
 ```bash
-python -m src.app.answers logs/verification.jsonl --output logs/answers.html
+python -m src.evaluation benchmark/questions.jsonl --run-id hybrid-baseline --output logs/evaluation.json --answers logs/evaluation-answers.jsonl
+python -m src.app.answers logs/evaluation-answers.jsonl --output logs/answers.html
 ```
+
+Warnings appear above each answer, with expandable check details and source
+passages. For answers held in memory,
+`write_answer_page([answer], Path("logs/answers.html"))` writes the same page.
 
 Every JSONL row retains the question/run IDs, generation configuration,
 answer, sources and individual checks. `numeric_support_rate` is the supported
 numeric checks divided by all applicable passage/fact checks; unverified checks
 stay in the denominator. Abstentions have no numeric score (`null`). Keep the
-groundedness checks separate when evaluating semantic faithfulness. Use one
-writer per results file; recording errors propagate to the caller.
+groundedness checks separate when evaluating semantic faithfulness.
 
 An abstention has no sentence warnings. Malformed or truncated output keeps
 its `parse_error` and `truncated` status. When structured sentence boundaries
 cannot be recovered, the available prose is kept as one flagged block.
 Streamed prose is provisional; replace it with the resolved answer and show
-its warnings when generation finishes.
+its warnings when generation finishes. The app does: it passes `on_token`,
+writes the prose to the page as it arrives, and clears it once the checked
+answer card is ready, or when the provider fails part way.
 
 `parse_question` reads the companies, fiscal years and question type out of the
-question, and `parsed.describe()` says what it read, so the app can show
-"Companies: AAPL" and the user can see when the reading was wrong. A company
-the corpus does not hold, such as Intel, is reported in `parsed.unresolved`
-rather than silently ignored. `build_prompt` numbers the passages as sources,
-puts the rules above them, and never shows the model a URL.
+question, and `parsed.describe()` says what it read. The app shows it under
+the answer, in the scope the sidebar ended with ("Question type: numeric ·
+Companies: AAPL · Fiscal years: FY2024"), so the user can see when the reading
+was wrong. A question read as unanswerable and searched all the same says
+"unanswerable, searched in case a filing answers it", since the line sits
+under whatever answer a filing gave. Where a question was split into one
+search per filing, the same line names the filings (`Answer.sub_questions`).
+A company the corpus does not hold, such as Intel, is reported in
+`parsed.unresolved` rather than silently ignored. `build_prompt` numbers the
+passages as sources, puts the rules above them, and never shows the model a
+URL.
 
 Numeric cues include the metric aliases used by the facts router and the XBRL
 labels in `data/index/facts.parquet`. Newly supported labels need a request
@@ -1134,12 +1274,30 @@ for a figure: "What was Apple's commercial paper?" is numeric, while
 "What is Apple's commercial paper program?" remains factual. The parser reads
 only the label column and caches successful reads until the file changes;
 failed reads are retried. Built-in cues remain available without a store.
-Pass `facts_file=...` to `parse_question` or `build_query` to use another store;
-both `answer_question` and `verify_answer` pass their store through automatically.
+Pass `facts_file=...` to `parse_question` to use another store; both
+`answer_question` and `verify_answer` pass their store through automatically.
 Use `facts_file=None` to disable label lookup, as verification does when it
 only needs sentence-level entities. Possessive total questions match recognised
 company names. Comparative, temporal and unanswerable classifications keep
 their existing priority over numeric cues.
+
+A line of the statements that the facts route does not answer is a cue as
+well, by the name a question gives it: accounts receivable, income tax
+expense, stock-based compensation, capital expenditures and the others in
+`FIGURE_LINE_ITEM_CUES`. The XBRL label of such a line is not what a question
+calls it ("Accounts Receivable, after Allowance for Credit Loss, Current"), so
+the store's labels did not cover them, and "What was Microsoft's accounts
+receivable in fiscal year 2024?" was read as prose and searched with no lean
+toward tables. Like a stored label, each needs a request for the figure: "How
+does Microsoft manage accounts receivable risk?" stays factual.
+
+The app reads a question with the store's labels too. It used to pass
+`facts_file=None`, so a question naming a line item by its label, such as
+gross profit, was searched as prose in the app and as a figure question by
+`answer_question` and the evaluation harness. `filter_sidebar` reads a
+question the same way when it is not handed a parse. What both changes do to
+the answers is in
+[How often the answers are right](#how-often-the-answers-are-right).
 
 Accounts payable, inventories and net sales questions can use the facts route
 when a matching figure and supporting passage exist. Recognising another
@@ -1148,6 +1306,50 @@ an unambiguous metric mapping and citation; otherwise it falls back to retrieval
 The supporting search uses the question's metric alias, so "net sales" searches
 for that wording in the filing. Inventory purchase obligations, reserves and
 write-downs require different concepts and cannot be checked against `InventoryNet`.
+
+The route looks through the top 50 passages of that search for one that prints
+the figure (`FACT_PASSAGE_K`), where it used to look through 20. The figure was
+in the store and the statement in the filing, but a search for "total revenue"
+ranks Amazon's income statement, which says "net sales", below the prose that
+uses the word. 50 is what Hybrid already fetches for any smaller request, so
+it searches and scores nothing more.
+
+Where that search finds nothing to cite, the route searches once more, for
+the line item's other names together. A question need not use the filer's
+word: "What was Amazon's total revenue in fiscal year 2024?" is a search for
+"total revenue" and Amazon's statement prints "Total net sales", and only
+Adobe calls its accounts payable "trade payables". The figure is the same
+whatever the line is called, and the passage still has to print it in a row
+that names the line item, so the second search changes where the route looks
+and not what it accepts. It runs only after the first has found nothing, on a
+question that was on its way to a model, so an answer the route already gave
+cannot change.
+
+A passage prints the figure when it shows it at a scale it declares or beside
+a scale word, or in a table row that names the line item. A filer that reports
+in millions to one decimal place is matched in that form as well: Palo Alto
+Networks prints total assets of $10,241,600,000 as "10,241.6" and never as a
+whole number of millions, so the route could cite none of its statements. A
+decimal has to sit in a row that names the line item or carry its scale word,
+since a table in millions holds rates written the same way.
+
+A line item answers to the names the statements give it as well as the names
+a question uses: "income from operations" (Salesforce, Alphabet, Meta and
+ServiceNow), "operating profit" (Texas Instruments), "cash and equivalents"
+(Micron), "trade payables" (Adobe), and the cash flow statement's line for
+cash from operations, which few filers word alike. Each was read off the rows
+that print a stored figure across the 75 filings. The route cites a row only
+where it names the line item and the checker reads a row the same way. Before
+these were added the route answered operating cash flow for no filing of
+Apple, Amazon, Salesforce, Cisco, Alphabet, Meta or Micron, and where it did
+cite a passage for operating cash flow or operating income the checker marked
+the route's own figure a mismatch against that passage, 27 times in the 623
+answers it gave with BM25. "Inventory", singular, is left out though Alphabet
+and Broadcom print it: the word is in too much prose about purchase
+commitments for a sentence that uses it to be checked against the balance.
+
+How many headline questions the route answers at each step is in
+[How often the answers are right](#how-often-the-answers-are-right).
 
 `parsed.to_query()` gives BM25 a different text from dense search. Once the
 filters confine the search to Meta's FY2025 filing, "Meta's" and "fiscal year
@@ -1180,16 +1382,74 @@ citations, and an `abstention_reason` that the browser viewer displays:
 - `no_evidence`: the index is empty, returned evidence is unusable, or a custom
   retriever cannot report why it returned nothing.
 - `model_declined`: passages reached the model, but it declined to answer.
+- `beyond_the_filings`: the question asks for advice, or for a prediction of
+  the assistant's own. Nothing was searched.
+- `company_not_in_corpus`: the question asks for a figure of a company the
+  corpus holds no filings for. Nothing was searched.
+
+The last two are refusals, decided from the question alone. Searched, "Is
+Meta a good investment?" gets sixteen passages about Meta and a model that may
+answer from them, and a question about Intel's revenue gets sixteen passages
+from other companies. `parse_question` already read both as unanswerable, and
+`ParsedQuestion.unanswerable_because` now says why (`request`, `company`,
+`topic` or `year`), so `answer_question` can refuse the first two kinds before
+it searches. A figure is an outside company's own when the question names the
+company as its owner: by a possessive ("Intel's revenue"), after "of" ("the
+revenue of Intel"), or as the subject of a verb of having or reporting ("how
+many employees did NVIDIA have"). Named any other way the company is a topic.
+"Did NVIDIA account for more than 10% of any company's revenue?" asks the
+filings in the corpus about their customers, and a wording the rule does not
+list, "Intel revenue in FY2024?", is searched and left to the model.
+`ParsedQuestion.refused` is the one place that says whether a reading is
+refused, so the line under an answer and what was done cannot disagree.
+
+The other two kinds are still searched, because a filing may answer them. A
+refusal that is wrong costs the answer, and a search that finds nothing costs
+one abstention by the model. `topic` is a question about a share price, about
+next year, or about a company outside the corpus that is not asked for a
+figure of its own. The words do not tell "What is Apple's current stock
+price?" from "What average share price did Apple pay for repurchases in
+FY2024?", which Item 5 answers, or "What will Microsoft's revenue be next
+year?" from "What were Microsoft's purchase obligations due next year in
+FY2024?", which the contractual obligations table answers. The filings the
+corpus holds also name the companies it does not, as competitors, suppliers
+and customers, so "Which companies named NVIDIA as a competitor in FY2024?"
+is a question about them. `year` is a question naming only a fiscal year
+outside the corpus: a filing prints the two years before its own, so Apple's
+FY2020 revenue is in its FY2021 statements and the app answers it, and it
+says what falls due in the years after. A question is also searched when the
+caller's `Query` names a company, as the app's sidebar lets a user choose one
+by hand.
+
+`python notebooks/answers/refusal_check.py` counts the answerable questions
+the refusal would turn away: none of 16,006 (the 48 test questions, every name
+of every headline line item, every line-item question for every year, and the
+12,579 of the generated benchmark). One benchmark question was refused until
+the parser stopped reading "Loss Contingency, Estimate of Possible Loss" as an
+instruction to estimate. Those sets hold no question about a repurchase price
+or an obligation due next year, which is how an earlier rule that refused on
+those words passed the same count, so four such questions are among the
+script's probes now. The script prints how each probe is read: seven that
+should be refused, and nineteen that should be searched.
+
+With `--provider mistral` it also asks a model each probe with the refusal off
+and on. That was run on fifteen probes, under the earlier rule. Of the six
+that are still refused, the model declined five on its own and answered "Is
+Meta a good investment?" with Meta's spending plans. It also declined the two
+that are now searched instead, "What will Microsoft's revenue be next year?"
+and "What is Apple's current stock price?", so searching them shows a user
+the same abstention. The seven that were always searched came out the same
+both ways. The eleven probes added since have not been asked of a model.
 
 Pass `min_score=<calibrated value>` to `answer_question` to add an inclusive
 floor on the selected retriever's final scores. Its internal thresholds also
 remain in force. `None` adds no floor; the existing defaults remain unset
-pending benchmark calibration (#26). BM25, cosine similarity, fused ranks and
-reranker scores have different scales and must not share an arbitrary cutoff.
+pending benchmark calibration (#26). BM25, cosine similarity and fused ranks
+have different scales and must not share an arbitrary cutoff.
 The gate prevents generation on empty evidence; score alone does not prove
 that a nonempty set answers the question, so the model can still abstain.
 
-Built-in BM25, dense, hybrid and wrapping retrievers support candidate checks.
+The built-in BM25, dense and hybrid retrievers support candidate checks.
 Custom retrievers can add `has_candidates(query)` to report metadata matches;
 without it, an empty search still abstains but uses `no_evidence`. Index and
 provider errors propagate instead of being counted as abstentions. A zero
@@ -1293,6 +1553,233 @@ Three things follow.
   seconds here. Ollama unloads a model after five idle minutes, so the next
   request pays for loading it again.
 
+### How often the answers are right
+
+`python notebooks/answers/app_path_accuracy.py` asks the 48 test questions the
+way the app does, through `answer_question`, and checks the answers
+automatically. The Mistral notebook calls retrieval and the model itself, so it
+never takes the facts route or the split of a multi-filing question. This runs
+both, so it measures what a user is shown. The checks are the notebook's: a
+figure question is right when the answer states every expected figure, rounding
+allowed, and a prose answer is scored by the share of the expected items it
+mentions. They are proxies, as they are there.
+
+It asks every question three times, because a hosted model does not repeat
+itself. Mistral's API gave three different answers to one prompt at temperature
+0, with or without a seed, and where the figure was missing from its sources
+the same model abstained in some answers and stated a wrong figure in others.
+Retrieval and the facts route are the same in every run, so the spread across
+runs is the model's.
+
+With `ministral-8b-2512` at `FINAL_K` 16, three runs of the 48 at each state of
+the code. Each row is a file `notebooks/answers/app_path_accuracy.py` writes to
+its git-ignored `results/` folder, named in brackets, and the three
+numbers in a cell are the three runs. The files these rows were read from were
+committed and then removed. `notebooks/removed-results.json` lists every such
+file with its row count, its SHA-256 and the git object that holds it, so
+`git cat-file -p <git_blob>` prints the one a number came from:
+
+| 48 test questions | Figures right, of 28 | Wrong figure or none | Abstained | From the facts store | Figure in the passages, of the 20 a model answered | Prose: expected terms in the answer |
+|---|---|---|---|---|---|---|
+| main, BM25 (`0-main-bm25`) | 23, 23, 23 | 4, 4, 3 | 1, 1, 2 | 8 | 16 | 0.87, 0.88, 0.87 |
+| main, Hybrid (`0-main-hybrid`) | 26, 26, 26 | 1, 1, 1 | 1, 1, 1 | 8 | 18 | 0.92, 0.91, 0.93 |
+| Table boost 1.2, BM25 (`1-table-boost-bm25`) | 26, 25, 25 | 0, 1, 1 | 2, 2, 2 | 8 | 18 | 0.85, 0.87, 0.90 |
+| Table boost 1.2, Hybrid (`1-table-boost-hybrid`) | 26, 27, 26 | 1, 0, 1 | 1, 1, 1 | 8 | 19 | 0.93, 0.92, 0.95 |
+| Facts route changes, BM25 (`4-statement-names-bm25`) | 25, 25, 26 | 1, 1, 0 | 2, 2, 2 | 8 | 18 | 0.88, 0.88, 0.89 |
+| Facts route changes, Hybrid (`4-statement-names-hybrid`) | 27, 27, 27 | 0, 0, 0 | 1, 1, 1 | 8 | 19 | 0.93, 0.91, 0.92 |
+| Second citation search, BM25 (`5-other-names-bm25`) | 26, 26, 25 | 1, 1, 1 | 1, 1, 2 | 8 | 18 | 0.87, 0.87, 0.87 |
+| Second citation search, Hybrid (`5-other-names-hybrid`) | 27, 27, 26 | 0, 0, 1 | 1, 1, 1 | 8 | 19 | 0.90, 0.93, 0.92 |
+| Common words left out, BM25 (`6-common-words-bm25`) | 26, 27, 26 | 2, 1, 2 | 0, 0, 0 | 8 | 19 | 0.88, 0.90, 0.88 |
+| Common words left out, Hybrid (`6-common-words-hybrid`) | 28, 28, 28 | 0, 0, 0 | 0, 0, 0 | 8 | 20 | 0.92, 0.93, 0.92 |
+| Final state, BM25 (`9-final-bm25`) | 26, 26, 27 | 2, 2, 1 | 0, 0, 0 | 8 | 19 | 0.89, 0.88, 0.90 |
+| Final state, Hybrid (`9-final-hybrid`) | 27, 28, 28 | 1, 0, 0 | 0, 0, 0 | 8 | 20 | 0.90, 0.93, 0.91 |
+
+The figure columns barely move between runs and the prose column moves by a
+point or two, so one figure question is a real difference and 0.02 of prose
+terms is not. A model that is not given the figure states a wrong one more
+often than it abstains. Of the four figures BM25 never put in front of it on
+main, it stated a wrong one in all three runs for two (Oracle's FY2025 net
+income, and Salesforce's share of revenue from the Americas), in two runs of
+three for Google's marketable securities, and abstained on Salesforce's
+goodwill. BM25's fifth miss had the figure among its passages and gave the
+neighbouring year's: 46% for Google's FY2022 share of revenue from the United
+States, which was 48%.
+
+The table boost puts the figure in front of the model for two more of BM25's
+questions and one more of Hybrid's. BM25 now gets three more right: Google's
+share of revenue from the United States, Oracle's net income and Salesforce's
+share from the Americas. It loses Microsoft's effective tax rate in two runs
+of three: the filing gives it twice, 17.6% in the tax note's table and a
+rounded 18% in the MD&A's prose, and with both among its passages the model
+gave 18%. Hybrid gains Google's marketable securities in its passages, at rank
+10, and the model stated it in one run of three and the equity securities'
+figure in the other two. Salesforce's goodwill is still not retrieved by
+either.
+
+The facts route changes below do not touch these 48: the route answers the
+same eight, and the other questions reach the model with the same passages as
+before. So the three pairs of rows from the table boost to the second
+citation search are one state asked three times, and the differences are the
+model's. With Hybrid it stated Google's marketable securities in one run of
+three, then in all three, then in two.
+
+Leaving the common words out of the keyword search (see
+[Searching the indexes](#searching-the-indexes)) does change what the 48 are
+searched with. With Hybrid every figure is right in all three runs.
+Salesforce's goodwill is printed in the fifth passage, where no passage that
+prints it had been among the sixteen, and Google's marketable securities is
+stated every time. In one run of the three the goodwill answer gives an
+acquisition's goodwill first and the balance after it, which the check counts
+as right because the expected figure is stated. With BM25 alone the figure is
+among the passages for 19 of the 20 questions the model answers, from 18, and
+Google's marketable securities is now right. Salesforce's goodwill turns from
+an abstention into a wrong answer: BM25 now ranks an acquisition's table among
+the sixteen and the passage with the balance seventeenth, one past the cut,
+and the model reads the goodwill off the table it was given.
+
+The last pair of rows is the branch as it ends, after the changes to how a
+question is read, the checker and the refusal. None of them changes what
+these 48 are searched with, so the rows are the state above asked again. The
+one Hybrid miss is Google's marketable securities in one run of three, the
+equity securities' figure given for the total, with the right figure among
+the passages. BM25's are Salesforce's goodwill in all three runs and
+Microsoft's effective tax rate, 18% for 17.6%, in two.
+
+Those 48 questions cover eight of the fifteen companies, and most are answered
+right. `python notebooks/answers/headline_figures.py` asks the plain question
+for each of the 75 filings and each line item the facts route supports, such
+as "What was Micron's operating income in fiscal year 2023?", 825 in all, and
+grades the answers against the XBRL store. It separates the two ways such a
+question is answered: from the facts store, exactly and with no model, or by a
+model from retrieved passages where the route gave way. Without `--provider` it
+asks no model and counts what the route answers, which needs no key and comes
+out the same on every run.
+
+| 825 headline questions, one run | From the facts store | Model: right | Model: right, to fewer digits | Model: a wrong figure or none | Model: abstained | Right, of the 762 the store can grade |
+|---|---|---|---|---|---|---|
+| main, BM25 (`headline-0-main-bm25`) | 623 | 43 | 24 | 44 | 28 | 690 |
+| main, Hybrid (`headline-0-main-hybrid`) | 637 | 58 | 22 | 28 | 17 | 717 |
+| Table boost 1.2, Hybrid (`headline-1-table-boost-hybrid`) | 651 | 87 | 5 | 8 | 11 | 743 |
+| Facts route changes, BM25 (`headline-4-statement-names-bm25`) | 747 | 3 | 0 | 1 | 11 | 750 |
+| Facts route changes, Hybrid (`headline-4-statement-names-hybrid`) | 752 | 8 | 0 | 1 | 1 | 760 |
+| Second citation search, BM25 (`headline-5-other-names-bm25`) | 752 | 3 | 0 | 1 | 6 | 755 |
+| Second citation search, Hybrid (`headline-5-other-names-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
+| Common words left out, BM25 (`headline-6-common-words-bm25`) | 752 | 3 | 0 | 2 | 5 | 755 |
+| Common words left out, Hybrid (`headline-6-common-words-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
+| Final state, Hybrid (`headline-9-final-hybrid`) | 756 | 6 | 0 | 0 | 0 | 762 |
+
+The other 63 have no single figure in the store to grade against: a software
+company has no inventories, some filers report no total for liabilities, and
+Oracle tags two net incomes that disagree. The store holds the figure for
+every one of the 762, so each question left to the model is one the route
+found a figure for and then no passage to cite. The retriever decides that
+too, which is why the first column differs between rows. Operating cash flow
+is the largest group, 47 of the 75 with BM25 on main, and the model then gave
+a wrong figure for 25 of them.
+
+With the table boost the model's wrong answers fall from 28 to 8 and it states
+the exact figure far more often, 87 against 58, because the statement table is
+now among its sources. Thirty questions became right and four stopped being:
+Adobe's accounts payable in four of its five years, where the model now
+abstains. Adobe's balance sheet calls the line "Trade payables".
+
+The first column is the facts route's, and it can be counted with no model
+asked. With Hybrid, as each change to the route went in:
+
+| Facts route, Hybrid, no model asked | Answered from the store, of the 762 it holds a figure for |
+|---|---|
+| Table boost 1.2 (`headline-1-table-boost-hybrid`) | 651 |
+| Looking through 50 passages for the citation, not 20 (`headline-2-passage-depth-hybrid-no-model`) | 660 |
+| A figure printed to one decimal of a million (`headline-3-decimal-millions-hybrid-no-model`) | 692 |
+| The statements' own names for a line (`headline-4-statement-names-hybrid`) | 752 |
+| A second search, for the line item's other names (`headline-5-other-names-hybrid`) | 756 |
+
+The nine the deeper search added were answered by the model before: five right,
+one to fewer digits, two wrong and one abstained. The 32 the decimal form added
+are all Palo Alto Networks', and the model had 28 of them right and abstained
+on four. The 60 the statements' names added are operating cash flow (39),
+operating income (12), accounts payable (5) and cash (4), and the model had 46
+right, four to fewer digits, five wrong and five abstained. No step lost a
+question the route had answered before it.
+
+Before the second search ten of the 762 were left to the model with Hybrid,
+and it got eight right. The two it missed were Amazon's revenue for FY2024 and
+FY2025, asked as "total revenue": Amazon's statement says "net sales", and a
+search for the question's words does not reach it. The second search does,
+and the route answers Amazon's revenue for all five years. The six still left
+to the model are four inventories and ServiceNow's accounts payable in two
+years, and it gets all six right, so every one of the 762 is answered right
+with Hybrid. BM25 leaves ten and the model misses seven of them, all
+inventories of Broadcom and Alphabet.
+
+Those 825 questions use one name for each line item, the first in
+`FINANCIAL_METRICS`. `--every-name` asks each filing once for every name a
+line item has there, 2,325 questions, to see whether the route copes with a
+question in words the filing does not use:
+
+| Every name of every line item, no model asked | Answered from the store, of the 2,237 it holds a figure for |
+|---|---|
+| Before the second search, BM25 (`headline-4-statement-names-bm25-every-name-no-model`) | 2,035 |
+| Before the second search, Hybrid (`headline-4-statement-names-hybrid-every-name-no-model`) | 2,164 |
+| With it, BM25 (`headline-5-other-names-bm25-every-name-no-model`) | 2,225 |
+| With it, Hybrid (`headline-5-other-names-hybrid-every-name-no-model`) | 2,229 |
+| With the filers' names for earnings per share, Hybrid (`headline-8-checker-hybrid-every-name-no-model`) | 2,379 of 2,387 |
+
+No question the route answered before was lost, and none of those answers
+changed. Of the 65 Hybrid gained, 43 were asked as "trade payables" of a filer
+that prints "accounts payable", 16 as "revenue", "revenues" or "total revenue"
+of Amazon and Cisco, and six as ServiceNow's operating or net loss in years it
+reported income. BM25 gained 190, most of them revenue asked in a word the
+statement does not print: the dense half of Hybrid often gets from "revenue"
+to "net sales" on the first search, and a keyword search cannot.
+
+The last row adds "diluted net income per share" and "basic net income per
+share", which is what four of the filers call earnings per share: 150 more
+questions, all answered from the store, with every earlier answer unchanged.
+The checker supports all 2,379.
+
+Leaving the common words out of the keyword search changes the search the
+route cites from, and not what the route answers. Run again after that change,
+both sets come out as they were under both retrievers: the same 756 and 752
+of the 825, the same 2,229 and 2,225 under every name, and each answer the
+same sentence as before.
+
+The facts route answers eleven line items. A filing reports many more, and a
+question about one of those is answered by a model from the passages. `python
+notebooks/answers/line_item_figures.py` asks the plain question for sixteen of
+them, such as "What was Cisco's accounts receivable in fiscal year 2024?", of
+every FY2024 filing whose store holds one figure for the line, 177 questions,
+and grades the answers against the store as the headline questions are graded.
+With Hybrid and `ministral-8b-2512`, one run on each side of the change to how
+a question is read (see [From a question to an answer](#from-a-question-to-an-answer)):
+
+| 177 line-item questions, FY2024, one run | Read as asking for a figure | Tables among the 16 passages, mean | Right | Right, to fewer digits | A wrong figure or none | Abstained |
+|---|---|---|---|---|---|---|
+| Before (`line-items-6-common-words-hybrid`) | 0 | 4.5 | 120 | 5 | 48 | 4 |
+| Read as figure questions (`line-items-7-figure-questions-hybrid`) | 162 | 11.7 | 145 | 2 | 24 | 6 |
+| Final state (`line-items-9-final-hybrid`) | 162 | 11.7 | 148 | 2 | 21 | 6 |
+
+147 of the 177 are right where 125 were, and the wrong answers halve. 27
+questions became right and five stopped being. Two of the five are abstentions
+where the model had the figure before (Salesforce's purchases of property and
+equipment, Micron's capital expenditures), two are a neighbouring figure
+(Meta's depreciation of property and equipment for its depreciation and
+amortization, and Texas Instruments' tax rate for its tax expense), and one is
+Cisco's accounts receivable given as $6.7 billion with a second figure beside
+it. The model does not repeat itself, so a question or two of the difference
+in any one line is its own, as in the 48.
+
+Twelve of the sixteen names are the new cues. Gross profit, interest expense,
+depreciation and amortization and marketable securities are read as figure
+questions through the store's labels, which the app's path now reads with.
+The fifteen "share repurchases" questions are the ones still read as prose,
+on purpose: a filing reports the cash paid for repurchases and the amount
+bought under its programme as two figures, the question does not say which,
+and read as a figure question it was answered right less often.
+
+None of the 48 test questions and none of the 2,325 headline questions is read
+differently, so the tables above stand as they are.
+
 ## Streamlit app and components
 
 The real app reads the processed filings and indexes on this machine, searches
@@ -1307,27 +1794,36 @@ Build the local indexes first if they do not exist (`python -m src.retrieval
 bm25` and `python -m src.retrieval embed`). The app checks each index against
 the current processed corpus before searching. The sidebar's Configuration box
 picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
-the metadata filter, so the first Ask also loads the dense index and the
-embedding model; C1 is BM25 alone and loads neither. A row measured without the
-metadata filter searches every filing, and the sidebar says so when one is
-picked. The model
+the metadata filter, so the first Ask also checks the dense index and loads the
+embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
+is BM25 alone and loads neither. The app opens on hybrid because, with the
+sidebar's filters applied, it gets more of the test questions' figures right
+than BM25: 26 of 28 against 23 before the table boost was set, 26 or 27 against
+25 or 26 with it, and all 28 against 26 or 27 since the keyword search stopped
+scoring the commonest words (see
+[How often the answers are right](#how-often-the-answers-are-right)). A row
+measured without the metadata filter searches every filing, and the sidebar
+says so when one is picked. The model
 provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
 model by default, or Mistral's free API (`ministral-8b-2512`) with
 `LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds
 rather than minutes.
 An explicit Item filter is enforced for numeric questions too. When the
 question or filters change, the app hides the prior answer until Ask is pressed
-again.
+again. While a model is answering, its prose is written to the page as it
+arrives, and the checked answer card replaces it. Under the card the app says
+how it read the question: the question type, and the companies and years it
+searched.
 
 Issue #37's reusable UI is in `src/app/components.py`.
 
 - `answer_card(answer, key="answer-id")` displays a completed `Answer`. Inline
   markers open and focus the corresponding citation expander without another
-  model call. Use a distinct, stable key for every card on the page.
-- `citation_expander(citation, passages, key="source-id", expanded=False)`
-  displays the exact stored passage, full source line (company, ticker, CIK,
-  form, fiscal year, Part, Item, title, filing date) and filing link. Missing
-  metadata is labelled unknown. Source numbering follows prompt order.
+  model call. Each expander holds the exact stored passage, the full source
+  line (company, ticker, CIK, form, fiscal year, Part, Item, title, filing
+  date) and the filing link, with missing metadata labelled unknown. Source
+  numbering follows prompt order. Use a distinct, stable key for every card on
+  the page.
 - `filter_sidebar(question, parsed=None)` returns the effective `Query` to
   pass to `answer_question(query=...)`. It reflects companies and years from
   the shared parser and explicit Item mentions such as `Items 7 and 8`.
@@ -1485,6 +1981,11 @@ describes; a row a run has measured is labelled there with the run that
 measured it. `C0`, the fixed-size baseline, is built by the ablation runner
 only and cannot be selected.
 
+`--no-refusal` searches and asks a model about every question, instead of
+refusing one the parser reads as asking for advice or a prediction, or for a
+figure of a company outside the corpus. The report counts the rows it refused
+as `refused`.
+
 `--no-decompose` searches each question once instead of once per filing. A
 question naming more than one company or more than one year is otherwise split
 into one search per filing and the results interleaved, so the `FINAL_K`
@@ -1494,8 +1995,22 @@ records the `sub_questions` its evidence came from and the report counts the
 rows that were split, so the comparison says how many questions it could apply
 to at all.
 
-Evaluation rows include citation checks; run `verify_answer` separately when
-numeric verification is also needed.
+Every answer is put through `verify_answer` before it is recorded, against the
+company and year the question is about, as the app checks an answer before
+showing it. That holds under a configuration measured without the metadata
+filter too: it searches every filing, and its answer is still checked against
+the benchmark's company and year. The report's `checks` counts the answered
+rows by the worst of the figures each states. A figure is a `mismatch` where a
+check contradicts it, `supported` where a passage or the facts store supports
+it, and `unverified` otherwise, and an answer is counted as its worst figure:
+`mismatch` first, then `unverified`, then `supported`. So a supported answer
+is one whose every figure is supported, and one supported claim does not hide
+another that could not be checked. `unchecked` is an answer to a question that
+asks for no figure and states none; a question that asks for one and is
+answered without it is `unverified`. A run then says how many of its answers
+a user would see flagged, and
+how many hold a figure nothing confirmed. The facts store is read once for the
+run.
 
 ### Embedding and generation ablations
 
