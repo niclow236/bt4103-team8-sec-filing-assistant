@@ -162,13 +162,14 @@ def test_truncated_and_legacy_answers_are_conservatively_flagged():
     assert all("sec-warning" in row["class"] for row in page.select(".sec-claim"))
 
 
-def test_abstention_has_reason_and_no_claim_warning():
+def test_an_abstention_is_never_laid_out_as_a_card_of_claims():
+    # Its text is the abstain sentence, which the card would otherwise show as
+    # one uncited claim that needs review. ``answer_card`` states it instead;
+    # see test_an_abstention_is_stated_with_its_reason_and_what_to_try.
     answer = replace(sample_answer("q"), text=ABSTAIN_PHRASE, abstained=True,
                      abstention_reason="filters_excluded_all", sentences=(), citations=())
-    page = soup(answer)
-    assert ABSTAIN_PHRASE in page.text
-    assert not page.select(".sec-claim")
-    assert not page.select("details")
+    with pytest.raises(ValueError, match="abstention_notice"):
+        answer_card_html(answer)
 
 
 SIDEBAR_APP = '''
@@ -183,6 +184,18 @@ def sidebar():
     app = AppTest.from_string(SIDEBAR_APP).run(timeout=30)
     assert not app.exception
     return app
+
+
+def test_sidebar_says_what_it_searches_in_words():
+    # It used to print the Query's own field names: "ticker: AAPL; fiscal_year: 2024".
+    app = sidebar()
+    assert app.sidebar.caption[-1].value == (
+        "Searching: AAPL, MSFT; FY2023, FY2024; Item 7, Item 8")
+    for control in app.sidebar.multiselect:
+        control.set_value([])
+    app.run()
+    assert app.sidebar.caption[-1].value == (
+        "Searching: every company; every fiscal year; every Item")
 
 
 def test_sidebar_extracts_filters_and_returns_a_retrieval_query():
@@ -274,3 +287,52 @@ def test_sidebar_item_reaches_answer_retrieval_without_facts_bypass(monkeypatch)
     answer = answer_question(query.text, EmptyRetriever(), sample_answer("q").config,
                              query=query, parsed=parse_question(query.text, facts_file=None))
     assert answer.abstained
+
+
+# --- the Ask page's pieces (#38) -------------------------------------------------
+
+def test_card_can_leave_the_question_to_the_page_above_it():
+    assert soup().select("h3")
+    page = BeautifulSoup(
+        answer_card_html(sample_answer("Example?"), show_question=False), "html.parser")
+    assert not page.select("h3")
+    assert page.select(".sec-claim")
+
+
+def test_trace_rows_follow_prompt_order_and_mark_what_was_cited():
+    from src.app.components import trace_rows
+    from src.retrieval.records import RetrievedPassage
+
+    first = sample_answer("q").passages[0]
+    second = RetrievedPassage(
+        chunk_id="other", text="Other text.", score=0.5, rank=1, retriever="hybrid",
+        ticker="MSFT", company="Microsoft", fiscal_year=2023, item="1A", title="Risk Factors",
+        url="javascript:alert(1)", content_type="table", sources=("bm25", "dense"))
+    answer = replace(sample_answer("q"), passages=(first, second))
+    rows = trace_rows(answer)
+    assert [row["Source"] for row in rows] == ["[1]", "[2]"]
+    assert [row["Cited"] for row in rows] == [True, False]
+    assert rows[1]["Found by"] == "bm25, dense" and rows[0]["Found by"] == "test"
+    assert rows[1]["Type"] == "table" and rows[1]["Passage"] == "Other text."
+    # Only an http(s) filing link is offered as one, as on the card.
+    assert rows[0]["Filing"] == first.url and rows[1]["Filing"] is None
+
+
+ABSTAINED_APP = '''
+from dataclasses import replace
+from src.app.components import answer_card
+from src.rag.constants import ABSTAIN_PHRASE
+from tests.sample_answers import sample_answer
+answer_card(replace(sample_answer("q"), text=ABSTAIN_PHRASE, abstained=True,
+                    abstention_reason="filters_excluded_all", sentences=(), citations=(),
+                    passages=()))
+'''
+
+
+def test_an_abstention_is_stated_with_its_reason_and_what_to_try():
+    app = AppTest.from_string(ABSTAINED_APP).run(timeout=30)
+    assert not app.exception
+    assert app.warning[0].value == (
+        "**No answer from the filings.** The selected filters excluded every indexed passage.")
+    assert "Clear a company, fiscal year or Item" in app.caption[0].value
+    assert not app.get("html")

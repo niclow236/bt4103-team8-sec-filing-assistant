@@ -136,7 +136,12 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
 │   ├── stack.py             # the named configurations, and the one way to build one
-│   └── app/                 # the app; so far the viewer for saved answers
+│   └── app/                 # the Streamlit app, and the viewer for saved answers
+│       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
+│       ├── app_pages/       #   one script per page
+│       │   └── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
+│       ├── state.py         #   what is kept between reruns: indexes, stacks, answers
+│       ├── components.py    #   what pages draw: answer card, filters, trace
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
@@ -473,10 +478,11 @@ audit-matter paragraph laid out as a table -- and their text stays in the prose,
 so nothing is lost. Those are reported as counts by the parse stage. A gate that
 fired on them would cry wolf on every run.
 
-Run the app once it is built:
+Run the app, once the retrieval indexes are built (see
+[Streamlit app and components](#streamlit-app-and-components)):
 
 ```bash
-streamlit run src/app/app.py
+streamlit run src/app/main.py
 ```
 
 ## What the pipeline produces
@@ -1787,8 +1793,11 @@ them, sends retrieved passages to the configured answer model, verifies the
 result, and shows citations to those filings:
 
 ```bash
-python -m streamlit run src/app/app.py
+streamlit run src/app/main.py
 ```
+
+Run it from the project root. `python -m streamlit run src/app/main.py` does
+the same.
 
 Build the local indexes first if they do not exist (`python -m src.retrieval
 bm25` and `python -m src.retrieval embed`). The app checks each index against
@@ -1811,19 +1820,64 @@ rather than minutes.
 An explicit Item filter is enforced for numeric questions too. When the
 question or filters change, the app hides the prior answer until Ask is pressed
 again. While a model is answering, its prose is written to the page as it
-arrives, and the checked answer card replaces it. Under the card the app says
-how it read the question: the question type, and the companies and years it
-searched.
+arrives, and the checked answer card replaces it.
 
-Issue #37's reusable UI is in `src/app/components.py`.
+The Ask page (#38) shows, in order:
 
+- the question box and Ask. Pressing Enter in the box reads the question;
+  Ask answers it.
+- the filters the question resolved to, as soon as it is read and before
+  anything is searched: the companies, fiscal years and Items, and the
+  question type. They follow the sidebar, so a filter changed by hand shows
+  there too, and an empty one reads "every company".
+- the outcome, the configuration, what wrote the answer (a model, or the facts
+  store) and how long it took.
+- the answer card with its inline citations. An abstention is stated in its
+  place: "No answer from the filings", the reason, and what to try.
+- the retrieval trace, four steps that each open onto their detail: how the
+  question was read, what was found (every passage the answer was written
+  from, in prompt order, with its rank, score, the retrievers that found it,
+  whether it was cited, and a link to the filing), what wrote the answer, and
+  what the checks found. It is drawn from the answer already given, so
+  opening it searches nothing.
+
+### Where things go in `src/app/`
+
+Each file has one job, so that a second page does not grow its own copy of
+what the first one does:
+
+| File | What belongs in it |
+|---|---|
+| `main.py` | The entry point. Makes the project importable, sets the page title, and lists the pages in `PAGES`. No page content. |
+| `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
+| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing), `Stopwatch`. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |
+| `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
+
+To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
+`main.py`. The menu appears once there is a second page.
+
+Issue #37's reusable UI is in `src/app/components.py`, with the Ask page's
+pieces from #38.
+
+- `resolved_filters(query, parsed)` shows what will be searched, in the same
+  words as the sidebar's own "Searching:" line.
+- `configuration_picker(runs)` is the sidebar's Configuration box, and returns
+  the id picked. `runs` is `dict(state.measured())`.
+- `answer_summary(answer, config, seconds)` is the row above an answer.
+- `abstention_notice(answer)` states an abstention. `answer_card` calls it for
+  an abstained answer, so a page does not have to. `answer_card_html` is for
+  an answer with claims and refuses an abstention.
+- `retrieval_trace(answer, parsed, config, key="trace-id")` draws the four
+  steps. `trace_rows(answer)` is the passage table's rows, one per passage.
 - `answer_card(answer, key="answer-id")` displays a completed `Answer`. Inline
   markers open and focus the corresponding citation expander without another
   model call. Each expander holds the exact stored passage, the full source
   line (company, ticker, CIK, form, fiscal year, Part, Item, title, filing
   date) and the filing link, with missing metadata labelled unknown. Source
   numbering follows prompt order. Use a distinct, stable key for every card on
-  the page.
+  the page. `show_question=False` leaves the question heading out, for a page
+  whose question box is directly above the card.
 - `filter_sidebar(question, parsed=None)` returns the effective `Query` to
   pass to `answer_question(query=...)`. It reflects companies and years from
   the shared parser and explicit Item mentions such as `Items 7 and 8`.
@@ -1862,10 +1916,13 @@ untrusted text is never inserted into that script.
 
 Acceptance checks are in `tests/test_app_components.py`: source mapping,
 escaping, warning states, real Streamlit widget reruns and the Item-filter
-handoff to the RAG engine. Run them with:
+handoff to the RAG engine. The Ask page is checked through the entry point in
+`tests/test_app_live.py` and `tests/test_app_state.py`, which run
+`src/app/main.py` as Streamlit does, with a stand-in for the built
+configuration, so they need no index and no model. Run them with:
 
 ```bash
-python -m pytest tests/test_app_components.py -q
+python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_app_state.py -q
 ```
 
 ## The benchmark

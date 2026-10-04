@@ -1,18 +1,30 @@
-"""What the app keeps between one Ask and the next (#36).
+"""What the app keeps between one rerun and the next (#36).
 
-Streamlit runs the page's script again on every widget change, so whatever is
-worth keeping has to be held outside it. ``app.py`` keeps the indexes, the
-embedding model and each built configuration with ``st.cache_resource``. This
-module holds what a repeated question should not pay for twice, the answer it
-was given, and the stopwatch behind the line that says how long one took.
+Streamlit runs a page's script again on every widget change, so whatever is
+worth keeping has to be held outside it. Everything a page keeps is here, so
+no page holds a cache of its own:
+
+- for the process, with ``st.cache_resource``: the indexes and the embedding
+  model (``_indexes``) and each built configuration (``load_stack``), and with
+  ``st.cache_data`` the runs under ``results/`` (``measured``);
+- for the process, per configuration: the answer a repeated question was
+  given (``Remembered``);
+- for one browser session: the answer a page is showing and the request it
+  answers (``keep``, ``kept``, ``has_kept``);
+- the stopwatch behind the line that says how long an answer took.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
+
+import streamlit as st
+
+from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
     from src.rag.records import Answer
@@ -28,6 +40,76 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # would otherwise grow with every new question. Past this many the answer
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
+
+
+@st.cache_resource
+def _indexes() -> dict:
+    """The BM25 and dense retrievers every configuration shares, once per process.
+
+    Without it, switching from C4 to C3 -- the same hybrid retriever -- read
+    both indexes again and loaded a second copy of the embedding model.
+    """
+    return {}
+
+
+@st.cache_resource(show_spinner="Checking the local filing indexes…")
+def load_stack(config_id: str) -> Remembered:
+    """Assemble a named configuration once per Streamlit process (#43).
+
+    The same call the evaluation command makes, so what the demo shows is the
+    system the numbers in ``results/`` describe, rather than a fourth stack
+    assembled here. Cached on the id because building one loads the indexes
+    and, for the dense and hybrid rows, the embedding model.
+    """
+    # Remembered, so a repeated demo question is answered once (#36).
+    return Remembered(build_stack(config_id, parts=_indexes()))
+
+
+@st.cache_data(show_spinner=False)
+def measured() -> list[tuple[str, str]]:
+    """Each configuration measured under ``results/``, as (id, label).
+
+    Read from the result files rather than listed here, so a configuration is
+    offered because a run measured it. Several runs can measure the same row;
+    the most recent run's label is the one shown.
+    """
+    seen: dict[str, str] = {}
+    for run in measured_runs():
+        seen.setdefault(run.config_id, run.label)
+    return list(seen.items())
+
+
+@dataclass(frozen=True)
+class Kept:
+    """The answer a page is showing: what was asked, the answer, and how long it took."""
+
+    request: tuple[Any, ...]
+    answer: Answer
+    seconds: float
+
+
+def keep(page: str, request: tuple[Any, ...], answer: Answer, seconds: float) -> None:
+    """Hold ``answer`` for this browser session as what ``page`` is showing.
+
+    One entry per page, under the page's own name, so the Ask page and a page
+    that asks two configurations do not show each other's answers.
+    """
+    st.session_state[f"{page}:kept"] = Kept(request, answer, seconds)
+
+
+def kept(page: str, request: tuple[Any, ...]) -> Kept | None:
+    """What ``page`` is showing, if it answers ``request``, and None if not.
+
+    The request is the question with everything it was asked with, so an
+    answer is never shown under a question or filters it was not given for.
+    """
+    held = st.session_state.get(f"{page}:kept")
+    return held if held is not None and held.request == request else None
+
+
+def has_kept(page: str) -> bool:
+    """Whether ``page`` holds an answer at all, to whatever request."""
+    return f"{page}:kept" in st.session_state
 
 
 class Remembered:

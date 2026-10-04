@@ -388,11 +388,22 @@ def test_neither_the_app_nor_the_commands_construct_a_retriever():
     from src.config import PROJECT_ROOT
 
     classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever")
-    for relative in ("src/app/app.py", "src/evaluation/cli.py"):
+    # Every file of the app, so a page added later is held to it too.
+    app = sorted(path.relative_to(PROJECT_ROOT).as_posix()
+                 for path in (PROJECT_ROOT / "src" / "app").rglob("*.py"))
+    assert "src/app/state.py" in app and "src/app/app_pages/ask.py" in app
+    for relative in (*app, "src/evaluation/cli.py"):
         source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         for name in classes:
             assert name not in source, f"{relative} still builds {name} itself"
+    # The app builds a stack in one place, and its pages go through it.
+    for relative in ("src/app/state.py", "src/evaluation/cli.py"):
+        source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         assert "build_stack" in source or "build_retriever" in source
+    for relative in app:
+        if relative != "src/app/state.py":
+            source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
+            assert "build_stack(" not in source, f"{relative} builds a stack of its own"
 
 
 def test_the_ablation_runner_takes_its_rows_from_the_registry():

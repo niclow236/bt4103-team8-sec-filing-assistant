@@ -10,13 +10,21 @@ from typing import Any
 
 from streamlit.testing.v1 import AppTest
 
-import src.app.app as app_module
+import src.app.state as state_module
+import src.rag.query as query_module
+import src.rag.verify as verify_module
+from src.config import PROJECT_ROOT
+from src.rag.constants import ABSTAIN_PHRASE
+from src.rag.generate import ProviderUnavailable
 from src.rag.records import GenerationConfig
 from src.stack import DEFAULT_STACK, SELECTABLE, stack_config
 from tests.sample_answers import sample_answer
 
 
-APP = "from src.app.app import main\nmain()"
+# The entry point as ``streamlit run`` is given it. The Ask page is a script
+# that main.py runs, and it reads what it calls from these modules on every
+# run, so a stand-in set on one of them is the one the page gets.
+APP = str(PROJECT_ROOT / "src" / "app" / "main.py")
 GENERATION = GenerationConfig("ollama", "llama3.2:3b", "grounded_v4")
 
 
@@ -46,15 +54,15 @@ def _standing_in(monkeypatch, config_id=DEFAULT_STACK, runs=()):
         built.setdefault(selected, FakeStack(config=stack_config(selected)))
         return built[selected]
 
-    monkeypatch.setattr(app_module, "load_stack", load_stack)
-    monkeypatch.setattr(app_module, "measured", lambda: list(runs))
-    monkeypatch.setattr(app_module, "verify_answer", lambda answer, *, parsed: answer)
+    monkeypatch.setattr(state_module, "load_stack", load_stack)
+    monkeypatch.setattr(state_module, "measured", lambda: list(runs))
+    monkeypatch.setattr(verify_module, "verify_answer", lambda answer, *, parsed: answer)
     return built
 
 
 def test_live_app_answers_through_the_selected_configuration(monkeypatch):
     built = _standing_in(monkeypatch)
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     assert not ui.exception
     ui.text_input[0].set_value("What was Apple's revenue in FY2024, Item 7?").run()
     ui.button[0].click().run()
@@ -85,7 +93,7 @@ def test_live_app_offers_every_configuration_it_can_build(monkeypatch):
     # ablation runner but cannot be built here, so it is not offered even when
     # a run has measured it.
     _standing_in(monkeypatch, runs=[("C0", "nightly-7 · C0 — naive BM25")])
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     assert not ui.exception
     options = list(ui.sidebar.selectbox[0].options)
     assert len(options) == len(SELECTABLE)
@@ -100,7 +108,7 @@ def test_live_app_says_when_a_row_does_not_apply_the_filters(monkeypatch):
     # The sidebar prints the filters it would search with, so a row that
     # ignores them has to say so.
     _standing_in(monkeypatch)
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     assert not any("filters above are not applied" in c.value for c in ui.sidebar.caption)
     ui.sidebar.selectbox[0].set_value("C3").run()
     assert not ui.exception
@@ -110,7 +118,7 @@ def test_live_app_says_when_a_row_does_not_apply_the_filters(monkeypatch):
 def test_live_app_labels_a_configuration_with_the_run_that_measured_it(monkeypatch):
     # Criterion: a configuration named in results/ can be selected in the app.
     _standing_in(monkeypatch, runs=[("C1", "nightly-7 · C1 — section-aware BM25")])
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     assert not ui.exception
     assert "nightly-7 · C1 — section-aware BM25" in list(ui.sidebar.selectbox[0].options)
     # The default row has no run, so the app says so rather than implying one.
@@ -119,7 +127,7 @@ def test_live_app_labels_a_configuration_with_the_run_that_measured_it(monkeypat
 
 def test_selecting_a_measured_configuration_builds_that_configuration(monkeypatch):
     built = _standing_in(monkeypatch, runs=[("C1", "nightly-7 · C1 — section-aware BM25")])
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.sidebar.selectbox[0].set_value("C1").run()
     ui.button[0].click().run()
@@ -132,9 +140,9 @@ def test_live_app_reports_missing_index_without_model_call(monkeypatch):
     def no_index(config_id):
         raise FileNotFoundError("Build the local index first")
 
-    monkeypatch.setattr(app_module, "load_stack", no_index)
-    monkeypatch.setattr(app_module, "measured", lambda: [])
-    ui = AppTest.from_string(APP).run(timeout=30)
+    monkeypatch.setattr(state_module, "load_stack", no_index)
+    monkeypatch.setattr(state_module, "measured", lambda: [])
+    ui = AppTest.from_file(APP).run(timeout=30)
     ui.text_input[0].set_value("Apple FY2024 revenue?").run()
     ui.button[0].click().run()
     assert not ui.exception
@@ -145,9 +153,9 @@ def test_live_app_reports_missing_index_without_model_call(monkeypatch):
 def test_live_app_verifies_against_the_sidebar_scope(monkeypatch):
     verified = []
     _standing_in(monkeypatch)
-    monkeypatch.setattr(app_module, "verify_answer",
+    monkeypatch.setattr(verify_module, "verify_answer",
                         lambda answer, *, parsed: verified.append(parsed) or answer)
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.sidebar.multiselect[0].set_value(["MSFT"]).run()
     ui.button[0].click().run()
@@ -162,14 +170,14 @@ def test_live_app_reads_the_question_with_the_facts_store_s_labels(monkeypatch):
     # naming a line item by its label was searched as prose in the app and as
     # a figure question everywhere it was measured.
     read = []
-    parse = app_module.parse_question
-    monkeypatch.setattr(app_module, "parse_question",
+    parse = query_module.parse_question
+    monkeypatch.setattr(query_module, "parse_question",
                         lambda question, **options: read.append(options) or parse(
                             question, **options))
     _standing_in(monkeypatch)
     # The first question to need the labels reads them from the store, which
     # can take longer than AppTest's three seconds on a busy machine.
-    ui = AppTest.from_string(APP, default_timeout=30).run()
+    ui = AppTest.from_file(APP, default_timeout=30).run()
     ui.text_input[0].set_value("What was Apple's gross profit in FY2024?").run()
     ui.button[0].click().run()
     assert not ui.exception
@@ -181,7 +189,7 @@ def _ask(monkeypatch, answer, question="What was Apple's revenue in FY2024?"):
     _standing_in(monkeypatch)
     monkeypatch.setattr(FakeStack, "answer",
                         lambda self, question, **overrides: answer(question, **overrides))
-    ui = AppTest.from_string(APP, default_timeout=30).run()
+    ui = AppTest.from_file(APP, default_timeout=30).run()
     ui.text_input[0].set_value(question).run()
     ui.button[0].click().run()
     assert not ui.exception
@@ -215,7 +223,7 @@ def test_live_app_replaces_the_streamed_prose_with_the_checked_answer(monkeypatc
 def test_live_app_leaves_no_half_answer_above_a_provider_error(monkeypatch):
     def answer(question, *args, on_token, **kwargs):
         on_token("Example revenue ")
-        raise app_module.ProviderUnavailable("The model stopped answering")
+        raise ProviderUnavailable("The model stopped answering")
 
     ui = _ask(monkeypatch, answer)
     assert "The model stopped answering" in ui.error[0].value
@@ -223,24 +231,33 @@ def test_live_app_leaves_no_half_answer_above_a_provider_error(monkeypatch):
     assert not ui.get("html")
 
 
-def test_live_app_says_under_the_answer_how_the_question_was_read(monkeypatch):
+def _trace(ui):
+    """The trace's steps, and every line written inside them.
+
+    AppTest lists an expander drawn as a timeline step under ``status``.
+    """
+    return ([step.label for step in ui.main.status],
+            [caption.value for step in ui.main.status for caption in step.caption])
+
+
+def test_live_app_says_in_the_trace_how_the_question_was_read(monkeypatch):
     ui = _ask(monkeypatch, lambda question, *args, **kwargs: sample_answer(question))
-    assert ui.main.caption[-1].value == (
-        "Question type: numeric · Companies: AAPL · Fiscal years: FY2024")
+    steps, lines = _trace(ui)
+    assert steps[0] == "Read as: numeric question"
+    assert lines[:3] == ["Question type: numeric", "Companies: AAPL", "Fiscal years: FY2024"]
     # In the scope the sidebar ends up with, which is what gets searched.
     ui.sidebar.multiselect[0].set_value(["MSFT"]).run()
     ui.button[0].click().run()
     assert not ui.exception
-    assert ui.main.caption[-1].value == (
-        "Question type: numeric · Companies: MSFT · Fiscal years: FY2024")
+    assert _trace(ui)[1][:3] == [
+        "Question type: numeric", "Companies: MSFT", "Fiscal years: FY2024"]
 
 
 def test_live_app_names_the_filings_a_split_question_was_searched_in(monkeypatch):
     ui = _ask(monkeypatch, lambda question, *args, **kwargs: replace(
         sample_answer(question), sub_questions=("AAPL FY2024", "MSFT FY2024")),
         question="Compare Apple and Microsoft's revenue in FY2024")
-    assert ui.main.caption[-1].value.endswith(
-        " · Searched one filing at a time: AAPL FY2024, MSFT FY2024")
+    assert "Searched one filing at a time: AAPL FY2024, MSFT FY2024" in _trace(ui)[1]
 
 
 def test_live_app_searches_with_hybrid_unless_another_row_is_chosen(monkeypatch):
@@ -248,10 +265,128 @@ def test_live_app_searches_with_hybrid_unless_another_row_is_chosen(monkeypatch)
     # best with (README, "How often the answers are right"), so a change of
     # DEFAULT_STACK to a BM25 row has to be made on purpose.
     built = _standing_in(monkeypatch)
-    ui = AppTest.from_string(APP).run(timeout=30)
+    ui = AppTest.from_file(APP).run(timeout=30)
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.button[0].click().run()
     ui.sidebar.selectbox[0].set_value("C1").run()
     ui.button[0].click().run()
     assert not ui.exception
     assert [stack.config.retriever for stack in built.values()] == ["hybrid", "bm25"]
+
+
+# --- the Ask page (#38) ----------------------------------------------------------
+
+def _badges(ui):
+    """The line of resolved filters under the question box, as it is written."""
+    return [text.value for text in ui.main.markdown if "Searching" in text.value]
+
+
+def _summary(ui):
+    """The badges of the row above an answer. AppTest lists a badge as markdown."""
+    return [text.value for text in ui.main.markdown if text.value.startswith(":")
+            and "Searching" not in text.value]
+
+
+def test_ask_page_shows_the_filters_a_question_resolved_to_before_it_is_asked(monkeypatch):
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not _badges(ui)                      # nothing to search for yet
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024, Item 7?").run()
+    assert not ui.exception
+    line = _badges(ui)[0]
+    for badge in (":blue-badge[AAPL]", ":blue-badge[FY2024]", ":blue-badge[Item 7]",
+                  ":violet-badge[numeric question]"):
+        assert badge in line
+    assert not built                            # shown without building or asking anything
+    # A filter cleared by hand reads as searching everything, not as nothing.
+    ui.sidebar.multiselect[0].set_value([]).run()
+    assert ":gray-badge[every company]" in _badges(ui)[0]
+
+
+def test_ask_page_shows_no_filters_for_a_row_that_applies_none(monkeypatch):
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.sidebar.selectbox[0].set_value("C3").run()
+    assert ":gray-badge[every company]" in _badges(ui)[0]
+    assert ":blue-badge[AAPL]" not in _badges(ui)[0]
+
+
+def test_ask_page_lists_the_passages_an_answer_was_written_from(monkeypatch):
+    ui = _ask(monkeypatch, lambda question, *args, **kwargs: sample_answer(question))
+    steps, _ = _trace(ui)
+    assert steps == [
+        "Read as: numeric question",
+        "Found 1 passage in 1 filing with hybrid retrieval, 1 cited",
+        "Written by test",
+        "Checked: 1 supported, 1 mismatch",
+    ]
+    passages = ui.main.dataframe[0].value
+    assert list(passages["Source"]) == ["[1]"]
+    assert list(passages["Chunk"]) == ["test-passage"]
+    assert bool(passages["Cited"][0])
+    # Above the answer: the outcome, the configuration and what wrote it.
+    assert _summary(ui) == [
+        ":green-badge[:material/check_circle: Answered]",
+        f":gray-badge[:material/tune: {DEFAULT_STACK} · {stack_config(DEFAULT_STACK).name}]",
+        ":gray-badge[:material/edit_note: test (ollama)]",
+    ]
+    assert [heading.value for heading in ui.main.subheader] == ["Answer", "Retrieval trace"]
+
+
+def test_ask_page_states_an_abstention_and_still_shows_its_trace(monkeypatch):
+    def declined(question, *args, **kwargs):
+        return replace(sample_answer(question), text=ABSTAIN_PHRASE, abstained=True,
+                       abstention_reason="model_declined", sentences=(), citations=(),
+                       verification=None)
+
+    ui = _ask(monkeypatch, declined)
+    assert _summary(ui)[0] == ":orange-badge[:material/do_not_disturb_on: No answer]"
+    assert ui.warning[0].value.startswith("**No answer from the filings.**")
+    assert "does not support an answer" in ui.warning[0].value
+    assert not ui.get("html")                   # no empty card under it
+    steps, _ = _trace(ui)
+    assert steps[1].startswith("Found 1 passage")
+    assert steps[2] == "test found no answer in the passages"
+
+
+def test_ask_page_says_a_refused_question_was_not_searched(monkeypatch):
+    def refused(question, *args, **kwargs):
+        return replace(sample_answer(question), text=ABSTAIN_PHRASE, abstained=True,
+                       abstention_reason="beyond_the_filings", sentences=(), citations=(),
+                       passages=(), verification=None)
+
+    ui = _ask(monkeypatch, refused, question="Should I buy Apple stock?")
+    assert "gives no advice" in ui.warning[0].value
+    steps, _ = _trace(ui)
+    assert steps[1:3] == ["Not searched: no filing could answer this", "No model was asked"]
+    assert not ui.main.dataframe
+    # Nothing wrote it, so the row above names no model.
+    assert len(_summary(ui)) == 2
+
+
+def test_ask_with_no_question_asks_nothing(monkeypatch):
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui.button[0].click().run()
+    assert not ui.exception and not built
+    assert any("Type a question first" in caption.value for caption in ui.main.caption)
+
+
+def test_the_app_starts_from_its_file_without_the_project_on_the_path():
+    # ``streamlit run src/app/main.py`` puts src/app on sys.path, not the
+    # project root, and the app then failed on its first ``import src``.
+    import subprocess
+    import sys
+
+    script = (
+        "import runpy, sys;"
+        f"sys.path[:] = [p for p in sys.path if p not in ('', {str(PROJECT_ROOT)!r})];"
+        "import streamlit as st;"
+        "st.navigation = lambda pages: type('P', (), {'run': lambda self: None})();"
+        f"runpy.run_path({APP!r}, run_name='__main__');"
+        "import src.app.state"
+    )
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                          cwd=PROJECT_ROOT.parent)
+    assert done.returncode == 0, done.stderr[-600:]

@@ -11,8 +11,9 @@ from dataclasses import replace
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import src.app.app as app_module
 import src.app.state as state_module
+import src.rag.verify as verify_module
+from src.config import PROJECT_ROOT
 from src.app.state import Remembered, Stopwatch
 from src.rag.generate import ProviderUnavailable
 from src.retrieval.constants import FINAL_K
@@ -21,7 +22,7 @@ from src.stack import DEFAULT_STACK, stack_config
 from tests.sample_answers import sample_answer
 
 
-APP = "from src.app.app import main\nmain()"
+APP = str(PROJECT_ROOT / "src" / "app" / "main.py")
 QUESTION = "What was Apple's revenue in FY2024?"
 # How long a test waits on a thread before calling it stuck.
 WAIT = 10
@@ -267,12 +268,12 @@ def built(monkeypatch):
         stacks[config_id] = CountingStack(stack_config(config_id))
         return stacks[config_id]
 
-    monkeypatch.setattr(app_module, "build_stack", build_stack)
-    monkeypatch.setattr(app_module, "measured", lambda: [])
-    monkeypatch.setattr(app_module, "verify_answer", lambda answer, *, parsed: answer)
-    app_module.load_stack.clear()
+    monkeypatch.setattr(state_module, "build_stack", build_stack)
+    monkeypatch.setattr(state_module, "measured", lambda: [])
+    monkeypatch.setattr(verify_module, "verify_answer", lambda answer, *, parsed: answer)
+    state_module.load_stack.clear()
     yield stacks
-    app_module.load_stack.clear()
+    state_module.load_stack.clear()
 
 
 def _timing_lines(ui):
@@ -281,7 +282,7 @@ def _timing_lines(ui):
 
 
 def _ask(question=QUESTION):
-    ui = AppTest.from_string(APP, default_timeout=30).run()
+    ui = AppTest.from_file(APP, default_timeout=30).run()
     ui.text_input[0].set_value(question).run()
     ui.button[0].click().run()
     assert not ui.exception
@@ -319,14 +320,14 @@ def test_live_app_asks_for_the_passages_the_generator_is_given(built):
 
 
 def test_live_app_asks_again_after_a_failure(built, monkeypatch):
-    build_stack = app_module.build_stack
+    build_stack = state_module.build_stack
 
     def failing_once(config_id, **kwargs):
         stack = build_stack(config_id, **kwargs)
         stack.failures.append(ProviderUnavailable("The model stopped answering"))
         return stack
 
-    monkeypatch.setattr(app_module, "build_stack", failing_once)
+    monkeypatch.setattr(state_module, "build_stack", failing_once)
     ui = _ask()
     assert "The model stopped answering" in ui.error[0].value
     assert not ui.get("html") and not _timing_lines(ui)

@@ -4,7 +4,7 @@ Issue #36 asks for the app's first load to be measured apart from the queries
 after it. Start the app in a new process:
 
 ```powershell
-python -m streamlit run src/app/app.py
+streamlit run src/app/main.py
 ```
 
 ## What the app keeps
@@ -37,10 +37,11 @@ loading the indexes and the embedding model.
 ## Measured
 
 On one laptop (Intel i5-1135G7, 16 GB RAM, no GPU use), on 3 Oct 2026, on the
-full 15-company index of 28,289 passages. Each step ran `src/app/app.py` in a
-new Python process through Streamlit's `AppTest`, which runs the script as a
-browser session does, and each time is the app's own "Query completed in"
-line. The first Ask was measured twice.
+full 15-company index of 28,289 passages. Each step ran the app's entry point
+(`src/app/app.py` at the time, now `src/app/main.py`) in a new Python process
+through Streamlit's `AppTest`, which runs the script as a browser session
+does, and each time is the app's own "Query completed in" line. The first Ask
+was measured twice.
 
 The questions were ones the facts store answers ("What was Apple's total
 revenue in FY2024?"), so no model was asked. The times are the indexes, the
