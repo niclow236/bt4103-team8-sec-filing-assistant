@@ -8,6 +8,7 @@ tests stand in a built ``Stack`` rather than patching the RAG entry point.
 from dataclasses import dataclass, replace
 from typing import Any
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import src.app.state as state_module
@@ -459,19 +460,104 @@ def test_a_mistyped_provider_in_env_is_said_and_does_not_stop_the_page(monkeypat
     assert built[DEFAULT_STACK].loaded_for == ["ollama"]
 
 
-def test_picking_mistral_without_a_key_says_so_before_anything_is_loaded(monkeypatch):
-    # Through the app's own load_stack: the key is checked when the stack is
-    # built, ahead of the indexes, so this reads none.
+class _OnePassage:
+    """A retriever that finds the sample answer's passage, whatever is asked."""
+
+    name = "stub"
+
+    def search(self, query, k=None):
+        return list(sample_answer("q").passages)
+
+
+@pytest.fixture
+def own_stack(monkeypatch):
+    """The app's own ``load_stack`` and ``build_stack`` over a stub retriever.
+
+    No index is read, and whether a chat model is built, and when, is the
+    code's own decision. ``load_stack`` keeps what it builds for the process,
+    so it is emptied before and after.
+    """
+    build_stack = state_module.build_stack
+    monkeypatch.setattr(
+        state_module, "build_stack",
+        lambda config_id, **kwargs: build_stack(config_id, retriever=_OnePassage(), **kwargs))
     monkeypatch.setattr(state_module, "measured", lambda: [])
+    monkeypatch.setattr(verify_module, "verify_answer", lambda answer, *, parsed: answer)
     state_module.load_stack.clear()
+    yield
+    state_module.load_stack.clear()
+
+
+def _ask_mistral(question):
+    """Ask with Mistral picked. The suite gives it no key."""
     ui = AppTest.from_file(APP, default_timeout=30).run()
     ui.sidebar.button_group[0].set_value("mistral").run()
-    ui.text_input[0].set_value("What risks does Apple describe in its FY2024 10-K?").run()
+    ui.text_input[0].set_value(question).run()
     ui.button[0].click().run()
-    state_module.load_stack.clear()
     assert not ui.exception
+    return ui
+
+
+def test_a_figure_from_the_facts_store_needs_no_key_for_the_provider_picked(
+        own_stack, monkeypatch):
+    # The stack built its chat model before the question was read. So with
+    # Mistral picked and no key every Ask was refused, a figure the facts
+    # store looks up with no model among them (review of #119).
+    import src.rag.answer as answer_module
+    from src.rag.constants import FACTS_PROVIDER, FACTS_SOURCE, FACTS_TEMPLATE_ID
+
+    def looked_up(question, tickers, fiscal_years, retriever, **kwargs):
+        return replace(sample_answer(question), config=GenerationConfig(
+            FACTS_PROVIDER, FACTS_SOURCE, FACTS_TEMPLATE_ID))
+
+    monkeypatch.setattr(answer_module, "answer_from_facts", looked_up)
+    ui = _ask_mistral("What was Apple's revenue in FY2024?")
+    assert not ui.error
+    assert len(ui.get("html")) == 1
+    assert ":gray-badge[:material/edit_note: facts store, no model]" in _summary(ui)
+
+
+def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_stack):
+    # The same error as before, raised now where a model is first needed.
+    ui = _ask_mistral("What risks does Apple describe in its FY2024 10-K?")
     assert "MISTRAL_API_KEY is not set" in ui.error[0].value
-    assert not ui.get("html") and not ui.main.status
+    assert not ui.get("html") and not ui.main.status and not ui.text
+
+
+def test_a_failed_ask_is_not_followed_by_the_line_for_a_changed_question(monkeypatch):
+    # An older answer is kept for another question. Under the error of an Ask
+    # that had just failed, "the question changed, select Ask" read as its cause.
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    assert len(ui.get("html")) == 1
+
+    def fails(self, question, **overrides):
+        raise ProviderUnavailable("The model stopped answering")
+
+    monkeypatch.setattr(FakeStack, "answer", fails)
+    ui.text_input[0].set_value("What risks does Apple describe in its FY2024 10-K?").run()
+    assert ui.info and not ui.get("html")       # not asked yet, and the old answer is hidden
+    ui.button[0].click().run()
+    assert "The model stopped answering" in ui.error[0].value
+    assert not ui.info
+
+
+def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypatch):
+    # Not when Ask is pressed: by then the indexes have been read for nothing.
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.sidebar.warning                      # Ollama needs no key
+    ui.sidebar.button_group[0].set_value("mistral").run()
+    said = ui.sidebar.warning[0].value
+    assert said.startswith("Mistral cannot write an answer yet: ")
+    assert "MISTRAL_API_KEY is not set" in said
+    assert said.endswith("A figure the facts store holds is still answered.")
+    # A key that arrives is seen on the next rerun, with no restart.
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    ui.run()
+    assert not ui.exception and not ui.sidebar.warning
 
 
 # --- Streamlit's file watcher and a library's lazy modules ----------------------

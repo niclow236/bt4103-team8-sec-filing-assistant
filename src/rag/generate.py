@@ -359,7 +359,7 @@ def chat_model(
     For Ollama, the server is ``base_url``, else ``LLM_BASE_URL`` from the
     environment or .env, else Ollama's default address. ``LLM_NUM_GPU``, when
     set, says how many layers go on the GPU; see ``constants.LLM_NUM_GPU_ENV``
-    for when to set it. For Mistral, see :func:`_mistral_model`, which refuses
+    for when to set it. For Mistral, see :func:`_mistral_settings`, which refuses
     ``base_url``, since Mistral's address comes from ``MISTRAL_BASE_URL``. The
     settings are read as :func:`config_from_env` reads them: the process
     environment with ``dotenv`` loaded into it, or ``environ`` in place of both.
@@ -373,32 +373,63 @@ def chat_model(
     return _provider(config).build(config, base_url, _environment(environ, dotenv))
 
 
-def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
-    """``ChatOllama`` for the config, on the server :func:`chat_model` describes."""
-    from langchain_ollama import ChatOllama
+def check_provider(
+    config: GenerationConfig,
+    *,
+    base_url: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    dotenv: Path = ENV_FILE,
+) -> None:
+    """Refuse the settings :func:`chat_model` would refuse, and build nothing.
 
+    For a caller that has to say early that a provider cannot answer, and may
+    never need its client. The app offers both providers and builds a chat
+    model only when an answer needs one, since a figure looked up in the facts
+    store needs none; it says beside the provider picked that its key is
+    missing, before a question is asked. That check runs on every rerun of the
+    page, and building ``ChatOllama`` to make it took 0.8 s to import its
+    library and 16 ms and two HTTP clients each time after.
+
+    Each provider checks its settings in one function, which this and its
+    ``build`` both call, so what is refused here is what :func:`chat_model`
+    refuses, with the same words. What only a request can show is not checked:
+    a server that is not running, a key the API refuses.
+    """
+    _provider(config).settings(config, base_url, _environment(environ, dotenv))
+
+
+def _ollama_settings(
+    config: GenerationConfig, base_url: str | None, env: Mapping[str, str],
+) -> dict[str, Any]:
+    """What ``ChatOllama`` is built with, on the server :func:`chat_model` describes."""
     if base_url is None:
         base_url = (env.get(LLM_BASE_URL_ENV) or "").strip() or DEFAULT_OLLAMA_URL
     layers = (env.get(LLM_NUM_GPU_ENV) or "").strip()
     if layers and not layers.isdigit():
         raise ValueError(f"{LLM_NUM_GPU_ENV} must be a whole number of layers, got {layers!r}")
-    return ChatOllama(
-        model=config.model,
-        base_url=base_url.rstrip("/"),
-        num_gpu=int(layers) if layers else None,
-        client_kwargs={"timeout": GENERATION_TIMEOUT_S},
-    )
+    return {
+        "model": config.model,
+        "base_url": base_url.rstrip("/"),
+        "num_gpu": int(layers) if layers else None,
+        "client_kwargs": {"timeout": GENERATION_TIMEOUT_S},
+    }
 
 
-def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
-    """``ChatMistralAI`` for the config, with the key from the environment or .env.
+def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
+    """``ChatOllama`` for the config, with the settings :func:`_ollama_settings` read."""
+    from langchain_ollama import ChatOllama
+
+    return ChatOllama(**_ollama_settings(config, base_url, env))
+
+
+def _mistral_settings(
+    config: GenerationConfig, base_url: str | None, env: Mapping[str, str],
+) -> tuple[str, str, str]:
+    """What ``ChatMistralAI`` is built with: the model, the key and the address.
 
     The key is each teammate's own, from their own Mistral account, so a missing
     one is refused here, with where to make one, rather than on the first request,
-    where the API would only answer 401. The same model, key and address get the
-    same client back, so a run of questions reuses one connection to the API
-    rather than opening two new HTTP clients, and a new TLS handshake inside the
-    measured latency, for every question.
+    where the API would only answer 401.
 
     ``base_url`` is refused rather than ignored: it is the Ollama server's
     address, and a caller that passes one expects its requests to go there.
@@ -421,7 +452,18 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[
     # ``environ`` is not passed over for the process's own MISTRAL_BASE_URL,
     # which ChatMistralAI reads when it is given none.
     address = (env.get(MISTRAL_BASE_URL_ENV) or "").strip() or MISTRAL_API_URL
-    return _mistral_client(config.model, key, address)
+    return config.model, key, address
+
+
+def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
+    """``ChatMistralAI`` for the config, with the key from the environment or .env.
+
+    The same model, key and address get the same client back, so a run of
+    questions reuses one connection to the API rather than opening two new HTTP
+    clients, and a new TLS handshake inside the measured latency, for every
+    question.
+    """
+    return _mistral_client(*_mistral_settings(config, base_url, env))
 
 
 @lru_cache(maxsize=8)
@@ -899,6 +941,8 @@ class _Provider:
 
     ``package`` is the LangChain package its chat model comes from; ``build``
     makes that model for a config, from the settings :func:`chat_model` read;
+    ``settings`` checks those settings and returns what ``build`` builds with,
+    building nothing itself, which is all :func:`check_provider` runs;
     ``request`` is what goes with the messages;
     ``unavailable`` turns the client's error into a ``ProviderUnavailable``, or
     None to let it through; ``stop_reason`` reads why the answer ended, from the
@@ -908,16 +952,17 @@ class _Provider:
 
     package: str
     build: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
+    settings: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
     request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
     unavailable: Callable[[Exception, Any, GenerationConfig], ProviderUnavailable | None]
     stop_reason: Callable[[Mapping[str, Any], GenerationConfig, bool], str | None]
 
 
 _PROVIDERS = {
-    OLLAMA: _Provider("langchain_ollama", _ollama_model, _ollama_request,
+    OLLAMA: _Provider("langchain_ollama", _ollama_model, _ollama_settings, _ollama_request,
                       _ollama_unavailable, _ollama_stop_reason),
-    MISTRAL: _Provider("langchain_mistralai", _mistral_model, _mistral_request,
-                       _mistral_unavailable, _mistral_stop_reason),
+    MISTRAL: _Provider("langchain_mistralai", _mistral_model, _mistral_settings,
+                       _mistral_request, _mistral_unavailable, _mistral_stop_reason),
 }
 _PACKAGES = frozenset(provider.package for provider in _PROVIDERS.values())
 

@@ -7,8 +7,8 @@ no page holds a cache of its own:
 - for the process, with ``st.cache_resource``: the indexes and the embedding
   model (``_indexes``) and each built configuration (``load_stack``), and with
   ``st.cache_data`` the runs under ``results/`` (``measured``);
-- from ``.env``, read on every rerun: the providers a page can offer and the
-  one it opens on (``answer_models``);
+- from ``.env``, read on every rerun: the providers a page can offer, the one
+  it opens on, and what any of them lacks (``answer_models``);
 - for the process, per configuration: the answer a repeated question was
   given (``Remembered``);
 - for one browser session: the answer a page is showing and the request it
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 import streamlit as st
 
 from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
-from src.rag.generate import config_from_env
+from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
 from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
@@ -69,9 +69,16 @@ def load_stack(config_id: str, provider: str | None = None) -> Remembered:
     names. It is cached on too, so a page that offers both builds each once.
     They share the indexes, and each remembers its own answers, so an answer
     one provider wrote is never shown as the other's.
+
+    The chat model is not built here. ``generate`` builds it when an answer
+    first needs one, because not every answer does: built here, a figure the
+    facts store could look up was refused for the key of a provider that
+    would never have been asked. What a provider lacks is said before a
+    question is asked instead, by ``answer_models``.
     """
     # Remembered, so a repeated demo question is answered once (#36).
-    return Remembered(build_stack(config_id, provider=provider, parts=_indexes()))
+    return Remembered(
+        build_stack(config_id, provider=provider, parts=_indexes(), defer_llm=True))
 
 
 @dataclass(frozen=True)
@@ -81,6 +88,9 @@ class AnswerModels:
     # Provider to the model it would answer with, in the order they are offered.
     models: dict[str, str]
     default: str                   # the provider ``.env`` names, which a page opens on
+    # Provider to why it could not write an answer as things stand, in its own
+    # words: a missing key, a setting it cannot read. Absent where it could.
+    unready: dict[str, str]
     problem: str | None = None     # why ``.env``'s own choice could not be used, if it could not
 
 
@@ -96,12 +106,24 @@ def answer_models() -> AnswerModels:
     A mistyped ``LLM_PROVIDER`` is not an error here. A page can still be
     asked with the provider picked by hand, so it opens on the default one and
     ``problem`` says what was wrong with the setting.
+
+    ``unready`` is what each provider's own check refuses, asked of its
+    settings alone (``check_provider``): no client is built and nothing is
+    sent. A provider that is not ready can still be picked, since a question
+    the facts store answers asks no model.
     """
-    models = {provider: config_from_env(provider=provider).model for provider in PROVIDERS}
+    models, unready = {}, {}
+    for provider in PROVIDERS:
+        config = config_from_env(provider=provider)
+        models[provider] = config.model
+        try:
+            check_provider(config)
+        except (ProviderUnavailable, ValueError) as error:
+            unready[provider] = str(error)
     try:
-        return AnswerModels(models, config_from_env().provider)
+        return AnswerModels(models, config_from_env().provider, unready)
     except ValueError as error:
-        return AnswerModels(models, DEFAULT_PROVIDER, str(error))
+        return AnswerModels(models, DEFAULT_PROVIDER, unready, str(error))
 
 
 @st.cache_data(show_spinner=False)

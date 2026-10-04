@@ -41,6 +41,7 @@ from src.rag.generate import (
     _prose,
     _text,
     chat_model,
+    check_provider,
     config_from_env,
     generate,
     stream,
@@ -493,6 +494,40 @@ def test_a_missing_key_says_where_to_make_one(tmp_path, values):
     with pytest.raises(ProviderUnavailable, match="console.mistral.ai.*then restart the notebook "
                                                   "or command so the key is read"):
         chat_model(_mistral_config(), dotenv=_dotenv(tmp_path, **values))
+
+
+@pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
+def test_the_check_refuses_a_missing_key_in_the_words_the_build_does(tmp_path, values):
+    # One function reads each provider's settings, for the check and the build,
+    # so the app's warning beside a provider is the error an Ask would give.
+    path = _dotenv(tmp_path, **values)
+    with pytest.raises(ProviderUnavailable) as built:
+        chat_model(_mistral_config(), dotenv=path)
+    with pytest.raises(ProviderUnavailable) as checked:
+        check_provider(_mistral_config(), dotenv=path)
+    assert str(checked.value) == str(built.value)
+
+
+def test_the_check_reads_the_settings_and_builds_no_client(tmp_path, monkeypatch):
+    # It runs on every rerun of the app's page. Building ChatOllama to make it
+    # opened two HTTP clients each time.
+    from src.rag.generate import _mistral_client
+
+    monkeypatch.setattr("langchain_ollama.ChatOllama",
+                        lambda **settings: pytest.fail("the check built ChatOllama"))
+    assert check_provider(_config(), dotenv=_dotenv(tmp_path, LLM_NUM_GPU="0")) is None
+    assert check_provider(_mistral_config(), environ={"MISTRAL_API_KEY": "test-key"}) is None
+    assert _mistral_client.cache_info().currsize == 0
+
+
+def test_the_check_refuses_every_setting_the_build_refuses(tmp_path):
+    with pytest.raises(ValueError, match="LLM_NUM_GPU must be a whole number"):
+        check_provider(_config(), dotenv=_dotenv(tmp_path, LLM_NUM_GPU="none"))
+    with pytest.raises(ValueError, match="MISTRAL_BASE_URL"):
+        check_provider(_mistral_config(), base_url="http://proxy:8080/v1",
+                       environ={"MISTRAL_API_KEY": "test-key"})
+    with pytest.raises(ProviderUnavailable, match="LLM_PROVIDER to one of ollama, mistral"):
+        check_provider(_config(provider="anthropic"))
 
 
 def test_a_key_added_to_the_dotenv_file_after_the_error_is_read(tmp_path):

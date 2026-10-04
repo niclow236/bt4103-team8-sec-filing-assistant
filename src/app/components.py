@@ -290,16 +290,22 @@ _PROVIDERS = {
 }
 
 
-def provider_picker(models: Mapping[str, str], default: str, *, problem: str | None = None,
+def provider_picker(models: Mapping[str, str], default: str, *,
+                    unready: Mapping[str, str] | None = None, problem: str | None = None,
                     key: str = "provider") -> str:
     """Pick what writes the answers, in the sidebar: the local model or the hosted one.
 
-    ``models`` is each provider with the model it would answer with, and
-    ``default`` the provider the page opens on, both from
+    ``models`` is each provider with the model it would answer with,
+    ``default`` the provider the page opens on, and ``unready`` each provider
+    that could not answer as things stand with why, all from
     ``state.answer_models``. The choice lasts for the browser session and
-    changes nothing in ``.env``. ``problem`` is shown under it: what was wrong
-    with ``.env``'s own choice, where it could not be used. Returns the
-    provider picked.
+    changes nothing in ``.env``.
+
+    Two things are said under it, as soon as they are true and not when Ask
+    is pressed: what the provider picked lacks, and ``problem``, what was
+    wrong with ``.env``'s own choice. A provider that lacks something can
+    still be picked: a figure the facts store looks up asks no model.
+    Returns the provider picked.
     """
     with st.sidebar:
         provider = st.segmented_control(
@@ -310,6 +316,11 @@ def provider_picker(models: Mapping[str, str], default: str, *, problem: str | N
                  "other one answers with its default.",
         )
         st.caption(f"{models[provider]}, {_PROVIDERS[provider][1]}")
+        lacks = (unready or {}).get(provider)
+        if lacks:
+            st.warning(f"{_PROVIDERS[provider][0]} cannot write an answer yet: {lacks}. "
+                       "A figure the facts store holds is still answered.",
+                       icon=":material/key_off:")
         if problem:
             st.warning(problem)
     return provider

@@ -43,7 +43,8 @@ question = question.strip()
 parsed = parse_question(question) if question else None
 query = filter_sidebar(question, parsed=parsed)
 available = state.answer_models()
-provider = provider_picker(available.models, available.default, problem=available.problem)
+provider = provider_picker(available.models, available.default,
+                           unready=available.unready, problem=available.problem)
 config_id = configuration_picker(dict(state.measured()))
 config = STACKS[config_id]
 
@@ -90,6 +91,7 @@ if shown is not None:
     answer_card(shown.answer, key="ask-answer", show_question=False)
     st.subheader("Retrieval trace", anchor=False)
     retrieval_trace(shown.answer, scoped, config, key="ask-trace")
-elif state.has_kept(PAGE) and question:
+elif state.has_kept(PAGE) and question and not asked:
+    # Not under an Ask that has just failed: there it read as the reason.
     st.info("The question, the filters or a setting changed. Select Ask to refresh the answer.",
             icon=":material/refresh:")

@@ -18,7 +18,9 @@ keeps three things outside it, for as long as the process runs:
   (`_indexes`), so picking another row does not load them again.
 - The provider and model, which are read when a configuration is built. The
   sidebar's Answer model box picks the provider and opens on the one `.env`
-  names; each provider picked is built once and shares the indexes.
+  names; each provider picked is built once and shares the indexes. The chat
+  model itself is built when an answer first needs one, so a figure the facts
+  store looks up loads no model client.
 - The answers. A question asked again with the same filters under the same
   configuration is given the answer it was given before, with no search and no
   model call, in the same browser session or another (`src/app/state.py`). A

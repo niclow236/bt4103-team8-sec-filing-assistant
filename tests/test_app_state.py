@@ -359,6 +359,8 @@ def test_each_provider_is_built_once_over_the_same_indexes(built):
     assert hosted is not local and hosted_stack is not local_stack
     assert (local_stack.built_with["provider"], hosted_stack.built_with["provider"]) == (
         "ollama", "mistral")
+    # Neither builds its chat model with the stack: an answer that needs one does.
+    assert local_stack.built_with["defer_llm"] and hosted_stack.built_with["defer_llm"]
     assert hosted_stack.built_with["parts"] is local_stack.built_with["parts"]
     assert state_module.load_stack(DEFAULT_STACK, "ollama") is local
     # Each remembers its own answers: one provider's is never given as the other's.
@@ -368,14 +370,31 @@ def test_each_provider_is_built_once_over_the_same_indexes(built):
 
 
 def test_answer_models_reads_what_env_selects(monkeypatch):
-    assert state_module.answer_models() == state_module.AnswerModels(
-        {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}, "ollama")
+    found = state_module.answer_models()
+    assert (found.models, found.default, found.problem) == (
+        {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}, "ollama", None)
     monkeypatch.setenv("LLM_PROVIDER", "mistral")
     monkeypatch.setenv("LLM_MODEL", "mistral-small-2506")
-    assert state_module.answer_models() == state_module.AnswerModels(
-        {"ollama": "llama3.2:3b", "mistral": "mistral-small-2506"}, "mistral")
+    found = state_module.answer_models()
+    assert (found.models, found.default, found.problem) == (
+        {"ollama": "llama3.2:3b", "mistral": "mistral-small-2506"}, "mistral", None)
     monkeypatch.setenv("LLM_PROVIDER", "mistrl")
     unknown = state_module.answer_models()
     assert unknown.default == "ollama" and "got 'mistrl'" in unknown.problem
     # The model was named for a provider that does not exist, so neither gets it.
     assert unknown.models == {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}
+
+
+def test_answer_models_says_what_each_provider_lacks_and_builds_no_client(monkeypatch):
+    # Read on every rerun of a page, so it asks each provider's settings and
+    # nothing else: no client library imported, no client built.
+    from src.rag.generate import _mistral_client
+
+    lacks = state_module.answer_models().unready
+    assert list(lacks) == ["mistral"] and "MISTRAL_API_KEY is not set" in lacks["mistral"]
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    assert state_module.answer_models().unready == {}
+    monkeypatch.setenv("LLM_NUM_GPU", "many")
+    lacks = state_module.answer_models().unready
+    assert list(lacks) == ["ollama"] and "LLM_NUM_GPU must be a whole number" in lacks["ollama"]
+    assert _mistral_client.cache_info().currsize == 0

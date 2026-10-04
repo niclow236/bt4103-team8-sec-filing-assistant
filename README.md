@@ -1824,8 +1824,15 @@ It opens on the provider `.env` names (`LLM_PROVIDER`, which unset means
 Ollama), and switching it lasts for the browser session and changes nothing
 in `.env`. Before this box the provider was `.env`'s alone to choose, so a
 `.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
-model, minutes at a time, with nothing on the page to say so. A figure
-question the facts store answers needs neither.
+model, minutes at a time, with nothing on the page to say so.
+
+A figure question the facts store answers needs neither provider, whichever
+is picked: the chat model is built when an answer first needs one, not when
+the configuration is loaded. So Mistral with no key still answers "What was
+Apple's total revenue in FY2024?", and a question that does need the model
+fails with the provider's own message. The box does not wait for that. As
+soon as a provider that cannot answer is picked, it says under it what the
+provider lacks, in the words the error would use.
 An explicit Item filter is enforced for numeric questions too. When the
 question, the filters, the configuration or the answer model change, the app
 hides the prior answer until Ask is pressed again. While a model is answering, its prose is written to the page as it
@@ -1873,9 +1880,11 @@ pieces from #38.
   words as the sidebar's own "Searching:" line.
 - `configuration_picker(runs)` is the sidebar's Configuration box, and returns
   the id picked. `runs` is `dict(state.measured())`.
-- `provider_picker(models, default)` is the sidebar's Answer model box, and
-  returns the provider picked, to pass to `state.load_stack(config_id,
-  provider)`. Both arguments come from `state.answer_models()`.
+- `provider_picker(models, default, unready=...)` is the sidebar's Answer
+  model box, and returns the provider picked, to pass to
+  `state.load_stack(config_id, provider)`. Its arguments come from
+  `state.answer_models()`, which asks each provider's settings what it lacks
+  with `check_provider` and builds no client to do it.
 - `answer_summary(answer, config, seconds)` is the row above an answer.
 - `abstention_notice(answer)` states an abstention. `answer_card` calls it for
   an abstained answer, so a page does not have to. `answer_card_html` is for
