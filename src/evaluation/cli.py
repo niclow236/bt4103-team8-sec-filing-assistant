@@ -1,8 +1,9 @@
-"""Evaluate one retrieval/generation configuration and report abstention rates."""
+"""Evaluate answers, citations, abstention and query latency/API cost."""
 
 import argparse
 import json
 import sys
+from dataclasses import replace
 from math import isfinite
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from src.rag.constants import LLM_MODEL_ENV, LLM_PROVIDER_ENV, PROVIDERS
 from src.stack import DEFAULT_STACK, RETRIEVERS, SELECTABLE, build_stack
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate
+from .quality import LLMJudge, RUBRIC_ID, TokenPrices
 
 
 def _for_this_command(message: str) -> str:
@@ -59,6 +61,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output", type=Path, required=True, help="JSON report including rates and answers")
     parser.add_argument("--answers", type=Path, help="Optional answer JSONL for the browser viewer")
+    parser.add_argument("--judge", action="store_true",
+                        help="Score semantic faithfulness and correctness with an extra model call.")
+    parser.add_argument("--judge-model", help="Judge model on the same provider (requires --judge).")
+    for prefix in ("", "judge-"):
+        for direction in ("input", "output"):
+            parser.add_argument(f"--{prefix}{direction}-usd-per-million", type=float,
+                                help="Explicit USD per million tokens; supply both input/output rates.")
     parser.add_argument(
         "--no-facts", dest="use_facts", action="store_const", const=False,
         help="Send every question to retrieval and generation, instead of looking a "
@@ -86,6 +95,24 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--run-id must be non-empty")
     if args.answers and args.answers.resolve() == args.output.resolve():
         parser.error("--output and --answers must name different files")
+    if args.judge_model and not args.judge:
+        parser.error("--judge-model requires --judge")
+
+    def prices(prefix):
+        values = [getattr(args, prefix + direction + "_usd_per_million")
+                  for direction in ("input", "output")]
+        if any(v is not None for v in values):
+            if any(v is None for v in values):
+                parser.error("supply both input and output token prices")
+            try:
+                return TokenPrices(*values)
+            except ValueError as error:
+                parser.error(str(error))
+        return None
+
+    token_prices, judge_prices = prices(""), prices("judge_")
+    if judge_prices is not None and not args.judge:
+        parser.error("judge token prices require --judge")
     # The stack is assembled the one shared way (#43), and before the questions
     # load, so a mistyped LLM_PROVIDER or a missing MISTRAL_API_KEY stops the
     # run at once rather than after the indexes have been read.
@@ -110,12 +137,19 @@ def main(argv: list[str] | None = None) -> None:
     except (ValueError, ProviderUnavailable) as error:
         parser.error(_for_this_command(str(error)))
     questions = load_questions(args.questions, processed_dir=args.processed_dir)
+    judge = None
+    if args.judge:
+        judge_config = replace(stack.generation, model=args.judge_model or stack.generation.model,
+                               prompt_template_id=RUBRIC_ID)
+        judge = LLMJudge(judge_config, llm=None if args.judge_model else stack.llm)
     try:
         report = evaluate(questions, stack.retriever, stack.generation, llm=stack.llm,
                           run_id=args.run_id, min_score=stack.config.min_score,
                           top_k=stack.config.top_k, use_facts=stack.config.use_facts,
                           use_decomposition=stack.config.use_decomposition,
-                          use_refusal=stack.config.use_refusal, stack=stack.config)
+                          use_refusal=stack.config.use_refusal, stack=stack.config,
+                          judge=judge, token_prices=token_prices,
+                          judge_token_prices=judge_prices)
         stopped = None
     except (RunStopped, RunInterrupted) as error:
         # The answers before the question the run stopped at, whether a

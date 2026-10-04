@@ -1963,6 +1963,62 @@ which returns the report. A run that stops part-way raises instead:
 `RunInterrupted`, a `KeyboardInterrupt`, on Ctrl-C. Either carries the report
 of the questions before it on `.report`, as the command writes it.
 
+Answer-quality evaluation (#47) adds `quality`, `latency_ms` and `cost` to
+each result, together with its gold answer and supporting chunk IDs. To score
+semantic faithfulness and correctness, add `--judge`:
+
+```bash
+python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --no-facts \
+  --judge --run-id answer-quality --output logs/answer-quality.json
+```
+
+The judge uses the answering provider/model by default; `--judge-model` selects
+another model on that provider. It makes a separate structured call using the
+versioned `answer-quality-v1` rubric. Faithfulness scores factual claims against
+their own cited passages; correctness compares the response with the gold
+answer, accepting equivalent wording and numeric units. Both scores range from
+0 to 1, with reasons recorded per question. These are model judgements, so
+inspect the reasons and compare with human review before treating them as gold
+labels. Without `--judge`, answered questions have null semantic scores rather
+than treating numeric verification or token overlap as semantic proof.
+Abstention correctness is determined from benchmark answerability (1 on an
+unanswerable question, 0 otherwise), and answering an unanswerable question has
+correctness 0. Faithfulness is null for abstentions because they assert no
+claims. A judge provider failure or invalid response keeps the completed answer
+and records `judge_failed`, its error, and null unscored values. Judge identity,
+rubric and configuration are recorded; judge latency and API cost appear in
+`judge_overhead`, separately from query resources.
+
+Citation precision is the number of correctly cited distinct chunk IDs divided
+by all distinct resolved cited chunk IDs; recall divides by the distinct gold
+chunk IDs. Repeated citations count once, and retrieved but uncited passages do
+not count. Empty denominators produce null, so a question with no gold chunks
+has no citation recall. An answerable abstention has recall 0. Unresolved and
+invalid markers are recorded separately and do not enter resolved-ID precision.
+Thus high precision alone does not certify citation validity or coverage.
+Report `quality` contains macro means and explicit scored/total denominators.
+
+Per-query stage timings include all outer retrieval searches (including facts
+evidence, decomposition and candidate diagnostics), model generation including
+retry waits, and total answer time including verification. `other` holds parsing,
+facts lookup, prompt construction and verification overhead. The current stack
+has no reranker: `rerank` is 0 and `rerank_enabled` is false; hybrid fusion is
+included in retrieval. `Answer.latency_ms` retains its original generation-only
+meaning. Judge calls are excluded from query timing. `resources` reports mean
+stage latency and API costs with known/unknown query counts, including in
+partial reports.
+
+Hosted API cost requires the provider's token counts and explicit current USD
+rates, supplied as `--input-usd-per-million` and `--output-usd-per-million`.
+Supply judge rates separately with `--judge-input-usd-per-million` and
+`--judge-output-usd-per-million`, especially when using a different judge model.
+No rates are hardcoded. Missing prices/usage, or unknown charges from failed
+retry attempts, produce null cost with a reason. Facts, pre-model abstentions
+and Ollama have zero hosted API cost; this does not price hardware or electricity.
+Each cost record includes observed token counts and model call counts.
+Programmatic callers can pass `judge=LLMJudge(config)`, `token_prices=TokenPrices(...)`
+and `judge_token_prices=TokenPrices(...)` from `src.evaluation.quality` to `evaluate`.
+
 `--no-facts` sends every question to retrieval and generation instead of looking
 a numeric one up in the XBRL facts store first, which is the without half of
 that comparison. Each row records the `route` that answered it and the report
