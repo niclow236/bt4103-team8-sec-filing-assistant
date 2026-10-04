@@ -357,6 +357,26 @@ def test_a_busy_provider_is_asked_again_before_it_stops_the_run(monkeypatch, cap
     assert f"1: {busy}; asking again in {RETRY_WAITS_S[0]}s" in caplog.text
 
 
+def test_a_busy_provider_is_asked_again_without_searching_again(monkeypatch):
+    # Only generation failed, so only generation is repeated (#108): the
+    # passages and prompt of the first attempt are the ones asked again.
+    monkeypatch.setattr("src.evaluation.harness.sleep", lambda seconds: None)
+
+    class Counting(StaticRetriever):
+        searches = 0
+
+        def search(self, query, k=None):
+            self.searches += 1
+            return super().search(query, k)
+
+    retriever = Counting([passage()])
+    model = Failing(ProviderBusy("rate limit"), times=1)
+    report = evaluate([question(1)], retriever, CONFIG, run_id="run", llm=model)
+    assert (retriever.searches, model.requests) == (1, 2)
+    assert report["results"][0]["attempts"] == 2
+    assert report["results"][0]["answer"]["abstained"] is False
+
+
 def test_the_retry_is_one_function_a_script_can_ask_through_too(monkeypatch, caplog):
     # The measurement scripts under notebooks/answers/ each had this loop, and
     # their own ask() returns more than an Answer.

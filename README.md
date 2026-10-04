@@ -1935,8 +1935,10 @@ and errors stop the run instead of inflating the abstention count. The one
 exception is a failure that asking again may fix, such as Mistral's rate limit,
 a server error, a full Ollama queue or a dropped connection (`ProviderBusy`):
 the question is asked again after 10 seconds and then after a minute, or after
-as long as the provider asks for, up to five minutes. Each row records how many
-times its question was asked, as `attempts`. When the provider still cannot
+as long as the provider asks for, up to five minutes. Only the model is asked
+again, with the passages and prompt the first attempt built, so a retry does
+not search again. Each row records how many times its question was asked, as
+`attempts`. When the provider still cannot
 answer, or you press Ctrl-C, the run stops there, but the report and
 `--answers` file are still written with every question before it, the report's
 `stopped` names the question and the error, and the command exits 1. A mistyped
