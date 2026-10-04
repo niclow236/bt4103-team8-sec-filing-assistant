@@ -20,7 +20,7 @@ from dotenv import dotenv_values
 from langchain_mistralai import ChatMistralAI
 from langchain_ollama import ChatOllama
 
-from src.config import PROJECT_ROOT
+from src.config import PROJECT_ROOT, load_env
 from src.rag.constants import (
     ABSTAIN_PHRASE,
     DEFAULT_MISTRAL_MODEL,
@@ -38,7 +38,6 @@ from src.rag.generate import (
     _PROVIDERS,
     ProviderBusy,
     ProviderUnavailable,
-    _mistral_client,
     _prose,
     _text,
     chat_model,
@@ -322,48 +321,33 @@ def test_generation_refuses_negative_latency():
 
 # --- configuration -----------------------------------------------------------------------
 
-_LLM_VARS = ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL", "LLM_NUM_GPU", "MISTRAL_API_KEY",
-             "MISTRAL_BASE_URL")
-
-
-@pytest.fixture
-def clean_env(monkeypatch):
-    """No LLM variables before the test, and none left behind by it.
-
-    load_dotenv writes into the real os.environ, which monkeypatch does not
-    see, so the variables a .env test loads are removed again afterwards. The
-    Mistral clients the test builds are dropped too, so no later test is
-    handed one back.
-    """
-    for name in _LLM_VARS:
-        monkeypatch.delenv(name, raising=False)
-    _mistral_client.cache_clear()
-    yield
-    for name in _LLM_VARS:
-        os.environ.pop(name, None)
-    _mistral_client.cache_clear()
-
-
 def _dotenv(tmp_path, **values):
     path = tmp_path / ".env"
     path.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
     return path
 
 
-def test_config_defaults_to_the_local_model(tmp_path, clean_env):
+def test_config_defaults_to_the_local_model(tmp_path):
     config = config_from_env(dotenv=tmp_path / "absent.env")
     assert (config.provider, config.model) == ("ollama", DEFAULT_MODEL)
     assert config.prompt_template_id == PROMPT_TEMPLATE_ID
     assert config.temperature == 0.0
 
 
-def test_config_reads_the_model_from_the_dotenv_file(tmp_path, clean_env):
+def test_config_reads_the_model_from_the_dotenv_file(tmp_path):
     assert config_from_env(dotenv=_dotenv(tmp_path, LLM_MODEL="qwen2.5:7b")).model == "qwen2.5:7b"
 
 
-def test_a_shell_variable_wins_over_the_dotenv_file(tmp_path, clean_env, monkeypatch):
+def test_a_shell_variable_wins_over_the_dotenv_file(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "from-shell")
     assert config_from_env(dotenv=_dotenv(tmp_path, LLM_MODEL="from-file")).model == "from-shell"
+
+
+def test_no_test_reads_the_project_dotenv_or_the_shell():
+    # tests/conftest.py starts every test from the defaults, so a typo in a
+    # teammate's own .env or shell fails none of them.
+    assert load_env() is False
+    assert config_from_env() == config_from_env(environ={})
 
 
 def test_an_argument_wins_over_the_environment():
@@ -371,7 +355,7 @@ def test_an_argument_wins_over_the_environment():
     assert config_from_env(environ={"LLM_MODEL": "  "}).model == DEFAULT_MODEL
 
 
-def test_config_reads_the_provider_and_uses_its_default_model(tmp_path, clean_env):
+def test_config_reads_the_provider_and_uses_its_default_model(tmp_path):
     config = config_from_env(dotenv=_dotenv(tmp_path, LLM_PROVIDER="Mistral"))
     assert (config.provider, config.model) == ("mistral", DEFAULT_MISTRAL_MODEL)
 
@@ -429,7 +413,7 @@ def test_chat_model_reads_the_settings_it_is_given_in_place_of_the_environment(m
         chat_model(_mistral_config(), environ={})
 
 
-def test_chat_model_is_chat_ollama_on_the_configured_server(tmp_path, clean_env):
+def test_chat_model_is_chat_ollama_on_the_configured_server(tmp_path):
     llm = chat_model(_config(model="llama3.2:3b"), dotenv=tmp_path / "absent.env")
     assert isinstance(llm, ChatOllama)
     assert llm.model == "llama3.2:3b"
@@ -438,11 +422,11 @@ def test_chat_model_is_chat_ollama_on_the_configured_server(tmp_path, clean_env)
     assert llm.client_kwargs == {"timeout": GENERATION_TIMEOUT_S}
 
 
-def test_chat_model_reads_the_gpu_layers_from_the_dotenv_file(tmp_path, clean_env):
+def test_chat_model_reads_the_gpu_layers_from_the_dotenv_file(tmp_path):
     assert chat_model(_config(), dotenv=_dotenv(tmp_path, LLM_NUM_GPU="0")).num_gpu == 0
 
 
-def test_gpu_layers_must_be_a_whole_number(tmp_path, clean_env):
+def test_gpu_layers_must_be_a_whole_number(tmp_path):
     with pytest.raises(ValueError, match="LLM_NUM_GPU"):
         chat_model(_config(), dotenv=_dotenv(tmp_path, LLM_NUM_GPU="none"))
 
@@ -456,7 +440,7 @@ def test_the_request_carries_the_gpu_layers_only_when_the_model_sets_them():
     assert json.loads(requests[1].content)["options"]["num_gpu"] == 0
 
 
-def test_chat_model_reads_the_server_from_the_dotenv_file(tmp_path, clean_env):
+def test_chat_model_reads_the_server_from_the_dotenv_file(tmp_path):
     path = _dotenv(tmp_path, LLM_BASE_URL="http://gpu-box:11434/")
     assert chat_model(_config(), dotenv=path).base_url == "http://gpu-box:11434"
     assert chat_model(_config(), base_url="http://other:1/", dotenv=path).base_url == "http://other:1"
@@ -467,7 +451,7 @@ def test_chat_model_refuses_an_unknown_provider():
         chat_model(_config(provider="anthropic"))
 
 
-def test_chat_model_is_chat_mistral_ai_with_the_key_from_the_dotenv_file(tmp_path, clean_env):
+def test_chat_model_is_chat_mistral_ai_with_the_key_from_the_dotenv_file(tmp_path):
     llm = chat_model(_mistral_config(), dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
     assert isinstance(llm, ChatMistralAI)
     assert llm.model == DEFAULT_MISTRAL_MODEL
@@ -475,13 +459,13 @@ def test_chat_model_is_chat_mistral_ai_with_the_key_from_the_dotenv_file(tmp_pat
     assert llm.timeout == HOSTED_TIMEOUT_S
 
 
-def test_a_temperature_the_api_accepts_is_not_refused_when_the_model_is_built(tmp_path, clean_env):
+def test_a_temperature_the_api_accepts_is_not_refused_when_the_model_is_built(tmp_path):
     # ChatMistralAI's own check stops at 1; Mistral's API took 1.2 on 28 September
     # 2026 and refuses above 1.5 with a 422, which the error handling reads.
     chat_model(_mistral_config(temperature=1.2), dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
 
 
-def test_an_ollama_address_is_not_taken_for_mistral(tmp_path, clean_env):
+def test_an_ollama_address_is_not_taken_for_mistral(tmp_path):
     with pytest.raises(ValueError, match="MISTRAL_BASE_URL"):
         chat_model(_mistral_config(), base_url="http://proxy:8080/v1",
                    dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
@@ -491,7 +475,7 @@ def test_every_provider_the_command_offers_can_answer():
     assert set(PROVIDERS) == set(_PROVIDERS)
 
 
-def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path, clean_env):
+def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path):
     config = _mistral_config()
     first = chat_model(config, dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key"))
     assert chat_model(config, dotenv=_dotenv(tmp_path, MISTRAL_API_KEY="test-key")) is first
@@ -502,7 +486,7 @@ def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path, cl
 
 
 @pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
-def test_a_missing_key_says_where_to_make_one(tmp_path, clean_env, values):
+def test_a_missing_key_says_where_to_make_one(tmp_path, values):
     # No key line is what .env.example leaves, and an empty value what removing
     # its # without pasting a key leaves. Once a blank line was read, a key
     # pasted in later is only seen after a restart, so the message says so.
@@ -511,7 +495,7 @@ def test_a_missing_key_says_where_to_make_one(tmp_path, clean_env, values):
         chat_model(_mistral_config(), dotenv=_dotenv(tmp_path, **values))
 
 
-def test_a_key_added_to_the_dotenv_file_after_the_error_is_read(tmp_path, clean_env):
+def test_a_key_added_to_the_dotenv_file_after_the_error_is_read(tmp_path):
     # What the missing-key message asks for, in one notebook: refused, the key
     # pasted into .env, the question asked again, with no restart.
     path = _dotenv(tmp_path, LLM_PROVIDER="mistral")
@@ -1185,7 +1169,7 @@ def test_a_chat_model_for_the_other_provider_is_refused():
 # --- the evaluation command -----------------------------------------------------------------
 
 @pytest.mark.parametrize("provider, client", [("ollama", ChatOllama), ("mistral", ChatMistralAI)])
-def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, clean_env, provider,
+def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, provider,
                                                      client):
     import src.evaluation.cli as cli
     from src.retrieval.bm25 import BM25Retriever
@@ -1210,7 +1194,7 @@ def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, clea
     ({"LLM_PROVIDER": "ollama", "LLM_NUM_GPU": "all"}, "LLM_NUM_GPU must be a whole number"),
 ], ids=["provider", "key", "gpu-layers"])
 def test_the_evaluation_command_refuses_its_settings_before_loading_anything(
-        monkeypatch, tmp_path, clean_env, capsys, values, expected):
+        monkeypatch, tmp_path, capsys, values, expected):
     import src.evaluation.cli as cli
 
     for name, value in values.items():
@@ -1234,7 +1218,7 @@ _FLAGS_NOTE = (" (on this command, --provider and --model do the same as LLM_PRO
      _FLAGS_NOTE),
 ], ids=["stopped", "interrupted", "advice"])
 def test_a_stopped_run_writes_the_answers_before_it_and_fails(
-        monkeypatch, tmp_path, clean_env, stopper, error, note):
+        monkeypatch, tmp_path, stopper, error, note):
     import src.evaluation as evaluation
     import src.evaluation.cli as cli
     from src.retrieval.bm25 import BM25Retriever
@@ -1261,7 +1245,7 @@ def test_a_stopped_run_writes_the_answers_before_it_and_fails(
 
 
 def test_the_command_says_its_flags_win_over_the_settings_its_errors_name(
-        monkeypatch, tmp_path, clean_env, capsys):
+        monkeypatch, tmp_path, capsys):
     # Without a key, --provider mistral fails whatever .env says, so the advice
     # to set LLM_PROVIDER=ollama there has to say that the flag wins.
     import src.evaluation.cli as cli

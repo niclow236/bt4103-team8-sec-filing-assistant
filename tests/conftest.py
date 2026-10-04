@@ -1,8 +1,9 @@
-"""Shared fixtures: a small synthetic corpus, and an encoder that needs no model.
+"""Shared fixtures: a small synthetic corpus, an encoder that needs no model,
+and settings that do not come from the project's .env.
 
-The tests run on a fresh clone, so nothing here reads ``data/``. The corpus is
-written through the pipeline's own records and ``write_chunks``, so it has
-exactly the shape ``iter_chunks`` reads. The encoder is deterministic and
+The tests run on a fresh clone, so nothing here reads ``data/`` or ``.env``. The
+corpus is written through the pipeline's own records and ``write_chunks``, so it
+has exactly the shape ``iter_chunks`` reads. The encoder is deterministic and
 instant: a passage's vector is seeded from its text, which is enough to tell
 whether a vector was re-encoded without paying for bge.
 """
@@ -11,13 +12,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from src import config
 from src.pipeline.chunk import write_chunks
 from src.pipeline.records import ChunkedFiling, ChunkRecord
+from src.rag.constants import (
+    LLM_BASE_URL_ENV,
+    LLM_MODEL_ENV,
+    LLM_NUM_GPU_ENV,
+    LLM_PROVIDER_ENV,
+    MISTRAL_API_KEY_ENV,
+    MISTRAL_BASE_URL_ENV,
+)
+from src.rag.generate import _mistral_client
 from src.retrieval import embed
 
 # Three companies, two fiscal years each.
@@ -126,6 +138,36 @@ def fake_model(monkeypatch):
     model = FakeModel()
     monkeypatch.setattr(embed, "_load_model", lambda threads=None: (model, 1))
     return model
+
+
+# The settings that choose and reach the model that answers, read from the
+# environment and the project's .env.
+LLM_SETTINGS = (LLM_PROVIDER_ENV, LLM_MODEL_ENV, LLM_BASE_URL_ENV, LLM_NUM_GPU_ENV,
+                MISTRAL_API_KEY_ENV, MISTRAL_BASE_URL_ENV)
+
+
+@pytest.fixture(autouse=True)
+def _no_local_settings(monkeypatch):
+    """Every test starts from the defaults, whatever a teammate's .env or shell sets.
+
+    The project's own .env is never loaded, so a typo in it fails no test, and
+    the LLM settings are removed from the environment. A test about reading
+    .env writes its own and passes its path, which is still read, and a test
+    that sets a variable sets it itself. load_dotenv writes into the real
+    os.environ, which monkeypatch does not see, so the settings a test loads
+    are removed again afterwards. The Mistral clients a test builds are dropped
+    too, so no later test is handed one back.
+    """
+    load_dotenv = config.load_dotenv
+    monkeypatch.setattr(config, "load_dotenv", lambda path, *args, **kwargs:
+                        Path(path) != config.ENV_FILE and load_dotenv(path, *args, **kwargs))
+    for name in LLM_SETTINGS:
+        monkeypatch.delenv(name, raising=False)
+    _mistral_client.cache_clear()
+    yield
+    for name in LLM_SETTINGS:
+        os.environ.pop(name, None)
+    _mistral_client.cache_clear()
 
 
 @pytest.fixture(autouse=True)
