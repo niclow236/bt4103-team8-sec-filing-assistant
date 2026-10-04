@@ -188,11 +188,24 @@ def test_different_questions_are_answered_at_the_same_time():
     assert sorted(answer.question for answer in got) == sorted([QUESTION, other])
 
 
-def test_a_session_waiting_on_a_failure_asks_in_its_turn():
+def test_a_session_waiting_on_a_failure_asks_in_its_turn(monkeypatch):
+    # Only a session that found another asking the same question waits on its
+    # event, so ``waiting`` is set once the second is waiting on the first.
+    waiting = threading.Event()
+
+    class Watched(threading.Event):
+        def wait(self, timeout=None):
+            waiting.set()
+            return super().wait(timeout)
+
+    monkeypatch.setattr(state_module, "Event", Watched)
     stack = SlowStack(failures=[ProviderUnavailable("Mistral's rate limit was reached")])
     remembered = Remembered(stack)
     threads, got = _in_threads(remembered, [QUESTION, QUESTION])
     assert stack.arrived.acquire(timeout=WAIT)
+    # Released before the other got there, the first could fail and leave
+    # nothing in flight, and the other would ask afresh without being woken.
+    assert waiting.wait(WAIT), "the other session never waited on the first"
     stack.release.set()
     _finish(threads)
     # One met the failure, which was not kept. The other was woken, asked in
