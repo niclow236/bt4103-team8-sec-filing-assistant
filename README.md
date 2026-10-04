@@ -2158,42 +2158,72 @@ locally under `results/embeddings-real-20261004/`. Data, indexes, model weights,
 logs and run artifacts remain ignored; the results PR includes the complete
 summary CSV for review.
 
-The local generation row used the same corpus and default BGE/hybrid C4 stack,
-with **16 passages, facts disabled, decomposition and refusal enabled**,
-`grounded_v4` and temperature 0. It measures 30 questions at indices
+Both generation rows used the same corpus and default BGE/hybrid C4 stack,
+with a **passage budget of 16, facts disabled, decomposition and refusal enabled**,
+`grounded_v4` and temperature 0. Each measures 30 questions at indices
 `i * (12579 - 1) // (30 - 1)`: 14 companies and 25 filings, with 1–2 questions
 per represented filing. PANW is absent. All 30 questions reached the real
-Ollama provider with retrieved evidence; none was refused before a model call.
+provider in each run with retrieved evidence; none was refused before a model
+call. The question IDs and C4 stack settings match between the two reports.
 The installed `llama3.2:3b` model is Q4_K_M, digest
 `a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72`.
 
-Because the normal generation command preflights both providers, G1 was
-selected from the registered experiments in the running process while the
-Mistral key was unavailable. The command used the existing runner and real
-provider, without changing application code or any C4 answer setting:
+The providers were measured in separate processes: G1 completed while the
+Mistral key was unavailable, and G2 ran once it was configured locally.
+Because the normal generation command preflights both providers, each command
+selected its registered experiment in the running process. Both used the
+existing runner and real provider without changing application code or any
+C4 answer setting:
 
 ```bash
 HF_HUB_OFFLINE=1 LLM_BASE_URL=http://127.0.0.1:11434 ../.venv/bin/python -u -c \
   'from src.evaluation import model_ablation as a; a.GENERATION_EXPERIMENTS = tuple(e for e in a.GENERATION_EXPERIMENTS if e.id == "G1"); a.main(["generation", "benchmark/generated.jsonl", "--no-facts", "--limit", "30", "--run-id", "providers-local-real-20261004"])'
+HF_HUB_OFFLINE=1 MISTRAL_BASE_URL=https://api.mistral.ai/v1 ../.venv/bin/python -u -c \
+  'from src.evaluation import model_ablation as a; a.GENERATION_EXPERIMENTS = tuple(e for e in a.GENERATION_EXPERIMENTS if e.id == "G2"); a.main(["generation", "benchmark/generated.jsonl", "--no-facts", "--limit", "30", "--run-id", "providers-hosted-real-20261004"])'
 ```
 
 | Row | Provider | Model | Questions | Abstention | Provider-routed questions | Provider abstention | Median generation (ms) | Retried questions |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | G1 | Ollama | llama3.2:3b | 30 | 3.33% | 30 | 3.33% | 28,472.9 | 0 |
+| G2 | Mistral | ministral-8b-2512 | 30 | 6.67% | 30 | 6.67% | 1,662.5 | 0 |
 
-Ollama abstained on one question and answered 29, with a median generation
-call of 28.5 seconds. That latency excludes retrieval, verification and any
-retry waits. Abstention measures willingness to answer, not correctness or
-faithfulness; these numbers alone do not establish answer quality.
-Full reports and summaries are kept locally under
-`results/providers-local-real-20261004/`.
+Mistral has the lower median generation latency here: 1.66 seconds versus
+Ollama's 28.47 seconds. Neither run needed a retry. Mistral abstained on two
+questions and Ollama on one; a one-question difference in a 30-question sample
+does not establish a reliable abstention advantage. Latency excludes
+retrieval, verification and retry waits. Abstention measures willingness to
+answer, not correctness or faithfulness. The numeric verifier classified
+Ollama's 29 non-abstained answers as 3 supported, 7 mismatch and 19 unverified;
+Mistral's 28 as 4 supported, 10 mismatch and 14 unverified. These checks concern
+figures, not whole-answer faithfulness, and do not establish a quality winner.
 
-**G2 remains unmeasured:** the hosted `ministral-8b-2512` comparison needs the
-user's own `MISTRAL_API_KEY` in the local `.env`. There is no measured provider
-winner yet. Issue #46 remains open until G2 completes on the same 30 question
-IDs and C4 settings and its row is added here. The results PR is a draft while
-that input is missing. Validation of the application at `a0cb411` passed all
-**1,229 tests**; `git diff --check` also passed for this documentation update.
+The combined table uses the existing C/E/G comparison writer. Its source
+reports were checked for the same 30 question IDs, C4 settings and pinned
+provider/model configurations, then copied byte-for-byte into
+`results/providers-real-20261004/`. Both summary rows match their source CSVs
+exactly. The original runs remain under `results/providers-local-real-20261004/`
+and `results/providers-hosted-real-20261004/`. The combination was written with:
+
+```bash
+../.venv/bin/python - <<'PY'
+import json
+from pathlib import Path
+from src.evaluation.model_ablation import GENERATION_EXPERIMENTS, MODEL_FIELDS, _generation_summary, _write_report
+from src.evaluation.results import available_run_dir, write_comparison
+run_id = 'providers-real-20261004'
+sources = {'G1': 'providers-local-real-20261004', 'G2': 'providers-hosted-real-20261004'}
+reports = {e.id: json.loads((Path('results') / sources[e.id] / e.id / 'report.json').read_text()) for e in GENERATION_EXPERIMENTS}
+run_dir = available_run_dir(Path('results'), run_id)
+summaries = [_generation_summary(e, reports[e.id]) for e in GENERATION_EXPERIMENTS]
+write_comparison(run_dir, run_id=run_id, top_k=16, summaries=summaries, extra_fields=MODEL_FIELDS, matrix='generation', source_runs=sources)
+for e in GENERATION_EXPERIMENTS:
+    _write_report(run_dir, e.id, reports[e.id])
+PY
+```
+
+All six E rows and both G rows required by issue #46 are now measured and
+documented. Validation of the application at `a0cb411` passed all **1,229
+tests**; `git diff --check` also passed for this documentation update.
 
 ## Team and course
 

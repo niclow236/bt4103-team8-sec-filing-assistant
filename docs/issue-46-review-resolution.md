@@ -50,8 +50,13 @@ with full precision summaries and per-question reports under the ignored local
 for the tables, commands, hardware, sampling limitations and interpretation.
 The current application's full suite passed **1,229 tests**.
 
-The real Ollama G1 row also completed all 30 sampled questions, with facts
-disabled and C4's other answer settings preserved. Reports are under
-`results/providers-local-real-20261004/`. The hosted Mistral G2 row still needs
-a locally configured `MISTRAL_API_KEY`. Issue 46 remains open and the results
-PR stays in draft until G2 covers the same 30 questions and is documented.
+The real Ollama G1 and hosted Mistral G2 rows each completed the same 30 sampled
+questions, with facts disabled and C4's other answer settings preserved. Every
+question reached its real provider with retrieved evidence; neither run stopped
+or needed a retry. The combined C/E/G-format table and unchanged reports are
+under `results/providers-real-20261004/`, with source runs retained under
+`results/providers-local-real-20261004/` and
+`results/providers-hosted-real-20261004/`. The README now records both provider
+rows, latency and abstention interpretation, and numeric verification limits.
+All real measurements required by issue 46 are documented in the follow-up
+results PR; the issue closes when that PR is merged.
