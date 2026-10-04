@@ -5,6 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.app.components import answer_card, filter_sidebar
+from src.app.results_page import render_results_page
 from src.app.state import Remembered, Stopwatch
 from src.rag.generate import ProviderUnavailable
 from src.rag.query import parse_question
@@ -51,6 +52,10 @@ def measured() -> list[tuple[str, str]]:
 
 def main() -> None:
     st.set_page_config(page_title="SEC Filing Assistant", page_icon="📑")
+    page = st.sidebar.radio("Page", ("Ask", "Results"))
+    if page == "Results":
+        render_results_page()
+        return
     st.title("SEC Filing Assistant")
     st.caption("Ask questions about the 10-K filings in your local corpus. "
                "Answers cite the filing passages used to generate them.")
