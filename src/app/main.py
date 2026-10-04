@@ -46,6 +46,15 @@ def _settle_lazy_aliases() -> None:
     a ``__file__`` of None and a ``__getattr__`` of its own. Both are read
     from the module's own namespace, because ``getattr`` is what sets the
     import off. The watcher takes an empty ``__path__`` for an answer.
+
+    This writes to another library's modules, so it is held to the versions
+    it was written against: ``requirements.txt`` pins streamlit and
+    transformers both, where sentence-transformers alone would take any
+    transformers 5.x. Look at it again when either pin moves. The tests in
+    ``tests/test_app_live.py`` say which way a new version went: one fails
+    when it shapes an alias some other way, so this no longer quiets the
+    watcher, and one fails when the watcher has stopped asking or
+    transformers has stopped registering aliases, so this can be deleted.
     """
     for name, module in list(sys.modules.items()):
         if not name.startswith("transformers."):

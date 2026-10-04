@@ -661,3 +661,39 @@ def test_the_file_watcher_reads_transformers_itself_quietly_after_a_run(monkeypa
             paths_of(module)
     assert warned == []
     assert set(sys.modules) == loaded        # and reading them imported nothing
+
+
+def test_the_alias_workaround_is_still_needed(monkeypatch):
+    # The other way a new version can go. _settle_lazy_aliases writes to
+    # another library's modules, so it should not outlive its reason. This
+    # fails when streamlit's watcher stops asking a module for an attribute it
+    # lacks, or transformers stops registering aliases: either means the
+    # function, and these tests of it, can be deleted (review of #119).
+    import sys
+
+    import transformers  # noqa: F401
+
+    aliases = []
+    for name, module in list(sys.modules.items()):
+        own = getattr(module, "__dict__", {})
+        if (name.startswith("transformers.") and own.get("__file__", "") is None
+                and "__getattr__" in own):
+            aliases.append(module)
+    assert aliases, "transformers registers no alias modules: delete _settle_lazy_aliases"
+
+    asked = []
+
+    def records(attribute):
+        asked.append(attribute)
+        raise AttributeError(attribute)
+
+    # One of transformers' own, as the library leaves it and before a run of
+    # the app has settled it, answering by recording what it was asked for in
+    # place of importing. Both are put back after: other tests read this module.
+    alias = vars(aliases[0])
+    monkeypatch.setitem(alias, "__getattr__", records)
+    monkeypatch.delitem(alias, "__path__", raising=False)
+    paths_of, warned = _watcher(monkeypatch)
+    assert paths_of(aliases[0]) == set() and warned == []
+    assert "__path__" in asked, (
+        "the watcher no longer asks a module for __path__: delete _settle_lazy_aliases")
