@@ -1833,10 +1833,12 @@ Apple's total revenue in FY2024?", and a question that does need the model
 fails with the provider's own message. The box does not wait for that. As
 soon as a provider that cannot answer is picked, it says under it what the
 provider lacks and what to do about it.
+
 An explicit Item filter is enforced for numeric questions too. When the
 question, the filters, the configuration or the answer model change, the app
-hides the prior answer until Ask is pressed again. While a model is answering, its prose is written to the page as it
-arrives, and the checked answer card replaces it.
+hides the prior answer until Ask is pressed again. While a model is answering,
+its prose is written to the page as it arrives, and the checked answer card
+replaces it.
 
 The Ask page (#38) shows, in order:
 
@@ -1864,7 +1866,7 @@ what the first one does:
 
 | File | What belongs in it |
 |---|---|
-| `main.py` | The entry point. Makes the project importable, sets the page title, and lists the pages in `PAGES`. No page content. |
+| `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
 | `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
 | `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |

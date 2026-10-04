@@ -63,8 +63,9 @@ def load_stack(config_id: str, provider: str | None = None) -> Remembered:
 
     The same call the evaluation command makes, so what the demo shows is the
     system the numbers in ``results/`` describe, rather than a fourth stack
-    assembled here. Cached on the id because building one loads the indexes
-    and, for the dense and hybrid rows, the embedding model.
+    assembled here. Cached on the id because building one reads the indexes,
+    and because the one built keeps the embedding model that the dense and
+    hybrid rows load on their first search.
 
     ``provider`` is what writes the answers, and None means the one ``.env``
     names. It is cached on too, so a page that offers both builds each once.

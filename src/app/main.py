@@ -70,5 +70,9 @@ try:
 finally:
     # After the page, which is where the embedding model is first loaded, and
     # before the run ends, which is when the watcher looks. Also when the page
-    # stopped early or asked for a rerun.
+    # stopped early or asked for a rerun. Every session's run ends here, so a
+    # second tab settles what the first tab's Ask has loaded before its own
+    # watcher looks. A fragment's rerun does not pass through this file, and
+    # the watcher looks after one too: before a page asks from inside a
+    # fragment, this has to move to state.py and run where the stack answers.
     _settle_lazy_aliases()
