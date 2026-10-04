@@ -472,3 +472,95 @@ def test_picking_mistral_without_a_key_says_so_before_anything_is_loaded(monkeyp
     assert not ui.exception
     assert "MISTRAL_API_KEY is not set" in ui.error[0].value
     assert not ui.get("html") and not ui.main.status
+
+
+# --- Streamlit's file watcher and a library's lazy modules ----------------------
+
+def _watcher(monkeypatch):
+    """The watcher's own reading of a module's paths, and what it would have
+    logged while reading, recorded in place of being logged."""
+    import streamlit.watcher.local_sources_watcher as watcher
+
+    warned = []
+    monkeypatch.setattr(watcher._LOGGER, "warning", lambda *args, **kwargs: warned.append(args))
+    return watcher.get_module_paths, warned
+
+
+def _lazy_alias(name):
+    """A module as transformers 5 makes an alias: no file, and any attribute it
+    lacks looked up by importing a module that needs torchvision."""
+    import types
+
+    module = types.ModuleType(name)
+    module.__file__ = None
+
+    def missing(attribute):
+        raise ModuleNotFoundError("No module named 'torchvision'")
+
+    module.__getattr__ = missing
+    return module
+
+
+def test_the_file_watcher_reads_a_lazy_alias_without_setting_off_its_import(monkeypatch):
+    # After each run Streamlit's watcher asks every loaded module for its
+    # __path__. transformers answers for an alias by importing what the alias
+    # stands for, and 102 of those imports need torchvision, so the terminal
+    # filled with tracebacks after the first question.
+    import sys
+    import types
+
+    paths_of, warned = _watcher(monkeypatch)
+    name = "transformers.models.example.image_processing_example_fast"
+    # As the watcher met one: nothing read, and a traceback logged.
+    assert paths_of(_lazy_alias(name)) == set() and len(warned) == 1
+
+    alias = _lazy_alias(name)
+    plain = types.ModuleType("transformers.models.example.modeling_example")
+    plain.__file__ = "modeling_example.py"
+    monkeypatch.setitem(sys.modules, name, alias)
+    monkeypatch.setitem(sys.modules, plain.__name__, plain)
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.exception
+    # After a run of the app the same reading logs nothing more.
+    assert paths_of(alias) == set() and len(warned) == 1
+    # Only an alias is touched.
+    assert "__path__" not in vars(plain)
+
+    # A run that stops part way is still followed by the watcher, and the
+    # embedding model is first loaded inside an Ask.
+    import streamlit as st
+
+    later = _lazy_alias("transformers.models.later.image_processing_later_fast")
+
+    def loads_and_stops(self, question, **overrides):
+        sys.modules[later.__name__] = later
+        st.stop()
+
+    monkeypatch.setattr(FakeStack, "answer", loads_and_stops)
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    sys.modules.pop(later.__name__, None)
+    assert built and not ui.exception
+    assert paths_of(later) == set() and len(warned) == 1
+
+
+def test_the_file_watcher_reads_transformers_itself_quietly_after_a_run(monkeypatch):
+    # The library as installed, whatever its version: the alias above is shaped
+    # as transformers 5.17 shapes one, and this is what fails if a later
+    # version shapes them some other way.
+    import sys
+
+    # Installed with sentence-transformers. It registers its aliases as it is imported.
+    import transformers  # noqa: F401
+
+    paths_of, warned = _watcher(monkeypatch)
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.exception
+    loaded = set(sys.modules)
+    for name, module in list(sys.modules.items()):
+        if name.startswith("transformers"):
+            paths_of(module)
+    assert warned == []
+    assert set(sys.modules) == loaded        # and reading them imported nothing
