@@ -7,6 +7,7 @@ from dataclasses import replace
 import streamlit as st
 
 from src.app.components import answer_card, filter_sidebar
+from src.app.state import Remembered, Stopwatch
 from src.rag.generate import ProviderUnavailable
 from src.rag.query import parse_question
 from src.rag.verify import verify_answer
@@ -32,7 +33,8 @@ def load_stack(config_id: str):
     assembled here. Cached on the id because building one loads the indexes
     and, for the dense and reranked rows, a model.
     """
-    return build_stack(config_id, parts=_indexes())
+    # Remembered, so a repeated demo question is answered once (#36).
+    return Remembered(build_stack(config_id, parts=_indexes()))
 
 
 @st.cache_data(show_spinner=False)
@@ -81,7 +83,7 @@ def main() -> None:
     request = (question.strip(), query.tickers, query.fiscal_years, query.items, config_id)
     if st.button("Ask", type="primary", disabled=not question.strip()):
         try:
-            with st.spinner("Searching filings and generating an answer…"):
+            with st.spinner("Searching filings and generating an answer…"), Stopwatch() as watch:
                 stack = load_stack(config_id)
                 answer = stack.answer(question.strip(), query=query, parsed=parsed)
                 answer = verify_answer(answer, parsed=replace(
@@ -89,10 +91,15 @@ def main() -> None:
         except (FileNotFoundError, ValueError, ProviderUnavailable) as error:
             st.error(str(error))
         else:
+            st.session_state["filing_seconds"] = watch.seconds
             st.session_state["filing_answer"] = answer
             st.session_state["filing_request"] = request
 
     if st.session_state.get("filing_request") == request:
+        # How long the answer shown took, kept beside it so the line is still
+        # there when a rerun draws the answer again. The first Ask of a process
+        # includes loading the indexes, and a repeated question takes none.
+        st.caption(f"Query completed in {st.session_state['filing_seconds']:.2f}s")
         answer = st.session_state.get("filing_answer")
         if answer is not None:
             answer_card(answer, key="filing-answer")
