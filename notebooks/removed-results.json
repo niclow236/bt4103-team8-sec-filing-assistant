@@ -1,0 +1,296 @@
+{
+  "what": "The result files that were committed and then removed from the tree, so that a number in the README can be traced to the file it was read from.",
+  "read_one": "git cat-file -p <git_blob> > <path>",
+  "check_one": "sha256sum <path> (the bytes as git holds them: UTF-8 with a BOM, LF line ends)",
+  "rows": "data rows, the header line not counted",
+  "files": [
+    {
+      "path": "notebooks/answers/results/0-main-bm25.csv",
+      "rows": 144,
+      "sha256": "28537a19b4e79db23b62f2108c0d156c0893bbe2f5ddb5f616dd5f72facb8866",
+      "git_blob": "902d224b7217942b45beacca5ff7f3b6cbb03043"
+    },
+    {
+      "path": "notebooks/answers/results/0-main-hybrid.csv",
+      "rows": 144,
+      "sha256": "0f0d0ecfd0b8b53fafedca61db1e1a8bf68ef7684d2966d6a78d11049e1eb366",
+      "git_blob": "19b5c68d62747ffb41e7bbe19b6cb7cc636cbe55"
+    },
+    {
+      "path": "notebooks/answers/results/1-table-boost-bm25.csv",
+      "rows": 144,
+      "sha256": "83695a12baba2dd6f3dcb107a4ec82a7d74d6db8553e1441f20698f022e34704",
+      "git_blob": "051b227df3ce29aed563c57f7f9c80ded745af65"
+    },
+    {
+      "path": "notebooks/answers/results/1-table-boost-hybrid.csv",
+      "rows": 144,
+      "sha256": "e95688c9af3d84e928b718b9e5756e819d1adef69a357b09e521d001360eca68",
+      "git_blob": "b3bd36363c84289a4eff09599a91053094a87db8"
+    },
+    {
+      "path": "notebooks/answers/results/4-statement-names-bm25.csv",
+      "rows": 144,
+      "sha256": "863931de09e2ab3f7777a7a46ba995e722197dbce1a382b4f5c3d778e0ff5ff7",
+      "git_blob": "151eee1bcd9b320d137d71a6dc0c2d50f2e67d98"
+    },
+    {
+      "path": "notebooks/answers/results/4-statement-names-hybrid.csv",
+      "rows": 144,
+      "sha256": "d75e290700a830b2ff68bd094bd2b979e2ecaba811ccd48a25c440cb94c6b164",
+      "git_blob": "2aec0141f99d8a53fa5c986fdea5564e40117d86"
+    },
+    {
+      "path": "notebooks/answers/results/5-other-names-bm25.csv",
+      "rows": 144,
+      "sha256": "494ded1afa98932f009cb76bbea9fd2018e0a397f69050914bb093f6899b4882",
+      "git_blob": "c81a6c92162b279436efe7353dabec9abfa04306"
+    },
+    {
+      "path": "notebooks/answers/results/5-other-names-hybrid.csv",
+      "rows": 144,
+      "sha256": "2bb6671dc1d20e549c3b0a5ab22d91bf0307da1e8c135d3204c17f565e710cb8",
+      "git_blob": "d38320aae41a748b3eb17b7119aa86f47b572c67"
+    },
+    {
+      "path": "notebooks/answers/results/6-common-words-bm25.csv",
+      "rows": 144,
+      "sha256": "e3e441cb1b71acee571ca19e3362715a8422e352d59018fc1a1d8acfc6855872",
+      "git_blob": "13df8fb97062e2336d9557ff18b29db0b00af629"
+    },
+    {
+      "path": "notebooks/answers/results/6-common-words-hybrid.csv",
+      "rows": 144,
+      "sha256": "5985d2216deff0759392b7bb632ed57612287795638cb3ad21f7eb3b235b60a2",
+      "git_blob": "5e5805e7197d22fc30bdb1a432be10b074add098"
+    },
+    {
+      "path": "notebooks/answers/results/9-final-bm25.csv",
+      "rows": 144,
+      "sha256": "cd009bd702dd54379541bf876d9cd5911e7f70c134c441f924df65a3f924b42c",
+      "git_blob": "4cf31b93c3fb663ca8d0248904f3f7839cc47202"
+    },
+    {
+      "path": "notebooks/answers/results/9-final-hybrid.csv",
+      "rows": 144,
+      "sha256": "04e88b475ae35e9930b4aa50f28e874de3f52fb47b39d708b66e402479add5fa",
+      "git_blob": "c42767197e7b60e61749a1b83f9a829e8911e053"
+    },
+    {
+      "path": "notebooks/answers/results/headline-0-main-bm25.csv",
+      "rows": 825,
+      "sha256": "59e71148f20b9d9d2c3c9d16753ff384b7dffbc17bf631efdfb605dca4be810a",
+      "git_blob": "f3883f95f5aaf1431eac402749180385c2bda575"
+    },
+    {
+      "path": "notebooks/answers/results/headline-0-main-hybrid.csv",
+      "rows": 825,
+      "sha256": "92068c0b8a121d9904679e91fccbca28af14fb27cf17c013397f737e4bfc8a30",
+      "git_blob": "4793a6c64f5077907ae9eb360b6cd101788979d6"
+    },
+    {
+      "path": "notebooks/answers/results/headline-1-table-boost-hybrid.csv",
+      "rows": 825,
+      "sha256": "381ade90f10928e113fe38fb03fb1e523c2ef2a7bfacd508413172507b52c4aa",
+      "git_blob": "e115c7a09418e9e970062dd5f23a8c4620f5478a"
+    },
+    {
+      "path": "notebooks/answers/results/headline-2-passage-depth-hybrid-no-model.csv",
+      "rows": 825,
+      "sha256": "d591c1f518edb23381a9306327f3b8b344f8b3016c5cec5eeaba994b67c53501",
+      "git_blob": "27d47245fa1932e8c74c5f61a68e89b840466217"
+    },
+    {
+      "path": "notebooks/answers/results/headline-3-decimal-millions-hybrid-no-model.csv",
+      "rows": 825,
+      "sha256": "a206cf506499f72933d5a6723530a58fc9a8222423b113fd0dc9ba6df223e61b",
+      "git_blob": "ea0d5899786c0fd12c31a6211e0e8755ee62f511"
+    },
+    {
+      "path": "notebooks/answers/results/headline-4-statement-names-bm25-every-name-no-model.csv",
+      "rows": 2325,
+      "sha256": "af14667592826b957a3a176bd623adcdd440c3a7a701a1093c7ffc807b0f381b",
+      "git_blob": "522234853b4719e42b5b55b0017d094ddb97a002"
+    },
+    {
+      "path": "notebooks/answers/results/headline-4-statement-names-bm25.csv",
+      "rows": 825,
+      "sha256": "02b5c7860e3f69cbced6b40a2fff5f3df55a4f1071303328dd4e7070b0f7ce26",
+      "git_blob": "31f82b26de6f0585974445e5284ea8b024412da1"
+    },
+    {
+      "path": "notebooks/answers/results/headline-4-statement-names-hybrid-every-name-no-model.csv",
+      "rows": 2325,
+      "sha256": "bf3c7379f48f43c16f2ea085b2eba0fbddc141ac5ccb3cd1a5dc76be3b92097e",
+      "git_blob": "b04ac240ffc943dc3ac15035f739cfd8f8dbf683"
+    },
+    {
+      "path": "notebooks/answers/results/headline-4-statement-names-hybrid.csv",
+      "rows": 825,
+      "sha256": "67968dc4adf880cc6bf510cecfeef83d53107507289a57d9d1db3e022e685bc3",
+      "git_blob": "fa66a8f35beece97440c95466cf10e744c21a630"
+    },
+    {
+      "path": "notebooks/answers/results/headline-5-other-names-bm25-every-name-no-model.csv",
+      "rows": 2325,
+      "sha256": "1844d955f6ad5eb3c38e14f98919c2a2b9cac74d0d1c4c16fb4d2ad7e6c240f9",
+      "git_blob": "2ff5aba895861bad06aafa1819e6ba812626e931"
+    },
+    {
+      "path": "notebooks/answers/results/headline-5-other-names-bm25.csv",
+      "rows": 825,
+      "sha256": "ed7492102317bd267f7b9108bd2b193ddc7cbb91320d72631099b627777be70e",
+      "git_blob": "3ebfdfe92213bbc091c86508e2dff0f5af1a0994"
+    },
+    {
+      "path": "notebooks/answers/results/headline-5-other-names-hybrid-every-name-no-model.csv",
+      "rows": 2325,
+      "sha256": "1eefaae87b712b95e86a739c3474016002f82a5aaa1b6870d09dc329671f138c",
+      "git_blob": "c5c7467d8ede824de54eb7979ce6d274a7a7fb6c"
+    },
+    {
+      "path": "notebooks/answers/results/headline-5-other-names-hybrid.csv",
+      "rows": 825,
+      "sha256": "9a469ceb009f0d143adb88b0eef2949cd7a1ec22dde600ea832909fcd7f40123",
+      "git_blob": "c47c02affa8b2035fff459580213bfda457b537c"
+    },
+    {
+      "path": "notebooks/answers/results/headline-6-common-words-bm25.csv",
+      "rows": 825,
+      "sha256": "64733d9c6ab3651292e3b61999b8d72155595ed54868caf885575cbb138a90a5",
+      "git_blob": "c6ac032d78e52b1124ee67fc2fcd1323ac3f358d"
+    },
+    {
+      "path": "notebooks/answers/results/headline-6-common-words-hybrid-checked.csv",
+      "rows": 825,
+      "sha256": "805f828c94185221b3ccd5d590d7946aadfc16eb50ee7dfbf657f8f19739a96b",
+      "git_blob": "5da958519f6363d1af68607343cddbaa9809d82f"
+    },
+    {
+      "path": "notebooks/answers/results/headline-6-common-words-hybrid.csv",
+      "rows": 825,
+      "sha256": "c51ec11b5920147e9dab6537a5a53661459a6573d0647a928bf9fa6f92182a87",
+      "git_blob": "fcf55282321f17614b9b248be9e8586ab9f138c0"
+    },
+    {
+      "path": "notebooks/answers/results/headline-8-checker-hybrid-every-name-no-model.csv",
+      "rows": 2475,
+      "sha256": "f7c6904b8e5e9b013191f0be9d4f98845be932ae1f423b615d4c1ba2122676c3",
+      "git_blob": "7f248a68a760d856b00cedd27a494f9aaa968ac0"
+    },
+    {
+      "path": "notebooks/answers/results/headline-9-final-hybrid.csv",
+      "rows": 825,
+      "sha256": "9112854e2d009fa3c870ac0e3f3a1069a0ce82c3d483a02b4fa0d07f8fa47f8a",
+      "git_blob": "e8715dabd92acebf25246af2f3102e6a59d40d71"
+    },
+    {
+      "path": "notebooks/answers/results/line-items-6-common-words-hybrid.csv",
+      "rows": 177,
+      "sha256": "9da5011252b3f20e9855e618b471bcd0625a15b82532004db19c958b1b17e86f",
+      "git_blob": "f8d7a876b60c6e14d802024ebdc547e7b0d62d1a"
+    },
+    {
+      "path": "notebooks/answers/results/line-items-7-figure-questions-hybrid.csv",
+      "rows": 177,
+      "sha256": "66b2ea16e97f7a5e42847df345ee2e2aaf31881171765724f7b956b31d71670b",
+      "git_blob": "2cb259450c9454563b6f08bc6ccf411da5d7bfa3"
+    },
+    {
+      "path": "notebooks/answers/results/line-items-9-final-hybrid.csv",
+      "rows": 177,
+      "sha256": "ea2bc26b4997c125d5754b7e97f02590800136ef7728b28b27f1bf62cc9d7b94",
+      "git_blob": "58d5af8b275825cdf7b300a641389aa0946ddc7d"
+    },
+    {
+      "path": "notebooks/answers/results/refusal-probes.csv",
+      "rows": 15,
+      "sha256": "0186bf1a631f72b7de89d1e774237633fe323eb208b190100c65e6e04aad2ef5",
+      "git_blob": "94feedd2d2833035fa226953dc3eab8f59242d9a"
+    },
+    {
+      "path": "notebooks/mistral/results/20260918-1239_ministral-14b-2512_ministral-8b-2512.csv",
+      "rows": 96,
+      "sha256": "4bf6f7578d3048ae2d9e345f0dce4e03445041455e60b6ce979996bbc6e3ee54",
+      "git_blob": "0c9441632718e7ed3dc4287facbb1180bc01d22f"
+    },
+    {
+      "path": "notebooks/mistral/results/20260918-2000_voxtral-small-2507_codestral-2508.csv",
+      "rows": 96,
+      "sha256": "6749850f3e9664596ee9208d6653999592321e0f14d63c8438fc6ac77878818f",
+      "git_blob": "6a6e1fba82595d47163cdf6796dd21c8548dbc78"
+    },
+    {
+      "path": "notebooks/mistral/results/20260923-2133_ministral-14b-2512_ministral-8b-2512.csv",
+      "rows": 96,
+      "sha256": "829bd6159ec1420d790af40f6d9daa55cc368e21dfacd3bfda0ed3b5a7dfce50",
+      "git_blob": "05ff9a170abbc190ed42f902809082e6d25637a7"
+    },
+    {
+      "path": "notebooks/mistral/results/20260923-2138_ministral-14b-2512_ministral-8b-2512.csv",
+      "rows": 96,
+      "sha256": "bc4593c3254e225b1360f0e7fa0972bb386412b152bcb5152fe951909ab19ce4",
+      "git_blob": "6589c515fc0eba02f2c4d3d82315dde30d806840"
+    },
+    {
+      "path": "notebooks/mistral/results/comparison.csv",
+      "rows": 21,
+      "sha256": "6a5d0455fa748fc64477a06e43f946f9c15e7dff337c1c83658c586dfc40133f",
+      "git_blob": "08783e2890a5eb407a0ca5fcd4f731dcf83e43d9"
+    },
+    {
+      "path": "notebooks/retrieval/results/common_words_comparison.csv",
+      "rows": 192,
+      "sha256": "df45b97a4495763e2687cabbaeef4dd4d29291144311dafa368d4cff30891723",
+      "git_blob": "72ab7b9bfc684705a385dfecfec0eb538b5168a2"
+    },
+    {
+      "path": "notebooks/retrieval/results/common_words_comparison_xbrl.csv",
+      "rows": 5960,
+      "sha256": "2eefe1469d6a4d6718ea0259b25aa1ec1cd67b76589469f91cd926e190365296",
+      "git_blob": "78c9635cda42506097e56b37fba5c73543be4b57"
+    },
+    {
+      "path": "notebooks/retrieval/results/final_k_sweep.csv",
+      "rows": 7728,
+      "sha256": "06e04fd9d15c736337744040b20840eff612269ffe0fbe2b310656c013b14dfa",
+      "git_blob": "6c382c577f4f3f69c89f634d99806a04ea1f3d07"
+    },
+    {
+      "path": "notebooks/retrieval/results/fusion_weight_sweep.csv",
+      "rows": 240,
+      "sha256": "2227e4ca948ac57a6a7ac76f11a3e6df3e89e65bcf64aebc2809a79f4ad6b53f",
+      "git_blob": "5c65374d118156ef669b6808ff46c58401c9c978"
+    },
+    {
+      "path": "notebooks/retrieval/results/rerank_comparison.csv",
+      "rows": 144,
+      "sha256": "5e223a085a1f0fb0fc487440fd5377e568204f469d5203b2b964401e37243d2b",
+      "git_blob": "19b14d9608ececca7ec874621ab9c77dd2154fff"
+    },
+    {
+      "path": "notebooks/retrieval/results/rerank_comparison_xbrl.csv",
+      "rows": 675,
+      "sha256": "25cd6937ccd6616989da74b7626cc2dcf2150d762ba66c170f66d2bf332c8cb0",
+      "git_blob": "4fab656b6ed1ce01f5f8370e81f302d280078741"
+    },
+    {
+      "path": "notebooks/retrieval/results/search_text_comparison.csv",
+      "rows": 432,
+      "sha256": "ac6f6e1fa37d787636e07d81f9bc669b7961461cb4b3b808a931cdec31f7e109",
+      "git_blob": "99c78abf6636b66c5eeebe2708b1a2785e87925b"
+    },
+    {
+      "path": "notebooks/retrieval/results/table_boost_sweep.csv",
+      "rows": 768,
+      "sha256": "997b00547e30a42bc71860c9021ece8998ae26dc83662f2cf32ac2d803d8c5a2",
+      "git_blob": "99461bdefb91fdbcdb150bbc7eafa67d75b78352"
+    },
+    {
+      "path": "notebooks/retrieval/results/table_boost_sweep_xbrl.csv",
+      "rows": 2980,
+      "sha256": "ff32891729b1368f31cd386d866b01cf2631e4189bc4f0c73411724e445d34a6",
+      "git_blob": "250ee29326d24f310d2b38f29dd753320474cf12"
+    }
+  ]
+}

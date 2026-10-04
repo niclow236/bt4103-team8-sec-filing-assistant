@@ -29,8 +29,9 @@ have anyway. The route only ever replaces an answer it can fully support.
 The answer it builds is this project's own sentence, not a model's, so it is
 recorded as having come from the facts store rather than from whichever model
 was configured -- see ``constants.FACTS_PROVIDER``. Nothing here calls a model,
-which is also why it returns in the time of one retrieval rather than the
-minutes a local model takes to read a prompt.
+which is also why it returns in the time of one retrieval, or two where the
+first finds nothing to cite, rather than the minutes a local model takes to
+read a prompt.
 """
 
 from __future__ import annotations
@@ -75,6 +76,12 @@ _SCALE_WORDS = {1_000: ("thousand", "thousands"),
 # A scale word straight after a figure, which is what makes "$5.2 billion"
 # a different number from a figure of 5.2.
 _SCALE_AFTER = re.compile(r"\s*(?:thousand|million|billion|trillion)s?\b", re.I)
+
+# "per share" straight after a line item's name, which makes it a per-share
+# amount and no longer the line item: "net income per share", "net loss per
+# share, basic and diluted", "net income per diluted share".
+_PER_SHARE_AFTER = re.compile(
+    r"\s+per\s+(?:(?:basic|diluted|common|ordinary)\s+)*share\b", re.I)
 
 # How a filing writes a negative: a minus sign, either side of the currency
 # symbol, or the accounting form, wrapping the figure in parentheses.
@@ -165,7 +172,7 @@ def format_figure(value: Decimal, unit: str) -> str:
 
 
 @lru_cache(maxsize=2)
-def _cached_facts(path: Path, mtime_ns: int):
+def cached_facts(path: Path, mtime_ns: int):
     """The facts store, read once per file per change.
 
     Keyed on the modification time as well as the path, so a rebuilt store is
@@ -178,6 +185,13 @@ def _cached_facts(path: Path, mtime_ns: int):
     return load_facts(path)
 
 
+@lru_cache(maxsize=None)
+def _alias(alias: str) -> re.Pattern[str]:
+    """A metric's alias as a whole word or phrase, in any case: the one pattern
+    every reader of a question or a claim finds it by."""
+    return re.compile(r"\b" + re.escape(alias) + r"\b", re.I)
+
+
 def metrics_in(text: str) -> set[str]:
     """Every metric whose words appear in the text, by whole-word match.
 
@@ -187,19 +201,62 @@ def metrics_in(text: str) -> set[str]:
     :func:`find_metric` adds the judgement a question needs. One definition
     rather than two, so a change to how an alias is matched cannot land on one
     side only and leave the router answering what the checker will not check.
+
+    A name inside a longer name of another metric is part of that name:
+    "diluted net income per share" names earnings per share, and the "net
+    income" in it does not name net income. A text that also says "net income"
+    on its own names both.
+
+    A name with "per share" after it is a per-share amount of the line item
+    and not the line item. "Net income per share" is what several filers call
+    earnings per share, and without "basic" or "diluted" in front it does not
+    say which, so it names neither of those and not net income either. Read
+    as net income, a right answer in those words was checked against the
+    store's net income and marked a mismatch.
     """
-    return {
-        key for key, metric in FINANCIAL_METRICS.items()
-        if any(re.search(r"\b" + re.escape(alias) + r"\b", text, re.I)
-               for alias in metric.aliases)
+    found = {
+        key: [match.span() for alias in metric.aliases
+              for match in _alias(alias).finditer(text)]
+        for key, metric in FINANCIAL_METRICS.items()
     }
+
+    def inside_another(key: str, span: tuple[int, int]) -> bool:
+        return any(
+            other != key and start <= span[0] and span[1] <= end and (start, end) != span
+            for other, spans in found.items() for start, end in spans
+        )
+
+    return {key for key, spans in found.items()
+            if any(not inside_another(key, span) and not _per_share_amount(text, key, span)
+                   for span in spans)}
+
+
+def _per_share_amount(text: str, key: str, span: tuple[int, int]) -> bool:
+    """Whether the name at ``span`` is a line item's with "per share" after it."""
+    return (not FINANCIAL_METRICS[key].unit.endswith("/shares")
+            and _PER_SHARE_AFTER.match(text, span[1]) is not None)
+
+
+def names_a_per_share_amount(text: str) -> bool:
+    """Whether the text names a line item per share, as "net income per share" does.
+
+    For a text :func:`metrics_in` finds no line item in. Such a figure is a
+    per-share one of a line item the text does not pin down, so the checker
+    cannot say what to compare it with, and reading it as a plain dollar
+    amount would set "$12.36" against a table in millions and call it wrong.
+    """
+    return any(
+        _per_share_amount(text, key, match.span())
+        for key, metric in FINANCIAL_METRICS.items() for alias in metric.aliases
+        for match in _alias(alias).finditer(text)
+    )
 
 
 def _longest_alias(metric: str, question: str) -> str:
     """The longest of the metric's aliases that the question actually uses."""
     matched = [
         alias for alias in FINANCIAL_METRICS[metric].aliases
-        if re.search(r"\b" + re.escape(alias) + r"\b", question, re.I)
+        if _alias(alias).search(question)
     ]
     return max(matched, key=len)
 
@@ -219,7 +276,7 @@ def _asks_only_for(question: str, alias: str) -> bool:
     segment names would have to grow one name at a time across fifteen
     companies and would still be a list of the ones somebody thought of.
     """
-    rest = re.sub(r"\b" + re.escape(alias) + r"\b", " ", question, flags=re.I)
+    rest = _alias(alias).sub(" ", question)
     rest = _ENTITY_NAMES.sub(" ", rest)
     words = re.findall(r"[A-Za-z0-9']+", rest)
     return all(_is_scaffolding(word) for word in words)
@@ -286,7 +343,7 @@ def lookup_fact(
     if frame is None:
         try:
             path = Path(facts_file)
-            frame = _cached_facts(path, path.stat().st_mtime_ns)
+            frame = cached_facts(path, path.stat().st_mtime_ns)
         except Exception:
             # Every way of failing to read the store is a miss, deliberately:
             # a corrupt file raises whatever the parquet engine chooses to
@@ -393,6 +450,12 @@ def prints_figure(
     391,035 |" is revenue in millions. A passage that declares a different
     scale is still refused.
 
+    A needle with a decimal point in it, "56.9" for a filer that prints its
+    millions to one place, is held to more than that: a declared scale is not
+    enough, because a table in millions holds percentages and rates written
+    the same way. It has to sit in a row that names the metric, or carry its
+    scale word beside it.
+
     And the needles carry no sign, so the sign is checked here: a loss of
     $1,500 is printed "(1,500)" or "-1,500", and a passage showing a positive
     1,500 is a different line item. A figure whose sign disagrees with the
@@ -412,9 +475,11 @@ def prints_figure(
                 if divisor == 1:
                     if _SCALE_AFTER.match(after) is None:
                         return True
-                elif (declared
-                      or re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I)
-                      or (heading is None and _row_names(before, labels))):
+                    continue
+                named = _row_names(before, labels)
+                if (re.match(rf"\s*(?:{'|'.join(words)})\b", after, re.I)
+                        or (declared and (named or "." not in needle))
+                        or (heading is None and named)):
                     return True
     return False
 
@@ -504,15 +569,32 @@ def answer_from_facts(
     retrieving and generating as usual. See the module docstring for what each
     step refuses and why. ``min_score`` is the caller's floor on a passage's
     score, applied here as the retrieval path applies it.
+
+    The passage is searched for under the name the question used for the line
+    item, and where that finds none, once more under its other names: the
+    figure is the same whatever the filer calls the line, and a question need
+    not use the filer's word for it.
     """
     started = perf_counter()
     fact = lookup_fact(question, tickers, fiscal_years, facts_file=facts_file, frame=frame)
     if fact is None:
         return None
+    asked = _longest_alias(fact.metric, question)
     passage = supporting_passage(
-        fact, retriever, top_k=top_k, min_score=min_score,
-        search_text=_longest_alias(fact.metric, question),
+        fact, retriever, top_k=top_k, min_score=min_score, search_text=asked,
     )
+    if passage is None:
+        # The filer may word the line differently from the question: Amazon's
+        # statement says "net sales", so a search for "total revenue" does not
+        # reach it. One more search, for the line item's other names together,
+        # before giving the question to a model.
+        others = " ".join(
+            alias for alias in FINANCIAL_METRICS[fact.metric].aliases if alias != asked
+        )
+        if others:
+            passage = supporting_passage(
+                fact, retriever, top_k=top_k, min_score=min_score, search_text=others,
+            )
     if passage is None:
         return None
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import streamlit as st
 
 from src.app.components import answer_card, filter_sidebar
@@ -31,7 +29,7 @@ def load_stack(config_id: str):
     The same call the evaluation command makes, so what the demo shows is the
     system the numbers in ``results/`` describe, rather than a fourth stack
     assembled here. Cached on the id because building one loads the indexes
-    and, for the dense and reranked rows, a model.
+    and, for the dense and hybrid rows, the embedding model.
     """
     # Remembered, so a repeated demo question is answered once (#36).
     return Remembered(build_stack(config_id, parts=_indexes()))
@@ -58,7 +56,11 @@ def main() -> None:
                "Answers cite the filing passages used to generate them.")
 
     question = st.text_input("Question", placeholder="What did Apple report about revenue in FY2024?")
-    parsed = parse_question(question, facts_file=None) if question.strip() else None
+    # Read with the facts store's labels as cues, as answer_question and the
+    # evaluation harness read a question. Read without them, a question that
+    # names a line item by its label ("What was Apple's gross profit in
+    # FY2024?") was taken for prose and searched with no lean toward tables.
+    parsed = parse_question(question) if question.strip() else None
     query = filter_sidebar(question, parsed=parsed)
     with st.sidebar:
         # In the registry's order, each labelled with the run that measured it,
@@ -80,20 +82,34 @@ def main() -> None:
         st.caption("Uses local processed filings and indexes. The answer model "
                    "comes from LLM_PROVIDER / LLM_MODEL in .env.")
 
+    # The question as read, in the scope the sidebar ends up with: what the
+    # answer is checked against and what the line under it describes.
+    scoped = parsed.scoped_to(query) if parsed is not None else None
     request = (question.strip(), query.tickers, query.fiscal_years, query.items, config_id)
     if st.button("Ask", type="primary", disabled=not question.strip()):
+        # The answer as the model writes it, until the checked answer replaces
+        # it. Plain text, because a "$" in prose is not the start of a formula.
+        draft, written = st.empty(), []
+
+        def show(token: str) -> None:
+            written.append(token)
+            draft.text("".join(written))
+
         try:
             with st.spinner("Searching filings and generating an answer…"), Stopwatch() as watch:
                 stack = load_stack(config_id)
-                answer = stack.answer(question.strip(), query=query, parsed=parsed)
-                answer = verify_answer(answer, parsed=replace(
-                    parsed, tickers=query.tickers, fiscal_years=query.fiscal_years))
+                answer = stack.answer(question.strip(), query=query, parsed=parsed,
+                                      on_token=show)
+                answer = verify_answer(answer, parsed=scoped)
         except (FileNotFoundError, ValueError, ProviderUnavailable) as error:
             st.error(str(error))
         else:
             st.session_state["filing_seconds"] = watch.seconds
             st.session_state["filing_answer"] = answer
             st.session_state["filing_request"] = request
+        # Also where the provider failed part way, so that half an answer is
+        # not left on the page above the error.
+        draft.empty()
 
     if st.session_state.get("filing_request") == request:
         # How long the answer shown took, kept beside it so the line is still
@@ -103,6 +119,10 @@ def main() -> None:
         answer = st.session_state.get("filing_answer")
         if answer is not None:
             answer_card(answer, key="filing-answer")
+            read = list(scoped.describe())
+            if answer.sub_questions:
+                read.append("Searched one filing at a time: " + ", ".join(answer.sub_questions))
+            st.caption(" · ".join(read))
     elif "filing_answer" in st.session_state:
         st.info("The question or filters changed. Select Ask to refresh the answer.")
 

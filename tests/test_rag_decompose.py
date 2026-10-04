@@ -364,17 +364,20 @@ def test_the_harness_counts_the_rows_it_split(monkeypatch):
     from src.rag.records import Answer, GenerationConfig
 
     config = GenerationConfig("ollama", "m", "grounded_v4")
+    # The answers are to the question asked, since the harness checks each one
+    # against the question it was asked as the app does.
+    asked = "Compare Apple and Microsoft in FY2024"
     answers = iter([
-        Answer(question="q1", text="a", citations=(), passages=(), abstained=True,
+        Answer(question=asked, text="a", citations=(), passages=(), abstained=True,
                config=config, abstention_reason="no_evidence",
                sub_questions=("AAPL FY2024", "MSFT FY2024")),
-        Answer(question="q2", text="a", citations=(), passages=(), abstained=True,
+        Answer(question=asked, text="a", citations=(), passages=(), abstained=True,
                config=config, abstention_reason="no_evidence"),
     ])
     monkeypatch.setattr("src.evaluation.harness.answer_question", lambda *a, **k: next(answers))
     questions = [
         BenchmarkQuestion.from_mapping({
-            "question_id": f"q{n}", "question": "Compare Apple and Microsoft in FY2024",
+            "question_id": f"q{n}", "question": asked,
             "expected_answer": "x", "supporting_chunk_ids": ["c1"],
             "hard_negative_chunk_ids": [], "ticker": None, "fiscal_year": None,
             "question_type": "comparative", "difficulty": "hard", "source": "manual",

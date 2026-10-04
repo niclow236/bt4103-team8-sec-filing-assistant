@@ -252,6 +252,41 @@ chroma/
 Thumbs.db
 .vscode/
 .idea/
+
+# The Streamlit agent skill, when `streamlit skills` or the app's own prompt
+# installs it in the project. Both are symlinks into the Streamlit package
+# inside .venv, so they resolve only on the machine that made them, and
+# Streamlit's installer says not to commit them. The project's own skill,
+# .claude/skills/verify, stays tracked.
+.agents/skills/developing-with-streamlit
+.claude/skills/developing-with-streamlit
+
 # Terminal output saved by src/utils.py run logging. Records of one machine
 # run, not shared source.
 logs/
+
+# Results and other data files. A script or notebook in this repo writes each
+# one, and like logs/ it is a record of one run on one machine, so none is
+# committed. Running the code again writes a new file, which is the same as
+# the old one only where nothing behind it moved: a hosted model does not
+# repeat its answers, and another commit or another build of the indexes ranks
+# passages differently. The files behind the numbers in the README were
+# committed and then removed, so they are in the history.
+# notebooks/removed-results.json lists each with its row count, its SHA-256
+# and the git object that holds it, and `git cat-file -p <git_blob>` prints
+# one. A results/ folder anywhere holds a run's output.
+results/
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.jsonl
+# Hand-written inputs that no code produces, so they stay in the repo.
+!notebooks/test_data/test_questions.csv
+!benchmark/questions.jsonl

@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from src.rag.query import ParsedQuestion, build_query, parse_question
+from src.rag.query import ParsedQuestion, parse_question
 from src.retrieval.constants import TABLE_BOOST
 from src.retrieval.records import Query
 
@@ -34,6 +34,39 @@ def test_issue_89_figure_questions(question, ticker, year, tmp_path):
     assert parsed.tickers == (ticker,)
     assert parsed.fiscal_years == (year,)
     assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+@pytest.mark.parametrize("line_item", [
+    "accounts receivable", "income tax expense", "provision for income taxes",
+    "income before income taxes", "stock-based compensation", "share-based compensation",
+    "sales and marketing expense", "property and equipment", "property, plant and equipment",
+    "intangible assets", "capital expenditures", "purchases of property and equipment",
+    "interest paid",
+])
+def test_a_plain_question_about_a_statement_line_asks_for_a_figure(line_item):
+    # None of these was a cue, and no label in the facts store is worded this
+    # way, so the question was read as prose and searched with no lean toward
+    # tables. Labels are off here: these are read without the store.
+    parsed = _parse(f"What was Microsoft's {line_item} in fiscal year 2024?")
+    assert parsed.question_type == "numeric"
+    assert parsed.wants_figures is True
+    assert parsed.to_query().table_boost == TABLE_BOOST
+
+
+@pytest.mark.parametrize("question", [
+    "How does Microsoft manage accounts receivable risk?",
+    "What does Apple say about its capital expenditures plans for data centers?",
+    "How does Meta account for stock-based compensation?",
+    "Why did Amazon's provision for income taxes matter to its strategy?",
+    "How does Adobe amortize its intangible assets?",
+    # Left out on purpose: the cash paid and the amount bought under the
+    # programme are two figures, and the question does not say which.
+    "What were Cisco's share repurchases in fiscal year 2024?",
+])
+def test_a_statement_line_named_in_a_prose_question_stays_prose(question):
+    parsed = _parse(question)
+    assert parsed.wants_figures is False
+    assert parsed.to_query().table_boost == 1.0
 
 
 def test_inventory_risk_stays_a_prose_question(tmp_path):
@@ -525,6 +558,61 @@ def test_a_request_for_advice_a_prediction_or_a_price_is_unanswerable(question):
     assert _parse(question).question_type == "unanswerable"
 
 
+@pytest.mark.parametrize("question, because", [
+    ("Should I buy Microsoft stock?", "request"),
+    ("Predict Apple's revenue next year", "request"),
+    # Advice about a company outside the corpus is refused as advice.
+    ("Should I buy Intel stock?", "request"),
+    # An outside company's own figure: a possessive, or the subject after an
+    # auxiliary.
+    ("What was Intel's revenue in 2023?", "company"),
+    ("How many employees did NVIDIA have in FY2024?", "company"),
+    ("How much revenue did Tesla report in FY2023?", "company"),
+    # The words that mark a price or the future are also in questions a filing
+    # answers: the contractual obligations table, remaining performance
+    # obligations, Item 5's repurchases and the cover page.
+    ("What will Apple's revenue be next year?", "topic"),
+    ("What is Apple's stock price?", "topic"),
+    ("What were Microsoft's purchase obligations due next year in FY2024?", "topic"),
+    ("How much of Oracle's remaining performance obligations will be recognized in the "
+     "next fiscal year, as of FY2024?", "topic"),
+    ("What average share price did Apple pay for repurchases in FY2024?", "topic"),
+    ("What was the market capitalization of Apple's stock held by non-affiliates in FY2024?",
+     "topic"),
+    # A company outside the corpus that the filings inside it are asked about,
+    # or whose own figure is not what is asked for.
+    ("Which companies named NVIDIA as a competitor in FY2024?", "topic"),
+    ("What did the filings disclose about supply agreements with Intel in FY2023?", "topic"),
+    ("Which companies reported revenue from Intel as a customer in FY2024?", "topic"),
+    ("Did any company mention Qualcomm's patents?", "topic"),
+    ("What did NVIDIA report in 2023?", "topic"),
+    ("What was Apple's revenue in 2015?", "year"),
+    # A year after the corpus is outside it like one before, and is searched.
+    ("What will Apple's revenue be in fiscal 2026?", "year"),
+])
+def test_an_unanswerable_question_says_why_it_is_one(question, because):
+    parsed = _parse(question)
+    assert parsed.question_type == "unanswerable"
+    assert parsed.unanswerable_because == because
+
+
+def test_an_answerable_question_has_no_reason_to_be_refused():
+    assert _parse("What was Apple's revenue in FY2024?").unanswerable_because is None
+    with pytest.raises(ValueError, match="only for an unanswerable question"):
+        ParsedQuestion("q", "factual", (), (), (), False, unanswerable_because="request")
+    with pytest.raises(ValueError, match="unanswerable_because must be one of"):
+        ParsedQuestion("q", "unanswerable", (), (), (), False, unanswerable_because="mood")
+
+
+def test_a_prediction_word_inside_a_line_item_s_name_is_not_a_request():
+    # One of the 12,579 benchmark questions: the XBRL label holds "Estimate"
+    # after a comma, which read as an instruction to estimate.
+    parsed = _parse("What was Loss Contingency, Estimate of Possible Loss for INTU in FY2021?")
+    assert parsed.question_type != "unanswerable"
+    assert _parse("Given what Oracle reported, estimate its revenue going forward"
+                  ).question_type == "unanswerable"
+
+
 def test_a_prediction_verb_after_a_subject_asks_what_the_filing_predicts():
     assert _parse("What does Apple predict for its supply chain?").question_type == "factual"
 
@@ -583,16 +671,44 @@ def test_describe_shows_every_decision_back_to_the_user():
     assert "Not in the corpus: NVIDIA, 2019" in lines
 
 
+@pytest.mark.parametrize("question, kind", [
+    # Searched, so the line sits under whatever answer a filing gave.
+    ("What were Microsoft's purchase obligations due next year in FY2024?",
+     "Question type: unanswerable, searched in case a filing answers it"),
+    ("What was Apple's revenue in 2015?",
+     "Question type: unanswerable, searched in case a filing answers it"),
+    # Refused, so there is no answer for the line to contradict.
+    ("Should I buy Microsoft stock?", "Question type: unanswerable"),
+    ("What was Intel's revenue in 2023?", "Question type: unanswerable"),
+    ("What was Apple's revenue in FY2024?", "Question type: numeric"),
+])
+def test_describe_says_when_an_unanswerable_reading_was_searched_anyway(question, kind):
+    assert _parse(question).describe()[0] == kind
+
+
+def test_describe_and_the_refusal_are_one_decision():
+    # A company picked by hand makes an outside company's figure a search
+    # (the app's sidebar), and the line under the answer has to say so:
+    # decided in two places, it read "unanswerable" under an answer.
+    reading = _parse("What was Intel's revenue in 2023?")
+    assert reading.refused == "company"
+    by_hand = reading.scoped_to(Query(reading.question, tickers=("AAPL",)))
+    assert by_hand.refused is None
+    assert by_hand.describe()[0] == (
+        "Question type: unanswerable, searched in case a filing answers it")
+    # Advice is refused whichever company is searched.
+    advice = _parse("Should I buy Intel stock?")
+    assert advice.scoped_to(Query(advice.question, tickers=("AAPL",))).refused == "request"
+    # And every reason a reading can be refused for has its abstention.
+    from src.rag.answer import REFUSALS
+    refused_for = {_parse(q).refused for q in (
+        "Should I buy Intel stock?", "What was Intel's revenue in 2023?",
+        "What was Apple's revenue in 2015?", "What is Apple's current stock price?")}
+    assert refused_for - {None} == set(REFUSALS)
+
+
 def test_describe_says_when_nothing_is_filtered():
     assert "Filters: none, searching every company and year" in _parse("What is a 10-K?").describe()
-
-
-def test_build_query_is_the_short_form():
-    query = build_query("Apple's revenue in FY2024", top_k=5, known_tickers=SCOPE,
-                        fiscal_years=YEARS, facts_file=None)
-    assert query.tickers == ("AAPL",)
-    assert query.fiscal_years == (2024,)
-    assert query.top_k == 5
 
 
 # --- search text ----------------------------------------------------------------

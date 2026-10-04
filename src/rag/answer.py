@@ -13,13 +13,21 @@ from ..retrieval.constants import FINAL_K
 from ..retrieval.facts import FACTS_FILE
 from ..retrieval.records import Query
 from .citations import resolve_citations
-from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS
+from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS, UnanswerableBecause
 from .decompose import search_decomposed
 from .generate import config_from_env, generate
 from .numeric import answer_from_facts
 from .prompt import build_prompt
 from .query import ParsedQuestion, parse_question
 from .records import Answer, AbstentionReason, GenerationConfig
+
+# What an unanswerable question is refused with, by why it is unanswerable
+# (``constants.UNANSWERABLE_BECAUSE``). "topic" and "year" are not here: those
+# are searched, see answer_question.
+REFUSALS: dict[UnanswerableBecause, AbstentionReason] = {
+    "request": "beyond_the_filings",
+    "company": "company_not_in_corpus",
+}
 
 
 def answer_question(
@@ -35,9 +43,28 @@ def answer_question(
     facts_file: Path = FACTS_FILE,
     use_facts: bool = True,
     use_decomposition: bool = True,
+    use_refusal: bool = True,
     parsed: ParsedQuestion | None = None,
 ) -> Answer:
     """The shared entry point for the app and evaluation harness.
+
+    A question the parser reads as asking for advice or a prediction, or for
+    a figure of a company the corpus holds no filings for, is refused before
+    anything is searched. Searched, the first kind gets sixteen passages about
+    the company it names and the second sixteen about other companies, and a
+    model may then answer from them: asked "Is Meta a good investment?" it
+    described Meta's spending plans. The refusal is an abstention with its own
+    reason.
+
+    Every other question is searched, the rest of what the parser reads as
+    unanswerable included, because a filing may answer it: one about a share
+    price, next year or a company outside the corpus (a 10-K prints the price
+    it paid for its own shares and the obligations due next year, and names
+    its competitors), and one naming only a fiscal year outside the corpus
+    (a filing prints the two years before its own). So is a question whose
+    Query names a company: the caller chose what to search.
+    ``use_refusal=False`` searches everything, which is the without half of
+    that comparison.
 
     A supplied Query overrides automatic filters. ``min_score`` is an optional
     additional floor on this retriever's final scores (inclusive, like rank()).
@@ -62,7 +89,10 @@ def answer_question(
 
     ``parsed`` is the question already read, for a caller that has one -- the
     harness builds its Query from one -- so that reading it twice is a choice
-    rather than the only option.
+    rather than the only option. It has to be a reading of this question, as
+    ``verify_answer`` and the app's sidebar require of theirs: the reading
+    decides the refusal and the route, so one left over from another question
+    would refuse this one unsearched, or look up a figure it never asked for.
 
     Empty retrieval never builds a prompt or calls a model. Built-in indexes
     distinguish empty filters from rejected scores using metadata, without
@@ -75,10 +105,26 @@ def answer_question(
     if min_score is not None and not isfinite(min_score):
         raise ValueError("min_score must be finite or None")
     parsed = parsed if parsed is not None else parse_question(question, facts_file=facts_file)
+    # parse_question strips, so a question with space around it matches its own reading.
+    if parsed.question != question.strip():
+        raise ValueError("parsed question must match the question")
     query = query if query is not None else parsed.to_query(top_k=FINAL_K)
     if query.top_k < 1:
         raise ValueError("top_k must be positive when answering a question")
     config = config if config is not None else config_from_env()
+
+    # Read in the companies the Query names: a caller that chose one to search
+    # by hand, as the app's sidebar lets a user do, is not refused for naming
+    # another (``ParsedQuestion.refused``).
+    because = parsed.scoped_to(query).refused if use_refusal else None
+    refusal = REFUSALS.get(because)
+    if refusal is not None:
+        answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(), passages=(),
+                        abstained=True, config=config, latency_ms=0.0,
+                        abstention_reason=refusal)
+        if on_token is not None:
+            on_token(answer.text)
+        return answer
 
     # The Query's filters rather than the parse's, so a caller that narrowed the
     # search by hand gets the figure for the company and year it asked about.
@@ -112,7 +158,7 @@ def answer_question(
                 reason = "below_threshold"
             elif admitted is False and query.filters:
                 unrestricted = replace(query, tickers=(), fiscal_years=(), items=(),
-                                       content_type=None, key_items_only=False)
+                                       content_type=None)
                 if has_candidates(retriever, unrestricted) is True:
                     reason = "filters_excluded_all"
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(),

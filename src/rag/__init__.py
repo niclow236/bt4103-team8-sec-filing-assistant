@@ -47,7 +47,7 @@ from .generate import (
     stream,
 )
 from .prompt import GroundedPrompt, build_prompt, render_source
-from .query import ParsedQuestion, build_query, parse_question
+from .query import ParsedQuestion, parse_question
 from .records import (
     Answer,
     Citation,
@@ -59,7 +59,7 @@ from .records import (
     VerificationCheck,
     VerificationResult,
 )
-from .verify import record_verification, verify_answer
+from .verify import verify_answer, worst_check
 
 __all__ = [
     "Answer",
@@ -83,17 +83,16 @@ __all__ = [
     "build_prompt",
     "decompose",
     "search_decomposed",
-    "build_query",
     "chat_model",
     "config_from_env",
     "find_metric",
     "generate",
     "lookup_fact",
     "parse_question",
-    "record_verification",
     "render_citation",
     "render_source",
     "resolve_citations",
     "stream",
     "verify_answer",
+    "worst_check",
 ]

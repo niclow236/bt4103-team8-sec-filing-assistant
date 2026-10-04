@@ -16,7 +16,7 @@ thing in one place, and changes by getting a new id.
 from __future__ import annotations
 
 import re
-from typing import NamedTuple
+from typing import Literal, NamedTuple, get_args
 
 # --- companies --------------------------------------------------------------
 # The names a question might use for each company in config/companies.txt,
@@ -102,6 +102,30 @@ OUT_OF_SCOPE_ALIASES: dict[str, tuple[str, ...]] = {
 # would filter to years and let one company crowd out the other.
 QUESTION_TYPES = ("factual", "comparative", "temporal", "numeric", "unanswerable")
 
+# Why a question is unanswerable, which decides what is done about it.
+#
+# - request: it asks for advice or for a prediction of the engine's own.
+#   Refused without a search, however it is worded.
+# - company: it asks for a figure of a company the corpus holds no filings
+#   for ("What was Intel's total revenue?"). Refused without a search: a
+#   search over the other companies only hands a model passages to answer
+#   from.
+# - topic: it is about something no filing in the corpus reports as its own
+#   subject: a share price, next year, a company outside the corpus. Still
+#   searched, because the words cannot tell a request for today's price from
+#   a question a filing answers. A 10-K prints the average price paid for
+#   repurchased shares, the market value of the shares non-affiliates hold
+#   and the obligations due next year, and the filings the corpus holds name
+#   the companies it does not as competitors, suppliers and customers.
+# - year: it names only fiscal years outside the corpus. Still searched: a
+#   filing prints the two years before its own beside it, and what falls due
+#   in the years after it.
+#
+# Where a question is searched, a model that finds no answer in the passages
+# abstains, which costs a search. A refusal that is wrong costs the answer.
+UnanswerableBecause = Literal["request", "company", "topic", "year"]
+UNANSWERABLE_BECAUSE: tuple[UnanswerableBecause, ...] = get_args(UnanswerableBecause)
+
 # Phrases that set two things against each other. Whole-word, lower case.
 COMPARATIVE_CUES = (
     "compare", "comparison", "compared", "versus", "vs", "vs.", "relative to",
@@ -146,6 +170,12 @@ NUMERIC_CUES = (
 # own; the question has to be asking for the thing rather than asking what
 # the filing said about it. ``query.py`` combines these four tables to make
 # that call, and the rule is written out there.
+#
+# Only the first two tables decide a refusal. The nouns and the future
+# phrases are a guess from the words, and a filing answers some questions
+# that carry them ("What average share price did Apple pay for repurchases?",
+# "What were Microsoft's purchase obligations due next year?"), so those are
+# searched and left to the model: see ``UNANSWERABLE_BECAUSE``.
 
 # Requests for advice. Always unanswerable: no reading of the filing turns
 # "should I buy" into a question about what it says.
@@ -161,6 +191,30 @@ ADVICE_CUES = (
 # on what Apple disclosed, predict ..." both count, while "what does Apple
 # predict for its supply chain" asks what the filing predicts and does not.
 PREDICTION_VERBS = ("predict", "forecast", "project", "estimate", "extrapolate", "guess")
+
+# The abbreviations a company's legal name ends in. The full stop after one is
+# part of the name, not the end of a clause, so the verb after "Apple Inc." is
+# not read as an instruction. Lower case, without the stop.
+CORPORATE_SUFFIXES = ("inc", "corp", "co", "ltd")
+
+# What a company does to a figure that makes the figure its own: "how many
+# employees did NVIDIA have", "what did Intel report". Stems, matched at the
+# start of the word after the company's name. Any other verb leaves the
+# company as something a filing in the corpus may be asked about, as in "did
+# NVIDIA account for more than 10% of any company's revenue", so the list
+# errs towards a search.
+OWNING_VERBS = (
+    "have", "has", "had", "report", "earn", "make", "made", "generate", "spend", "spent",
+    "pay", "paid", "employ", "post", "record", "own", "hold", "held", "owe", "invest",
+    "book", "recogni", "incur", "lose", "lost",
+)
+
+# Nouns that name a relationship with the company after "of", rather than a
+# figure of its own: "customers of Intel", "a supplier of NVIDIA".
+RELATION_NOUNS = (
+    "customer", "customers", "supplier", "suppliers", "competitor", "competitors",
+    "partner", "partners", "vendor", "vendors",
+)
 
 # Nouns for things a 10-K does not carry. Unanswerable when asked for
 # directly, and a topic like any other when the question asks what the filing
@@ -437,6 +491,25 @@ HOSTED_TIMEOUT_S = 120
 # guessing, since a wrong concept answers confidently with the wrong figure.
 # ``concepts`` are matched on the part after the taxonomy prefix, so
 # "us-gaap:Revenues" matches "Revenues".
+#
+# An alias is also what a statement row has to be called before the route will
+# cite it (``numeric.prints_figure``) or the checker read it, so the names the
+# filings use are here beside the ones a question uses: "income from
+# operations" (Salesforce, Alphabet, Meta, ServiceNow), "operating profit"
+# (Texas Instruments), "cash and equivalents" (Micron), "trade payables"
+# (Adobe), and the cash flow statement's line for cash from operations, which
+# few filers word alike. Each was read off the rows that print a stored figure
+# across the 75 filings. "Inventory", singular, is left out though Alphabet and
+# Broadcom print it: the word is in too much prose about purchase commitments
+# and risk for a sentence using it to be checked against the balance.
+#
+# Adobe, Salesforce, Alphabet and Intuit call earnings per share "net income
+# per share", which holds another line item's name. ``numeric.metrics_in``
+# reads a name inside a longer one as part of the longer one, so "diluted net
+# income per share" names earnings per share and not net income. Plain "net
+# income per share" is left out on purpose: it does not say basic or diluted,
+# so the route would be choosing one for the user. ``metrics_in`` reads it as
+# a per-share amount that names no line item here, and not as net income.
 
 
 class Metric(NamedTuple):
@@ -453,17 +526,29 @@ FINANCIAL_METRICS: dict[str, Metric] = {
                        "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"), "USD"),
     "net_income": Metric(("net income", "net earnings", "net loss"),
                          ("NetIncomeLoss", "ProfitLoss"), "USD"),
-    "operating_income": Metric(("operating income", "operating loss"), ("OperatingIncomeLoss",), "USD"),
+    "operating_income": Metric(("operating income", "operating loss", "income from operations",
+                                "operating profit"), ("OperatingIncomeLoss",), "USD"),
     "assets": Metric(("total assets",), ("Assets",), "USD"),
     "liabilities": Metric(("total liabilities",), ("Liabilities",), "USD"),
-    "accounts_payable": Metric(("accounts payable",), ("AccountsPayableCurrent",), "USD"),
+    "accounts_payable": Metric(("accounts payable", "trade payables"),
+                               ("AccountsPayableCurrent",), "USD"),
     "inventory": Metric(("inventories",), ("InventoryNet",), "USD"),
-    "cash": Metric(("cash and cash equivalents",), ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
-    "diluted_eps": Metric(("diluted earnings per share", "diluted eps"),
+    "cash": Metric(("cash and cash equivalents", "cash and equivalents"),
+                   ("CashAndCashEquivalentsAtCarryingValue",), "USD"),
+    "diluted_eps": Metric(("diluted earnings per share", "diluted eps",
+                           "diluted net income per share"),
                           ("EarningsPerShareDiluted",), "USD/shares"),
-    "basic_eps": Metric(("basic earnings per share", "basic eps"),
+    "basic_eps": Metric(("basic earnings per share", "basic eps",
+                         "basic net income per share"),
                         ("EarningsPerShareBasic",), "USD/shares"),
-    "operating_cash": Metric(("cash from operations", "operating cash flow"),
+    "operating_cash": Metric(("cash from operations", "operating cash flow",
+                              "net cash from operations",
+                              "net cash provided by operating activities",
+                              "net cash provided by (used in) operating activities",
+                              "cash provided by operating activities",
+                              "cash generated by operating activities",
+                              "cash flow provided by operating activities",
+                              "cash flows from operating activities"),
                              ("NetCashProvidedByUsedInOperatingActivities",), "USD"),
 }
 
@@ -482,6 +567,30 @@ NUMERIC_CUES = NUMERIC_CUES + tuple(
 FIGURE_METRIC_CUES = tuple(
     alias for key in ("accounts_payable", "inventory")
     for alias in FINANCIAL_METRICS[key].aliases
+)
+
+# Lines of the three statements that the facts route does not answer, by the
+# names a question gives them. "What was Microsoft's accounts receivable in
+# fiscal year 2024?" asks for a figure, and none of its words was a cue, so it
+# was read as prose and searched with no lean toward tables: four of its
+# sixteen passages were tables, where a figure question gets twelve.
+# ``notebooks/answers/line_item_figures.py`` asks that question of every line
+# item here and every filing of a year.
+#
+# The XBRL label of a line is not what a question calls it ("Accounts
+# Receivable, after Allowance for Credit Loss, Current"), so the labels in the
+# facts store do not cover these. Like the two metrics above, each needs a
+# request for the figure: "how does Microsoft manage accounts receivable risk"
+# stays prose. "Share repurchases" was measured and left out, since a filing
+# reports the cash paid and the amount bought under its programme as two
+# figures and the question does not say which.
+FIGURE_LINE_ITEM_CUES = (
+    "income before income taxes", "income tax expense", "provision for income taxes",
+    "sales and marketing expense", "sales and marketing expenses",
+    "stock-based compensation", "share-based compensation",
+    "accounts receivable", "property and equipment", "property, plant and equipment",
+    "intangible assets", "capital expenditures", "purchases of property and equipment",
+    "interest paid",
 )
 
 # How the facts store writes a unit, and what this project calls it. The store
@@ -584,7 +693,17 @@ FACTS_SENTENCE = "{company} reported {label} of {figure} for {period}."
 # than FINAL_K because this is not a ranked answer set: the figure is in one
 # specific table of one specific filing, and the search is already narrowed to
 # that filing, so the cost of looking further down is a few string comparisons.
-FACT_PASSAGE_K = 20
+#
+# 50, which is retrieval's CANDIDATE_K, rather than the 20 it started at. Hybrid
+# fetches that many candidates for any smaller request, so looking through all
+# of them searches and scores nothing more. At 20 the route found a
+# figure in the store and then no passage to cite for questions whose statement
+# table sat a little further down: a search for "total revenue" ranks Amazon's
+# income statement, which says "net sales", below the prose that uses the word.
+# Over the plain question for each filing and line item, 825 of them
+# (notebooks/answers/headline_figures.py, with Hybrid), the route answered 660
+# at 50 where it answered 651 at 20, and none it had answered before was lost.
+FACT_PASSAGE_K = 50
 
 # --- decomposing a question -------------------------------------------------
 # How many company-and-year PAIRS a question may be split into (#35). It caps
@@ -601,8 +720,8 @@ FACT_PASSAGE_K = 20
 # passages per filing are not the only cost: each pair is another search, and
 # each filing is another one for the model to hold together in one answer at
 # 3B on a laptop. Which of the two matters more is a thing to measure on the
-# benchmark (#26) rather than to assume here, in the way TABLE_BOOST and the
-# score floors are left at their conservative settings until measured.
+# benchmark (#26) rather than to assume here, in the way the score floors are
+# left unset until measured and TABLE_BOOST stayed off until its sweep.
 #
 # The other cap is not a constant, because it follows from the budget itself:
 # no split may leave a sub-question with no passage at all, so a split is only
