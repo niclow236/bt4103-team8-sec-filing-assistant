@@ -336,3 +336,10 @@ def test_an_abstention_is_stated_with_its_reason_and_what_to_try():
         "**No answer from the filings.** The selected filters excluded every indexed passage.")
     assert "Clear a company, fiscal year or Item" in app.caption[0].value
     assert not app.get("html")
+    # One built with no reason, which the pipeline never makes, says so.
+    unexplained = ABSTAINED_APP.replace('abstention_reason="filters_excluded_all", ', "")
+    app = AppTest.from_string(unexplained).run(timeout=30)
+    assert not app.exception
+    assert app.warning[0].value == (
+        "**No answer from the filings.** No reason was recorded for this abstention.")
+    assert not app.caption

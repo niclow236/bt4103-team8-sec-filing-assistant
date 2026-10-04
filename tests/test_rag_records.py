@@ -4,7 +4,14 @@ import dataclasses
 
 import pytest
 
-from src.rag.records import Answer, Citation, GenerationConfig
+from src.rag.records import (
+    ABSTENTION_MESSAGES,
+    NO_ABSTENTION_REASON,
+    Answer,
+    Citation,
+    GenerationConfig,
+    abstention_text,
+)
 from src.retrieval.records import RetrievedPassage
 
 CONFIG = GenerationConfig(provider="ollama", model="llama3.1:8b", prompt_template_id="grounded_v1")
@@ -146,3 +153,13 @@ def test_config_rides_on_the_answer():
     other = GenerationConfig(provider="ollama", model="llama3.1:8b",
                              prompt_template_id="grounded_v1")
     assert _answer(config=other).config is other
+
+
+def test_an_abstention_s_message_is_looked_up_in_one_place():
+    for reason, message in ABSTENTION_MESSAGES.items():
+        assert abstention_text(reason) == message
+    # One recorded with no reason, as a results file written before reasons
+    # were recorded has it, is said to have none: nothing is guessed for it.
+    assert abstention_text(None) == NO_ABSTENTION_REASON
+    assert abstention_text("a reason a later version records") == NO_ABSTENTION_REASON
+    assert NO_ABSTENTION_REASON not in ABSTENTION_MESSAGES.values()

@@ -26,7 +26,7 @@ from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
 from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA
 from src.rag.query import ParsedQuestion, parse_question
-from src.rag.records import ABSTENTION_MESSAGES, Answer, Citation
+from src.rag.records import Answer, Citation, abstention_text
 from src.retrieval.constants import FINAL_K
 from src.retrieval.records import Query, RetrievedPassage
 from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
@@ -219,9 +219,8 @@ def abstention_notice(answer: Answer) -> None:
     is the correct one. Drawn as two bare paragraphs it read as an answer
     that had failed to load.
     """
-    reason = ABSTENTION_MESSAGES.get(
-        answer.abstention_reason, "The available evidence does not answer this question.")
-    st.warning(f"**No answer from the filings.** {reason}", icon=":material/do_not_disturb_on:")
+    st.warning(f"**No answer from the filings.** {abstention_text(answer.abstention_reason)}",
+               icon=":material/do_not_disturb_on:")
     next_step = _ABSTENTION_NEXT_STEPS.get(answer.abstention_reason)
     if next_step:
         st.caption(next_step)
@@ -510,8 +509,7 @@ def retrieval_trace(answer: Answer, parsed: ParsedQuestion, config: StackConfig,
                 },
             )
         else:
-            st.caption(ABSTENTION_MESSAGES.get(answer.abstention_reason,
-                                               "No passage was retrieved."))
+            st.caption(abstention_text(answer.abstention_reason))
 
     with st.expander(_writing_step(answer), type="step", icon=":material/edit_note:"):
         for line in _writing_detail(answer):
