@@ -107,6 +107,13 @@ def answer_models() -> AnswerModels:
     asked with the provider picked by hand, so it opens on the default one and
     ``problem`` says what was wrong with the setting.
 
+    Nor is a ``.env`` that cannot be read at all. PowerShell 5's ``>`` and
+    ``Out-File`` save a file as UTF-16, which python-dotenv refuses, and this
+    is the first place a page reads ``.env``: raised from here, the refusal
+    was a traceback where the sidebar should be, on every load. The page
+    opens on each provider's default model and ``problem`` says the file
+    could not be read. An Ask still fails on it, as an error on the page.
+
     ``unready`` is what each provider's own check refuses, asked of its
     settings alone (``check_provider``): no client is built and nothing is
     sent. It holds what is wrong and not the check's advice, which is written
@@ -115,15 +122,26 @@ def answer_models() -> AnswerModels:
     no model.
     """
     models, unready = {}, {}
-    for provider in PROVIDERS:
-        config = config_from_env(provider=provider)
-        models[provider] = config.model
-        try:
-            check_provider(config)
-        except ProviderUnavailable as error:
-            unready[provider] = error.reason
-        except ValueError as error:
-            unready[provider] = str(error)
+    try:
+        for provider in PROVIDERS:
+            config = config_from_env(provider=provider)
+            models[provider] = config.model
+            try:
+                check_provider(config)
+            except ProviderUnavailable as error:
+                unready[provider] = error.reason
+            except ValueError as error:
+                unready[provider] = str(error)
+    except (ValueError, OSError) as error:
+        # Only reading .env raises here: a provider named in the code is not
+        # refused, and what its settings lack was caught above. UTF-16 with
+        # its byte order mark is a UnicodeDecodeError, and without one an
+        # OSError on Windows, where a variable cannot hold the null bytes.
+        models = {provider: config_from_env(provider=provider, environ={}).model
+                  for provider in PROVIDERS}
+        return AnswerModels(models, DEFAULT_PROVIDER, {}, (
+            f"Could not read .env: {error}. If PowerShell 5's `>` or `Out-File` saved it, "
+            "it is UTF-16: save it as UTF-8."))
     try:
         return AnswerModels(models, config_from_env().provider, unready)
     except ValueError as error:

@@ -5,6 +5,7 @@ asks ``src.stack`` for a configuration by id and answers through it, so these
 tests stand in a built ``Stack`` rather than patching the RAG entry point.
 """
 
+import importlib
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -466,6 +467,52 @@ def test_a_mistyped_provider_in_env_is_said_and_does_not_stop_the_page(monkeypat
     ui.button[0].click().run()
     assert not ui.exception and not ui.error
     assert built[DEFAULT_STACK].loaded_for == ["ollama"]
+
+
+# What reading a .env saved as UTF-16 raises: with its byte order mark, as
+# PowerShell 5's > and Out-File write one, and without, on Windows.
+UNREADABLE = [UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte"),
+              OSError(22, "Invalid argument")]
+
+
+def _unreadable_env(monkeypatch, error):
+    """Every read of .env raises ``error``."""
+    def refuses(*args, **kwargs):
+        raise error
+
+    # The module, through importlib: ``import src.rag.generate`` gets the
+    # function of that name the package exports.
+    monkeypatch.setattr(importlib.import_module("src.rag.generate"), "load_env", refuses)
+
+
+@pytest.mark.parametrize("error", UNREADABLE, ids=["with a byte order mark", "without one"])
+def test_an_unreadable_env_is_said_and_does_not_stop_the_page(monkeypatch, error):
+    # The page reads .env to name the model each provider would answer with.
+    # Read outside any try, a file that cannot be decoded was a traceback
+    # before the sidebar was drawn, on every load (review of #119).
+    _unreadable_env(monkeypatch, error)
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.exception
+    box, line = _provider(ui)
+    assert box.value == "ollama" and line.startswith("llama3.2:3b, ")
+    said = [warning.value for warning in ui.sidebar.warning]
+    assert len(said) == 1 and said[0].startswith("Could not read .env: ")
+    assert said[0].endswith("it is UTF-16: save it as UTF-8.")
+    # The other provider can still be looked at, on its default model.
+    box.set_value("mistral").run()
+    assert not ui.exception and _provider(ui)[1].startswith("ministral-8b-2512, ")
+
+
+@pytest.mark.parametrize("error", UNREADABLE, ids=["with a byte order mark", "without one"])
+def test_an_ask_over_an_unreadable_env_is_an_error_on_the_page(own_stack, monkeypatch, error):
+    # Through the app's own load_stack, which reads .env to build the stack.
+    _unreadable_env(monkeypatch, error)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    assert ui.error[0].value == str(error) and not ui.get("html")
 
 
 class _OnePassage:

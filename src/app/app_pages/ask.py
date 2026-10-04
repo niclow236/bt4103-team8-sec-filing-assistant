@@ -74,7 +74,9 @@ if asked and question:
             answer = state.load_stack(config_id, provider).answer(
                 question, query=query, parsed=parsed, on_token=show)
             answer = verify_answer(answer, parsed=scoped)
-    except (FileNotFoundError, ValueError, ProviderUnavailable) as error:
+    except (OSError, ValueError, ProviderUnavailable) as error:
+        # OSError for an index that is not there, and for a .env saved in an
+        # encoding that cannot be read, which the sidebar has already named.
         st.error(str(error), icon=":material/error:")
     else:
         state.keep(PAGE, request, answer, watch.seconds)

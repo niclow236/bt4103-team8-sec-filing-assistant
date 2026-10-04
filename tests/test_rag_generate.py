@@ -536,6 +536,24 @@ def test_the_check_refuses_every_setting_the_build_refuses(tmp_path):
         check_provider(_config(provider="anthropic"))
 
 
+@pytest.mark.parametrize("encoding, raised", [("utf-16", UnicodeDecodeError),
+                                              ("utf-16-le", (ValueError, OSError))])
+def test_a_dotenv_saved_as_utf16_cannot_be_read(tmp_path, encoding, raised):
+    # python-dotenv reads UTF-8. PowerShell 5's > and Out-File save UTF-16
+    # with a byte order mark, which it cannot decode. Without the mark the
+    # text decodes with a null byte after every letter, which no variable can
+    # hold: an OSError on Windows and a ValueError elsewhere. The app catches
+    # both where it first reads .env (state.answer_models), so this is the
+    # test that fails if a later python-dotenv reads such a file some other way.
+    path = tmp_path / ".env"
+    path.write_bytes("SEC_FILING_PROBE=1\n".encode(encoding))
+    try:
+        with pytest.raises(raised):
+            config_from_env(dotenv=path)
+    finally:
+        os.environ.pop("SEC_FILING_PROBE", None)     # had a later version read it after all
+
+
 def test_a_key_added_to_the_dotenv_file_after_the_error_is_read(tmp_path):
     # What the missing-key message asks for, in one notebook: refused, the key
     # pasted into .env, the question asked again, with no restart.
