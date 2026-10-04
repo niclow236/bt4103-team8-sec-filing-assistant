@@ -39,6 +39,7 @@ from typing import Any
 from .config import PROCESSED_DIR, PROJECT_ROOT
 from .retrieval.constants import FINAL_K
 from .retrieval.records import Query
+from .retrieval.embedding_config import EmbeddingConfig
 
 # Where the ablation runner writes, and so where the app looks for the
 # configurations that have actually been measured.
@@ -151,13 +152,14 @@ def build_retriever(
     key: str,
     *,
     processed_dir: Path = PROCESSED_DIR,
+    embedding: EmbeddingConfig | None = None,
     chroma_dir: Path | None = None,
     embedding_model: str | None = None,
     embedding_dimensions: int | None = None,
     embedding_query_prefix: str | None = None,
     embedding_passage_prefix: str | None = None,
     model: Any | None = None,
-    parts: dict[str, Any] | None = None,
+    parts: dict[Any, Any] | None = None,
 ) -> Any:
     """The retriever a configuration names, loaded against the local corpus.
 
@@ -175,21 +177,34 @@ def build_retriever(
     """
     parts = {} if parts is None else parts
 
+    if embedding is not None and any(value is not None for value in (
+        chroma_dir, embedding_model, embedding_dimensions,
+        embedding_query_prefix, embedding_passage_prefix,
+    )):
+        raise ValueError("pass embedding or individual embedding settings, not both")
+    if embedding is None:
+        if chroma_dir is None and any(value is not None for value in (
+            embedding_model, embedding_dimensions, embedding_query_prefix, embedding_passage_prefix,
+        )):
+            raise ValueError("embedding settings need chroma_dir")
+        defaults = EmbeddingConfig()
+        embedding = EmbeddingConfig(
+            model=embedding_model if embedding_model is not None else defaults.model,
+            dimensions=embedding_dimensions if embedding_dimensions is not None else defaults.dimensions,
+            index_dir=chroma_dir if chroma_dir is not None else defaults.index_dir,
+            query_prefix=embedding_query_prefix if embedding_query_prefix is not None else defaults.query_prefix,
+            passage_prefix=embedding_passage_prefix if embedding_passage_prefix is not None else defaults.passage_prefix,
+        )
+    corpus_key = str(processed_dir.resolve())
+
     def part(name: str, load: Any) -> Any:
-        slot = name if name != "dense" or chroma_dir is None else f"dense:{chroma_dir}"
+        # Scope the cache to the corpus and every setting that affects retrieval.
+        # Validation happens above even when a slot was already populated.
+        slot = (name, corpus_key, embedding) if name == "dense" else (name, corpus_key)
         if slot not in parts:
             kwargs = {"processed_dir": processed_dir}
-            if name == "dense" and chroma_dir is not None:
-                kwargs.update(
-                    chroma_dir=chroma_dir,
-                    embedding_model=embedding_model,
-                    embedding_dimensions=embedding_dimensions,
-                    passage_prefix=embedding_passage_prefix or "",
-                )
-                if embedding_query_prefix is not None:
-                    kwargs["query_prefix"] = embedding_query_prefix
-            elif name == "dense" and (embedding_model or embedding_dimensions):
-                raise ValueError("embedding_model and embedding_dimensions need chroma_dir")
+            if name == "dense":
+                kwargs["embedding"] = embedding
             parts[slot] = load(**kwargs)
         return parts[slot]
 
@@ -263,6 +278,7 @@ def build_stack(
     config_id: str = DEFAULT_STACK,
     *,
     processed_dir: Path = PROCESSED_DIR,
+    embedding: EmbeddingConfig | None = None,
     chroma_dir: Path | None = None,
     embedding_model: str | None = None,
     embedding_dimensions: int | None = None,
@@ -273,7 +289,7 @@ def build_stack(
     retriever_key: str | None = None,
     retriever: Any | None = None,
     llm: Any | None = None,
-    parts: dict[str, Any] | None = None,
+    parts: dict[Any, Any] | None = None,
     **settings: Any,
 ) -> Stack:
     """Build the configuration ``config_id`` names.
@@ -319,6 +335,7 @@ def build_stack(
         else build_retriever(
             config.retriever,
             processed_dir=processed_dir,
+            embedding=embedding,
             chroma_dir=chroma_dir,
             embedding_model=embedding_model,
             embedding_dimensions=embedding_dimensions,

@@ -219,3 +219,44 @@ def test_the_sort_window_changes_nothing_but_speed(corpus, tmp_path, fake_model)
     a, b = stored(tmp_path / "a"), stored(tmp_path / "b")
     assert set(a) == set(b)
     assert all(np.allclose(a[c][2], b[c][2]) for c in a)
+
+
+def test_passage_prefix_changes_vectors_digests_and_manifest(corpus, chroma, fake_model):
+    build(corpus, chroma)
+    old = stored(chroma)
+    manifest = build(corpus, chroma, passage_prefix="passage: ")
+    new = stored(chroma)
+    assert manifest.passage_prefix == "passage: "
+    assert old.keys() == new.keys()
+    assert all(old[key][1][embed.DIGEST_FIELD] != new[key][1][embed.DIGEST_FIELD] for key in old)
+    assert all(not np.array_equal(old[key][2], new[key][2]) for key in old)
+    assert embed.check_index(chroma, corpus, passage_prefix="passage: ") == []
+    assert any("passage prefix" in problem for problem in embed.check_index(chroma, corpus))
+    calls = fake_model.calls
+    build(corpus, chroma, passage_prefix="passage: ")
+    assert fake_model.calls == calls
+
+
+def test_minilm_limit_survives_noop_resume_without_loading(corpus, chroma, fake_model, monkeypatch, capsys):
+    fake_model.max_seq_length = 256
+    fake_model.tokenizer = lambda texts: {"input_ids": [[0] * 300 for text in texts]}
+    first = build(corpus, chroma, model_name="test-minilm")
+    report = embed.truncation_file_for(chroma)
+    assert first.max_tokens == 256
+    assert json.loads(report.read_text())["n_truncated"] == 90
+    assert "truncated at 256 tokens" in capsys.readouterr().out
+    monkeypatch.setattr(embed, "_load_model", lambda *args, **kwargs: pytest.fail("no-op resume must not load model"))
+    second = build(corpus, chroma, model_name="test-minilm")
+    assert second.max_tokens == 256
+    assert json.loads(report.read_text())["max_tokens"] == 256
+    assert json.loads(report.read_text())["n_truncated"] == 90
+
+
+def test_token_limit_change_refuses_to_relabel_existing_vectors(corpus, chroma, fake_model):
+    fake_model.max_seq_length = 512
+    first = build(corpus, chroma)
+    with pytest.raises(RuntimeError, match="token limit"):
+        build(corpus, chroma, max_tokens=256)
+    assert embed.read_manifest(embed.manifest_file_for(chroma)) == first
+    second = build(corpus, chroma, rebuild=True, max_tokens=256)
+    assert second.max_tokens == 256

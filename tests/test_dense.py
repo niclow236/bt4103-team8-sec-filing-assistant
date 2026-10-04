@@ -141,7 +141,7 @@ def test_the_score_is_a_similarity_not_a_distance(corpus, chroma, fake_model, mo
         def encode(self, texts, **kwargs):
             return np.stack([pinned for _ in texts])
 
-    monkeypatch.setattr(embed, "_load_model", lambda threads=None: (Pinned(), 1))
+    monkeypatch.setattr(embed, "_load_model", lambda threads=None, **_: (Pinned(), 1))
     found = DenseRetriever.load(chroma_dir=chroma, processed_dir=corpus).search(
         Query("ignored, the encoder is pinned", top_k=3)
     )

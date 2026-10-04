@@ -509,9 +509,13 @@ def build(
     system, twice, at 86% built. Disk is cheap here and memory is not: the
     second walk costs seconds against an encode measured in hours.
     """
-    custom_model = model_name is not None or dimensions is not None
     model_name = EMBED_MODEL if model_name is None else model_name
     dimensions = EMBED_DIMENSIONS if dimensions is None else dimensions
+    if max_tokens is not None and max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
+    previous_manifest = read_manifest(manifest_file_for(chroma_dir))
+    if max_tokens is None and previous_manifest is not None and previous_manifest.model == model_name:
+        max_tokens = previous_manifest.max_tokens
     if batch_size < 1 or sort_window < 1:
         raise ValueError(
             f"batch_size and sort_window must be at least 1, got {batch_size} and "
@@ -581,6 +585,10 @@ def build(
                 f"  python -m src.retrieval embed --rebuild"
             )
 
+    if (held and previous_manifest is not None and previous_manifest.max_tokens is not None
+            and max_tokens is not None and max_tokens != previous_manifest.max_tokens):
+        raise RuntimeError("changing the encoder token limit requires rebuild=True")
+
     before = _differences(held, corpus)
     if held:
         print(f"index:    {len(held):,} vectors, {_describe(before)}")
@@ -613,11 +621,12 @@ def build(
             # Loaded on the first batch rather than up front, so a run with
             # nothing to do never pays for torch.
             print(f"loading {model_name} ...")
-            if not custom_model:
-                model, used_threads = _load_model(threads)
-            else:
-                model, used_threads = _load_model(
-                    threads, model_name=model_name, expected_dimensions=dimensions
+            model, used_threads = _load_model(
+                threads, model_name=model_name, expected_dimensions=dimensions
+            )
+            if max_tokens is not None:
+                model.max_seq_length = min(
+                    max_tokens, int(getattr(model, "max_seq_length", max_tokens))
                 )
             print(f"encoding on {used_threads} threads")
             started = time.perf_counter()
@@ -703,6 +712,18 @@ def build(
             f"it was building; rebuild it: python -m src.retrieval embed --rebuild"
         )
 
+    # Retain the actual encoder limit even when a current index needs no model.
+    if model is not None:
+        effective_max_tokens = int(getattr(model, "max_seq_length", max_tokens or EMBED_MAX_TOKENS))
+    elif previous_manifest is not None and previous_manifest.model == model_name and previous_manifest.max_tokens:
+        effective_max_tokens = previous_manifest.max_tokens
+    elif max_tokens is not None:
+        effective_max_tokens = max_tokens
+    else:
+        # Legacy indexes have no limit recorded: read the encoder once to learn it.
+        model, _ = _load_model(threads, model_name=model_name, expected_dimensions=dimensions)
+        effective_max_tokens = int(getattr(model, "max_seq_length", EMBED_MAX_TOKENS))
+
     # From the index's own digests, not the corpus walk: the manifest says what
     # the index holds, and matches the corpus only if the two are the same.
     manifest = IndexManifest(
@@ -716,14 +737,12 @@ def build(
         dimensions=dimensions,
         chunk_budget=chunk_budget,
         chunk_overlap=chunk_overlap,
+        passage_prefix=passage_prefix,
+        max_tokens=effective_max_tokens,
     )
     write_manifest(manifest, manifest_file)
-    max_tokens = max_tokens or (
-        int(getattr(model, "max_seq_length", EMBED_MAX_TOKENS))
-        if model is not None else EMBED_MAX_TOKENS
-    )
     write_truncation_report(
-        collection, chroma_dir, model=model_name, max_tokens=max_tokens
+        collection, chroma_dir, model=model_name, max_tokens=effective_max_tokens
     )
 
     after = _differences(held, corpus)
@@ -745,6 +764,7 @@ def check_index(
     model: str | None = None,
     dimensions: int | None = None,
     passage_prefix: str = PASSAGE_PREFIX,
+    max_tokens: int | None = None,
 ) -> list[str]:
     """Every reason the index in ``chroma_dir`` should not be searched.
 
@@ -768,7 +788,10 @@ def check_index(
 
     expected_model = model or EMBED_MODEL
     expected_dimensions = dimensions or EMBED_DIMENSIONS
-    problems = manifest.mismatches(model=expected_model, dimensions=expected_dimensions)
+    problems = manifest.mismatches(
+        model=expected_model, dimensions=expected_dimensions, passage_prefix=passage_prefix,
+        max_tokens=max_tokens if manifest.max_tokens is not None else None
+    )
 
     collection = open_collection(chroma_dir, create=False)
     if collection is None:
@@ -850,7 +873,7 @@ def write_truncation_report(
     )
     print()
     print(f"  WARNING  {len(passages):,} of {n_indexed:,} vectors ({share:.1f}%) were "
-          f"truncated at {EMBED_MAX_TOKENS} tokens by the encoder.")
+          f"truncated at {max_tokens} tokens by the encoder.")
     print(f"           {tables:,} of them are table passages. Worst: {worst:,} tokens.")
     print("           Their stored text is whole; their vector is not.")
     print(f"           Listed in {path}")

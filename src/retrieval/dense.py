@@ -49,6 +49,7 @@ from .constants import (
     CHROMA_DIR,
     DENSE,
     EMBED_MODEL,
+    EMBED_DIMENSIONS,
     EMBED_NORMALIZE,
     MIN_DENSE_SCORE,
     QUERY_PREFIX,
@@ -62,6 +63,7 @@ from .embed import (
     where_for,
 )
 from .records import IndexManifest, Query, RetrievedPassage
+from .embedding_config import EmbeddingConfig
 
 
 def similarity_of(distance: float) -> float:
@@ -122,6 +124,7 @@ class DenseRetriever:
         embedding_dimensions: int | None = None,
         query_prefix: str = QUERY_PREFIX,
         passage_prefix: str = "",
+        embedding: EmbeddingConfig | None = None,
     ) -> DenseRetriever:
         """Open the index in ``chroma_dir``, or refuse it and say why.
 
@@ -139,6 +142,12 @@ class DenseRetriever:
         index. It is not what a run that produces numbers for the report wants,
         which is why it is not the default.
         """
+        if embedding is not None:
+            chroma_dir = embedding.index_dir
+            embedding_model = embedding.model
+            embedding_dimensions = embedding.dimensions
+            query_prefix = embedding.query_prefix
+            passage_prefix = embedding.passage_prefix
         if verify:
             from . import embed as embed_stage
 
@@ -148,6 +157,7 @@ class DenseRetriever:
                 model=embedding_model or embed_stage.EMBED_MODEL,
                 dimensions=embedding_dimensions or embed_stage.EMBED_DIMENSIONS,
                 passage_prefix=passage_prefix,
+                max_tokens=embedding.max_tokens if embedding is not None else None,
             )
             if problems:
                 detail = "\n".join(f"  - {problem}" for problem in problems)
@@ -281,13 +291,12 @@ class DenseRetriever:
         if self._model is None:
             from .embed import _load_model
 
-            if self.embedding_model is None and self.embedding_dimensions is None:
-                self._model, _ = _load_model()
-            else:
-                self._model, _ = _load_model(
-                    model_name=self.embedding_model or EMBED_MODEL,
-                    expected_dimensions=self.embedding_dimensions,
-                )
+            self._model, _ = _load_model(
+                model_name=self.embedding_model or EMBED_MODEL,
+                expected_dimensions=self.embedding_dimensions or EMBED_DIMENSIONS,
+            )
+            if self.manifest is not None and self.manifest.max_tokens is not None:
+                self._model.max_seq_length = self.manifest.max_tokens
         return self._model
 
 
