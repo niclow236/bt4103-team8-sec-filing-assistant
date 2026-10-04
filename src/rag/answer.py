@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from .generate import config_from_env, generate
 from .numeric import answer_from_facts
 from .prompt import build_prompt
 from .query import ParsedQuestion, parse_question
-from .records import Answer, AbstentionReason, GenerationConfig
+from .records import Answer, AbstentionReason, Generation, GenerationConfig
 
 # What an unanswerable question is refused with, by why it is unanswerable
 # (``constants.UNANSWERABLE_BECAUSE``). "topic" and "year" are not here: those
@@ -45,6 +46,7 @@ def answer_question(
     use_decomposition: bool = True,
     use_refusal: bool = True,
     parsed: ParsedQuestion | None = None,
+    ask_model: Callable[[Callable[[], Generation]], Generation] | None = None,
 ) -> Answer:
     """The shared entry point for the app and evaluation harness.
 
@@ -93,6 +95,13 @@ def answer_question(
     ``verify_answer`` and the app's sidebar require of theirs: the reading
     decides the refusal and the route, so one left over from another question
     would refuse this one unsearched, or look up a figure it never asked for.
+
+    ``ask_model`` is how the model is asked: it is handed the call that runs
+    the prompt, built from passages already searched, and returns what that
+    call returns. None makes the call once, which is how the app asks. The
+    evaluation harness passes one that asks a busy provider again (#108), so
+    that a retry repeats only the model call and not the lookup, decomposition
+    and search before it.
 
     Empty retrieval never builds a prompt or calls a model. Built-in indexes
     distinguish empty filters from rejected scores using metadata, without
@@ -169,6 +178,7 @@ def answer_question(
         return answer
 
     prompt = build_prompt(question, passages)
-    generation = generate(prompt, config, llm=llm, max_tokens=max_tokens, on_token=on_token)
+    run = partial(generate, prompt, config, llm=llm, max_tokens=max_tokens, on_token=on_token)
+    generation = run() if ask_model is None else ask_model(run)
     answered = resolve_citations(question, generation, prompt.passages)
     return replace(answered, sub_questions=sub_questions) if sub_questions else answered

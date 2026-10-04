@@ -6,7 +6,6 @@ import logging
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from functools import partial
 from math import isfinite
 from time import sleep
 from typing import Any, TypeVar
@@ -21,7 +20,7 @@ from src.rag import (
     worst_check,
 )
 from src.rag.answer import REFUSALS
-from src.rag.records import GenerationConfig
+from src.rag.records import Generation, GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from .records import BenchmarkQuestion, UNANSWERABLE
@@ -148,9 +147,11 @@ def evaluate(
     stop the run instead of being counted as abstentions. A failure asking
     again may fix (``ProviderBusy``) is asked again first, after each wait in
     ``RETRY_WAITS_S``, and each row records how many times its question was
-    asked, as ``attempts``. When the provider still cannot answer, the run
-    raises :class:`RunStopped`, a ``ProviderUnavailable``, carrying the report
-    of every question before that one, with ``stopped`` naming it: on a hosted
+    asked, as ``attempts``. Only the model is asked again: the passages and
+    prompt of the first attempt are reused, so a retry costs no search. When
+    the provider still cannot answer, the run raises :class:`RunStopped`, a
+    ``ProviderUnavailable``, carrying the report of every question before that
+    one, with ``stopped`` naming it: on a hosted
     free plan a rate limit can come at question 40 of 48, and it should not
     throw away the 39 answers before it. Ctrl-C raises :class:`RunInterrupted`,
     a ``KeyboardInterrupt``, carrying the same report. A complete report has
@@ -249,11 +250,22 @@ def evaluate(
         # the metadata filter drops those too and searches what it measured.
         if stack is not None:
             query = stack.scoped(query)
-        answer, attempts = answer_with_retries(question.question_id, partial(
-            answer_question, question.question, retriever, config, query=query,
-            min_score=min_score, llm=llm, use_facts=use_facts,
-            use_decomposition=use_decomposition, use_refusal=use_refusal, parsed=parsed,
-        ))
+        # Only the model call is asked again (#108): the passages and prompt
+        # it runs on are built once, so a busy provider does not repeat the
+        # lookup, decomposition and search before it. One attempt where the
+        # question never reached a model, as before.
+        attempts = 1
+
+        def ask_model(run: Callable[[], Generation]) -> Generation:
+            nonlocal attempts
+            generation, attempts = answer_with_retries(question.question_id, run)
+            return generation
+
+        answer = answer_question(
+            question.question, retriever, config, query=query, min_score=min_score,
+            llm=llm, use_facts=use_facts, use_decomposition=use_decomposition,
+            use_refusal=use_refusal, parsed=parsed, ask_model=ask_model,
+        )
         # Checked as the app checks an answer before showing it, against the
         # company and year the question is about, so a row carries what the
         # answer card would say of it and the viewer (src.app.answers) has
