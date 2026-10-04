@@ -1866,7 +1866,7 @@ what the first one does:
 |---|---|
 | `main.py` | The entry point. Makes the project importable, sets the page title, and lists the pages in `PAGES`. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
-| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
 | `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
@@ -1880,11 +1880,11 @@ pieces from #38.
   words as the sidebar's own "Searching:" line.
 - `configuration_picker(runs)` is the sidebar's Configuration box, and returns
   the id picked. `runs` is `dict(state.measured())`.
-- `provider_picker(models, default, unready=...)` is the sidebar's Answer
-  model box, and returns the provider picked, to pass to
-  `state.load_stack(config_id, provider)`. Its arguments come from
-  `state.answer_models()`, which asks each provider's settings what it lacks
-  with `check_provider` and builds no client to do it.
+- `provider_picker(state.answer_models())` is the sidebar's Answer model box,
+  and returns the provider picked, to pass to
+  `state.load_stack(config_id, provider)`. `answer_models` asks each
+  provider's settings what it lacks with `check_provider` and builds no
+  client to do it.
 - `answer_summary(answer, config, seconds)` is the row above an answer.
 - `abstention_notice(answer)` states an abstention. `answer_card` calls it for
   an abstained answer, so a page does not have to. `answer_card_html` is for

@@ -16,7 +16,7 @@ from dataclasses import replace
 from hashlib import sha256
 from html import escape
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
 import streamlit as st
@@ -30,6 +30,11 @@ from src.rag.records import Answer, Citation, abstention_text
 from src.retrieval.constants import FINAL_K
 from src.retrieval.records import Query, RetrievedPassage
 from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
+
+if TYPE_CHECKING:
+    # For an annotation alone. A component is handed what state.py holds and
+    # imports nothing from it when the app runs.
+    from src.app.state import AnswerModels
 
 
 _MARKER = re.compile(r"\[(-?\d+)\]")
@@ -298,26 +303,25 @@ _PROVIDERS = {
 }
 
 
-def provider_picker(models: Mapping[str, str], default: str, *,
-                    unready: Mapping[str, str] | None = None, problem: str | None = None,
-                    key: str = "provider") -> str:
+def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
     """Pick what writes the answers, in the sidebar: the local model or the hosted one.
 
-    ``models`` is each provider with the model it would answer with,
-    ``default`` the provider the page opens on, and ``unready`` each provider
-    that could not answer as things stand with why, all from
-    ``state.answer_models``. The choice lasts for the browser session and
-    changes nothing in ``.env``.
+    ``available`` is what ``state.answer_models()`` returns, taken whole so
+    that a page does not take it apart to hand it over: each provider with
+    the model it would answer with, the provider the page opens on, what any
+    of them lacks, and what was wrong with ``.env``'s own choice. The choice
+    lasts for the browser session and changes nothing in ``.env``.
 
     Two things are said under it, as soon as they are true and not when Ask
     is pressed: what the provider picked lacks, with what to do about it in
-    the app, and ``problem``, what was wrong with ``.env``'s own choice. A
-    provider that lacks something can still be picked: a figure the facts
-    store looks up asks no model. Returns the provider picked.
+    the app, and what was wrong with ``.env``. A provider that lacks
+    something can still be picked: a figure the facts store looks up asks no
+    model. Returns the provider picked.
     """
+    models, unready = available.models, available.unready
     with st.sidebar:
         provider = st.segmented_control(
-            "Answer model", list(models), default=default, required=True,
+            "Answer model", list(models), default=available.default, required=True,
             format_func=lambda option: _PROVIDERS[option][0], key=key,
             help="Opens on LLM_PROVIDER from .env, which unset means Ollama. "
                  "LLM_MODEL names the model of the provider .env selects; the "
@@ -325,7 +329,6 @@ def provider_picker(models: Mapping[str, str], default: str, *,
         )
         label, means, setup = _PROVIDERS[provider]
         st.caption(f"{models[provider]}, {means}")
-        unready = unready or {}
         if provider in unready:
             # Short, and with no icon: the sidebar is narrow, and a warning
             # that ran to twenty lines pushed the Configuration box below it
@@ -335,8 +338,8 @@ def provider_picker(models: Mapping[str, str], default: str, *,
             st.warning(f"{label} cannot write an answer yet: {unready[provider]}. Fix it in "
                        f"`.env` (README, {setup}) and restart the app{instead}. "
                        "A figure the facts store holds is still answered.")
-        if problem:
-            st.warning(problem)
+        if available.problem:
+            st.warning(available.problem)
     return provider
 
 

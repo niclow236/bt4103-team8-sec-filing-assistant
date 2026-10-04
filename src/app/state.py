@@ -12,7 +12,7 @@ no page holds a cache of its own:
 - for the process, per configuration: the answer a repeated question was
   given (``Remembered``);
 - for one browser session: the answer a page is showing and the request it
-  answers (``keep``, ``kept``, ``has_kept``);
+  answers (``Request``, ``keep``, ``kept``, ``has_kept``);
 - the stopwatch behind the line that says how long an answer took.
 """
 
@@ -22,7 +22,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import streamlit as st
 
@@ -32,6 +32,7 @@ from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
     from src.rag.records import Answer
+    from src.retrieval.records import Query
     from src.stack import Stack
 
 # What a caller passes with a question that does not change its answer:
@@ -162,37 +163,71 @@ def measured() -> list[tuple[str, str]]:
     return list(seen.items())
 
 
+class Request(NamedTuple):
+    """What an answer was asked with: the question, its filters, and what answered it.
+
+    Everything that would change the answer, so that one kept for a request
+    is never shown for another. A page used to build this as a bare tuple, in
+    an order it chose itself. A field put in the wrong place there made a
+    request that never matched, with no error to show for it, and each page
+    to come builds one of its own. ``of`` takes the fields from where they
+    already are.
+
+    A tuple all the same, and compared as one. An answer kept in the session
+    outlives this module when Streamlit loads it again after an edit, and a
+    dataclass loaded again is a new class, equal to nothing kept before it.
+    """
+
+    question: str
+    tickers: tuple[str, ...]
+    fiscal_years: tuple[int, ...]
+    items: tuple[str, ...]
+    config_id: str
+    provider: str
+
+    @classmethod
+    def of(cls, query: Query, config_id: str, provider: str) -> Request:
+        """``query`` as the sidebar left it, asked of one configuration and one provider."""
+        return cls(query.text, query.tickers, query.fiscal_years, query.items,
+                   config_id, provider)
+
+
 @dataclass(frozen=True)
 class Kept:
     """The answer a page is showing: what was asked, the answer, and how long it took."""
 
-    request: tuple[Any, ...]
+    request: Request
     answer: Answer
     seconds: float
 
 
-def keep(page: str, request: tuple[Any, ...], answer: Answer, seconds: float) -> None:
-    """Hold ``answer`` for this browser session as what ``page`` is showing.
+def _key(page: str) -> str:
+    """Where the session holds what ``page`` is showing.
 
     One entry per page, under the page's own name, so the Ask page and a page
     that asks two configurations do not show each other's answers.
     """
-    st.session_state[f"{page}:kept"] = Kept(request, answer, seconds)
+    return f"{page}:kept"
 
 
-def kept(page: str, request: tuple[Any, ...]) -> Kept | None:
+def keep(page: str, request: Request, answer: Answer, seconds: float) -> None:
+    """Hold ``answer`` for this browser session as what ``page`` is showing."""
+    st.session_state[_key(page)] = Kept(request, answer, seconds)
+
+
+def kept(page: str, request: Request) -> Kept | None:
     """What ``page`` is showing, if it answers ``request``, and None if not.
 
     The request is the question with everything it was asked with, so an
     answer is never shown under a question or filters it was not given for.
     """
-    held = st.session_state.get(f"{page}:kept")
+    held = st.session_state.get(_key(page))
     return held if held is not None and held.request == request else None
 
 
 def has_kept(page: str) -> bool:
     """Whether ``page`` holds an answer at all, to whatever request."""
-    return f"{page}:kept" in st.session_state
+    return _key(page) in st.session_state
 
 
 class Remembered:

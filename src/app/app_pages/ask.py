@@ -42,16 +42,14 @@ question = question.strip()
 # FY2024?") was taken for prose and searched with no lean toward tables.
 parsed = parse_question(question) if question else None
 query = filter_sidebar(question, parsed=parsed)
-available = state.answer_models()
-provider = provider_picker(available.models, available.default,
-                           unready=available.unready, problem=available.problem)
+provider = provider_picker(state.answer_models())
 config_id = configuration_picker(dict(state.measured()))
 config = STACKS[config_id]
 
 # The question as read, in the scope the sidebar ends up with: what the
 # answer is checked against and what the trace describes.
 scoped = parsed.scoped_to(query) if parsed is not None else None
-request = (question, query.tickers, query.fiscal_years, query.items, config_id, provider)
+request = state.Request.of(query, config_id, provider)
 
 if question:
     # Shown before anything is searched, so the reading can be corrected in

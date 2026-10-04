@@ -398,3 +398,19 @@ def test_answer_models_says_what_each_provider_lacks_and_builds_no_client(monkey
     assert state_module.answer_models().unready == {
         "ollama": "LLM_NUM_GPU must be a whole number of layers, got 'many'"}
     assert _mistral_client.cache_info().currsize == 0
+
+
+def test_a_request_is_everything_an_answer_was_asked_with():
+    query = Query("What was revenue?", tickers=("AAPL",), fiscal_years=(2024,), items=("7",))
+    request = state_module.Request.of(query, "C4", "ollama")
+    assert request.question == "What was revenue?" and request.config_id == "C4"
+    # Compared as the tuple it is, so one kept before Streamlit loaded the
+    # module again after an edit still matches one built after.
+    assert request == ("What was revenue?", ("AAPL",), (2024,), ("7",), "C4", "ollama")
+    # Change any one of them and it is another request.
+    others = [state_module.Request.of(changed, "C4", "ollama") for changed in (
+        replace(query, text="What was net income?"), replace(query, tickers=()),
+        replace(query, fiscal_years=(2023,)), replace(query, items=()))]
+    others += [state_module.Request.of(query, "C3", "ollama"),
+               state_module.Request.of(query, "C4", "mistral")]
+    assert all(other != request for other in others) and len(set(others)) == len(others)
