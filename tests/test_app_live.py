@@ -37,9 +37,11 @@ class FakeStack:
     generation: GenerationConfig = GENERATION
     llm: Any = None
     asked: list = None
+    loaded_for: list = None      # the provider of each Ask that loaded this stack
 
     def __post_init__(self):
         self.asked = []
+        self.loaded_for = []
 
     def answer(self, question, **overrides):
         self.asked.append((question, overrides))
@@ -50,8 +52,9 @@ def _standing_in(monkeypatch, config_id=DEFAULT_STACK, runs=()):
     """Stand a FakeStack in for whatever configuration the app selects."""
     built = {}
 
-    def load_stack(selected):
+    def load_stack(selected, provider=None):
         built.setdefault(selected, FakeStack(config=stack_config(selected)))
+        built[selected].loaded_for.append(provider)
         return built[selected]
 
     monkeypatch.setattr(state_module, "load_stack", load_stack)
@@ -137,7 +140,7 @@ def test_selecting_a_measured_configuration_builds_that_configuration(monkeypatc
 
 
 def test_live_app_reports_missing_index_without_model_call(monkeypatch):
-    def no_index(config_id):
+    def no_index(config_id, provider=None):
         raise FileNotFoundError("Build the local index first")
 
     monkeypatch.setattr(state_module, "load_stack", no_index)
@@ -390,3 +393,82 @@ def test_the_app_starts_from_its_file_without_the_project_on_the_path():
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                           cwd=PROJECT_ROOT.parent)
     assert done.returncode == 0, done.stderr[-600:]
+
+
+# --- what writes the answer is a choice on the page -----------------------------
+
+def _provider(ui):
+    """The sidebar's Answer model box, and the line under it."""
+    box = ui.sidebar.button_group[0]
+    line = next(caption.value for caption in ui.sidebar.caption
+                if "API" in caption.value or "this computer" in caption.value)
+    return box, line
+
+
+def test_ask_page_opens_on_the_local_model_and_can_be_switched_to_mistral(monkeypatch):
+    # The provider was .env's alone to choose. With a Mistral key in .env and
+    # no LLM_PROVIDER line, every answer waited minutes for the local model
+    # and nothing on the page could change it.
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    box, line = _provider(ui)
+    assert list(box.options) == ["Ollama", "Mistral"] and box.value == "ollama"
+    assert line.startswith("llama3.2:3b, on this computer")
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    assert built[DEFAULT_STACK].loaded_for == ["ollama"]
+    assert len(ui.get("html")) == 1
+
+    box.set_value("mistral").run()
+    assert not ui.exception
+    assert _provider(ui)[1].startswith("ministral-8b-2512, on Mistral's API")
+    # An answer one provider wrote is not left under the other's name.
+    assert not ui.get("html") and ui.info
+    ui.button[0].click().run()
+    assert built[DEFAULT_STACK].loaded_for == ["ollama", "mistral"]
+    assert len(ui.get("html")) == 1
+
+
+def test_ask_page_opens_on_the_provider_env_names(monkeypatch):
+    # LLM_MODEL is the model of the provider .env selects, so the other one
+    # is offered with its own default.
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_MODEL", "mistral-small-2506")
+    _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.exception
+    box, line = _provider(ui)
+    assert box.value == "mistral" and line.startswith("mistral-small-2506, on Mistral's API")
+    box.set_value("ollama").run()
+    assert _provider(ui)[1].startswith("llama3.2:3b, on this computer")
+
+
+def test_a_mistyped_provider_in_env_is_said_and_does_not_stop_the_page(monkeypatch):
+    # Every Ask used to fail on it. The page now names what it will ask, so it
+    # opens on the default provider, says what was wrong, and still answers.
+    monkeypatch.setenv("LLM_PROVIDER", "mistrl")
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.exception
+    assert _provider(ui)[0].value == "ollama"
+    said = ui.sidebar.warning[0].value
+    assert "LLM_PROVIDER must be one of ollama, mistral, got 'mistrl'" in said
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    assert not ui.exception and not ui.error
+    assert built[DEFAULT_STACK].loaded_for == ["ollama"]
+
+
+def test_picking_mistral_without_a_key_says_so_before_anything_is_loaded(monkeypatch):
+    # Through the app's own load_stack: the key is checked when the stack is
+    # built, ahead of the indexes, so this reads none.
+    monkeypatch.setattr(state_module, "measured", lambda: [])
+    state_module.load_stack.clear()
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui.sidebar.button_group[0].set_value("mistral").run()
+    ui.text_input[0].set_value("What risks does Apple describe in its FY2024 10-K?").run()
+    ui.button[0].click().run()
+    state_module.load_stack.clear()
+    assert not ui.exception
+    assert "MISTRAL_API_KEY is not set" in ui.error[0].value
+    assert not ui.get("html") and not ui.main.status

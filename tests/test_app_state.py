@@ -266,6 +266,7 @@ def built(monkeypatch):
 
     def build_stack(config_id, **kwargs):
         stacks[config_id] = CountingStack(stack_config(config_id))
+        stacks[config_id].built_with = kwargs
         return stacks[config_id]
 
     monkeypatch.setattr(state_module, "build_stack", build_stack)
@@ -346,3 +347,35 @@ def test_live_app_says_how_long_the_answer_took_for_as_long_as_it_shows_it(built
     ui.sidebar.multiselect[2].set_value([]).run()
     assert not ui.exception
     assert len(ui.get("html")) == 1 and len(_timing_lines(ui)) == 1
+
+
+def test_each_provider_is_built_once_over_the_same_indexes(built):
+    # A page that offers both providers builds each the first time it is
+    # asked, not on every Ask, and neither reads the indexes a second time.
+    local = state_module.load_stack(DEFAULT_STACK, "ollama")
+    local_stack = built[DEFAULT_STACK]
+    hosted = state_module.load_stack(DEFAULT_STACK, "mistral")
+    hosted_stack = built[DEFAULT_STACK]
+    assert hosted is not local and hosted_stack is not local_stack
+    assert (local_stack.built_with["provider"], hosted_stack.built_with["provider"]) == (
+        "ollama", "mistral")
+    assert hosted_stack.built_with["parts"] is local_stack.built_with["parts"]
+    assert state_module.load_stack(DEFAULT_STACK, "ollama") is local
+    # Each remembers its own answers: one provider's is never given as the other's.
+    local.answer(QUESTION, query=Query(QUESTION))
+    hosted.answer(QUESTION, query=Query(QUESTION))
+    assert (len(local_stack.asked), len(hosted_stack.asked)) == (1, 1)
+
+
+def test_answer_models_reads_what_env_selects(monkeypatch):
+    assert state_module.answer_models() == state_module.AnswerModels(
+        {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}, "ollama")
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_MODEL", "mistral-small-2506")
+    assert state_module.answer_models() == state_module.AnswerModels(
+        {"ollama": "llama3.2:3b", "mistral": "mistral-small-2506"}, "mistral")
+    monkeypatch.setenv("LLM_PROVIDER", "mistrl")
+    unknown = state_module.answer_models()
+    assert unknown.default == "ollama" and "got 'mistrl'" in unknown.problem
+    # The model was named for a provider that does not exist, so neither gets it.
+    assert unknown.models == {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}

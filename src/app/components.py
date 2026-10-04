@@ -23,7 +23,7 @@ import streamlit as st
 from src.config import read_tickers
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
-from src.rag.constants import FACTS_PROVIDER
+from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA
 from src.rag.query import ParsedQuestion, parse_question
 from src.rag.records import ABSTENTION_MESSAGES, Answer, Citation
 from src.retrieval.constants import FINAL_K
@@ -277,9 +277,42 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration")
         if not STACKS[config_id].metadata_filter:
             st.caption("This configuration was measured without the metadata filter, so "
                        "it searches every filing and the filters above are not applied.")
-        st.caption("Uses local processed filings and indexes. The answer model "
-                   "comes from LLM_PROVIDER / LLM_MODEL in .env.")
+        st.caption("Uses local processed filings and indexes.")
     return config_id
+
+
+# Each provider as the picker names it, and what choosing it means for the
+# person asking: where the model runs, what it needs, and how long it takes.
+_PROVIDERS = {
+    OLLAMA: ("Ollama", "on this computer, with no key. An answer can take minutes on a laptop."),
+    MISTRAL: ("Mistral", "on Mistral's API, with the MISTRAL_API_KEY in your .env. "
+                         "An answer takes seconds."),
+}
+
+
+def provider_picker(models: Mapping[str, str], default: str, *, problem: str | None = None,
+                    key: str = "provider") -> str:
+    """Pick what writes the answers, in the sidebar: the local model or the hosted one.
+
+    ``models`` is each provider with the model it would answer with, and
+    ``default`` the provider the page opens on, both from
+    ``state.answer_models``. The choice lasts for the browser session and
+    changes nothing in ``.env``. ``problem`` is shown under it: what was wrong
+    with ``.env``'s own choice, where it could not be used. Returns the
+    provider picked.
+    """
+    with st.sidebar:
+        provider = st.segmented_control(
+            "Answer model", list(models), default=default, required=True,
+            format_func=lambda option: _PROVIDERS[option][0], key=key,
+            help="Opens on LLM_PROVIDER from .env, which unset means Ollama. "
+                 "LLM_MODEL names the model of the provider .env selects; the "
+                 "other one answers with its default.",
+        )
+        st.caption(f"{models[provider]}, {_PROVIDERS[provider][1]}")
+        if problem:
+            st.warning(problem)
+    return provider
 
 
 def _written_by(answer: Answer) -> str:
@@ -501,6 +534,6 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
-    "configuration_picker", "filter_sidebar", "resolved_filters", "retrieval_trace",
-    "trace_rows",
+    "configuration_picker", "filter_sidebar", "provider_picker", "resolved_filters",
+    "retrieval_trace", "trace_rows",
 ]

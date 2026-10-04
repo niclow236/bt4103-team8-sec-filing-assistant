@@ -1078,7 +1078,10 @@ uses their own key on their own computer.
    ```
 
    `.env` is git-ignored, so the key stays on your computer. Never paste it into
-   code, a notebook cell, a commit, an issue or a chat.
+   code, a notebook cell, a commit, an issue or a chat. `LLM_PROVIDER=mistral`
+   makes Mistral what answers everywhere. Leave that line out and the commands
+   answer with Ollama, and the app opens on Ollama with Mistral one click away
+   in its sidebar's Answer model box.
 5. Ask a question that needs the model, such as the one in
    [From a question to an answer](#from-a-question-to-an-answer).
    `answer.config.provider` should be `'mistral'`.
@@ -1812,14 +1815,20 @@ than BM25: 26 of 28 against 23 before the table boost was set, 26 or 27 against
 scoring the commonest words (see
 [How often the answers are right](#how-often-the-answers-are-right)). A row
 measured without the metadata filter searches every filing, and the sidebar
-says so when one is picked. The model
-provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
-model by default, or Mistral's free API (`ministral-8b-2512`) with
-`LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds
-rather than minutes.
+says so when one is picked.
+
+The sidebar's Answer model box chooses what writes the answer: the local
+Ollama model, or Mistral's free API (`ministral-8b-2512`), which answers in
+seconds rather than minutes and needs your own `MISTRAL_API_KEY` in `.env`.
+It opens on the provider `.env` names (`LLM_PROVIDER`, which unset means
+Ollama), and switching it lasts for the browser session and changes nothing
+in `.env`. Before this box the provider was `.env`'s alone to choose, so a
+`.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
+model, minutes at a time, with nothing on the page to say so. A figure
+question the facts store answers needs neither.
 An explicit Item filter is enforced for numeric questions too. When the
-question or filters change, the app hides the prior answer until Ask is pressed
-again. While a model is answering, its prose is written to the page as it
+question, the filters, the configuration or the answer model change, the app
+hides the prior answer until Ask is pressed again. While a model is answering, its prose is written to the page as it
 arrives, and the checked answer card replaces it.
 
 The Ask page (#38) shows, in order:
@@ -1850,8 +1859,8 @@ what the first one does:
 |---|---|
 | `main.py` | The entry point. Makes the project importable, sets the page title, and lists the pages in `PAGES`. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
-| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing), `Stopwatch`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |
+| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
@@ -1864,6 +1873,9 @@ pieces from #38.
   words as the sidebar's own "Searching:" line.
 - `configuration_picker(runs)` is the sidebar's Configuration box, and returns
   the id picked. `runs` is `dict(state.measured())`.
+- `provider_picker(models, default)` is the sidebar's Answer model box, and
+  returns the provider picked, to pass to `state.load_stack(config_id,
+  provider)`. Both arguments come from `state.answer_models()`.
 - `answer_summary(answer, config, seconds)` is the row above an answer.
 - `abstention_notice(answer)` states an abstention. `answer_card` calls it for
   an abstained answer, so a page does not have to. `answer_card_html` is for

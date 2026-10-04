@@ -7,6 +7,8 @@ no page holds a cache of its own:
 - for the process, with ``st.cache_resource``: the indexes and the embedding
   model (``_indexes``) and each built configuration (``load_stack``), and with
   ``st.cache_data`` the runs under ``results/`` (``measured``);
+- from ``.env``, read on every rerun: the providers a page can offer and the
+  one it opens on (``answer_models``);
 - for the process, per configuration: the answer a repeated question was
   given (``Remembered``);
 - for one browser session: the answer a page is showing and the request it
@@ -24,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 import streamlit as st
 
+from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
+from src.rag.generate import config_from_env
 from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
@@ -53,16 +57,51 @@ def _indexes() -> dict:
 
 
 @st.cache_resource(show_spinner="Checking the local filing indexes…")
-def load_stack(config_id: str) -> Remembered:
+def load_stack(config_id: str, provider: str | None = None) -> Remembered:
     """Assemble a named configuration once per Streamlit process (#43).
 
     The same call the evaluation command makes, so what the demo shows is the
     system the numbers in ``results/`` describe, rather than a fourth stack
     assembled here. Cached on the id because building one loads the indexes
     and, for the dense and hybrid rows, the embedding model.
+
+    ``provider`` is what writes the answers, and None means the one ``.env``
+    names. It is cached on too, so a page that offers both builds each once.
+    They share the indexes, and each remembers its own answers, so an answer
+    one provider wrote is never shown as the other's.
     """
     # Remembered, so a repeated demo question is answered once (#36).
-    return Remembered(build_stack(config_id, parts=_indexes()))
+    return Remembered(build_stack(config_id, provider=provider, parts=_indexes()))
+
+
+@dataclass(frozen=True)
+class AnswerModels:
+    """What can write an answer, for a page to offer the choice."""
+
+    # Provider to the model it would answer with, in the order they are offered.
+    models: dict[str, str]
+    default: str                   # the provider ``.env`` names, which a page opens on
+    problem: str | None = None     # why ``.env``'s own choice could not be used, if it could not
+
+
+def answer_models() -> AnswerModels:
+    """The providers a page can offer, read from ``.env`` as ``build_stack`` reads it.
+
+    The provider used to be ``.env``'s alone to choose: the app opened on
+    ``LLM_PROVIDER``, which unset means the local model, and nothing on the
+    page could change it. A laptop with a Mistral key in ``.env`` and no
+    ``LLM_PROVIDER`` line waited minutes for the local model with nothing on
+    the page to say why.
+
+    A mistyped ``LLM_PROVIDER`` is not an error here. A page can still be
+    asked with the provider picked by hand, so it opens on the default one and
+    ``problem`` says what was wrong with the setting.
+    """
+    models = {provider: config_from_env(provider=provider).model for provider in PROVIDERS}
+    try:
+        return AnswerModels(models, config_from_env().provider)
+    except ValueError as error:
+        return AnswerModels(models, DEFAULT_PROVIDER, str(error))
 
 
 @st.cache_data(show_spinner=False)
@@ -116,11 +155,12 @@ class Remembered:
     """A built configuration that gives a repeated question the answer it gave before.
 
     The app asks through one of these in place of the ``Stack`` it wraps.
-    ``load_stack`` makes one per configuration and ``st.cache_resource`` keeps
-    it for the process, so the answers are shared by every browser session and
-    last until the app restarts. An answer is kept by the question and by what
-    it was asked with: the ``Query``, which carries the sidebar's companies,
-    years and Items, and any setting the caller overrode.
+    ``load_stack`` makes one per configuration and provider, and
+    ``st.cache_resource`` keeps it for the process, so the answers are shared
+    by every browser session and last until the app restarts. An answer is
+    kept by the question and by what it was asked with: the ``Query``, which
+    carries the sidebar's companies, years and Items, and any setting the
+    caller overrode.
 
     Only a finished answer is kept. A failure is not, so a question that met a
     busy provider is asked again, and neither is an answer the model left
