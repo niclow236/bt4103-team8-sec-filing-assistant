@@ -34,10 +34,24 @@ The follow-up review on 4 October identified four further comments:
 Follow-up validation: 1,227 full-suite tests passed, 113 affected-suite tests
 passed, and git diff --check passed.
 
-Tests use deterministic encoders and synthetic filings; they do not measure real
-model quality. This checkout has no processed corpus or built indexes, so real
-E1–E3/G1–G2 measurements required to close issue 46 remain to be run using the
-README commands. After implementation commit `73ac53b` was pushed, each of the
-28 review threads received a change explanation and was marked resolved.
-These resolutions cover the review findings; final model measurements are
-still pending.
+Those regression tests use deterministic encoders and synthetic filings; they
+do not measure real model quality. After implementation commit `73ac53b` was
+pushed, each of the 28 review threads received a change explanation and was
+marked resolved. PR 114 subsequently merged as `a0cb411`.
+
+The 4 October real-data follow-up rebuilt 75 SEC 10-K filings into 28,289
+passages, populated `data/raw`, `data/interim`, `data/processed`, BM25 and the
+41,710-row facts store, and built all three real encoder indexes. All nine
+corpus checks passed; the default dense and BM25 indexes both reported
+`current`. The six embedding rows completed over the same 1,500 questions,
+with full precision summaries and per-question reports under the ignored local
+`results/embeddings-real-20261004/` directory. See the README's
+[real corpus measurements](../README.md#real-corpus-measurements--4-october-2026)
+for the tables, commands, hardware, sampling limitations and interpretation.
+The current application's full suite passed **1,229 tests**.
+
+The real Ollama G1 row also completed all 30 sampled questions, with facts
+disabled and C4's other answer settings preserved. Reports are under
+`results/providers-local-real-20261004/`. The hosted Mistral G2 row still needs
+a locally configured `MISTRAL_API_KEY`. Issue 46 remains open and the results
+PR stays in draft until G2 covers the same 30 questions and is documented.

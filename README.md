@@ -2088,6 +2088,113 @@ A stopped or interrupted provider run saves completed answers, its stop reason
 and both summaries before exiting unsuccessfully. Completed runs print the
 table and output path. Use a fresh run ID; existing results are never overwritten.
 
+#### Real corpus measurements — 4 October 2026
+
+Measured on application commit `a0cb411`, on an Apple M1 Mac with 16 GiB RAM,
+macOS 15.6.1, Python 3.13.7, PyTorch 2.14.0, sentence-transformers 6.0.1,
+Chroma 1.5.9 and Ollama 0.33.3. Encoders used MPS; Ollama used Metal. These
+are real model runs over downloaded SEC filings, separate from the synthetic
+regression tests.
+
+The rebuilt corpus contains **75 10-K filings from 15 companies, FY2021–2025,
+and 28,289 passages**. All nine corpus checks passed. The facts store contains
+41,710 rows; `src.retrieval check` reported both `dense: current` and
+`bm25: current`. Every embedding index contains the full 28,289 passages.
+The benchmark has 12,579 numeric questions and SHA-256
+`63b23a5d81c7e7d0b46f8127b575566c61e23bfebe19c2dc55083efba1541a93`.
+
+Commands below were run from the repository root, using the existing virtual
+environment in its parent directory. SEC identity was configured in the local
+`.env`; real encoder weights were downloaded before setting `HF_HUB_OFFLINE=1`.
+That flag prevents Hugging Face network lookups, not provider calls.
+
+```bash
+../.venv/bin/python -u -m src.pipeline rebuild
+../.venv/bin/python -u -m src.retrieval bm25
+../.venv/bin/python -u -m src.retrieval facts
+HF_HUB_OFFLINE=1 ../.venv/bin/python -u -m src.retrieval embed
+HF_HUB_OFFLINE=1 ../.venv/bin/python -u -m src.retrieval check
+../.venv/bin/python -u -m src.retrieval benchmark
+HF_HUB_OFFLINE=1 ../.venv/bin/python -u -m src.evaluation.model_ablation embedding \
+  benchmark/generated.jsonl --prepare-indexes --limit 1500 \
+  --run-id embeddings-real-20261004
+```
+
+Each embedding row measures the same **1,500 questions**, with metadata filters
+and a retrieval cutoff of 10. Sampling uses file indices
+`i * (12579 - 1) // (1500 - 1)`, including both endpoints. This covers all 15
+companies and 74 filings, with 1–37 questions per represented filing; PANW
+FY2023 is absent from the sample. It is not a balanced or random sample.
+
+| Row | Encoder | Retrieval | Recall@10 | nDCG@10 | MRR@10 | Median search (ms) | Truncated passages |
+|---|---|---|---:|---:|---:|---:|---:|
+| E1 | BGE base | Hybrid | 0.5870 | 0.4476 | 0.4656 | 223.2 | 0 (0%) |
+| E1-dense | BGE base | Dense | 0.4817 | 0.3528 | 0.3732 | 111.8 | 0 (0%) |
+| E2 | MiniLM | Hybrid | 0.5778 | 0.4235 | 0.4366 | 151.4 | 15,489 (54.75%) |
+| E2-dense | MiniLM | Dense | 0.4249 | 0.2898 | 0.2986 | 71.1 | 15,489 (54.75%) |
+| E3 | E5 base | Hybrid | 0.5996 | 0.4689 | 0.4918 | 156.7 | 0 (0%) |
+| E3-dense | E5 base | Dense | 0.5479 | 0.4221 | 0.4489 | 82.4 | 0 (0%) |
+
+E5 leads recall, nDCG and MRR in both retrieval views on this sample. Hybrid
+retrieval improves all three encoders over their dense-only rows. MiniLM has
+the lowest median search latency, but its native 256-token window truncates
+54.75% of indexed passages, including 2,094 table passages. BGE and E5 use
+512-token windows with no truncation here. These observations do not isolate
+truncation as the cause of MiniLM's lower scores or establish a winner for
+other question types. This is a single run; differences below about 0.005
+should not drive a model choice. The application default remains BGE.
+
+Search latency includes query encoding and retrieval, excluding index
+preparation. The CSV records E1 preparation as 10.9 seconds for validation and
+reuse of an already built index, E2 as 214.8 seconds and E3 as 1,708.5 seconds
+for new index builds. E1's value is not a cold encoding time and must not be
+compared as one. Encoder snapshots were BGE
+`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, MiniLM
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, and E5
+`f52bf8ec8c7124536f0efb74aca902b2995e5bcd`.
+
+Full precision embedding summaries and the six per-question reports are kept
+locally under `results/embeddings-real-20261004/`. Data, indexes, model weights,
+logs and run artifacts remain ignored; the results PR includes the complete
+summary CSV for review.
+
+The local generation row used the same corpus and default BGE/hybrid C4 stack,
+with **16 passages, facts disabled, decomposition and refusal enabled**,
+`grounded_v4` and temperature 0. It measures 30 questions at indices
+`i * (12579 - 1) // (30 - 1)`: 14 companies and 25 filings, with 1–2 questions
+per represented filing. PANW is absent. All 30 questions reached the real
+Ollama provider with retrieved evidence; none was refused before a model call.
+The installed `llama3.2:3b` model is Q4_K_M, digest
+`a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72`.
+
+Because the normal generation command preflights both providers, G1 was
+selected from the registered experiments in the running process while the
+Mistral key was unavailable. The command used the existing runner and real
+provider, without changing application code or any C4 answer setting:
+
+```bash
+HF_HUB_OFFLINE=1 LLM_BASE_URL=http://127.0.0.1:11434 ../.venv/bin/python -u -c \
+  'from src.evaluation import model_ablation as a; a.GENERATION_EXPERIMENTS = tuple(e for e in a.GENERATION_EXPERIMENTS if e.id == "G1"); a.main(["generation", "benchmark/generated.jsonl", "--no-facts", "--limit", "30", "--run-id", "providers-local-real-20261004"])'
+```
+
+| Row | Provider | Model | Questions | Abstention | Provider-routed questions | Provider abstention | Median generation (ms) | Retried questions |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| G1 | Ollama | llama3.2:3b | 30 | 3.33% | 30 | 3.33% | 28,472.9 | 0 |
+
+Ollama abstained on one question and answered 29, with a median generation
+call of 28.5 seconds. That latency excludes retrieval, verification and any
+retry waits. Abstention measures willingness to answer, not correctness or
+faithfulness; these numbers alone do not establish answer quality.
+Full reports and summaries are kept locally under
+`results/providers-local-real-20261004/`.
+
+**G2 remains unmeasured:** the hosted `ministral-8b-2512` comparison needs the
+user's own `MISTRAL_API_KEY` in the local `.env`. There is no measured provider
+winner yet. Issue #46 remains open until G2 completes on the same 30 question
+IDs and C4 settings and its row is added here. The results PR is a draft while
+that input is missing. Validation of the application at `a0cb411` passed all
+**1,229 tests**; `git diff --check` also passed for this documentation update.
+
 ## Team and course
 
 BT4103 Business Analytics Capstone, Team 8, AY26/27 Semester 1, supervised by A/Prof Oh Hyelim. The main milestones are the requirements presentation in Week 6, the interim presentation in Week 9, and the final presentation in Week 13, with deliverables handed over the following week.
