@@ -3,7 +3,7 @@
 Checked against issue [46](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/46)
 and all 38 inline comments from jarrenoh and niclow236 on
 [PR 114](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/pull/114).
-The feature branch includes the latest main at `4e12c91`.
+The feature branch includes main at `beb9819`.
 
 | Review comments (discussion IDs) | Resolution and regression coverage |
 |---|---|
@@ -30,6 +30,9 @@ The follow-up review on 4 October identified four further comments:
 | 4176147674, 4176147682 | CLI preparation rejects a non-default corpus before benchmark loading or index mutation. Direct calls to prepare_embedding_indexes use the same guard. A real synthetic Chroma index test checks that its vector IDs and manifest bytes remain unchanged, with and without rebuilding; a relative path resolving to the default corpus is accepted. |
 | 4176147684 | Missing-index errors put the E2/E3 preparation command first, label it as applying to those indexes, and explain that subsequent advice applies to the default dense index or BM25. The suggested preparation uses the default corpus, including when an evaluation against another corpus fails. Tests check message order, both error types and shell-quoted paths. |
 | 4176147689 | E2/E3 now use sibling directories data/index/chroma-E2 and data/index/chroma-E3, with sidecars outside Chroma's default directory. Registry tests verify the layout; the synthetic three-encoder integration test uses it. The README explains relocating previously built indexes and sidecars without re-encoding. |
+
+Follow-up validation: 1,227 full-suite tests passed, 113 affected-suite tests
+passed, and git diff --check passed.
 
 Tests use deterministic encoders and synthetic filings; they do not measure real
 model quality. This checkout has no processed corpus or built indexes, so real
