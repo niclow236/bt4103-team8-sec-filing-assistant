@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -22,6 +20,7 @@ from src.stack import RESULTS_ROOT, STACKS, build_retriever
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .metrics import score_question
 from .records import BenchmarkQuestion, RunResult
+from .results import _safe_run_id, available_run_dir, write_comparison
 
 DEFAULT_RESULTS_ROOT = RESULTS_ROOT
 # The rows this command runs, as the shared registry defines them (#43). Kept
@@ -38,13 +37,6 @@ CONFIGURATIONS: dict[str, dict[str, Any]] = {
     }
     for config_id, config in STACKS.items()
 }
-
-
-def _safe_run_id(run_id: str) -> str:
-    value = run_id.strip()
-    if not value or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value):
-        raise ValueError("run_id must contain only letters, numbers, ., _, and -")
-    return value
 
 
 def _query(question: BenchmarkQuestion, *, top_k: int, metadata_filter: bool) -> Query:
@@ -148,9 +140,7 @@ def run_ablation(
     configurations: Sequence[str] = tuple(CONFIGURATIONS),
 ) -> dict[str, Any]:
     """Run selected C0-C4 rows and write ``results/<run-id>/``."""
-    run_dir = results_root / _safe_run_id(run_id)
-    if run_dir.exists():
-        raise FileExistsError(f"{run_dir} already holds a run; re-run under a new --run-id")
+    run_dir = available_run_dir(results_root, run_id)
     summaries: list[dict[str, Any]] = []
     for config_id in configurations:
         if config_id not in CONFIGURATIONS:
@@ -168,22 +158,7 @@ def run_ablation(
             )
         )
 
-    summary_rows = []
-    for summary in summaries:
-        row = {"config": summary["config"]["id"], "name": summary["config"]["name"]}
-        row.update({key: summary[key] for key in (
-            "questions", "recall", "ndcg", "mrr", "hard_negative_accuracy"
-        )})
-        summary_rows.append(row)
-    with (run_dir / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(summary_rows[0]))
-        writer.writeheader()
-        writer.writerows(summary_rows)
-    manifest = {"run_id": run_id, "top_k": top_k, "configurations": summaries}
-    (run_dir / "summary.json").write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
-    return manifest
+    return write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries)
 
 
 class FixedSizeBM25Retriever:

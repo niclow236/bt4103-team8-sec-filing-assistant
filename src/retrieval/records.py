@@ -242,11 +242,16 @@ class IndexManifest:
     chunk_budget: int | None = None
     chunk_overlap: int | None = None
 
+    passage_prefix: str = ""
+    max_tokens: int | None = None
+
     def mismatches(
         self,
         corpus_fingerprint: str | None = None,
         model: str | None = None,
         dimensions: int | None = None,
+        passage_prefix: str | None = None,
+        max_tokens: int | None = None,
     ) -> list[str]:
         """Describe every way this index disagrees with what the caller expects.
 
@@ -265,6 +270,10 @@ class IndexManifest:
             found.append(f"model: index built with {self.model or 'none'}, asked for {model}")
         if dimensions is not None and dimensions != self.dimensions:
             found.append(f"dimensions: index holds {self.dimensions}, asked for {dimensions}")
+        if passage_prefix is not None and passage_prefix != self.passage_prefix:
+            found.append(f"passage prefix: index built with {self.passage_prefix!r}, asked for {passage_prefix!r}")
+        if max_tokens is not None and max_tokens != self.max_tokens:
+            found.append(f"max_tokens: index built with {self.max_tokens}, asked for {max_tokens}")
         return found
 
 

@@ -152,7 +152,7 @@ def context_header(row: Mapping[str, Any]) -> str:
     )
 
 
-def embed_text(row: Mapping[str, Any]) -> str:
+def embed_text(row: Mapping[str, Any], passage_prefix: str = PASSAGE_PREFIX) -> str:
     """What actually goes to the encoder: prefix, header, then the passage.
 
     ``PASSAGE_PREFIX`` is empty for bge, which asks for a prefix on the query
@@ -163,12 +163,12 @@ def embed_text(row: Mapping[str, Any]) -> str:
     matters that this function is pure: hand it the same row twice and the
     stale-index check has to get the same string back both times.
     """
-    return f"{PASSAGE_PREFIX}{context_header(row)}{row['text']}"
+    return f"{passage_prefix}{context_header(row)}{row['text']}"
 
 
-def digest_of(row: Mapping[str, Any]) -> str:
+def digest_of(row: Mapping[str, Any], passage_prefix: str = PASSAGE_PREFIX) -> str:
     """The digest a current vector for this passage would carry."""
-    return passage_digest(row["chunk_id"], embed_text(row))
+    return passage_digest(row["chunk_id"], embed_text(row, passage_prefix))
 
 
 def metadata_for(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -269,7 +269,11 @@ def _use_threads(threads: int | None) -> int | None:
     return resolved
 
 
-def _load_model(threads: int | None = None):
+def _load_model(
+    threads: int | None = None,
+    model_name: str = EMBED_MODEL,
+    expected_dimensions: int | None = EMBED_DIMENSIONS,
+):
     """Import and load the encoder, late and with a usable failure.
 
     sentence-transformers pulls in torch, which is seconds of import time and a
@@ -289,7 +293,7 @@ def _load_model(threads: int | None = None):
         ) from error
 
     used = _use_threads(threads)
-    model = SentenceTransformer(EMBED_MODEL)
+    model = SentenceTransformer(model_name)
     # Renamed in sentence-transformers 6.0; the old name still works but warns.
     # Asked for by name so the module runs on either side of that rename, since
     # requirements.txt pins a version but a teammate's venv may predate it.
@@ -297,13 +301,13 @@ def _load_model(threads: int | None = None):
         model, "get_sentence_embedding_dimension"
     )
     width = measure()
-    if width != EMBED_DIMENSIONS:
+    if expected_dimensions is not None and width != expected_dimensions:
         # Two checkpoints of one family produce vectors that are not comparable,
         # and a dimension mismatch is the one case Chroma will not catch for us:
         # it accepts whatever the first add() gives it and rejects the rest.
         raise RuntimeError(
-            f"{EMBED_MODEL} produces {width}-dimensional vectors but "
-            f"constants.EMBED_DIMENSIONS says {EMBED_DIMENSIONS}. Change one to "
+            f"{model_name} produces {width}-dimensional vectors but "
+            f"the configured embedding dimension is {expected_dimensions}. Change one to "
             f"match the other before building an index."
         )
     return model, used
@@ -404,7 +408,10 @@ def _scan(collection) -> dict[str, tuple[str | None, str | None, str | None]]:
     return held
 
 
-def _corpus_digests(processed_dir: Path) -> tuple[dict[str, str], set, int]:
+def _corpus_digests(
+    processed_dir: Path,
+    passage_prefix: str = PASSAGE_PREFIX,
+) -> tuple[dict[str, str], set, int]:
     """Walk the corpus once: each passage's digest, the chunker settings seen,
     and the row count.
 
@@ -416,7 +423,7 @@ def _corpus_digests(processed_dir: Path) -> tuple[dict[str, str], set, int]:
     n_rows = 0
     for row in iter_chunks(processed_dir=processed_dir):
         n_rows += 1
-        digests[row["chunk_id"]] = digest_of(row)
+        digests[row["chunk_id"]] = digest_of(row, passage_prefix)
         settings.add((row.get("chunk_budget"), row.get("chunk_overlap")))
     return digests, settings, n_rows
 
@@ -452,6 +459,10 @@ def build(
     chroma_dir: Path = CHROMA_DIR,
     processed_dir: Path = PROCESSED_DIR,
     sort_window: int = EMBED_SORT_WINDOW,
+    model_name: str | None = None,
+    dimensions: int | None = None,
+    passage_prefix: str = PASSAGE_PREFIX,
+    max_tokens: int | None = None,
 ) -> IndexManifest:
     """Bring the index in ``chroma_dir`` up to date with ``processed_dir``.
 
@@ -498,6 +509,13 @@ def build(
     system, twice, at 86% built. Disk is cheap here and memory is not: the
     second walk costs seconds against an encode measured in hours.
     """
+    model_name = EMBED_MODEL if model_name is None else model_name
+    dimensions = EMBED_DIMENSIONS if dimensions is None else dimensions
+    if max_tokens is not None and max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
+    previous_manifest = read_manifest(manifest_file_for(chroma_dir))
+    if max_tokens is None and previous_manifest is not None and previous_manifest.model == model_name:
+        max_tokens = previous_manifest.max_tokens
     if batch_size < 1 or sort_window < 1:
         raise ValueError(
             f"batch_size and sort_window must be at least 1, got {batch_size} and "
@@ -511,7 +529,7 @@ def build(
 
     # First walk, over the whole corpus whatever the filters say: the digests
     # are what every decision below is made against.
-    corpus, settings, n_rows = _corpus_digests(processed_dir)
+    corpus, settings, n_rows = _corpus_digests(processed_dir, passage_prefix)
     if not n_rows:
         raise RuntimeError(
             f"No passages found in {processed_dir}. Run the chunk stage first: "
@@ -556,16 +574,20 @@ def build(
         held = _scan(collection)
         # Refused rather than repaired: every vector would change, possibly its
         # width too, and that is a decision to make on purpose.
-        foreign = sum(1 for entry in held.values() if entry[2] != EMBED_MODEL)
+        foreign = sum(1 for entry in held.values() if entry[2] != model_name)
         if foreign:
-            models = sorted({str(entry[2]) for entry in held.values() if entry[2] != EMBED_MODEL})
+            models = sorted({str(entry[2]) for entry in held.values() if entry[2] != model_name})
             raise RuntimeError(
                 f"{foreign:,} of the {len(held):,} vectors in {chroma_dir} were not "
-                f"encoded by {EMBED_MODEL} (found: {', '.join(models)}; 'None' means "
+                f"encoded by {model_name} (found: {', '.join(models)}; 'None' means "
                 f"built before this stage recorded the model). Mixing encoders in "
                 f"one index makes their scores incomparable. Rebuild it:\n"
                 f"  python -m src.retrieval embed --rebuild"
             )
+
+    if (held and previous_manifest is not None and previous_manifest.max_tokens is not None
+            and max_tokens is not None and max_tokens != previous_manifest.max_tokens):
+        raise RuntimeError("changing the encoder token limit requires rebuild=True")
 
     before = _differences(held, corpus)
     if held:
@@ -598,12 +620,18 @@ def build(
         if model is None:
             # Loaded on the first batch rather than up front, so a run with
             # nothing to do never pays for torch.
-            print(f"loading {EMBED_MODEL} ...")
-            model, used_threads = _load_model(threads)
+            print(f"loading {model_name} ...")
+            model, used_threads = _load_model(
+                threads, model_name=model_name, expected_dimensions=dimensions
+            )
+            if max_tokens is not None:
+                model.max_seq_length = min(
+                    max_tokens, int(getattr(model, "max_seq_length", max_tokens))
+                )
             print(f"encoding on {used_threads} threads")
             started = time.perf_counter()
 
-        texts = [embed_text(row) for row in batch]
+        texts = [embed_text(row, passage_prefix) for row in batch]
         # Tokenising a batch about to be encoded anyway costs a fraction of the
         # encode. The count goes onto the vector: bge reads EMBED_MAX_TOKENS and
         # silently drops the rest, so this is the only record that a vector
@@ -631,12 +659,12 @@ def build(
             documents=[row["text"] for row in batch],
             metadatas=[
                 {**metadata_for(row), DIGEST_FIELD: digest,
-                 TOKENS_FIELD: count, MODEL_FIELD: EMBED_MODEL}
+                 TOKENS_FIELD: count, MODEL_FIELD: model_name}
                 for row, digest, count in zip(batch, digests, counts)
             ],
         )
         for row, digest in zip(batch, digests):
-            held[row["chunk_id"]] = (digest, row["accession_no"], EMBED_MODEL)
+            held[row["chunk_id"]] = (digest, row["accession_no"], model_name)
         done += len(batch)
         replaced += len(replacing)
 
@@ -684,6 +712,18 @@ def build(
             f"it was building; rebuild it: python -m src.retrieval embed --rebuild"
         )
 
+    # Retain the actual encoder limit even when a current index needs no model.
+    if model is not None:
+        effective_max_tokens = int(getattr(model, "max_seq_length", max_tokens or EMBED_MAX_TOKENS))
+    elif previous_manifest is not None and previous_manifest.model == model_name and previous_manifest.max_tokens:
+        effective_max_tokens = previous_manifest.max_tokens
+    elif max_tokens is not None:
+        effective_max_tokens = max_tokens
+    else:
+        # Legacy indexes have no limit recorded: read the encoder once to learn it.
+        model, _ = _load_model(threads, model_name=model_name, expected_dimensions=dimensions)
+        effective_max_tokens = int(getattr(model, "max_seq_length", EMBED_MAX_TOKENS))
+
     # From the index's own digests, not the corpus walk: the manifest says what
     # the index holds, and matches the corpus only if the two are the same.
     manifest = IndexManifest(
@@ -693,13 +733,17 @@ def build(
         n_passages=len(held),
         n_filings=len({entry[1] for entry in held.values()}),
         built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        model=EMBED_MODEL,
-        dimensions=EMBED_DIMENSIONS,
+        model=model_name,
+        dimensions=dimensions,
         chunk_budget=chunk_budget,
         chunk_overlap=chunk_overlap,
+        passage_prefix=passage_prefix,
+        max_tokens=effective_max_tokens,
     )
     write_manifest(manifest, manifest_file)
-    write_truncation_report(collection, chroma_dir)
+    write_truncation_report(
+        collection, chroma_dir, model=model_name, max_tokens=effective_max_tokens
+    )
 
     after = _differences(held, corpus)
     print(f"index:    {chroma_dir}")
@@ -717,6 +761,10 @@ def build(
 def check_index(
     chroma_dir: Path = CHROMA_DIR,
     processed_dir: Path = PROCESSED_DIR,
+    model: str | None = None,
+    dimensions: int | None = None,
+    passage_prefix: str = PASSAGE_PREFIX,
+    max_tokens: int | None = None,
 ) -> list[str]:
     """Every reason the index in ``chroma_dir`` should not be searched.
 
@@ -738,16 +786,21 @@ def check_index(
             f"last build that changed it did not finish. Run: python -m src.retrieval embed"
         ]
 
-    problems = manifest.mismatches(model=EMBED_MODEL, dimensions=EMBED_DIMENSIONS)
+    expected_model = model or EMBED_MODEL
+    expected_dimensions = dimensions or EMBED_DIMENSIONS
+    problems = manifest.mismatches(
+        model=expected_model, dimensions=expected_dimensions, passage_prefix=passage_prefix,
+        max_tokens=max_tokens if manifest.max_tokens is not None else None
+    )
 
     collection = open_collection(chroma_dir, create=False)
     if collection is None:
         return problems + [f"a manifest exists but there is no collection in {chroma_dir}"]
     held = _scan(collection)
 
-    foreign = sum(1 for entry in held.values() if entry[2] != EMBED_MODEL)
+    foreign = sum(1 for entry in held.values() if entry[2] != expected_model)
     if foreign:
-        problems.append(f"{foreign:,} vectors were not encoded by {EMBED_MODEL}")
+        problems.append(f"{foreign:,} vectors were not encoded by {expected_model}")
 
     index_fingerprint = fingerprint_of(entry[0] or "" for entry in held.values())
     if index_fingerprint != manifest.corpus_fingerprint:
@@ -755,13 +808,18 @@ def check_index(
             "the manifest does not describe the vectors beside it; rebuild the index"
         )
 
-    corpus, _, _ = _corpus_digests(processed_dir)
+    corpus, _, _ = _corpus_digests(processed_dir, passage_prefix)
     if index_fingerprint != fingerprint_of(corpus.values()):
         problems.append(f"the index does not match the corpus: {_describe(_differences(held, corpus))}")
     return problems
 
 
-def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
+def write_truncation_report(
+    collection,
+    chroma_dir: Path,
+    model: str = EMBED_MODEL,
+    max_tokens: int = EMBED_MAX_TOKENS,
+) -> Path | None:
     """Say which vectors the encoder cut short, read back from the index itself.
 
     Loud on purpose. A truncated passage is not a failed one: it is indexed,
@@ -778,7 +836,7 @@ def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
     """
     path = truncation_file_for(chroma_dir)
     found = collection.get(
-        where={TOKENS_FIELD: {"$gt": EMBED_MAX_TOKENS}}, include=["metadatas"]
+        where={TOKENS_FIELD: {"$gt": max_tokens}}, include=["metadatas"]
     )
     if not found["ids"]:
         path.unlink(missing_ok=True)
@@ -800,8 +858,8 @@ def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
     path.write_text(
         json.dumps(
             {
-                "model": EMBED_MODEL,
-                "max_tokens": EMBED_MAX_TOKENS,
+                "model": model,
+                "max_tokens": max_tokens,
                 "n_indexed": n_indexed,
                 "n_truncated": len(passages),
                 "n_truncated_tables": tables,
@@ -815,7 +873,7 @@ def write_truncation_report(collection, chroma_dir: Path) -> Path | None:
     )
     print()
     print(f"  WARNING  {len(passages):,} of {n_indexed:,} vectors ({share:.1f}%) were "
-          f"truncated at {EMBED_MAX_TOKENS} tokens by the encoder.")
+          f"truncated at {max_tokens} tokens by the encoder.")
     print(f"           {tables:,} of them are table passages. Worst: {worst:,} tokens.")
     print("           Their stored text is whole; their vector is not.")
     print(f"           Listed in {path}")

@@ -48,6 +48,8 @@ from .base import rank, resolve_k
 from .constants import (
     CHROMA_DIR,
     DENSE,
+    EMBED_MODEL,
+    EMBED_DIMENSIONS,
     EMBED_NORMALIZE,
     MIN_DENSE_SCORE,
     QUERY_PREFIX,
@@ -61,6 +63,7 @@ from .embed import (
     where_for,
 )
 from .records import IndexManifest, Query, RetrievedPassage
+from .embedding_config import EmbeddingConfig
 
 
 def similarity_of(distance: float) -> float:
@@ -96,10 +99,18 @@ class DenseRetriever:
         collection,
         manifest: IndexManifest | None = None,
         min_score: float | None = MIN_DENSE_SCORE,
+        embedding_model: str | None = None,
+        embedding_dimensions: int | None = None,
+        query_prefix: str = QUERY_PREFIX,
+        passage_prefix: str = "",
     ) -> None:
         self.collection = collection
         self.manifest = manifest
         self.min_score = min_score
+        self.embedding_model = embedding_model
+        self.embedding_dimensions = embedding_dimensions
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._model = None
 
     @classmethod
@@ -109,6 +120,11 @@ class DenseRetriever:
         processed_dir: Path = PROCESSED_DIR,
         verify: bool = True,
         min_score: float | None = MIN_DENSE_SCORE,
+        embedding_model: str | None = None,
+        embedding_dimensions: int | None = None,
+        query_prefix: str = QUERY_PREFIX,
+        passage_prefix: str = "",
+        embedding: EmbeddingConfig | None = None,
     ) -> DenseRetriever:
         """Open the index in ``chroma_dir``, or refuse it and say why.
 
@@ -126,8 +142,23 @@ class DenseRetriever:
         index. It is not what a run that produces numbers for the report wants,
         which is why it is not the default.
         """
+        if embedding is not None:
+            chroma_dir = embedding.index_dir
+            embedding_model = embedding.model
+            embedding_dimensions = embedding.dimensions
+            query_prefix = embedding.query_prefix
+            passage_prefix = embedding.passage_prefix
         if verify:
-            problems = check_index(chroma_dir, processed_dir)
+            from . import embed as embed_stage
+
+            problems = check_index(
+                chroma_dir,
+                processed_dir,
+                model=embedding_model or embed_stage.EMBED_MODEL,
+                dimensions=embedding_dimensions or embed_stage.EMBED_DIMENSIONS,
+                passage_prefix=passage_prefix,
+                max_tokens=embedding.max_tokens if embedding is not None else None,
+            )
             if problems:
                 detail = "\n".join(f"  - {problem}" for problem in problems)
                 raise ValueError(
@@ -144,6 +175,10 @@ class DenseRetriever:
             collection,
             manifest=read_manifest(manifest_file_for(chroma_dir)),
             min_score=min_score,
+            embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
 
     def has_candidates(self, query: Query) -> bool:
@@ -240,7 +275,7 @@ class DenseRetriever:
         than obviously broken.
         """
         vectors = self._load().encode(
-            [f"{QUERY_PREFIX}{text}"],
+            [f"{self.query_prefix}{text}"],
             normalize_embeddings=EMBED_NORMALIZE,
             show_progress_bar=False,
         )
@@ -256,7 +291,12 @@ class DenseRetriever:
         if self._model is None:
             from .embed import _load_model
 
-            self._model, _ = _load_model()
+            self._model, _ = _load_model(
+                model_name=self.embedding_model or EMBED_MODEL,
+                expected_dimensions=self.embedding_dimensions or EMBED_DIMENSIONS,
+            )
+            if self.manifest is not None and self.manifest.max_tokens is not None:
+                self._model.max_seq_length = self.manifest.max_tokens
         return self._model
 
 

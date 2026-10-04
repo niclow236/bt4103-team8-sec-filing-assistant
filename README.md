@@ -2012,6 +2012,70 @@ a user would see flagged, and
 how many hold a figure nothing confirmed. The facts store is read once for the
 run.
 
+### Embedding and generation ablations
+
+Issue #46 compares three embedding configurations and both answer providers.
+The registry in `src/evaluation/model_ablation.py` records the encoder, vector
+width, query and passage prefixes, token limit and index directory together.
+`EmbeddingConfig` carries those settings through stack assembly and dense
+retrieval. The default index still uses BGE.
+
+Build the processed corpus, BM25 index and facts store, then generate the
+benchmark (`python -m src.retrieval benchmark`) as described above. With that
+benchmark on disk, run a small comparison:
+
+```bash
+python -m src.evaluation.model_ablation embedding \
+  benchmark/generated.jsonl --prepare-indexes --limit 14 --run-id embeddings-20261004
+python -m src.evaluation.model_ablation generation \
+  benchmark/generated.jsonl --no-facts --limit 14 --run-id providers-20261004
+```
+
+`--limit` takes an evenly spaced sample across the full file, including its
+ends when at least two questions are selected. It does not guarantee that a
+small sample covers every company, year or question type; use a larger sample
+or the complete benchmark for reported conclusions. Without `--limit`, all
+questions are measured. Fourteen questions is a smoke run, not a final result.
+
+E1 is BGE base, E2 MiniLM and E3 E5 base. Each encoder is measured twice:
+filtered hybrid retrieval (E1–E3, the C4 retrieval path) and filtered dense-only
+retrieval (E1-dense–E3-dense), which isolates the encoder from BM25 fusion.
+Both views use the same question filters and indexes. `--top-k` sets their
+retrieval cutoff (10 by default); it applies only to the embedding command.
+E5 encodes `query: ` and `passage: ` on the corresponding sides. MiniLM reads
+256 tokens, compared with BGE and E5's 512. Each row records the actual limit,
+indexed and truncated passage counts, truncation rate and median search latency.
+When indexes are prepared in that command, it also records elapsed preparation
+time (`build_ms`), including loading and validation; a current index can have
+no new passages to encode. A run without preparation leaves that field null.
+
+`--prepare-indexes` is incremental and resumes interrupted builds. E1 reuses
+`data/index/chroma`; E2 and E3 have their own directories. Incompatible models
+are refused, and prefixes participate in vector digests and manifest checks.
+Add `--rebuild-indexes` only when re-encoding is intended, such as after changing
+a model or token limit. `--processed-dir` is passed to benchmark validation,
+index preparation and both matrices' retrievers.
+
+G1 is local Ollama with the pinned default `llama3.2:3b`; G2 is hosted Mistral
+with the app's pinned `ministral-8b-2512`. They share retrieval indexes and use
+C4's passage budget and answer settings, including decomposition and refusal.
+The facts shortcut is disabled by default so numeric questions exercise the
+providers; `--no-facts` states that explicitly. `--with-facts` includes the
+shortcut and records that override. The table reports overall abstention,
+provider-routed question count and abstention rate, median answer latency and
+how many completed questions needed a retry. Reports retain routes and numeric
+verification checks. G1 needs Ollama and its model; G2 needs `MISTRAL_API_KEY`.
+
+Each run writes `report.json` for each configuration and a `summary.csv` and
+`summary.json` under `results/<run-id>/`. C, E and G runners share the table
+writer and JSON format (`run_id`, `top_k`, `configurations` with configuration
+objects). Model-specific columns extend the common C-row columns. Reports
+retain retrieved chunk IDs and scores for inspection and rescoring. A missing
+index or key fails before any question is measured or run directory is created.
+A stopped or interrupted provider run saves completed answers, its stop reason
+and both summaries before exiting unsuccessfully. Completed runs print the
+table and output path. Use a fresh run ID; existing results are never overwritten.
+
 ## Team and course
 
 BT4103 Business Analytics Capstone, Team 8, AY26/27 Semester 1, supervised by A/Prof Oh Hyelim. The main milestones are the requirements presentation in Week 6, the interim presentation in Week 9, and the final presentation in Week 13, with deliverables handed over the following week.

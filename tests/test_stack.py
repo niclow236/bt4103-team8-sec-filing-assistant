@@ -444,3 +444,48 @@ def test_the_evaluation_command_leaves_a_rows_settings_alone_unless_told(monkeyp
     cli.main(["--config", "C4", "--no-refusal", *common])
     assert ran["use_refusal"] is False and ran["use_facts"] is True
     assert ran["stack"].to_dict()["use_refusal"] is False
+
+
+def test_dense_prefix_defaults_and_empty_prefix_reach_loader(monkeypatch, tmp_path):
+    from src.retrieval.dense import DenseRetriever
+    from src.retrieval.constants import QUERY_PREFIX
+
+    loaded = []
+    monkeypatch.setattr(DenseRetriever, "load", lambda **kw: loaded.append(kw) or object())
+    build_retriever("dense", chroma_dir=tmp_path)
+    build_retriever("dense", chroma_dir=tmp_path, embedding_query_prefix="")
+    assert loaded[0]["embedding"].query_prefix == QUERY_PREFIX
+    assert loaded[1]["embedding"].query_prefix == ""
+
+
+def test_shared_parts_scope_dense_by_encoder_settings_and_corpus(monkeypatch, tmp_path):
+    from src.retrieval.dense import DenseRetriever
+
+    loaded = []
+    monkeypatch.setattr(DenseRetriever, "load", lambda **kwargs: loaded.append(kwargs) or object())
+    parts = {}
+    default = build_retriever("dense", parts=parts)
+    other = build_retriever("dense", chroma_dir=tmp_path / "E2", parts=parts)
+    prefix = build_retriever("dense", chroma_dir=tmp_path / "E2", embedding_query_prefix="", parts=parts)
+    corpus = build_retriever("dense", processed_dir=tmp_path / "processed", parts=parts)
+    assert len({id(default), id(other), id(prefix), id(corpus)}) == 4
+    assert build_retriever("dense", parts=parts) is default
+    assert len(loaded) == 4
+    with pytest.raises(ValueError, match="need chroma_dir"):
+        build_retriever("dense", embedding_model="custom", parts=parts)
+
+
+def test_e3_grouped_settings_reach_dense_load(monkeypatch, tmp_path):
+    from src.evaluation.model_ablation import EMBEDDING_EXPERIMENTS, _default_embedding_stack
+    from src.retrieval.bm25 import BM25Retriever
+    from src.retrieval.dense import DenseRetriever
+
+    seen = []
+    monkeypatch.setattr(BM25Retriever, "load", lambda **kwargs: object())
+    monkeypatch.setattr(DenseRetriever, "load", lambda **kwargs: seen.append(kwargs) or object())
+    _default_embedding_stack(EMBEDDING_EXPERIMENTS[2], processed_dir=tmp_path)
+    config = seen[0]["embedding"]
+    assert (config.model, config.dimensions, config.query_prefix, config.passage_prefix, config.max_tokens) == (
+        "intfloat/e5-base-v2", 768, "query: ", "passage: ", 512,
+    )
+    assert seen[0]["processed_dir"] == tmp_path
