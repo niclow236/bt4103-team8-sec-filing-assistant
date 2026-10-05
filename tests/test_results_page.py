@@ -1,6 +1,6 @@
 import json
 
-from src.app.results_page import load_result_runs
+from src.app.results_page import _benchmark_kind, load_result_runs
 
 
 def test_results_page_reads_saved_runs_and_keeps_question_rows_separate(tmp_path):
@@ -19,9 +19,9 @@ def test_results_page_reads_saved_runs_and_keeps_question_rows_separate(tmp_path
         }],
     }), encoding="utf-8")
     (config / "questions.jsonl").write_text(
-        json.dumps({"question_id": "hand", "difficulty": "hard", "source": "questions"})
+        json.dumps({"question_id": "hand"})
         + "\n"
-        + json.dumps({"question_id": "xbrl", "difficulty": "mechanical", "source": "xbrl"})
+        + json.dumps({"question_id": "xbrl-apple-2024-revenue"})
         + "\n",
         encoding="utf-8",
     )
@@ -31,6 +31,15 @@ def test_results_page_reads_saved_runs_and_keeps_question_rows_separate(tmp_path
 
     assert runs[0]["run_id"] == "demo"
     assert [row["question_id"] for row in runs[0]["configurations"][0]["question_rows"]] == [
-        "hand", "xbrl"
+        "hand", "xbrl-apple-2024-revenue"
     ]
+    assert _benchmark_kind(runs[0]["configurations"][0]["question_rows"][0]) == "Hand-written"
+    assert _benchmark_kind(runs[0]["configurations"][0]["question_rows"][1]) == "Mechanical (XBRL)"
 
+
+def test_results_page_reads_model_report_rows(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"results": [{"question_id": "q1"}]}), encoding="utf-8")
+    from src.app.results_page import _read_report_rows
+
+    assert _read_report_rows(report) == [{"question_id": "q1"}]

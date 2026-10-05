@@ -140,6 +140,10 @@ def run_embedding_ablation(
                     latency_ms=latency_ms, config=configuration,
                 )
                 result_rows.append({
+                    "question_id": question.question_id,
+                    "question_type": question.question_type,
+                    "difficulty": question.difficulty,
+                    "source": question.source,
                     **score_question(question, result, k=top_k), "config": configuration,
                     "retrieved_chunk_ids": list(result.retrieved_chunk_ids),
                     "retrieved_scores": list(result.retrieved_scores),
@@ -198,6 +202,13 @@ def run_generation_ablation(
             )
         except (RunStopped, RunInterrupted) as error:
             report, stopped = error.report, error
+        question_by_id = {question.question_id: question for question in questions}
+        for row in report.get("results", []):
+            question = question_by_id.get(row.get("question_id"))
+            if question is not None:
+                row["question_type"] = question.question_type
+                row["difficulty"] = question.difficulty
+                row["source"] = question.source
         summaries.append(_generation_summary(experiment, report))
         _write_report(run_dir, experiment.id, report)
         if stopped is not None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from statistics import mean
 from typing import Any
 
 import pandas as pd
@@ -35,7 +34,10 @@ def load_result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
             config_id = str(config.get("id") or "")
             if not config_id:
                 continue
-            questions = _read_questions(run_dir / config_id / "questions.jsonl")
+            config_dir = run_dir / config_id
+            questions = _read_questions(config_dir / "questions.jsonl")
+            if not questions:
+                questions = _read_report_rows(config_dir / "report.json")
             configurations.append({
                 "run_id": str(manifest.get("run_id") or run_dir.name),
                 "config_id": config_id,
@@ -64,11 +66,25 @@ def _read_questions(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_report_rows(path: Path) -> list[dict[str, Any]]:
+    """Read model-ablation question rows, which are stored in report.json."""
+    if not path.is_file():
+        return []
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = report.get("results", []) if isinstance(report, dict) else []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _benchmark_kind(row: dict[str, Any]) -> str:
     """Keep generated XBRL questions separate from hand-written questions."""
     if str(row.get("difficulty", "")).lower() == "mechanical":
         return "Mechanical (XBRL)"
     if str(row.get("source", "")).lower() == "xbrl":
+        return "Mechanical (XBRL)"
+    if str(row.get("question_id", "")).lower().startswith("xbrl-"):
         return "Mechanical (XBRL)"
     return "Hand-written"
 
@@ -121,11 +137,6 @@ def render_results_page() -> None:
         for kind, rows in grouped.items():
             if rows:
                 copy = {**item, "questions": len(rows)}
-                # Recalculate the displayed metrics for this benchmark only;
-                # the saved comparison summary may contain both sources.
-                copy["metrics"] = {
-                    metric: _mean_metric(rows, metric) for metric in METRICS
-                }
                 if kind == "Hand-written":
                     manual.append(copy)
                 else:
@@ -135,8 +146,3 @@ def render_results_page() -> None:
         _render_benchmark("Hand-written benchmark", manual)
     with tab_mechanical:
         _render_benchmark("Mechanical XBRL benchmark", mechanical)
-
-
-def _mean_metric(rows: list[dict[str, Any]], metric: str) -> float | None:
-    values = [row.get(metric) for row in rows if row.get(metric) is not None]
-    return mean(values) if values else None
