@@ -49,7 +49,7 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 ANSWERS_KEPT = 128
 
 
-@st.cache_resource(show_spinner="Reading the local filing corpus…")
+@st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
 def corpus_passages() -> tuple[dict[str, Any], ...]:
     """Read the processed passages once for the process (#40).
 
