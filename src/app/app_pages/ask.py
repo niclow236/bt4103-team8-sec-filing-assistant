@@ -72,7 +72,11 @@ if asked and question:
             answer = state.load_stack(config_id, provider).answer(
                 question, query=query, parsed=parsed, on_token=show)
             answer = verify_answer(answer, parsed=scoped)
-    except (OSError, ValueError, ProviderUnavailable) as error:
+    except ProviderUnavailable as error:
+        # What the provider lacks, without the advice for a notebook or a
+        # command that the full message goes on to give.
+        st.error(error.reason, icon=":material/error:")
+    except (OSError, ValueError) as error:
         # OSError for an index that is not there, and for a .env saved in an
         # encoding that cannot be read, which the sidebar has already named.
         st.error(str(error), icon=":material/error:")

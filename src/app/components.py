@@ -245,6 +245,12 @@ def answer_card(answer: Answer, *, key: str = "answer", show_question: bool = Tr
             unsafe_allow_javascript=True)
 
 
+def _not_in_corpus(parsed: ParsedQuestion) -> str:
+    """The companies and years a question named that the corpus does not hold,
+    in the one wording the sidebar and the filters line both show."""
+    return "not in the corpus: " + ", ".join(parsed.unresolved)
+
+
 def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None:
     """Show what a question will be searched in, as soon as it is read (#38).
 
@@ -261,7 +267,7 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
              for values, every in _scope(query)]
     if parsed is not None:
         if parsed.unresolved:
-            parts.append(f":orange-badge[not in the corpus: {', '.join(parsed.unresolved)}]")
+            parts.append(f":orange-badge[{_not_in_corpus(parsed)}]")
         parts.append(f":violet-badge[{parsed.question_type} question]")
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
@@ -585,7 +591,8 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
         selected_years = st.multiselect("Fiscal year", options["years"], key=f"{key}:years")
         selected_items = st.multiselect("Item", options["items"], key=f"{key}:items")
         if parsed and parsed.unresolved:
-            st.warning("Not in the corpus: " + ", ".join(parsed.unresolved))
+            said = _not_in_corpus(parsed)
+            st.warning(said[0].upper() + said[1:])
         unknown_items = [i for i in mentions if i not in items]
         if unknown_items:
             st.warning("Unrecognised Items (kept as filters): " + ", ".join(unknown_items))

@@ -1830,7 +1830,7 @@ A figure question the facts store answers needs neither provider, whichever
 is picked: the chat model is built when an answer first needs one, not when
 the configuration is loaded. So Mistral with no key still answers "What was
 Apple's total revenue in FY2024?", and a question that does need the model
-fails with the provider's own message. The box does not wait for that. As
+fails with what the provider lacks. The box does not wait for that. As
 soon as a provider that cannot answer is picked, it says under it what the
 provider lacks and what to do about it.
 

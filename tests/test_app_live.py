@@ -189,16 +189,20 @@ def test_live_app_reads_the_question_with_the_facts_store_s_labels(monkeypatch):
     assert read and all("facts_file" not in options for options in read)
 
 
+def _submit(ui, question="What was Apple's revenue in FY2024?"):
+    """Type a question and press Ask, on a page that then shows no traceback."""
+    ui.text_input[0].set_value(question).run()
+    ui.button[0].click().run()
+    assert not ui.exception
+    return ui
+
+
 def _ask(monkeypatch, answer, question="What was Apple's revenue in FY2024?"):
     """Ask the app one question, with ``answer`` standing in for the configuration's own."""
     _standing_in(monkeypatch)
     monkeypatch.setattr(FakeStack, "answer",
                         lambda self, question, **overrides: answer(question, **overrides))
-    ui = AppTest.from_file(APP, default_timeout=30).run()
-    ui.text_input[0].set_value(question).run()
-    ui.button[0].click().run()
-    assert not ui.exception
-    return ui
+    return _submit(AppTest.from_file(APP, default_timeout=30).run(), question)
 
 
 def test_live_app_writes_the_answer_to_the_page_as_it_arrives(monkeypatch):
@@ -547,10 +551,7 @@ def test_an_unreadable_env_is_said_and_does_not_stop_the_page(monkeypatch, error
 def test_an_ask_over_an_unreadable_env_is_an_error_on_the_page(own_stack, monkeypatch, error):
     # Through the app's own load_stack, which reads .env to build the stack.
     _unreadable_env(monkeypatch, error)
-    ui = AppTest.from_file(APP, default_timeout=30).run()
-    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
-    ui.button[0].click().run()
-    assert not ui.exception
+    ui = _submit(AppTest.from_file(APP, default_timeout=30).run())
     assert ui.error[0].value == str(error) and not ui.get("html")
 
 
@@ -586,10 +587,7 @@ def _ask_mistral(question):
     """Ask with Mistral picked. The suite gives it no key."""
     ui = AppTest.from_file(APP, default_timeout=30).run()
     ui.sidebar.button_group[0].set_value("mistral").run()
-    ui.text_input[0].set_value(question).run()
-    ui.button[0].click().run()
-    assert not ui.exception
-    return ui
+    return _submit(ui, question)
 
 
 def test_a_figure_from_the_facts_store_needs_no_key_for_the_provider_picked(
@@ -608,9 +606,11 @@ def test_a_figure_from_the_facts_store_needs_no_key_for_the_provider_picked(
 
 
 def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_stack):
-    # The same error as before, raised now where a model is first needed.
+    # Raised where a model is first needed. What the provider lacks and no
+    # more: the rest of the message says to restart a notebook or a command,
+    # and the sidebar has already said what to do in the app.
     ui = _ask_mistral("What risks does Apple describe in its FY2024 10-K?")
-    assert "MISTRAL_API_KEY is not set" in ui.error[0].value
+    assert ui.error[0].value == "MISTRAL_API_KEY is not set"
     assert not ui.get("html") and not ui.main.status and not ui.text
 
 

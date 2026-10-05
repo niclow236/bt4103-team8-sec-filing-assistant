@@ -412,7 +412,11 @@ def check_provider(
 def _ollama_settings(
     config: GenerationConfig, base_url: str | None, env: Mapping[str, str],
 ) -> dict[str, Any]:
-    """What ``ChatOllama`` is built with, on the server :func:`chat_model` describes."""
+    """What ``ChatOllama`` is built with, on the server :func:`chat_model` describes.
+
+    Named as :func:`_ollama_client` takes them, as Mistral's settings are for
+    its client, so both providers' ``settings`` return one shape.
+    """
     if base_url is None:
         base_url = (env.get(LLM_BASE_URL_ENV) or "").strip() or DEFAULT_OLLAMA_URL
     layers = (env.get(LLM_NUM_GPU_ENV) or "").strip()
@@ -422,21 +426,33 @@ def _ollama_settings(
         "model": config.model,
         "base_url": base_url.rstrip("/"),
         "num_gpu": int(layers) if layers else None,
-        "client_kwargs": {"timeout": GENERATION_TIMEOUT_S},
     }
 
 
 def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
-    """``ChatOllama`` for the config, with the settings :func:`_ollama_settings` read."""
+    """``ChatOllama`` for the config, with the settings :func:`_ollama_settings` read.
+
+    The same model, server and layers get the same client back, as Mistral's
+    do, so the app, which builds no chat model with its stack, does not build
+    one and two HTTP clients for every answer.
+    """
+    return _ollama_client(**_ollama_settings(config, base_url, env))
+
+
+@lru_cache(maxsize=8)
+def _ollama_client(model: str, base_url: str, num_gpu: int | None) -> Any:
+    """One ``ChatOllama`` per model, server and layers, built on first use."""
     from langchain_ollama import ChatOllama
 
-    return ChatOllama(**_ollama_settings(config, base_url, env))
+    return ChatOllama(model=model, base_url=base_url, num_gpu=num_gpu,
+                      client_kwargs={"timeout": GENERATION_TIMEOUT_S})
 
 
 def _mistral_settings(
     config: GenerationConfig, base_url: str | None, env: Mapping[str, str],
-) -> tuple[str, str, str]:
-    """What ``ChatMistralAI`` is built with: the model, the key and the address.
+) -> dict[str, Any]:
+    """What ``ChatMistralAI`` is built with: the model, the key and the address,
+    named as :func:`_mistral_client` takes them.
 
     The key is each teammate's own, from their own Mistral account, so a missing
     one is refused here, with where to make one, rather than on the first request,
@@ -465,7 +481,7 @@ def _mistral_settings(
     # ``environ`` is not passed over for the process's own MISTRAL_BASE_URL,
     # which ChatMistralAI reads when it is given none.
     address = (env.get(MISTRAL_BASE_URL_ENV) or "").strip() or MISTRAL_API_URL
-    return config.model, key, address
+    return {"model": config.model, "key": key, "base_url": address}
 
 
 def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
@@ -476,7 +492,7 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[
     clients, and a new TLS handshake inside the measured latency, for every
     question.
     """
-    return _mistral_client(*_mistral_settings(config, base_url, env))
+    return _mistral_client(**_mistral_settings(config, base_url, env))
 
 
 @lru_cache(maxsize=8)
@@ -955,7 +971,8 @@ class _Provider:
     ``package`` is the LangChain package its chat model comes from; ``build``
     makes that model for a config, from the settings :func:`chat_model` read;
     ``settings`` checks those settings and returns what ``build`` builds with,
-    building nothing itself, which is all :func:`check_provider` runs;
+    as the keyword arguments of the provider's client, building nothing
+    itself, which is all :func:`check_provider` runs;
     ``request`` is what goes with the messages;
     ``unavailable`` turns the client's error into a ``ProviderUnavailable``, or
     None to let it through; ``stop_reason`` reads why the answer ended, from the
@@ -965,7 +982,7 @@ class _Provider:
 
     package: str
     build: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
-    settings: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
+    settings: Callable[[GenerationConfig, str | None, Mapping[str, str]], dict[str, Any]]
     request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
     unavailable: Callable[[Exception, Any, GenerationConfig], ProviderUnavailable | None]
     stop_reason: Callable[[Mapping[str, Any], GenerationConfig, bool], str | None]

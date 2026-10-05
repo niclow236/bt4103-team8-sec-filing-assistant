@@ -486,6 +486,19 @@ def test_one_mistral_client_serves_every_question_with_the_same_key(tmp_path):
     assert other.mistral_api_key.get_secret_value() == "another-key"
 
 
+def test_one_ollama_client_serves_every_answer_of_a_model():
+    # The app builds no chat model with its stack, so without this each answer
+    # built a ChatOllama and two HTTP clients of its own (review of #119).
+    config = GenerationConfig("ollama", "llama3.2:3b", "grounded_v4")
+    first = chat_model(config, environ={})
+    assert chat_model(config, environ={}) is first
+    other = GenerationConfig("ollama", "qwen3:4b", "grounded_v4")
+    assert chat_model(other, environ={}) is not first
+    # Another server or number of layers is another client too.
+    assert chat_model(config, environ={"LLM_BASE_URL": "http://gpu-box:11434"}) is not first
+    assert chat_model(config, environ={"LLM_NUM_GPU": "0"}) is not first
+
+
 @pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
 def test_a_missing_key_says_where_to_make_one(tmp_path, values):
     # No key line is what .env.example leaves, and an empty value what removing
@@ -517,13 +530,14 @@ def test_the_check_refuses_a_missing_key_in_the_words_the_build_does(tmp_path, v
 def test_the_check_reads_the_settings_and_builds_no_client(tmp_path, monkeypatch):
     # It runs on every rerun of the app's page. Building ChatOllama to make it
     # opened two HTTP clients each time.
-    from src.rag.generate import _mistral_client
+    from src.rag.generate import _mistral_client, _ollama_client
 
     monkeypatch.setattr("langchain_ollama.ChatOllama",
                         lambda **settings: pytest.fail("the check built ChatOllama"))
     assert check_provider(_config(), dotenv=_dotenv(tmp_path, LLM_NUM_GPU="0")) is None
     assert check_provider(_mistral_config(), environ={"MISTRAL_API_KEY": "test-key"}) is None
     assert _mistral_client.cache_info().currsize == 0
+    assert _ollama_client.cache_info().currsize == 0
 
 
 def test_the_check_refuses_every_setting_the_build_refuses(tmp_path):
