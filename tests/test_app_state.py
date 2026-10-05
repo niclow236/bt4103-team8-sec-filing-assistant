@@ -11,8 +11,9 @@ from dataclasses import replace
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import src.app.app as app_module
 import src.app.state as state_module
+import src.rag.verify as verify_module
+from src.config import PROJECT_ROOT
 from src.app.state import Remembered, Stopwatch
 from src.rag.generate import ProviderUnavailable
 from src.retrieval.constants import FINAL_K
@@ -21,7 +22,7 @@ from src.stack import DEFAULT_STACK, stack_config
 from tests.sample_answers import sample_answer
 
 
-APP = "from src.app.app import main\nmain()"
+APP = str(PROJECT_ROOT / "src" / "app" / "main.py")
 QUESTION = "What was Apple's revenue in FY2024?"
 # How long a test waits on a thread before calling it stuck.
 WAIT = 10
@@ -265,14 +266,15 @@ def built(monkeypatch):
 
     def build_stack(config_id, **kwargs):
         stacks[config_id] = CountingStack(stack_config(config_id))
+        stacks[config_id].built_with = kwargs
         return stacks[config_id]
 
-    monkeypatch.setattr(app_module, "build_stack", build_stack)
-    monkeypatch.setattr(app_module, "measured", lambda: [])
-    monkeypatch.setattr(app_module, "verify_answer", lambda answer, *, parsed: answer)
-    app_module.load_stack.clear()
+    monkeypatch.setattr(state_module, "build_stack", build_stack)
+    monkeypatch.setattr(state_module, "measured", lambda: [])
+    monkeypatch.setattr(verify_module, "verify_answer", lambda answer, *, parsed: answer)
+    state_module.load_stack.clear()
     yield stacks
-    app_module.load_stack.clear()
+    state_module.load_stack.clear()
 
 
 def _timing_lines(ui):
@@ -281,7 +283,7 @@ def _timing_lines(ui):
 
 
 def _ask(question=QUESTION):
-    ui = AppTest.from_string(APP, default_timeout=30).run()
+    ui = AppTest.from_file(APP, default_timeout=30).run()
     ui.text_input[0].set_value(question).run()
     ui.button[0].click().run()
     assert not ui.exception
@@ -319,14 +321,14 @@ def test_live_app_asks_for_the_passages_the_generator_is_given(built):
 
 
 def test_live_app_asks_again_after_a_failure(built, monkeypatch):
-    build_stack = app_module.build_stack
+    build_stack = state_module.build_stack
 
     def failing_once(config_id, **kwargs):
         stack = build_stack(config_id, **kwargs)
         stack.failures.append(ProviderUnavailable("The model stopped answering"))
         return stack
 
-    monkeypatch.setattr(app_module, "build_stack", failing_once)
+    monkeypatch.setattr(state_module, "build_stack", failing_once)
     ui = _ask()
     assert "The model stopped answering" in ui.error[0].value
     assert not ui.get("html") and not _timing_lines(ui)
@@ -345,3 +347,70 @@ def test_live_app_says_how_long_the_answer_took_for_as_long_as_it_shows_it(built
     ui.sidebar.multiselect[2].set_value([]).run()
     assert not ui.exception
     assert len(ui.get("html")) == 1 and len(_timing_lines(ui)) == 1
+
+
+def test_each_provider_is_built_once_over_the_same_indexes(built):
+    # A page that offers both providers builds each the first time it is
+    # asked, not on every Ask, and neither reads the indexes a second time.
+    local = state_module.load_stack(DEFAULT_STACK, "ollama")
+    local_stack = built[DEFAULT_STACK]
+    hosted = state_module.load_stack(DEFAULT_STACK, "mistral")
+    hosted_stack = built[DEFAULT_STACK]
+    assert hosted is not local and hosted_stack is not local_stack
+    assert (local_stack.built_with["provider"], hosted_stack.built_with["provider"]) == (
+        "ollama", "mistral")
+    # Neither builds its chat model with the stack: an answer that needs one does.
+    assert local_stack.built_with["defer_llm"] and hosted_stack.built_with["defer_llm"]
+    assert hosted_stack.built_with["parts"] is local_stack.built_with["parts"]
+    assert state_module.load_stack(DEFAULT_STACK, "ollama") is local
+    # Each remembers its own answers: one provider's is never given as the other's.
+    local.answer(QUESTION, query=Query(QUESTION))
+    hosted.answer(QUESTION, query=Query(QUESTION))
+    assert (len(local_stack.asked), len(hosted_stack.asked)) == (1, 1)
+
+
+def test_answer_models_reads_what_env_selects(monkeypatch):
+    found = state_module.answer_models()
+    assert (found.models, found.default, found.problem) == (
+        {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}, "ollama", None)
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_MODEL", "mistral-small-2506")
+    found = state_module.answer_models()
+    assert (found.models, found.default, found.problem) == (
+        {"ollama": "llama3.2:3b", "mistral": "mistral-small-2506"}, "mistral", None)
+    monkeypatch.setenv("LLM_PROVIDER", "mistrl")
+    unknown = state_module.answer_models()
+    assert unknown.default == "ollama" and "got 'mistrl'" in unknown.problem
+    # The model was named for a provider that does not exist, so neither gets it.
+    assert unknown.models == {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}
+
+
+def test_answer_models_says_what_each_provider_lacks_and_builds_no_client(monkeypatch):
+    # Read on every rerun of a page, so it asks each provider's settings and
+    # nothing else: no client library imported, no client built.
+    from src.rag.generate import _mistral_client
+
+    # What is wrong and none of the advice, which is written for a command.
+    assert state_module.answer_models().unready == {"mistral": "MISTRAL_API_KEY is not set"}
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    assert state_module.answer_models().unready == {}
+    monkeypatch.setenv("LLM_NUM_GPU", "many")
+    assert state_module.answer_models().unready == {
+        "ollama": "LLM_NUM_GPU must be a whole number of layers, got 'many'"}
+    assert _mistral_client.cache_info().currsize == 0
+
+
+def test_a_request_is_everything_an_answer_was_asked_with():
+    query = Query("What was revenue?", tickers=("AAPL",), fiscal_years=(2024,), items=("7",))
+    request = state_module.Request.of(query, "C4", "ollama")
+    assert request.question == "What was revenue?" and request.config_id == "C4"
+    # Compared as the tuple it is, so one kept before Streamlit loaded the
+    # module again after an edit still matches one built after.
+    assert request == ("What was revenue?", ("AAPL",), (2024,), ("7",), "C4", "ollama")
+    # Change any one of them and it is another request.
+    others = [state_module.Request.of(changed, "C4", "ollama") for changed in (
+        replace(query, text="What was net income?"), replace(query, tickers=()),
+        replace(query, fiscal_years=(2023,)), replace(query, items=()))]
+    others += [state_module.Request.of(query, "C3", "ollama"),
+               state_module.Request.of(query, "C4", "mistral")]
+    assert all(other != request for other in others) and len(set(others)) == len(others)

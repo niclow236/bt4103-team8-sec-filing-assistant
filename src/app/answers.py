@@ -17,7 +17,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from src.rag.records import ABSTENTION_MESSAGES
+from src.rag.records import abstention_text
 
 
 def _text(value) -> str:
@@ -79,8 +79,7 @@ def render_answer(value) -> str:
         parts.append('<div class="badges">' + "".join(badges) + "</div>")
 
     if data.get("abstained"):
-        reason = ABSTENTION_MESSAGES.get(data.get("abstention_reason"),
-                                         "No factual claims were produced or scored.")
+        reason = abstention_text(data.get("abstention_reason"))
         parts.append('<section class="notice neutral"><span class="notice-icon">&#8212;</span>'
                      '<div><strong>The assistant abstained</strong>'
                      f'<p>{_text(reason)}</p></div></section>')
