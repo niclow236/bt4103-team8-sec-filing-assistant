@@ -139,9 +139,10 @@ bt4103-team8-sec-filing-assistant/
 │   └── app/                 # the Streamlit app, and the viewer for saved answers
 │       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
 │       ├── app_pages/       #   one script per page
-│       │   └── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
-│       ├── state.py         #   what is kept between reruns: indexes, stacks, answers
-│       ├── components.py    #   what pages draw: answer card, filters, trace
+│       │   ├── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
+│       │   └── browse.py    #     Browse: company/year/Item passage explorer
+│       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
+│       ├── components.py    #   what pages draw: answers, filters, trace, corpus passages
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
@@ -1791,9 +1792,10 @@ differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 
-The real app reads the processed filings and indexes on this machine, searches
-them, sends retrieved passages to the configured answer model, verifies the
-result, and shows citations to those filings:
+The app's Ask page reads the processed filings and indexes on this machine,
+searches them, sends retrieved passages to the configured answer model,
+verifies the result, and shows citations to those filings. Its Browse page
+reads the processed passages directly, without an index or model:
 
 ```bash
 streamlit run src/app/main.py
@@ -1802,9 +1804,10 @@ streamlit run src/app/main.py
 Run it from the project root. `python -m streamlit run src/app/main.py` does
 the same.
 
-Build the local indexes first if they do not exist (`python -m src.retrieval
-bm25` and `python -m src.retrieval embed`). The app checks each index against
-the current processed corpus before searching. The sidebar's Configuration box
+For the Ask page, build the local indexes first if they do not exist (`python
+-m src.retrieval bm25` and `python -m src.retrieval embed`). The app checks each
+index against the current processed corpus before searching. The sidebar's
+Configuration box
 picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
 the metadata filter, so the first Ask also checks the dense index and loads the
 embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
@@ -1859,6 +1862,16 @@ The Ask page (#38) shows, in order:
   what the checks found. It is drawn from the answer already given, so
   opening it searches nothing.
 
+The Browse page (#40) reads `data/processed/` directly and needs neither an
+index nor an answer model. Its company, fiscal-year and Item menus are
+dependent: each contains only values that exist under the choices before it,
+so every selectable combination has passages. It shows 25 passages at a time
+and makes every page reachable. Each expander is named for its nearest heading,
+table caption or Item title; inside it, the chunk ID is shown beside a link to
+the source filing on EDGAR. Prose is marked with an article icon and rendered
+as text; table passages are marked with a table icon and rendered in a
+spacing-preserving block so the two cannot be mistaken for one another.
+
 ### Where things go in `src/app/`
 
 Each file has one job, so that a second page does not grow its own copy of
@@ -1868,8 +1881,8 @@ what the first one does:
 |---|---|
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
-| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |
+| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `components.py` | What a page draws from the data it is handed: corpus selectors and passage panels, `filter_sidebar`, provider/configuration pickers, `resolved_filters`, the answer card and summary, abstention notice, and retrieval trace. A component builds no stack, asks no model and caches nothing. Widget selections are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
