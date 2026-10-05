@@ -437,6 +437,11 @@ def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[s
     one and two HTTP clients for every answer. The timeout is read on every
     call, so a notebook that lengthens ``GENERATION_TIMEOUT_S`` after its first
     answer gets a client with the limit the timeout error names.
+
+    :func:`_mistral_model` is the same line over Mistral's settings, client
+    and timeout. It is left as a copy on purpose: shared, it would need each
+    provider's timeout on ``_Provider``, and neither provider would read on
+    its own any more.
     """
     return _ollama_client(**_ollama_settings(config, base_url, env),
                           timeout=GENERATION_TIMEOUT_S)
