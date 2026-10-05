@@ -13,7 +13,7 @@ st.caption(
 
 try:
     passages = state.corpus_passages()
-except (OSError, ValueError, TypeError) as error:
+except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
     st.error(f"Could not read the processed filing corpus: {error}", icon=":material/error:")
 else:
     if not passages:
