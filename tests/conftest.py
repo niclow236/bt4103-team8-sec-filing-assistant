@@ -29,7 +29,7 @@ from src.rag.constants import (
     MISTRAL_API_KEY_ENV,
     MISTRAL_BASE_URL_ENV,
 )
-from src.rag.generate import _mistral_client
+from src.rag.generate import _mistral_client, _ollama_client
 from src.retrieval import embed
 
 # Three companies, two fiscal years each.
@@ -155,7 +155,7 @@ def _no_local_settings(monkeypatch):
     .env writes its own and passes its path, which is still read, and a test
     that sets a variable sets it itself. load_dotenv writes into the real
     os.environ, which monkeypatch does not see, so the settings a test loads
-    are removed again afterwards. The Mistral clients a test builds are dropped
+    are removed again afterwards. The chat clients a test builds are dropped
     too, so no later test is handed one back.
     """
     load_dotenv = config.load_dotenv
@@ -164,10 +164,12 @@ def _no_local_settings(monkeypatch):
     for name in LLM_SETTINGS:
         monkeypatch.delenv(name, raising=False)
     _mistral_client.cache_clear()
+    _ollama_client.cache_clear()
     yield
     for name in LLM_SETTINGS:
         os.environ.pop(name, None)
     _mistral_client.cache_clear()
+    _ollama_client.cache_clear()
 
 
 @pytest.fixture(autouse=True)

@@ -143,6 +143,31 @@ def test_the_generator_is_settled_before_an_index_is_read(monkeypatch):
     assert order == ["generator", "retriever"]
 
 
+def test_a_deferred_chat_model_is_not_built_with_the_stack(monkeypatch):
+    # The app's stack. A figure looked up in the facts store asks no model, so
+    # building the stack must not need the key of the provider picked. With
+    # the model built here, Mistral picked and no key, every Ask was refused.
+    import sys
+
+    from src.rag.generate import ProviderUnavailable
+
+    with pytest.raises(ProviderUnavailable, match="MISTRAL_API_KEY is not set"):
+        build_stack("C4", retriever=StubRetriever(), provider="mistral")
+
+    generate_module = sys.modules["src.rag.generate"]
+    monkeypatch.setattr(generate_module, "chat_model",
+                        lambda config: pytest.fail("the stack built a chat model"))
+    stack = build_stack("C4", retriever=StubRetriever(), provider="mistral", defer_llm=True)
+    assert stack.llm is None
+    assert (stack.generation.provider, stack.generation.model) == ("mistral", "ministral-8b-2512")
+    # A chat model handed in is still the one the stack uses.
+    given = object()
+    assert build_stack("C4", retriever=StubRetriever(), llm=given, defer_llm=True).llm is given
+    # And a provider that does not exist is still refused where the stack is built.
+    with pytest.raises(ValueError, match="the provider argument must be one of ollama, mistral"):
+        build_stack("C4", retriever=StubRetriever(), provider="openai", defer_llm=True)
+
+
 def test_overriding_the_retriever_does_not_load_the_one_it_replaced(monkeypatch):
     # --config C4 --retriever bm25 used to build the hybrid stack, reading the
     # dense index, and then throw it away.
@@ -388,11 +413,22 @@ def test_neither_the_app_nor_the_commands_construct_a_retriever():
     from src.config import PROJECT_ROOT
 
     classes = ("BM25Retriever", "DenseRetriever", "HybridRetriever")
-    for relative in ("src/app/app.py", "src/evaluation/cli.py"):
+    # Every file of the app, so a page added later is held to it too.
+    app = sorted(path.relative_to(PROJECT_ROOT).as_posix()
+                 for path in (PROJECT_ROOT / "src" / "app").rglob("*.py"))
+    assert "src/app/state.py" in app and "src/app/app_pages/ask.py" in app
+    for relative in (*app, "src/evaluation/cli.py"):
         source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         for name in classes:
             assert name not in source, f"{relative} still builds {name} itself"
+    # The app builds a stack in one place, and its pages go through it.
+    for relative in ("src/app/state.py", "src/evaluation/cli.py"):
+        source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
         assert "build_stack" in source or "build_retriever" in source
+    for relative in app:
+        if relative != "src/app/state.py":
+            source = (PROJECT_ROOT / Path(relative)).read_text(encoding="utf-8")
+            assert "build_stack(" not in source, f"{relative} builds a stack of its own"
 
 
 def test_the_ablation_runner_takes_its_rows_from_the_registry():
