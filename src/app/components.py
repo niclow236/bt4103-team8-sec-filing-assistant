@@ -109,6 +109,9 @@ def corpus_picker(passages: Sequence[Mapping[str, Any]], *, key: str = "browse")
               if row.get("ticker") and row.get("fiscal_year") is not None and row.get("item")]
     if not usable:
         raise ValueError("The local corpus has no passages with company, fiscal year and Item metadata")
+    if skipped := len(passages) - len(usable):
+        st.caption(f"{skipped} of {len(passages)} passages have no company, fiscal year or Item "
+                   "and are not listed.")
 
     names: dict[str, str] = {}
     for row in usable:
