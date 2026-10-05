@@ -18,7 +18,8 @@ except (OSError, ValueError, TypeError) as error:
 else:
     if not passages:
         st.warning(
-            "No processed passages were found. Run `python -m src.pipeline chunk` first.",
+            "No processed passages were found. Run `python -m src.pipeline chunk`, "
+            "then reload this page.",
             icon=":material/folder_off:")
     else:
         try:
