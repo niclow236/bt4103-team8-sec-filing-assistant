@@ -13,6 +13,7 @@ which is the harshest split of the JSON the prose renderer has to survive.
 import dataclasses
 import json
 import os
+import sys
 
 import httpx
 import pytest
@@ -497,6 +498,22 @@ def test_one_ollama_client_serves_every_answer_of_a_model():
     # Another server or number of layers is another client too.
     assert chat_model(config, environ={"LLM_BASE_URL": "http://gpu-box:11434"}) is not first
     assert chat_model(config, environ={"LLM_NUM_GPU": "0"}) is not first
+
+
+def test_a_timeout_a_notebook_lengthens_reaches_the_next_ollama_client(monkeypatch):
+    # The client was kept with the old limit, while the timeout error named
+    # the new one (review of #119).
+    config = GenerationConfig("ollama", "llama3.2:3b", "grounded_v4")
+    chat_model(config, environ={})
+    monkeypatch.setattr(sys.modules["src.rag.generate"], "GENERATION_TIMEOUT_S", 1800.0)
+    assert chat_model(config, environ={}).client_kwargs == {"timeout": 1800.0}
+
+
+def test_a_timeout_a_notebook_lengthens_reaches_the_next_mistral_client(monkeypatch):
+    environ = {"MISTRAL_API_KEY": "test-key"}
+    chat_model(_mistral_config(), environ=environ)
+    monkeypatch.setattr(sys.modules["src.rag.generate"], "HOSTED_TIMEOUT_S", 300)
+    assert chat_model(_mistral_config(), environ=environ).timeout == 300
 
 
 @pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])

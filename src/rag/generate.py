@@ -434,18 +434,21 @@ def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[s
 
     The same model, server and layers get the same client back, as Mistral's
     do, so the app, which builds no chat model with its stack, does not build
-    one and two HTTP clients for every answer.
+    one and two HTTP clients for every answer. The timeout is read on every
+    call, so a notebook that lengthens ``GENERATION_TIMEOUT_S`` after its first
+    answer gets a client with the limit the timeout error names.
     """
-    return _ollama_client(**_ollama_settings(config, base_url, env))
+    return _ollama_client(**_ollama_settings(config, base_url, env),
+                          timeout=GENERATION_TIMEOUT_S)
 
 
 @lru_cache(maxsize=8)
-def _ollama_client(model: str, base_url: str, num_gpu: int | None) -> Any:
-    """One ``ChatOllama`` per model, server and layers, built on first use."""
+def _ollama_client(model: str, base_url: str, num_gpu: int | None, timeout: float) -> Any:
+    """One ``ChatOllama`` per model, server, layers and timeout, built on first use."""
     from langchain_ollama import ChatOllama
 
     return ChatOllama(model=model, base_url=base_url, num_gpu=num_gpu,
-                      client_kwargs={"timeout": GENERATION_TIMEOUT_S})
+                      client_kwargs={"timeout": timeout})
 
 
 def _mistral_settings(
@@ -490,14 +493,14 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[
     The same model, key and address get the same client back, so a run of
     questions reuses one connection to the API rather than opening two new HTTP
     clients, and a new TLS handshake inside the measured latency, for every
-    question.
+    question. The timeout is read on every call, as Ollama's is.
     """
-    return _mistral_client(**_mistral_settings(config, base_url, env))
+    return _mistral_client(**_mistral_settings(config, base_url, env), timeout=HOSTED_TIMEOUT_S)
 
 
 @lru_cache(maxsize=8)
-def _mistral_client(model: str, key: str, base_url: str) -> Any:
-    """One ``ChatMistralAI`` per model, key and address, built on first use.
+def _mistral_client(model: str, key: str, base_url: str, timeout: float) -> Any:
+    """One ``ChatMistralAI`` per model, key, address and timeout, built on first use.
 
     The temperature and the output ceiling are not set here: :func:`stream`
     sends them with every request, as it does for Ollama. Set here as well,
@@ -514,7 +517,7 @@ def _mistral_client(model: str, key: str, base_url: str) -> Any:
         api_key=key,
         base_url=base_url,
         max_retries=1,
-        timeout=HOSTED_TIMEOUT_S,
+        timeout=timeout,
     )
 
 
