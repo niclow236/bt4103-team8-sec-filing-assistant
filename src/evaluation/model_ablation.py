@@ -164,6 +164,19 @@ def _generation_summary(experiment: GenerationExperiment, report: dict[str, Any]
     llm_rows = [row for row in results if row.get("route") == experiment.provider]
     latencies = [row["answer"]["latency_ms"] for row in results
                  if row.get("answer", {}).get("latency_ms") is not None]
+    by_benchmark = {}
+    for kind, rows in _group_benchmark_rows(results).items():
+        answered = [row.get("answer", {}) for row in rows if row.get("answer")]
+        latencies_for_kind = [answer["latency_ms"] for answer in answered
+                              if answer.get("latency_ms") is not None]
+        llm_for_kind = [row for row in rows if row.get("route") == experiment.provider]
+        by_benchmark[kind] = {
+            "questions": len(rows),
+            "abstention_rate": (mean(answer["abstained"] for answer in answered)
+                                if answered else None),
+            "median_latency_ms": median(latencies_for_kind) if latencies_for_kind else None,
+            "llm_questions": len(llm_for_kind),
+        }
     return {
         "config": {**asdict(experiment), "stack": report.get("stack")},
         "questions": report["summary"]["total"],
@@ -174,7 +187,18 @@ def _generation_summary(experiment: GenerationExperiment, report: dict[str, Any]
         "llm_questions": len(llm_rows),
         "llm_abstention_rate": mean(row["answer"]["abstained"] for row in llm_rows) if llm_rows else None,
         "stopped": report.get("stopped"),
+        "by_benchmark": by_benchmark,
     }
+
+
+def _group_benchmark_rows(rows: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        source = str(row.get("source", "")).lower()
+        difficulty = str(row.get("difficulty", "")).lower()
+        kind = "mechanical" if difficulty == "mechanical" or source == "xbrl" else "handwritten"
+        groups.setdefault(kind, []).append(row)
+    return groups
 
 
 def run_generation_ablation(

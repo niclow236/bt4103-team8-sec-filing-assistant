@@ -12,6 +12,7 @@ import streamlit as st
 from src.stack import RESULTS_ROOT
 
 METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+MODEL_METRICS = ("abstention_rate", "median_latency_ms", "llm_questions")
 
 
 @st.cache_data(show_spinner=False)
@@ -43,7 +44,9 @@ def load_result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
                 "config_id": config_id,
                 "name": str(config.get("name") or config_id),
                 "questions": int(config_summary.get("questions") or len(questions)),
-                "metrics": {metric: config_summary.get(metric) for metric in METRICS},
+                "metrics": {metric: config_summary.get(metric)
+                            for metric in (*METRICS, *MODEL_METRICS)},
+                "benchmark_metrics": config_summary.get("by_benchmark", {}),
                 "question_rows": questions,
             })
         if configurations:
@@ -89,25 +92,27 @@ def _benchmark_kind(row: dict[str, Any]) -> str:
     return "Hand-written"
 
 
-def _table(configurations: list[dict[str, Any]]) -> pd.DataFrame:
+def _table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
     rows = []
     for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark)
         rows.append({"Configuration": item["config_id"], "Name": item["name"],
-                     "Questions": item["questions"],
-                     **{metric.replace("_", " ").title(): item["metrics"].get(metric)
+                     "Questions": (saved or {}).get("questions", item["questions"]),
+                     **{metric.replace("_", " ").title(): (saved or {}).get(metric)
                         for metric in METRICS}})
     return pd.DataFrame(rows)
 
 
-def _render_benchmark(title: str, configurations: list[dict[str, Any]]) -> None:
+def _render_benchmark(title: str, configurations: list[dict[str, Any]], benchmark: str) -> None:
     st.subheader(title)
     if not configurations:
         st.info("No saved results for this benchmark.")
         return
-    st.dataframe(_table(configurations), use_container_width=True, hide_index=True)
+    st.dataframe(_table(configurations, benchmark), use_container_width=True, hide_index=True)
     chart_rows = []
     for item in configurations:
-        for metric, value in item["metrics"].items():
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        for metric, value in saved.items():
             if value is not None:
                 chart_rows.append({"Configuration": item["config_id"],
                                    "Metric": metric.replace("_", " ").title(),
@@ -143,6 +148,19 @@ def render_results_page() -> None:
                     mechanical.append(copy)
     tab_manual, tab_mechanical = st.tabs(["Hand-written benchmark", "Mechanical XBRL benchmark"])
     with tab_manual:
-        _render_benchmark("Hand-written benchmark", manual)
+        _render_benchmark("Hand-written benchmark", manual, "handwritten")
     with tab_mechanical:
-        _render_benchmark("Mechanical XBRL benchmark", mechanical)
+        _render_benchmark("Mechanical XBRL benchmark", mechanical, "mechanical")
+
+    model_rows = [item for item in selected["configurations"]
+                  if item["config_id"] in {"G1", "G2"}]
+    if model_rows:
+        st.subheader("Answer-model ablation")
+        st.dataframe(pd.DataFrame([
+            {"Configuration": item["config_id"], "Name": item["name"],
+             "Questions": item["questions"],
+             "Abstention rate": item["metrics"].get("abstention_rate"),
+             "Median latency (ms)": item["metrics"].get("median_latency_ms"),
+             "LLM questions": item["metrics"].get("llm_questions")}
+            for item in model_rows
+        ]), use_container_width=True, hide_index=True)

@@ -55,15 +55,31 @@ def _query(question: BenchmarkQuestion, *, top_k: int, metadata_filter: bool) ->
 
 def _summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     metric_names = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+    def summary_for(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            metric: mean(row[metric] for row in items if row[metric] is not None)
+            if any(row[metric] is not None for row in items) else None
+            for metric in metric_names
+        }
+
+    by_benchmark: dict[str, dict[str, Any]] = {}
+    for kind, items in _group_benchmark_rows(rows).items():
+        by_benchmark[kind] = {"questions": len(items), **summary_for(items)}
     return {
         "questions": len(rows),
-        **{
-            metric: mean(
-                row[metric] for row in rows if row[metric] is not None
-            ) if any(row[metric] is not None for row in rows) else None
-            for metric in metric_names
-        },
+        **summary_for(rows),
+        "by_benchmark": by_benchmark,
     }
+
+
+def _group_benchmark_rows(rows: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        source = str(row.get("source", "")).lower()
+        difficulty = str(row.get("difficulty", "")).lower()
+        kind = "mechanical" if difficulty == "mechanical" or source == "xbrl" else "handwritten"
+        groups.setdefault(kind, []).append(row)
+    return groups
 
 
 def run_configuration(
