@@ -73,8 +73,9 @@ if asked and question:
                 question, query=query, parsed=parsed, on_token=show)
             answer = verify_answer(answer, parsed=scoped)
     except ProviderUnavailable as error:
-        # What the provider lacks, without the advice for a notebook or a
-        # command that the full message goes on to give.
+        # A missing or refused key without the advice to restart a notebook
+        # or a command that the full message goes on to give. Every other
+        # failure names no reason of its own, so its whole message is shown.
         st.error(error.reason, icon=":material/error:")
     except (OSError, ValueError) as error:
         # OSError for an index that is not there, and for a .env saved in an

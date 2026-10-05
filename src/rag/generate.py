@@ -707,10 +707,12 @@ def _mistral_unavailable(
         if status in (401, 403):
             # A key already read stays in the environment, since a variable
             # that is set wins over .env, so a replaced key needs a new process.
+            refused = f"Mistral refused the API key ({said})"
             return ProviderUnavailable(
-                f"Mistral refused the API key ({said}); check {MISTRAL_API_KEY_ENV} in your .env, "
+                f"{refused}; check {MISTRAL_API_KEY_ENV} in your .env, "
                 f"or make a new key with your own account at {MISTRAL_CONSOLE} (API Keys), then "
-                f"restart the notebook or command so the new key is read"
+                f"restart the notebook or command so the new key is read",
+                reason=refused,
             )
         if status == 429:
             # Every 429 is taken as a limit a wait may lift, the per-minute rate

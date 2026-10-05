@@ -614,6 +614,25 @@ def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_sta
     assert not ui.get("html") and not ui.main.status and not ui.text
 
 
+def test_a_key_mistral_refuses_is_told_without_the_advice_for_a_command(own_stack, monkeypatch):
+    # The sidebar cannot know a key is refused until a request is sent, and
+    # the full message says to restart a notebook or a command (review of #119).
+    import httpx
+    import langchain_mistralai
+
+    def refusing(request):
+        return httpx.Response(401, json={"detail": "Unauthorized"})
+
+    built = langchain_mistralai.ChatMistralAI
+    monkeypatch.setattr(langchain_mistralai, "ChatMistralAI", lambda **settings: built(
+        **settings, client=httpx.Client(base_url=settings["base_url"],
+                                        transport=httpx.MockTransport(refusing))))
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    ui = _ask_mistral("What risks does Apple describe in its FY2024 10-K?")
+    assert ui.error[0].value == "Mistral refused the API key (HTTP 401: Unauthorized)"
+    assert not ui.get("html")
+
+
 def test_a_failed_ask_is_not_followed_by_the_line_for_a_changed_question(monkeypatch):
     # An older answer is kept for another question. Under the error of an Ask
     # that had just failed, "the question changed, select Ask" read as its cause.
