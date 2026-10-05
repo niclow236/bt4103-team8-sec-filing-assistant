@@ -629,8 +629,28 @@ def test_a_key_mistral_refuses_is_told_without_the_advice_for_a_command(own_stac
                                         transport=httpx.MockTransport(refusing))))
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     ui = _ask_mistral("What risks does Apple describe in its FY2024 10-K?")
-    assert ui.error[0].value == "Mistral refused the API key (HTTP 401: Unauthorized)"
+    # The key is set, so the sidebar has no warning: the error says what to
+    # do in the app in its place, as the sidebar does for a missing key.
+    assert not ui.sidebar.warning
+    assert ui.error[0].value == (
+        "Mistral refused the API key (HTTP 401: Unauthorized). Fix it in `.env` "
+        "(README, Setting up Mistral) and restart the app, or pick Ollama.")
     assert not ui.get("html")
+
+
+def test_a_failure_with_no_reason_of_its_own_is_shown_whole(monkeypatch):
+    # A rate limit says what to do itself, and nothing in .env would fix it.
+    from src.rag.generate import ProviderBusy
+
+    _standing_in(monkeypatch)
+
+    def busy(self, question, **overrides):
+        raise ProviderBusy("Mistral's rate limit was reached; wait a minute and ask again")
+
+    monkeypatch.setattr(FakeStack, "answer", busy)
+    ui = _submit(AppTest.from_file(APP, default_timeout=30).run(),
+                 "What risks does Apple describe in its FY2024 10-K?")
+    assert ui.error[0].value == "Mistral's rate limit was reached; wait a minute and ask again"
 
 
 def test_a_failed_ask_is_not_followed_by_the_line_for_a_changed_question(monkeypatch):

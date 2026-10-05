@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
     from src.app.state import AnswerModels
+    from src.rag.generate import ProviderUnavailable
 
 
 _MARKER = re.compile(r"\[(-?\d+)\]")
@@ -486,14 +487,38 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
             # Short, and with no icon: the sidebar is narrow, and a warning
             # that ran to twenty lines pushed the Configuration box below it
             # off the screen.
-            ready = [_PROVIDERS[other][0] for other in models if other not in unready]
-            instead = f", or pick {' or '.join(ready)}" if ready else ""
-            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. Fix it in "
-                       f"`.env` (README, {setup}) and restart the app{instead}. "
+            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. "
+                       f"{_fix_in_app(provider, available)} "
                        "A figure the facts store holds is still answered.")
         if available.problem:
             st.warning(available.problem)
     return provider
+
+
+def _fix_in_app(provider: str, available: AnswerModels) -> str:
+    """What to do in the app about a provider's settings: fix ``.env`` and
+    restart, or pick a provider that lacks nothing."""
+    ready = [_PROVIDERS[other][0] for other in available.models
+             if other != provider and other not in available.unready]
+    instead = f", or pick {' or '.join(ready)}" if ready else ""
+    return f"Fix it in `.env` (README, {_PROVIDERS[provider][2]}) and restart the app{instead}."
+
+
+def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
+    """Say why the provider picked could not answer an Ask.
+
+    ``available`` is what :func:`provider_picker` was given. What the provider
+    lacks, without the advice to restart a notebook or a command that the
+    full message goes on to give. Where the sidebar has not said what to do in
+    the app, because the settings looked right until a request was sent, as
+    a key the API refuses does, the error says it. A failure that names no
+    reason of its own, such as a rate limit, says what to do itself, and
+    nothing in ``.env`` would fix it, so its whole message is shown.
+    """
+    shown = error.reason
+    if error.reason != str(error) and provider not in available.unready:
+        shown += f". {_fix_in_app(provider, available)}"
+    st.error(shown, icon=":material/error:")
 
 
 def _writer(answer: Answer) -> Literal["facts", "model"] | None:
@@ -753,6 +778,6 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
-    "CorpusSelection", "filter_sidebar", "provider_picker", "resolved_filters",
+    "CorpusSelection", "filter_sidebar", "provider_error", "provider_picker", "resolved_filters",
     "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]

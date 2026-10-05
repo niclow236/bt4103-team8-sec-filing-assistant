@@ -91,9 +91,10 @@ class ProviderUnavailable(RuntimeError):
 
     ``reason`` is what is wrong on its own, in a few words, without the advice
     the message goes on to give. It is for a caller with advice of its own:
-    the app says it beside the provider picked, where "restart the notebook
-    or command" is not what there is to do. The whole message, where a
-    failure names none.
+    the app says it beside the provider picked, or under the failed Ask where
+    the settings looked right until a request was sent, and "restart the
+    notebook or command" is not what there is to do. The whole message, where
+    a failure names none.
     """
 
     def __init__(self, message: str, *, reason: str | None = None) -> None:
