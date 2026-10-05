@@ -142,3 +142,56 @@ def test_corpus_is_loaded_from_processed_passages_once(monkeypatch):
         assert calls == [True]
     finally:
         state.corpus_passages.clear()
+
+
+def test_a_new_selection_returns_to_the_first_page(monkeypatch):
+    rows = [passage(f"seven-{number:03d}") for number in range(27)]
+    rows += [passage(f"eight-{number:03d}", item="8") for number in range(27)]
+    app = browse(monkeypatch, rows)
+    app.selectbox[3].set_value(2).run()
+    app.selectbox[2].set_value("8").run()
+    assert not app.exception
+    assert app.selectbox[3].value == 1
+    assert any(caption.value == "Chunk ID: eight-000" for caption in app.caption)
+
+
+def test_a_passage_without_heading_or_safe_link_says_so(monkeypatch):
+    row = passage("bare")
+    row.update(heading="", url="javascript:alert(1)")
+    app = browse(monkeypatch, [row])
+    assert app.main.status[0].label == "Selected Item"
+    assert not app.get("link_button")
+    assert any(caption.value == "Filing link unavailable" for caption in app.caption)
+
+
+def test_dollar_signs_in_a_heading_are_not_read_as_math(monkeypatch):
+    row = passage("dollars")
+    row["heading"] = "Losses on strategic investments, net$(277)$(239)"
+    app = browse(monkeypatch, [row])
+    assert app.main.status[0].label == r"Losses on strategic investments, net\$(277)\$(239)"
+
+
+def test_passages_without_a_scope_are_counted_not_hidden(monkeypatch):
+    app = browse(monkeypatch, [passage("dated"), passage("undated", year=None)])
+    assert any(caption.value == "1 of 2 passages have no company, fiscal year or Item "
+               "and are not listed." for caption in app.caption)
+
+
+def test_a_malformed_filing_is_explained_on_the_page(monkeypatch, tmp_path):
+    (tmp_path / "AAPL").mkdir()
+    (tmp_path / "AAPL" / "10-K.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(state, "corpus_passages", lambda: tuple(iter_chunks(tmp_path)))
+    app = AppTest.from_file(BROWSE, default_timeout=30).run()
+    assert not app.exception
+    assert app.error[0].value.startswith("Could not read the processed filing corpus")
+
+
+def test_an_empty_corpus_is_read_again_on_the_next_rerun(monkeypatch):
+    reads = iter([(), (passage("arrived"),)])
+    monkeypatch.setattr(state, "iter_chunks", lambda: next(reads))
+    state.corpus_passages.clear()
+    try:
+        assert state.corpus_passages() == ()
+        assert state.corpus_passages() == (passage("arrived"),)
+    finally:
+        state.corpus_passages.clear()
