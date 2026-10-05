@@ -1,4 +1,4 @@
-"""Reusable Streamlit answer, evidence, trace and filter components (#37, #38).
+"""Reusable Streamlit answer, trace, filter and corpus components (#37, #38, #40).
 
 Each component draws what it is handed. None builds a stack, asks a model or
 caches anything: a page reads the question, loads through ``state.py``, asks,
@@ -7,6 +7,8 @@ the same way. The sidebar's own selections are the only thing one holds.
 
 The sidebar returns the Query to pass to ``answer_question(query=...)``.
 Render completed Answer records; citation numbers always refer to prompt order.
+The corpus controls and passage panels render processed rows without searching
+an index or asking a model.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from dataclasses import replace
 from hashlib import sha256
 from html import escape
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
 import streamlit as st
@@ -71,6 +73,156 @@ def _safe_url(url: str) -> bool:
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
     except ValueError:
         return False
+
+
+class CorpusSelection(NamedTuple):
+    """One filing scope selected on the Browse page."""
+
+    ticker: str
+    fiscal_year: int
+    item: str
+
+
+def _item_order(item: str) -> tuple[int, str]:
+    """Sort SEC Item labels in Form 10-K order, with any unknown label after them."""
+    return (_ITEMS.index(item), "") if item in _ITEMS else (len(_ITEMS), item)
+
+
+def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None):
+    """Draw a required selectbox and discard a stale dependent selection."""
+    if not options:
+        raise ValueError(f"{label} has no options")
+    if st.session_state.get(key) not in options:
+        st.session_state[key] = options[0]
+    return st.selectbox(label, options, key=key, format_func=format_func)
+
+
+def corpus_picker(passages: Sequence[Mapping[str, Any]], *, key: str = "browse") -> CorpusSelection:
+    """Pick a company, fiscal year and Item that actually exist in ``passages``.
+
+    Each choice narrows the choices after it. This prevents the Browse page
+    from offering a company/year/Item combination that resolves to an empty
+    page, and resets a now-invalid downstream value when an upstream widget
+    changes.
+    """
+    usable = [row for row in passages
+              if row.get("ticker") and row.get("fiscal_year") is not None and row.get("item")]
+    if not usable:
+        raise ValueError("The local corpus has no passages with company, fiscal year and Item metadata")
+    if skipped := len(passages) - len(usable):
+        st.caption(f"{skipped} of {len(passages)} passages have no company, fiscal year or Item "
+                   "and are not listed.")
+
+    names: dict[str, str] = {}
+    for row in usable:
+        names.setdefault(str(row["ticker"]), str(row.get("company") or row["ticker"]))
+    tickers = sorted(names)
+
+    with st.container(border=True):
+        st.caption("Choose a filing scope. Each menu contains only values present in the corpus.")
+        company_col, year_col, item_col = st.columns(3)
+        with company_col:
+            ticker = _existing_choice(
+                "Company", tickers, key=f"{key}:company",
+                format_func=lambda value: f"{value} — {names[value]}")
+        years = sorted({int(row["fiscal_year"]) for row in usable if row["ticker"] == ticker},
+                       reverse=True)
+        with year_col:
+            fiscal_year = _existing_choice(
+                "Fiscal year", years, key=f"{key}:year",
+                format_func=lambda value: f"FY{value}")
+        items = sorted({str(row["item"]).upper() for row in usable
+                        if row["ticker"] == ticker and row["fiscal_year"] == fiscal_year},
+                       key=_item_order)
+        with item_col:
+            item = _existing_choice(
+                "Item", items, key=f"{key}:item",
+                format_func=lambda value: f"Item {value}")
+    return CorpusSelection(ticker, fiscal_year, item)
+
+
+def select_corpus_passages(passages: Sequence[Mapping[str, Any]],
+                           selection: CorpusSelection) -> list[Mapping[str, Any]]:
+    """Return the passages in one selected company/year/Item, in corpus order."""
+    return [row for row in passages
+            if row.get("ticker") == selection.ticker
+            and row.get("fiscal_year") == selection.fiscal_year
+            and str(row.get("item") or "").upper() == selection.item]
+
+
+def _passage_kind(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    """The visible label, badge colour and icon for a stored content type."""
+    if row.get("content_type") == "table":
+        return "Table passage", "orange", ":material/table_chart:"
+    return "Prose passage", "blue", ":material/article:"
+
+
+def corpus_passage(row: Mapping[str, Any]) -> None:
+    """Render one full passage with its chunk ID, type and EDGAR filing link."""
+    kind, colour, icon = _passage_kind(row)
+    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    if row.get("content_type") == "table":
+        passage_title = row.get("table_caption") or row.get("heading") or row.get("title")
+    else:
+        passage_title = row.get("heading") or row.get("title")
+    # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
+    passage_title = str(passage_title or kind).replace("$", r"\$")
+
+    with st.expander(passage_title, icon=icon):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.badge(kind, color=colour, icon=icon)
+            st.caption(f"Chunk ID: {chunk_id}")
+        url = str(row.get("url") or "")
+        if _safe_url(url):
+            st.link_button("Open filing on EDGAR", url, icon=":material/open_in_new:")
+        else:
+            st.caption("Filing link unavailable")
+
+        text = str(row.get("text") or "")
+        if row.get("content_type") == "table":
+            # Tables are stored as aligned plain text. A code block preserves
+            # their rows and spacing and makes them visibly unlike prose.
+            st.code(text, language=None, wrap_lines=True)
+        else:
+            st.text(text)
+
+
+def corpus_passage_page(passages: Sequence[Mapping[str, Any]], selection: CorpusSelection,
+                        *, key: str = "browse", page_size: int = 25) -> None:
+    """Render a paginated selection without hiding how many passages exist."""
+    if page_size < 1:
+        raise ValueError("page_size must be positive")
+    selected = select_corpus_passages(passages, selection)
+    if not selected:
+        # ``corpus_picker`` only makes existing combinations, so this guards a
+        # malformed or concurrently replaced corpus rather than normal use.
+        st.warning("No passages exist for this selection.", icon=":material/search_off:")
+        return
+
+    filings = {str(row.get("accession_no") or row.get("url") or "") for row in selected}
+    page_count = (len(selected) + page_size - 1) // page_size
+    scope_key, page_key = f"{key}:scope", f"{key}:page"
+    scope = tuple(selection)
+    if st.session_state.get(scope_key) != scope:
+        st.session_state[scope_key] = scope
+        st.session_state[page_key] = 1
+    if st.session_state.get(page_key) not in range(1, page_count + 1):
+        st.session_state[page_key] = 1
+
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        page = st.selectbox(
+            "Page", range(1, page_count + 1), key=page_key,
+            format_func=lambda value: f"Page {value} of {page_count}",
+            width=180,
+        )
+        start = (page - 1) * page_size
+        stop = min(start + page_size, len(selected))
+        st.caption(
+            f"Showing passages {start + 1}–{stop} of {len(selected)} "
+            f"across {len(filings)} filing{'s' if len(filings) != 1 else ''}.")
+
+    for row in selected[start:stop]:
+        corpus_passage(row)
 
 
 def _citation_html(citation: Citation, passages: Sequence[RetrievedPassage], *,
@@ -606,6 +758,7 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
-    "configuration_picker", "filter_sidebar", "provider_picker", "resolved_filters",
-    "retrieval_trace", "trace_rows",
+    "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
+    "CorpusSelection", "filter_sidebar", "provider_picker", "resolved_filters",
+    "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]
