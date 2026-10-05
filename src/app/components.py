@@ -84,9 +84,8 @@ class CorpusSelection(NamedTuple):
 
 
 def _item_order(item: str) -> tuple[int, str]:
-    """Sort SEC Item labels numerically, with lettered Items beside their number."""
-    match = re.fullmatch(r"(\d+)(.*)", item)
-    return (int(match[1]), match[2]) if match else (10_000, item)
+    """Sort SEC Item labels in Form 10-K order, with any unknown label after them."""
+    return (_ITEMS.index(item), "") if item in _ITEMS else (len(_ITEMS), item)
 
 
 def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None):
