@@ -4,6 +4,7 @@ from streamlit.testing.v1 import AppTest
 
 from src.app import state
 from src.config import PROJECT_ROOT
+from src.pipeline.chunk import iter_chunks
 
 
 BROWSE = str(PROJECT_ROOT / "src" / "app" / "app_pages" / "browse.py")
