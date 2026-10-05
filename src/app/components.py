@@ -163,7 +163,8 @@ def corpus_passage(row: Mapping[str, Any]) -> None:
         passage_title = row.get("table_caption") or row.get("heading") or row.get("title")
     else:
         passage_title = row.get("heading") or row.get("title")
-    passage_title = str(passage_title or kind)
+    # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
+    passage_title = str(passage_title or kind).replace("$", r"\$")
 
     with st.expander(passage_title, icon=icon):
         with st.container(horizontal=True, vertical_alignment="center"):
