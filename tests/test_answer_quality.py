@@ -1,6 +1,7 @@
 """Gold answer evaluation, citation denominators, resource accounting and CLI."""
 
 import json
+from importlib import import_module
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -151,7 +152,7 @@ def test_judge_invalid_response_and_identity_fail_explicitly():
         judge(JudgeModel(error=ValueError("bad JSON")))(question(), answer())
     model = JudgeModel()
     model.model = "wrong-model"
-    with pytest.raises(ValueError, match="match recorded"):
+    with pytest.raises(ValueError, match="config records"):
         judge(model)(question(), answer())
 
 
@@ -313,7 +314,8 @@ def test_stage_timing_and_cost_exclude_judge_and_include_retries(monkeypatch):
                       token_prices=TokenPrices(1, 1), use_facts=False)
     row = report["results"][0]
     assert row["latency_ms"] == pytest.approx({"retrieve": 20, "rerank": 0,
-                                               "generate": 10080, "total": 10130, "other": 30})
+                                               "generate": 80, "retry_wait": 10000,
+                                               "total": 10130, "other": 30})
     assert row["judge_overhead"]["latency_ms"] == pytest.approx(400)
     assert row["attempts"] == 2 and retriever.calls == 1
     assert row["cost"]["reason"] == "failed_attempt_usage_unknown"
@@ -464,15 +466,19 @@ def test_cli_builds_the_judge_it_records(flags, model, shares_llm, tmp_path, mon
 
     def spy(config, *, llm=None):
         built.append((config, llm))
-        return judge()
+        judge_model = JudgeModel()
+        judge_model.model = config.model
+        return LLMJudge(config, llm=judge_model)
 
     monkeypatch.setattr("src.evaluation.cli.build_stack", lambda *a, **k: stack)
     monkeypatch.setattr("src.evaluation.cli.load_questions", lambda *a, **k: [question()])
     monkeypatch.setattr("src.evaluation.cli.LLMJudge", spy)
     main(["--run-id", "quality", "--output", str(tmp_path/"report.json"), "--judge", *flags])
     (config, llm), = built
-    assert (config.model, config.prompt_template_id) == (model, RUBRIC_ID)
+    assert (config.model, config.prompt_template_id) == (model, CONFIG.prompt_template_id)
     assert (llm is stack.llm) is shares_llm
+    recorded = json.loads((tmp_path/"report.json").read_text())["judge"]["config"]
+    assert (recorded["model"], recorded["prompt_template_id"]) == (model, RUBRIC_ID)
 
 
 @pytest.mark.parametrize("failure", ["busy", "http429", "finish_error"])
@@ -501,8 +507,16 @@ def test_busy_judge_retries_with_wait_time_and_unknown_failed_usage(monkeypatch,
     assert row["quality"]["method"] == "llm_judge" and len(model.calls) == 2
     assert retriever.calls == row["cost"]["model_calls"] == 1
     assert row["judge_overhead"]["cost"]["model_calls"] == 2
-    assert row["judge_overhead"]["cost"]["reason"] == "failed_attempt_usage_unknown"
-    assert row["judge_overhead"]["latency_ms"] == pytest.approx(10800 if failure=="finish_error" else 10400)
+    cost = row["judge_overhead"]["cost"]
+    assert cost["successful_calls"] == 1
+    if failure == "finish_error":
+        assert cost["usage_calls"] == 2 and cost["input_tokens"] == 400
+        assert cost["usd"] == pytest.approx(.00046)
+    else:
+        assert cost["reason"] == "failed_attempt_usage_unknown" and cost["usage_calls"] == 1
+    assert row["judge_overhead"]["latency_ms"] == pytest.approx(800 if failure=="finish_error" else 400)
+    assert row["judge_overhead"]["retry_wait_ms"] == pytest.approx(10000)
+    assert row["judge_overhead"]["total_ms"] == pytest.approx(10800 if failure=="finish_error" else 10400)
 
 
 def test_rejected_judge_key_maps_to_provider_failure_and_stops():
@@ -542,6 +556,7 @@ def test_interrupted_judge_retry_keeps_paid_answer_and_partial_cli_report(tmp_pa
               "--input-usd-per-million", "1", "--output-usd-per-million", "1"])
     report = json.loads(output.read_text())
     assert report["stopped"]["question_id"] == "q1" and len(report["results"]) == 1
+    assert report["stopped"]["stage"] == "judge"
     row = report["results"][0]
     assert row["quality"]["error"] == "interrupted" and row["quality"]["method"] == "judge_failed"
     assert row["cost"]["usd"] == pytest.approx(.00012)
@@ -569,3 +584,174 @@ def test_judge_outage_cli_exits_unsuccessfully_with_zero_score_coverage(tmp_path
     assert report["stopped"]["question_id"] == "q1"
     assert [r["question_id"] for r in report["results"]] == ["q1"]
     assert json.loads(capsys.readouterr().out)["quality"]["faithfulness"]["scored"] == 0
+
+
+@pytest.fixture
+def cli_stack(monkeypatch):
+    settings = SimpleNamespace(min_score=None, top_k=8, use_facts=False,
+                               use_decomposition=False, use_refusal=False)
+    settings.to_dict = lambda: {"key": "test"}
+    settings.scoped = lambda query: query
+    stack = SimpleNamespace(config=settings, generation=replace(CONFIG, provider="mistral"),
+                            retriever=Retriever(), llm=Model())
+    monkeypatch.setattr("src.evaluation.cli.build_stack", lambda *a, **k: stack)
+    monkeypatch.setattr("src.evaluation.cli.load_questions", lambda *a, **k:
+                        [question(f"q{i}") for i in range(1, 7)])
+    return stack
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, NotImplementedError, httpx.DecodingError,
+                                     ProviderUnavailable])
+def test_judge_stop_on_question_five_preserves_partial_files_and_resume_stage(
+        failure, cli_stack, tmp_path, monkeypatch):
+    class FailingJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            if len(self.calls) == 4:
+                self.calls.append(messages)
+                raise failure("judge broke")
+            return super().invoke(messages, **kwargs)
+
+    model = FailingJudge()
+    monkeypatch.setattr("src.evaluation.cli.LLMJudge", lambda *a, **k: judge(model, "mistral"))
+    output, answers = tmp_path/"partial.json", tmp_path/"answers.jsonl"
+    with pytest.raises(SystemExit, match="4 answered before it"):
+        main(["--run-id", "review", "--output", str(output), "--answers", str(answers),
+              "--judge", "--input-usd-per-million", "1", "--output-usd-per-million", "1",
+              "--judge-input-usd-per-million", "1", "--judge-output-usd-per-million", "1"])
+    report = json.loads(output.read_text())
+    assert report["stopped"] == {"question_id": "q5", "stage": "judge",
+                                 "error": f"{failure.__name__}: judge broke"}
+    assert [r["question_id"] for r in report["results"]] == [f"q{i}" for i in range(1, 6)]
+    assert [json.loads(line) for line in answers.read_text().splitlines()] == report["results"]
+    assert cli_stack.retriever.calls == len(model.calls) == 5
+    last = report["results"][-1]
+    assert last["quality"]["method"] == "judge_failed" and last["quality"]["correctness"] is None
+    assert not last["answer"]["abstained"] and last["cost"]["model_calls"] == 1
+    assert report["quality"]["correctness"] == {"mean": .5, "scored": 4, "total": 5}
+    assert report["resources"]["api_cost_usd"]["known_total"] == pytest.approx(.0006)
+    assert report["resources"]["judge_overhead"]["api_cost_usd"] == {
+        "known_total": pytest.approx(.00092), "mean": pytest.approx(.00023),
+        "known_queries": 4, "unknown_queries": 1}
+
+
+@pytest.mark.parametrize("failure", ["length", "model_length", "content_filter", "bad_json", "bad_score"])
+@pytest.mark.parametrize("unanswerable", [False, True])
+def test_failed_judge_response_keeps_known_spend_and_remains_unscored(failure, unanswerable):
+    class InvalidJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            result = super().invoke(messages, **kwargs)
+            result["raw"].usage_metadata = {"input_tokens": 200, "output_tokens": 4096,
+                                           "total_tokens": 4296}
+            result["raw"].response_metadata = {"finish_reason":
+                                               failure if failure not in {"bad_json", "bad_score"} else "stop"}
+            if failure == "bad_json":
+                result["parsed"], result["parsing_error"] = None, ValueError("bad JSON")
+            elif failure == "bad_score":
+                result["parsed"] = {"faithfulness": 2}
+            return result
+
+    report = evaluate([question(unanswerable=unanswerable), question("q2")], Retriever(), CONFIG,
+                      run_id="review", llm=Model(), judge=judge(InvalidJudge(), "mistral"),
+                      judge_token_prices=TokenPrices(2, 3))
+    assert report["stopped"] is None and len(report["results"]) == 2
+    row = report["results"][0]
+    assert row["quality"]["method"] == "judge_failed"
+    assert row["quality"]["correctness"] is row["quality"]["faithfulness"] is None
+    assert row["quality"]["answerability_correct"] == float(not unanswerable)
+    assert report["quality"]["correctness"]["scored"] == 0
+    cost = row["judge_overhead"]["cost"]
+    assert (cost["input_tokens"], cost["output_tokens"]) == (200, 4096)
+    assert cost["usd"] == pytest.approx(.012688) and cost["complete"]
+    assert cost["model_calls"] == cost["usage_calls"] == 1 and cost["successful_calls"] == 0
+    assert report["resources"]["judge_overhead"]["api_cost_usd"]["known_total"] == pytest.approx(.025376)
+
+
+@pytest.mark.parametrize("judge_provider", ["ollama", "mistral"])
+def test_judge_construction_rejects_wrong_client_package(judge_provider):
+    from langchain_ollama import ChatOllama
+    from langchain_mistralai import ChatMistralAI
+    model = (ChatMistralAI(model="judge-test", api_key="test-key") if judge_provider == "ollama"
+             else ChatOllama(model="judge-test"))
+    with pytest.raises(ValueError, match="config records the provider"):
+        judge(model, judge_provider)
+
+
+def test_judge_builds_and_checks_its_client_once(monkeypatch):
+    built = []
+    model = JudgeModel()
+
+    def build(config):
+        built.append(config)
+        return model
+
+    monkeypatch.setattr(import_module("src.rag.generate"), "chat_model", build)
+    evaluator = LLMJudge(GenerationConfig("ollama", "judge-test", CONFIG.prompt_template_id))
+    for _ in range(3):
+        evaluator(question(), answer())
+    assert len(built) == 1 and built[0].prompt_template_id == RUBRIC_ID
+    assert evaluator.model is model and len(model.calls) == 3
+
+
+def test_cli_judge_configuration_fails_before_benchmark_or_paid_answers(cli_stack, tmp_path, monkeypatch):
+    model = JudgeModel()
+    model.model = "wrong"
+    cli_stack.llm = model
+    monkeypatch.setattr("src.evaluation.cli.load_questions", lambda *a, **k: pytest.fail("loaded benchmark"))
+    output = tmp_path/"report.json"
+    with pytest.raises(SystemExit) as error:
+        main(["--run-id", "review", "--output", str(output), "--judge"])
+    assert error.value.code == 2 and not output.exists() and not model.calls
+
+
+def test_unknown_empty_and_known_zero_cost_totals_are_distinct():
+    unknown = evaluate([question()], Retriever(), replace(CONFIG, provider="mistral"),
+                       run_id="review", llm=Model(), judge=judge(provider="mistral"))
+    for summary in (unknown["resources"]["api_cost_usd"],
+                    unknown["resources"]["judge_overhead"]["api_cost_usd"]):
+        assert summary == {"known_total": None, "mean": None, "known_queries": 0, "unknown_queries": 1}
+    empty = evaluate([], Retriever(), CONFIG, run_id="empty")
+    assert empty["resources"]["api_cost_usd"]["known_total"] is None
+    assert empty["resources"]["judge_overhead"]["api_cost_usd"]["known_total"] is None
+    local = evaluate([question()], Retriever(), CONFIG, run_id="local", llm=Model())
+    assert local["resources"]["api_cost_usd"]["known_total"] == 0
+    assert local["resources"]["judge_overhead"]["api_cost_usd"]["known_total"] == 0
+
+
+def test_answer_and_judge_retry_waits_have_separate_aggregate_stages(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("src.evaluation.harness.perf_counter", lambda: clock[0])
+    monkeypatch.setattr("src.evaluation.harness.sleep", lambda duration: clock.__setitem__(0, clock[0]+duration))
+
+    class BusyAnswer(Model):
+        calls = 0
+
+        def stream(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                clock[0] += .01
+                raise ProviderBusy("busy")
+            yield from super().stream(messages, **kwargs)
+
+    class BusyJudge(JudgeModel):
+        def invoke(self, messages, **kwargs):
+            if not self.calls:
+                self.calls.append(messages)
+                clock[0] += .02
+                raise ProviderBusy("busy")
+            return super().invoke(messages, **kwargs)
+
+    report = evaluate([question()], Retriever(), CONFIG, run_id="review",
+                      llm=BusyAnswer(clock=clock), judge=judge(BusyJudge(clock=clock)))
+    row = report["results"][0]
+    stages = row["latency_ms"]
+    assert stages["generate"] == pytest.approx(80)
+    assert stages["retry_wait"] == pytest.approx(10000)
+    assert stages["total"] == pytest.approx(sum(stages[s] for s in ("retrieve", "rerank", "generate", "retry_wait", "other")))
+    overhead = row["judge_overhead"]
+    assert overhead["latency_ms"] == pytest.approx(420)
+    assert overhead["retry_wait_ms"] == pytest.approx(10000)
+    assert overhead["total_ms"] == pytest.approx(10420)
+    assert report["resources"]["latency_ms"]["generate"]["mean"] == pytest.approx(80)
+    assert report["resources"]["latency_ms"]["retry_wait"]["mean"] == pytest.approx(10000)
+    assert report["resources"]["judge_overhead"]["latency_ms"]["generate"]["mean"] == pytest.approx(420)
+    assert report["resources"]["judge_overhead"]["latency_ms"]["retry_wait"]["mean"] == pytest.approx(10000)

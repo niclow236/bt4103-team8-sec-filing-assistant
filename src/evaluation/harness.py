@@ -160,25 +160,46 @@ def answer_with_retries(label: str, ask: Callable[[], Asked]) -> tuple[Asked, in
 
 @dataclass
 class _ModelCalls:
-    """Calls, observed usage and retry-inclusive time for one model stage."""
+    """Calls, observed usage, active attempt time and separate retry waits."""
 
     calls: int = 0
     usages: list[dict[str, Any]] = field(default_factory=list)
     ms: float = 0.0
+    waited_ms: float = 0.0
+    successes: int = 0
 
     def ask(self, label: str, ask: Callable[[], Asked],
             usage: Callable[[Asked], dict[str, Any]]) -> tuple[Asked, int]:
         def call():
             self.calls += 1
-            result = ask()
-            self.usages.append(usage(result))
-            return result
+            started = perf_counter()
+            try:
+                result = ask()
+                self.usages.append(usage(result))
+                self.successes += 1
+                return result
+            except Exception as error:
+                if (spent := getattr(error, "usage", None)) is not None:
+                    self.usages.append(spent)
+                raise
+            finally:
+                self.ms += (perf_counter() - started) * 1000
 
         started = perf_counter()
+        previous_ms = self.ms
         try:
             return answer_with_retries(label, call)
         finally:
-            self.ms += (perf_counter() - started) * 1000
+            elapsed_ms = (perf_counter() - started) * 1000
+            self.waited_ms += max(0.0, elapsed_ms - (self.ms - previous_ms))
+
+
+class _JudgeStopped(Exception):
+    """A completed answer whose judging stopped, with the original failure."""
+
+    def __init__(self, row: dict[str, Any], cause: Exception | KeyboardInterrupt):
+        super().__init__(str(cause))
+        self.row, self.cause = row, cause
 
 
 def evaluate(
@@ -212,7 +233,9 @@ def evaluate(
     free plan a rate limit can come at question 40 of 48, and it should not
     throw away the 39 answers before it. Ctrl-C raises :class:`RunInterrupted`,
     a ``KeyboardInterrupt``, carrying the same report. A complete report has
-    ``stopped`` None. Any other error, such as a bug, comes through as itself.
+    ``stopped`` None. Outside judging, other errors such as bugs come through
+    as themselves. Judge errors retain the completed answer in a partial report
+    with ``stopped.stage`` set to ``judge``; that row needs only judging on resume.
     Empty subsets have a
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
@@ -257,8 +280,9 @@ def evaluate(
     stage timings and token usage are always recorded. ``token_prices`` and
     ``judge_token_prices`` are explicit USD rates per million tokens. Unknown
     usage/prices produce null hosted cost. Judge resources are recorded
-    separately. Invalid judge output leaves an answer unscored; an unavailable
-    or interrupted judge stops the run, retaining that completed answer.
+    separately. Invalid judge output leaves an answer unscored; other judge
+    failures stop the run, retaining that completed answer and any observed
+    usage. Model attempt time and retry waits are separate resource stages.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -380,19 +404,21 @@ def evaluate(
                 quality.update({key: result[key] for key in
                                 ("faithfulness", "correctness", "faithfulness_reason",
                                  "correctness_reason")}, method="llm_judge")
+                if not answerable:
+                    quality.update(correctness=0.0,
+                                   correctness_reason="Answered an unanswerable question")
             except JudgeInvalid as error:
                 quality.update(method="judge_failed", error=str(error))
-            except (ProviderUnavailable, KeyboardInterrupt) as error:
+            except (Exception, KeyboardInterrupt) as error:
                 judge_stopped = error
                 quality.update(method="judge_failed",
                                error="interrupted" if isinstance(error, KeyboardInterrupt) else str(error))
-        if judge is not None and not answer.abstained and not answerable:
-            quality.update(correctness=0.0, correctness_reason="Answered an unanswerable question")
         cost = query_cost(config.provider, generation_calls.usages,
-                          attempts=generation_calls.calls, prices=token_prices)
+                          attempts=generation_calls.calls, prices=token_prices,
+                          successful_calls=generation_calls.successes)
         judge_provider = config.provider if judge is None else judge.config.provider
         judge_cost = query_cost(judge_provider, judge_calls.usages, attempts=judge_calls.calls,
-                                prices=judge_token_prices)
+                                prices=judge_token_prices, successful_calls=judge_calls.successes)
         row = {"question_id": question.question_id, "run_id": run_id,
                 "expected_answer": question.expected_answer,
                 "supporting_chunk_ids": list(question.supporting_chunk_ids),
@@ -400,10 +426,15 @@ def evaluate(
                 # No reranker exists in the current stack; fusion is retrieval.
                 "latency_ms": {"retrieve": timed.latency_ms, "rerank": 0.0,
                                "generate": generation_calls.ms, "total": total_ms,
-                               "other": max(0.0, total_ms - timed.latency_ms - generation_calls.ms)},
+                               "retry_wait": generation_calls.waited_ms,
+                               "other": max(0.0, total_ms - timed.latency_ms - generation_calls.ms
+                                            - generation_calls.waited_ms)},
                 "rerank_enabled": False,
                 "cost": cost,
-                "judge_overhead": {"latency_ms": judge_calls.ms, "cost": judge_cost},
+                "judge_overhead": {"latency_ms": judge_calls.ms,
+                                   "retry_wait_ms": judge_calls.waited_ms,
+                                   "total_ms": judge_calls.ms + judge_calls.waited_ms,
+                                   "cost": judge_cost},
                 "question_type": question.question_type,
                 # Which route answered it. The Answer records the provider
                 # that produced it, and a looked-up answer says "facts"
@@ -418,13 +449,17 @@ def evaluate(
         if judge_stopped is not None:
             # The answer and its paid model call completed before judging failed.
             # Keep them in the partial report before the outer handler stops it.
-            rows.append(row)
-            raise judge_stopped
+            raise _JudgeStopped(row, judge_stopped)
         return row
 
     for question in questions:
         try:
             rows.append(row_for(question))
+        except _JudgeStopped as stop:
+            rows.append(stop.row)
+            stopped = _stopped(question, f"{type(stop.cause).__name__}: {stop.cause}") | {"stage": "judge"}
+            error_type = RunInterrupted if isinstance(stop.cause, KeyboardInterrupt) else RunStopped
+            raise error_type(report(stopped)) from stop.cause
         except ProviderUnavailable as error:
             stopped = _stopped(question, f"{type(error).__name__}: {error}")
             raise RunStopped(report(stopped)) from error

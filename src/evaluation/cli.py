@@ -13,7 +13,7 @@ from src.rag.constants import LLM_MODEL_ENV, LLM_PROVIDER_ENV, PROVIDERS
 from src.stack import DEFAULT_STACK, RETRIEVERS, SELECTABLE, build_stack
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate
-from .quality import LLMJudge, RUBRIC_ID, TokenPrices
+from .quality import LLMJudge, TokenPrices
 
 
 def _for_this_command(message: str) -> str:
@@ -136,12 +136,14 @@ def main(argv: list[str] | None = None) -> None:
         )
     except (ValueError, ProviderUnavailable) as error:
         parser.error(_for_this_command(str(error)))
-    questions = load_questions(args.questions, processed_dir=args.processed_dir)
     judge = None
     if args.judge:
-        judge_config = replace(stack.generation, model=args.judge_model or stack.generation.model,
-                               prompt_template_id=RUBRIC_ID)
-        judge = LLMJudge(judge_config, llm=None if args.judge_model else stack.llm)
+        judge_config = replace(stack.generation, model=args.judge_model or stack.generation.model)
+        try:
+            judge = LLMJudge(judge_config, llm=None if args.judge_model else stack.llm)
+        except (ValueError, ProviderUnavailable) as error:
+            parser.error(f"judge configuration: {_for_this_command(str(error))}")
+    questions = load_questions(args.questions, processed_dir=args.processed_dir)
     try:
         report = evaluate(questions, stack.retriever, stack.generation, llm=stack.llm,
                           run_id=args.run_id, min_score=stack.config.min_score,
@@ -167,6 +169,7 @@ def main(argv: list[str] | None = None) -> None:
                       "by_answerability": report["by_answerability"]}, indent=2))
     if stopped is not None:
         # The note goes right after the advice it is about, not after the path.
-        answered = len(report["results"])
+        answered = sum(row["question_id"] != report["stopped"]["question_id"]
+                       for row in report["results"])
         sys.exit(f"{_for_this_command(str(stopped))}; {answered} answered before it, "
                  f"written to {args.output}")

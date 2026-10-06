@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src.rag.generate import _provider, chat_model
+from src.rag.generate import ProviderBusy, ProviderUnavailable, _provider, checked_model
 from src.rag.constants import MAX_OUTPUT_TOKENS, OLLAMA
 from src.rag.records import Answer, GenerationConfig
 from .records import BenchmarkQuestion, UNANSWERABLE
@@ -32,6 +32,10 @@ numeric consistency for semantic judgement."""
 class JudgeInvalid(ValueError):
     """A working judge returned invalid or truncated scores."""
 
+    def __init__(self, message: str, usage: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.usage = usage
+
 
 class Judgement(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -50,15 +54,13 @@ class LLMJudge:
 
     def __init__(self, config: GenerationConfig, *, llm: Any | None = None):
         self.config = replace(config, prompt_template_id=RUBRIC_ID)
-        self.llm = llm
+        self.model = checked_model(self.config, llm)
 
     def to_dict(self) -> dict[str, Any]:
         return {"rubric": RUBRIC_ID, "config": self.config.to_dict()}
 
     def __call__(self, question: BenchmarkQuestion, answer: Answer) -> dict[str, Any]:
-        model = self.llm if self.llm is not None else chat_model(self.config)
-        if getattr(model, "model", self.config.model) != self.config.model:
-            raise ValueError("judge model must match recorded config")
+        model = self.model
         payload = {
             "question": question.question,
             "ticker": question.ticker,
@@ -93,19 +95,29 @@ class LLMJudge:
             raise
         raw = response.get("raw")
         metadata = getattr(raw, "response_metadata", None) or {}
+        raw_usage = getattr(raw, "usage_metadata", None)
+        usage = (None if raw_usage is None else
+                 {"input_tokens": raw_usage.get("input_tokens"),
+                  "output_tokens": raw_usage.get("output_tokens")})
         # Use the provider's own stop handling, including retryable API errors.
-        if provider.stop_reason(metadata, self.config, True) in {"length", "model_length"}:
-            raise JudgeInvalid("Judge response was truncated")
+        try:
+            reason = provider.stop_reason(metadata, self.config, True)
+        except ProviderBusy as error:
+            # This response can carry billable usage even though it needs retrying.
+            error.usage = usage
+            raise
+        except ProviderUnavailable as error:
+            raise JudgeInvalid(f"Judge stopped without finishing: {error}", usage) from error
+        if reason in {"length", "model_length"}:
+            raise JudgeInvalid("Judge response was truncated", usage)
         parsed = response.get("parsed")
         if response.get("parsing_error") is not None or parsed is None:
-            raise JudgeInvalid("Judge returned invalid structured scores")
+            raise JudgeInvalid("Judge returned invalid structured scores", usage)
         try:
             scores = Judgement.model_validate(parsed).model_dump()
         except ValidationError as error:
-            raise JudgeInvalid("Judge returned invalid structured scores") from error
-        usage = getattr(raw, "usage_metadata", None) or {}
-        return scores | {"input_tokens": usage.get("input_tokens"),
-                         "output_tokens": usage.get("output_tokens")}
+            raise JudgeInvalid("Judge returned invalid structured scores", usage) from error
+        return scores | (usage or {"input_tokens": None, "output_tokens": None})
 
 
 def citation_scores(question: BenchmarkQuestion, answer: Answer) -> dict[str, Any]:
@@ -146,7 +158,7 @@ class TokenPrices:
 
 
 def query_cost(provider: str, usages: list[dict[str, Any]], *, attempts: int,
-               prices: TokenPrices | None) -> dict[str, Any]:
+               prices: TokenPrices | None, successful_calls: int | None = None) -> dict[str, Any]:
     """API charges only. Failed retries may have charges with unknown usage."""
     def count(key):
         values = [u.get(key) for u in usages]
@@ -174,7 +186,8 @@ def query_cost(provider: str, usages: list[dict[str, Any]], *, attempts: int,
     return {"usd": usd, "complete": usd is not None, "reason": reason,
             "input_tokens": input_tokens, "output_tokens": output_tokens,
             "observed_input_tokens": observed_input, "observed_output_tokens": observed_output,
-            "model_calls": attempts, "successful_calls": len(usages)}
+            "model_calls": attempts, "usage_calls": len(usages),
+            "successful_calls": len(usages) if successful_calls is None else successful_calls}
 
 
 def quality_summary(rows: list[dict]) -> dict[str, Any]:
@@ -188,15 +201,29 @@ def quality_summary(rows: list[dict]) -> dict[str, Any]:
     return result
 
 
+def _cost_summary(costs: list[dict]) -> dict[str, Any]:
+    known = [c["usd"] for c in costs if c["usd"] is not None]
+    return {"known_total": sum(known) if known else None, "known_queries": len(known),
+            "unknown_queries": len(costs) - len(known),
+            "mean": sum(known) / len(known) if known else None}
+
+
 def resource_summary(rows: list[dict]) -> dict[str, Any]:
-    costs = [r["cost"]["usd"] for r in rows if r["cost"]["usd"] is not None]
+    def latency(values):
+        return {"mean": sum(values) / len(values) if values else None,
+                "queries": len(values)}
+
     return {
         "latency_ms": {
-            stage: {"mean": (sum(r["latency_ms"][stage] for r in rows) / len(rows)
-                              if rows else None), "queries": len(rows)}
-            for stage in ("retrieve", "rerank", "generate", "other", "total")
+            stage: latency([r["latency_ms"][stage] for r in rows])
+            for stage in ("retrieve", "rerank", "generate", "retry_wait", "other", "total")
         },
-        "api_cost_usd": {"known_total": sum(costs), "known_queries": len(costs),
-                         "unknown_queries": len(rows) - len(costs),
-                         "mean": sum(costs) / len(costs) if costs else None},
+        "api_cost_usd": _cost_summary([r["cost"] for r in rows]),
+        "judge_overhead": {
+            "latency_ms": {stage: latency([r["judge_overhead"][field] for r in rows])
+                           for stage, field in (("generate", "latency_ms"),
+                                                ("retry_wait", "retry_wait_ms"),
+                                                ("total", "total_ms"))},
+            "api_cost_usd": _cost_summary([r["judge_overhead"]["cost"] for r in rows]),
+        },
     }
