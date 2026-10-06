@@ -278,6 +278,18 @@ class ParsedQuestion:
             return because
         return None
 
+    @property
+    def not_in_corpus(self) -> str | None:
+        """The companies and years the question named that the corpus does not
+        hold, as one line, or None where it holds them all.
+
+        The one wording of it: :meth:`describe`, and the app's sidebar and
+        filters line, all show this.
+        """
+        if not self.unresolved:
+            return None
+        return "Not in the corpus: " + ", ".join(self.unresolved)
+
     def describe(self) -> tuple[str, ...]:
         """One line per thing the parser decided, for showing under the answer.
 
@@ -301,8 +313,8 @@ class ParsedQuestion:
             lines.append("Fiscal years: " + ", ".join(f"FY{y}" for y in self.fiscal_years))
         if not self.tickers and not self.fiscal_years:
             lines.append("Filters: none, searching every company and year")
-        if self.unresolved:
-            lines.append("Not in the corpus: " + ", ".join(self.unresolved))
+        if self.not_in_corpus:
+            lines.append(self.not_in_corpus)
         return tuple(lines)
 
     def to_query(self, *, top_k: int | None = None) -> Query:

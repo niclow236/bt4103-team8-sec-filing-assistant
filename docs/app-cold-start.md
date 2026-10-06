@@ -4,7 +4,7 @@ Issue #36 asks for the app's first load to be measured apart from the queries
 after it. Start the app in a new process:
 
 ```powershell
-python -m streamlit run src/app/app.py
+streamlit run src/app/main.py
 ```
 
 ## What the app keeps
@@ -16,8 +16,11 @@ keeps three things outside it, for as long as the process runs:
   picked in the sidebar once and `st.cache_resource` keeps it. Every
   configuration shares one BM25 index, one dense index and one embedding model
   (`_indexes`), so picking another row does not load them again.
-- The provider and model from `.env`, which are read when a configuration is
-  built.
+- The provider and model, which are read when a configuration is built. The
+  sidebar's Answer model box picks the provider and opens on the one `.env`
+  names; each provider picked is built once and shares the indexes. The chat
+  model itself is built when an answer first needs one, so a figure the facts
+  store looks up loads no model client.
 - The answers. A question asked again with the same filters under the same
   configuration is given the answer it was given before, with no search and no
   model call, in the same browser session or another (`src/app/state.py`). A
@@ -37,10 +40,11 @@ loading the indexes and the embedding model.
 ## Measured
 
 On one laptop (Intel i5-1135G7, 16 GB RAM, no GPU use), on 3 Oct 2026, on the
-full 15-company index of 28,289 passages. Each step ran `src/app/app.py` in a
-new Python process through Streamlit's `AppTest`, which runs the script as a
-browser session does, and each time is the app's own "Query completed in"
-line. The first Ask was measured twice.
+full 15-company index of 28,289 passages. Each step ran the app's entry point
+(`src/app/app.py` at the time, now `src/app/main.py`) in a new Python process
+through Streamlit's `AppTest`, which runs the script as a browser session
+does, and each time is the app's own "Query completed in" line. The first Ask
+was measured twice.
 
 The questions were ones the facts store answers ("What was Apple's total
 revenue in FY2024?"), so no model was asked. The times are the indexes, the

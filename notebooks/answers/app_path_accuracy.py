@@ -7,7 +7,7 @@ the XBRL store, and the split of a multi-filing question (#35). This runs the
 path the app runs, so a change to retrieval, routing or the prompt can be
 read as a change in what a user is shown:
 
-    parsed = parse_question(question)                       # as src/app/app.py reads it
+    parsed = parse_question(question)                       # as the app's Ask page reads it
     answer_question(question, retriever, config,
                     query=parsed.to_query(top_k=FINAL_K), parsed=parsed)
 
@@ -143,7 +143,7 @@ def load_retriever(name: str):
 
 
 def read_as_the_app_does(question: str):
-    """The question as ``src/app/app.py`` reads it, so that the route it takes,
+    """The question as the app's Ask page reads it, so that the route it takes,
     the lean toward tables and the checks are the ones a user gets. One place,
     for the three scripts here to follow the app from."""
     return parse_question(question)

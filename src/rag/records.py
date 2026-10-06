@@ -74,6 +74,23 @@ ABSTENTION_MESSAGES = {
     "company_not_in_corpus": "The question asks for a figure of a company the corpus holds "
                              "no filings for.",
 }
+# What to say of an abstention recorded with no reason: a results file written
+# before reasons were recorded, or an Answer built by hand. Every abstention
+# the pipeline makes carries one.
+NO_ABSTENTION_REASON = "No reason was recorded for this abstention."
+
+
+def abstention_text(reason: str | None) -> str:
+    """Why an answer abstained, in words: the message for ``reason``.
+
+    The one place the message is looked up. The app's notice, its trace and
+    the saved-answers page each looked it up themselves, and each said
+    something of its own about an abstention with no reason recorded: that
+    the evidence did not answer the question, that no passage was retrieved,
+    that no claim was scored. The first two are not known of such a record,
+    so it is said to have no reason recorded.
+    """
+    return ABSTENTION_MESSAGES.get(reason, NO_ABSTENTION_REASON)
 
 
 @dataclass(frozen=True)

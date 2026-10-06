@@ -136,7 +136,13 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
 │   ├── stack.py             # the named configurations, and the one way to build one
-│   └── app/                 # the app; so far the viewer for saved answers
+│   └── app/                 # the Streamlit app, and the viewer for saved answers
+│       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
+│       ├── app_pages/       #   one script per page
+│       │   ├── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
+│       │   └── browse.py    #     Browse: company/year/Item passage explorer
+│       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
+│       ├── components.py    #   what pages draw: answers, filters, trace, corpus passages
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
@@ -473,10 +479,11 @@ audit-matter paragraph laid out as a table -- and their text stays in the prose,
 so nothing is lost. Those are reported as counts by the parse stage. A gate that
 fired on them would cry wolf on every run.
 
-Run the app once it is built:
+Run the app, once the retrieval indexes are built (see
+[Streamlit app and components](#streamlit-app-and-components)):
 
 ```bash
-streamlit run src/app/app.py
+streamlit run src/app/main.py
 ```
 
 ## What the pipeline produces
@@ -1072,7 +1079,10 @@ uses their own key on their own computer.
    ```
 
    `.env` is git-ignored, so the key stays on your computer. Never paste it into
-   code, a notebook cell, a commit, an issue or a chat.
+   code, a notebook cell, a commit, an issue or a chat. `LLM_PROVIDER=mistral`
+   makes Mistral what answers everywhere. Leave that line out and the commands
+   answer with Ollama, and the app opens on Ollama with Mistral one click away
+   in its sidebar's Answer model box.
 5. Ask a question that needs the model, such as the one in
    [From a question to an answer](#from-a-question-to-an-answer).
    `answer.config.provider` should be `'mistral'`.
@@ -1782,17 +1792,22 @@ differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 
-The real app reads the processed filings and indexes on this machine, searches
-them, sends retrieved passages to the configured answer model, verifies the
-result, and shows citations to those filings:
+The app's Ask page reads the processed filings and indexes on this machine,
+searches them, sends retrieved passages to the configured answer model,
+verifies the result, and shows citations to those filings. Its Browse page
+reads the processed passages directly, without an index or model:
 
 ```bash
-python -m streamlit run src/app/app.py
+streamlit run src/app/main.py
 ```
 
-Build the local indexes first if they do not exist (`python -m src.retrieval
-bm25` and `python -m src.retrieval embed`). The app checks each index against
-the current processed corpus before searching. The sidebar's Configuration box
+Run it from the project root. `python -m streamlit run src/app/main.py` does
+the same.
+
+For the Ask page, build the local indexes first if they do not exist (`python
+-m src.retrieval bm25` and `python -m src.retrieval embed`). The app checks each
+index against the current processed corpus before searching. The sidebar's
+Configuration box
 picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
 the metadata filter, so the first Ask also checks the dense index and loads the
 embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
@@ -1803,27 +1818,106 @@ than BM25: 26 of 28 against 23 before the table boost was set, 26 or 27 against
 scoring the commonest words (see
 [How often the answers are right](#how-often-the-answers-are-right)). A row
 measured without the metadata filter searches every filing, and the sidebar
-says so when one is picked. The model
-provider comes from `.env` (`LLM_PROVIDER`, `LLM_MODEL`): the local Ollama
-model by default, or Mistral's free API (`ministral-8b-2512`) with
-`LLM_PROVIDER=mistral` and your own `MISTRAL_API_KEY`, which answers in seconds
-rather than minutes.
+says so when one is picked.
+
+The sidebar's Answer model box chooses what writes the answer: the local
+Ollama model, or Mistral's free API (`ministral-8b-2512`), which answers in
+seconds rather than minutes and needs your own `MISTRAL_API_KEY` in `.env`.
+It opens on the provider `.env` names (`LLM_PROVIDER`, which unset means
+Ollama), and switching it lasts for the browser session and changes nothing
+in `.env`. Before this box the provider was `.env`'s alone to choose, so a
+`.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
+model, minutes at a time, with nothing on the page to say so.
+
+A figure question the facts store answers needs neither provider, whichever
+is picked: the chat model is built when an answer first needs one, not when
+the configuration is loaded. So Mistral with no key still answers "What was
+Apple's total revenue in FY2024?", and a question that does need the model
+fails with what the provider lacks. The box does not wait for that. As
+soon as a provider that cannot answer is picked, it says under it what the
+provider lacks and what to do about it.
+
 An explicit Item filter is enforced for numeric questions too. When the
-question or filters change, the app hides the prior answer until Ask is pressed
-again. While a model is answering, its prose is written to the page as it
-arrives, and the checked answer card replaces it. Under the card the app says
-how it read the question: the question type, and the companies and years it
-searched.
+question, the filters, the configuration or the answer model change, the app
+hides the prior answer until Ask is pressed again. While a model is answering,
+its prose is written to the page as it arrives, and the checked answer card
+replaces it.
 
-Issue #37's reusable UI is in `src/app/components.py`.
+The Ask page (#38) shows, in order:
 
+- the question box and Ask. Pressing Enter in the box reads the question;
+  Ask answers it.
+- the filters the question resolved to, as soon as it is read and before
+  anything is searched: the companies, fiscal years and Items, and the
+  question type. They follow the sidebar, so a filter changed by hand shows
+  there too, and an empty one reads "every company".
+- the outcome, the configuration, what wrote the answer (a model, or the facts
+  store) and how long it took.
+- the answer card with its inline citations. An abstention is stated in its
+  place: "No answer from the filings", the reason, and what to try.
+- the retrieval trace, four steps that each open onto their detail: how the
+  question was read, what was found (every passage the answer was written
+  from, in prompt order, with its rank, score, the retrievers that found it,
+  whether it was cited, and a link to the filing), what wrote the answer, and
+  what the checks found. It is drawn from the answer already given, so
+  opening it searches nothing.
+
+The Browse page (#40) reads `data/processed/` directly and needs neither an
+index nor an answer model. Its company, fiscal-year and Item menus are
+dependent: each contains only values that exist under the choices before it,
+so every selectable combination has passages. It shows 25 passages at a time
+and makes every page reachable. Each expander is named for its nearest heading
+or table caption, then the end of its chunk ID, so no two panels in one
+selection read alike (#127): a table with no caption is named from its own
+label line, which carries the statement title, where 61 of Apple's 64 FY2025
+Item 8 tables used to fall back to "Financial Statements". The full chunk ID is
+shown inside, beside a link to the source filing on EDGAR. Prose is marked with
+an article icon and rendered as text; table passages are marked with a table
+icon and rendered in a
+spacing-preserving block so the two cannot be mistaken for one another.
+
+### Where things go in `src/app/`
+
+Each file has one job, so that a second page does not grow its own copy of
+what the first one does:
+
+| File | What belongs in it |
+|---|---|
+| `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
+| `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
+| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
+| `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
+
+To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
+`main.py`. The menu appears once there is a second page.
+
+Issue #37's reusable UI is in `src/app/components.py`, with the Ask page's
+pieces from #38.
+
+- `resolved_filters(query, parsed)` shows what will be searched, in the same
+  words as the sidebar's own "Searching:" line.
+- `configuration_picker(runs)` is the sidebar's Configuration box, and returns
+  the id picked. `runs` is `dict(state.measured())`.
+- `provider_picker(state.answer_models())` is the sidebar's Answer model box,
+  and returns the provider picked, to pass to
+  `state.load_stack(config_id, provider)`. `answer_models` asks each
+  provider's settings what it lacks with `check_provider` and builds no
+  client to do it.
+- `answer_summary(answer, config, seconds)` is the row above an answer.
+- `abstention_notice(answer)` states an abstention. `answer_card` calls it for
+  an abstained answer, so a page does not have to. `answer_card_html` is for
+  an answer with claims and refuses an abstention.
+- `retrieval_trace(answer, parsed, config, key="trace-id")` draws the four
+  steps. `trace_rows(answer)` is the passage table's rows, one per passage.
 - `answer_card(answer, key="answer-id")` displays a completed `Answer`. Inline
   markers open and focus the corresponding citation expander without another
   model call. Each expander holds the exact stored passage, the full source
   line (company, ticker, CIK, form, fiscal year, Part, Item, title, filing
   date) and the filing link, with missing metadata labelled unknown. Source
   numbering follows prompt order. Use a distinct, stable key for every card on
-  the page.
+  the page. `show_question=False` leaves the question heading out, for a page
+  whose question box is directly above the card.
 - `filter_sidebar(question, parsed=None)` returns the effective `Query` to
   pass to `answer_question(query=...)`. It reflects companies and years from
   the shared parser and explicit Item mentions such as `Items 7 and 8`.
@@ -1862,10 +1956,13 @@ untrusted text is never inserted into that script.
 
 Acceptance checks are in `tests/test_app_components.py`: source mapping,
 escaping, warning states, real Streamlit widget reruns and the Item-filter
-handoff to the RAG engine. Run them with:
+handoff to the RAG engine. The Ask page is checked through the entry point in
+`tests/test_app_live.py` and `tests/test_app_state.py`, which run
+`src/app/main.py` as Streamlit does, with a stand-in for the built
+configuration, so they need no index and no model. Run them with:
 
 ```bash
-python -m pytest tests/test_app_components.py -q
+python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_app_state.py -q
 ```
 
 ## The benchmark
