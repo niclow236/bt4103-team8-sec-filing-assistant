@@ -58,14 +58,16 @@ from langchain_core.utils.json import parse_partial_json
 from pydantic import ValidationError
 
 from ..config import ENV_FILE, load_env
+# The timeouts are read from the module on every use, so a notebook that sets
+# constants.GENERATION_TIMEOUT_S or HOSTED_TIMEOUT_S reaches the next client
+# and the error that names the limit. A name imported from it is a copy.
+from . import constants
 from .constants import (
     ABSTAIN_PHRASE,
     DEFAULT_MISTRAL_MODEL,
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_URL,
     DEFAULT_PROVIDER,
-    GENERATION_TIMEOUT_S,
-    HOSTED_TIMEOUT_S,
     LLM_BASE_URL_ENV,
     LLM_MODEL_ENV,
     LLM_NUM_GPU_ENV,
@@ -436,8 +438,8 @@ def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[s
     The same model, server and layers get the same client back, as Mistral's
     do, so the app, which builds no chat model with its stack, does not build
     one and two HTTP clients for every answer. The timeout is read on every
-    call, so a notebook that lengthens ``GENERATION_TIMEOUT_S`` after its first
-    answer gets a client with the limit the timeout error names.
+    call, so a notebook that lengthens ``constants.GENERATION_TIMEOUT_S`` after
+    its first answer gets a client with the limit the timeout error names.
 
     :func:`_mistral_model` is the same line over Mistral's settings, client
     and timeout. It is left as a copy on purpose: shared, it would need each
@@ -445,7 +447,7 @@ def _ollama_model(config: GenerationConfig, base_url: str | None, env: Mapping[s
     its own any more.
     """
     return _ollama_client(**_ollama_settings(config, base_url, env),
-                          timeout=GENERATION_TIMEOUT_S)
+                          timeout=constants.GENERATION_TIMEOUT_S)
 
 
 @lru_cache(maxsize=8)
@@ -501,7 +503,8 @@ def _mistral_model(config: GenerationConfig, base_url: str | None, env: Mapping[
     clients, and a new TLS handshake inside the measured latency, for every
     question. The timeout is read on every call, as Ollama's is.
     """
-    return _mistral_client(**_mistral_settings(config, base_url, env), timeout=HOSTED_TIMEOUT_S)
+    return _mistral_client(**_mistral_settings(config, base_url, env),
+                           timeout=constants.HOSTED_TIMEOUT_S)
 
 
 @lru_cache(maxsize=8)
@@ -639,7 +642,7 @@ def _ollama_unavailable(
         )
     if isinstance(error, httpx.TimeoutException):
         return ProviderUnavailable(
-            f"Ollama at {url} sent nothing for {GENERATION_TIMEOUT_S:.0f}s while running "
+            f"Ollama at {url} sent nothing for {constants.GENERATION_TIMEOUT_S:.0f}s while running "
             f"{config.model!r}; on this machine it needs a smaller model (set {LLM_MODEL_ENV}) "
             f"or a longer GENERATION_TIMEOUT_S"
         )
@@ -755,7 +758,7 @@ def _mistral_unavailable(
         return ProviderUnavailable(f"Mistral's API refused the request ({said})")
     if isinstance(error, httpx.TimeoutException):
         return ProviderBusy(
-            f"{api} sent nothing for {HOSTED_TIMEOUT_S}s while running "
+            f"{api} sent nothing for {constants.HOSTED_TIMEOUT_S}s while running "
             f"{config.model!r}: ask again, or {_ANSWER_LOCALLY}"
         )
     if isinstance(error, (httpx.ConnectError, ConnectionError)):
