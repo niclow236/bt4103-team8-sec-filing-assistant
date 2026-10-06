@@ -6,7 +6,7 @@ from src.app import state
 from src.app.components import corpus_passage_page, corpus_picker
 
 
-st.title("Browse filing corpus")
+st.title("Browse Filing Corpus")
 st.caption(
     "Choose a company, fiscal year and SEC Item to inspect the exact local passages "
     "available to retrieval. This page uses no answer model or API.")
