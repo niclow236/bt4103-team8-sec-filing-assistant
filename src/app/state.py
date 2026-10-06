@@ -1,21 +1,40 @@
-"""What the app keeps between one Ask and the next (#36).
+"""What the app keeps between one rerun and the next (#36).
 
-Streamlit runs the page's script again on every widget change, so whatever is
-worth keeping has to be held outside it. ``app.py`` keeps the indexes, the
-embedding model and each built configuration with ``st.cache_resource``. This
-module holds what a repeated question should not pay for twice, the answer it
-was given, and the stopwatch behind the line that says how long one took.
+Streamlit runs a page's script again on every widget change, so whatever is
+worth keeping has to be held outside it. Everything a page keeps is here, so
+no page holds a cache of its own:
+
+- for the process, with ``st.cache_resource``: the indexes and the embedding
+  model (``_indexes``), each built configuration (``load_stack``), and the
+  local passages shown by the Browse page (``corpus_passages``), and with
+  ``st.cache_data`` the runs under ``results/`` (``measured``);
+- from ``.env``, read on every rerun: the providers a page can offer, the one
+  it opens on, and what any of them lacks (``answer_models``);
+- for the process, per configuration: the answer a repeated question was
+  given (``Remembered``);
+- for one browser session: the answer a page is showing and the request it
+  answers (``Request``, ``keep``, ``kept``, ``has_kept``);
+- the stopwatch behind the line that says how long an answer took.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+import streamlit as st
+
+from src.pipeline.chunk import iter_chunks
+from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
+from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
+from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
     from src.rag.records import Answer
+    from src.retrieval.records import Query
     from src.stack import Stack
 
 # What a caller passes with a question that does not change its answer:
@@ -30,15 +49,217 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 ANSWERS_KEPT = 128
 
 
+@st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
+def corpus_passages() -> tuple[dict[str, Any], ...]:
+    """Read the processed passages once for the process (#40).
+
+    The Browse page needs the passage text and filing metadata, not a search
+    index and not a model. ``iter_chunks`` is the pipeline's common seam for
+    joining those two records, so the page sees exactly what retrieval can
+    see. The corpus is large and read-only while the app is running; a
+    resource cache shares this tuple between reruns and browser sessions
+    instead of copying all passage text into each session. Restart the app (or
+    clear Streamlit's cache) after rebuilding ``data/processed/``.
+
+    Callers must treat the dictionaries as read-only.
+    """
+    return tuple(iter_chunks())
+
+
+@st.cache_resource
+def _indexes() -> dict:
+    """The BM25 and dense retrievers every configuration shares, once per process.
+
+    Without it, switching from C4 to C3 -- the same hybrid retriever -- read
+    both indexes again and loaded a second copy of the embedding model.
+    """
+    return {}
+
+
+@st.cache_resource(show_spinner="Checking the local filing indexes…")
+def load_stack(config_id: str, provider: str | None = None) -> Remembered:
+    """Assemble a named configuration once per Streamlit process (#43).
+
+    The same call the evaluation command makes, so what the demo shows is the
+    system the numbers in ``results/`` describe, rather than a fourth stack
+    assembled here. Cached on the id because building one reads the indexes,
+    and because the one built keeps the embedding model that the dense and
+    hybrid rows load on their first search.
+
+    ``provider`` is what writes the answers, and None means the one ``.env``
+    names. It is cached on too, so a page that offers both builds each once.
+    They share the indexes, and each remembers its own answers, so an answer
+    one provider wrote is never shown as the other's.
+
+    The chat model is not built here. ``generate`` builds it when an answer
+    first needs one, because not every answer does: built here, a figure the
+    facts store could look up was refused for the key of a provider that
+    would never have been asked. What a provider lacks is said before a
+    question is asked instead, by ``answer_models``.
+    """
+    # Remembered, so a repeated demo question is answered once (#36).
+    return Remembered(
+        build_stack(config_id, provider=provider, parts=_indexes(), defer_llm=True))
+
+
+@dataclass(frozen=True)
+class AnswerModels:
+    """What can write an answer, for a page to offer the choice."""
+
+    # Provider to the model it would answer with, in the order they are offered.
+    models: dict[str, str]
+    default: str                   # the provider ``.env`` names, which a page opens on
+    # Provider to why it could not write an answer as things stand, in a few
+    # words: a missing key, a setting it cannot read. Absent where it could.
+    unready: dict[str, str]
+    problem: str | None = None     # why ``.env``'s own choice could not be used, if it could not
+
+
+def answer_models() -> AnswerModels:
+    """The providers a page can offer, read from ``.env`` as ``build_stack`` reads it.
+
+    The provider used to be ``.env``'s alone to choose: the app opened on
+    ``LLM_PROVIDER``, which unset means the local model, and nothing on the
+    page could change it. A laptop with a Mistral key in ``.env`` and no
+    ``LLM_PROVIDER`` line waited minutes for the local model with nothing on
+    the page to say why.
+
+    A mistyped ``LLM_PROVIDER`` is not an error here. A page can still be
+    asked with the provider picked by hand, so it opens on the default one and
+    ``problem`` says what was wrong with the setting.
+
+    Nor is a ``.env`` that cannot be read at all. PowerShell 5's ``>`` and
+    ``Out-File`` save a file as UTF-16, which python-dotenv refuses, and this
+    is the first place a page reads ``.env``: raised from here, the refusal
+    was a traceback where the sidebar should be, on every load. The page
+    opens on each provider's default model and ``problem`` says the file
+    could not be read. An Ask still fails on it, as an error on the page.
+
+    ``unready`` is what each provider's own check refuses, asked of its
+    settings alone (``check_provider``): no client is built and nothing is
+    sent. It holds what is wrong and not the check's advice, which is written
+    for a command: a page says for itself what to do. A provider that is not
+    ready can still be picked, since a question the facts store answers asks
+    no model.
+    """
+    models, unready = {}, {}
+    try:
+        for provider in PROVIDERS:
+            config = config_from_env(provider=provider)
+            models[provider] = config.model
+            try:
+                check_provider(config)
+            except ProviderUnavailable as error:
+                unready[provider] = error.reason
+            except ValueError as error:
+                unready[provider] = str(error)
+    except (ValueError, OSError) as error:
+        # Only reading .env raises here: a provider named in the code is not
+        # refused, and what its settings lack was caught above. UTF-16 with
+        # its byte order mark is a UnicodeDecodeError, and without one an
+        # OSError on Windows, where a variable cannot hold the null bytes.
+        models = {provider: config_from_env(provider=provider, environ={}).model
+                  for provider in PROVIDERS}
+        return AnswerModels(models, DEFAULT_PROVIDER, {}, (
+            f"Could not read .env: {error}. If PowerShell 5's `>` or `Out-File` saved it, "
+            "it is UTF-16: save it as UTF-8."))
+    try:
+        return AnswerModels(models, config_from_env().provider, unready)
+    except ValueError as error:
+        return AnswerModels(models, DEFAULT_PROVIDER, unready, str(error))
+
+
+@st.cache_data(show_spinner=False)
+def measured() -> list[tuple[str, str]]:
+    """Each configuration measured under ``results/``, as (id, label).
+
+    Read from the result files rather than listed here, so a configuration is
+    offered because a run measured it. Several runs can measure the same row;
+    the most recent run's label is the one shown.
+    """
+    seen: dict[str, str] = {}
+    for run in measured_runs():
+        seen.setdefault(run.config_id, run.label)
+    return list(seen.items())
+
+
+class Request(NamedTuple):
+    """What an answer was asked with: the question, its filters, and what answered it.
+
+    Everything that would change the answer, so that one kept for a request
+    is never shown for another. A page used to build this as a bare tuple, in
+    an order it chose itself. A field put in the wrong place there made a
+    request that never matched, with no error to show for it, and each page
+    to come builds one of its own. ``of`` takes the fields from where they
+    already are.
+
+    A tuple all the same, and compared as one. An answer kept in the session
+    outlives this module when Streamlit loads it again after an edit, and a
+    dataclass loaded again is a new class, equal to nothing kept before it.
+    """
+
+    question: str
+    tickers: tuple[str, ...]
+    fiscal_years: tuple[int, ...]
+    items: tuple[str, ...]
+    config_id: str
+    provider: str
+
+    @classmethod
+    def of(cls, query: Query, config_id: str, provider: str) -> Request:
+        """``query`` as the sidebar left it, asked of one configuration and one provider."""
+        return cls(query.text, query.tickers, query.fiscal_years, query.items,
+                   config_id, provider)
+
+
+@dataclass(frozen=True)
+class Kept:
+    """The answer a page is showing: what was asked, the answer, and how long it took."""
+
+    request: Request
+    answer: Answer
+    seconds: float
+
+
+def _key(page: str) -> str:
+    """Where the session holds what ``page`` is showing.
+
+    One entry per page, under the page's own name, so the Ask page and a page
+    that asks two configurations do not show each other's answers.
+    """
+    return f"{page}:kept"
+
+
+def keep(page: str, request: Request, answer: Answer, seconds: float) -> None:
+    """Hold ``answer`` for this browser session as what ``page`` is showing."""
+    st.session_state[_key(page)] = Kept(request, answer, seconds)
+
+
+def kept(page: str, request: Request) -> Kept | None:
+    """What ``page`` is showing, if it answers ``request``, and None if not.
+
+    The request is the question with everything it was asked with, so an
+    answer is never shown under a question or filters it was not given for.
+    """
+    held = st.session_state.get(_key(page))
+    return held if held is not None and held.request == request else None
+
+
+def has_kept(page: str) -> bool:
+    """Whether ``page`` holds an answer at all, to whatever request."""
+    return _key(page) in st.session_state
+
+
 class Remembered:
     """A built configuration that gives a repeated question the answer it gave before.
 
     The app asks through one of these in place of the ``Stack`` it wraps.
-    ``load_stack`` makes one per configuration and ``st.cache_resource`` keeps
-    it for the process, so the answers are shared by every browser session and
-    last until the app restarts. An answer is kept by the question and by what
-    it was asked with: the ``Query``, which carries the sidebar's companies,
-    years and Items, and any setting the caller overrode.
+    ``load_stack`` makes one per configuration and provider, and
+    ``st.cache_resource`` keeps it for the process, so the answers are shared
+    by every browser session and last until the app restarts. An answer is
+    kept by the question and by what it was asked with: the ``Query``, which
+    carries the sidebar's companies, years and Items, and any setting the
+    caller overrode.
 
     Only a finished answer is kept. A failure is not, so a question that met a
     busy provider is asked again, and neither is an answer the model left

@@ -29,7 +29,7 @@ from src.rag import (
     verify_answer,
 )
 from src.rag.constants import ABSTAIN_PHRASE
-from src.rag.records import ABSTENTION_MESSAGES
+from src.rag.records import ABSTENTION_MESSAGES, NO_ABSTENTION_REASON
 from src.retrieval import embed
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.dense import DenseRetriever
@@ -97,6 +97,10 @@ def assert_abstention(result, reason):
     assert 'data-status="abstained"' in html
     assert ABSTENTION_MESSAGES[reason] in html
     assert "has not been verified" not in html
+    # Saved with no reason, as a run from before reasons were recorded is,
+    # the page says so and gives it no reason of its own.
+    unexplained = render_answer({**result.to_dict(), "abstention_reason": None})
+    assert NO_ABSTENTION_REASON in unexplained and ABSTENTION_MESSAGES[reason] not in unexplained
 
 
 def test_all_metadata_filters_trigger_abstention(indexed):

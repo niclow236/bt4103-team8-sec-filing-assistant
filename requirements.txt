@@ -26,6 +26,13 @@ chromadb==1.5.9
 # directly.
 tokenizers==0.23.2
 
+# What sentence-transformers loads the embedding model with. Already installed
+# as its dependency, which accepts any 5.x; pinned here because the app works
+# around how this version registers its alias modules (_settle_lazy_aliases
+# in src/app/main.py). Moving this pin, or streamlit's below, is when to look
+# at that again, and tests/test_app_live.py says which way it went.
+transformers==5.17.0
+
 # Answer generation, by a local model served by Ollama (the default) or by
 # Mistral's API on its free plan, with each member's own key (see the README).
 # Ollama itself is not a Python package: install it from

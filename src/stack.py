@@ -289,6 +289,7 @@ def build_stack(
     retriever_key: str | None = None,
     retriever: Any | None = None,
     llm: Any | None = None,
+    defer_llm: bool = False,
     parts: dict[Any, Any] | None = None,
     **settings: Any,
 ) -> Stack:
@@ -301,6 +302,12 @@ def build_stack(
     read the dense index on the way past. ``retriever`` and ``llm`` are
     already-built parts, for a caller that loaded them once for several
     configurations or a test that wants neither an index nor a model.
+    ``defer_llm`` leaves the chat model unbuilt, for ``generate`` to build when
+    an answer first needs one. It is for a caller that may never need one: the
+    app, where a figure looked up in the facts store is answered with no model
+    and must not be refused for a key the question never uses. The provider's
+    name is still checked here; the caller says for itself, and early, what
+    else its settings lack (``generate.check_provider``).
     ``parts`` is passed to ``build_retriever``, for a caller that builds more
     than one configuration and wants them to share the indexes.
     ``settings`` override the rest of the configuration -- ``top_k``,
@@ -327,9 +334,10 @@ def build_stack(
     # The generator first, and it is the cheap half: reading .env and building
     # a chat model validates the provider settings, and a mistyped
     # LLM_PROVIDER or a missing MISTRAL_API_KEY should stop a caller before it
-    # has read an index off disk, not after.
+    # has read an index off disk, not after. Unless the caller defers it: then
+    # only the provider's name is checked here.
     generation = config_from_env(provider=provider, model=model)
-    built_llm = llm if llm is not None else chat_model(generation)
+    built_llm = llm if llm is not None or defer_llm else chat_model(generation)
     built_retriever = (
         retriever if retriever is not None
         else build_retriever(
