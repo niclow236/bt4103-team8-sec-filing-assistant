@@ -1866,10 +1866,14 @@ The Browse page (#40) reads `data/processed/` directly and needs neither an
 index nor an answer model. Its company, fiscal-year and Item menus are
 dependent: each contains only values that exist under the choices before it,
 so every selectable combination has passages. It shows 25 passages at a time
-and makes every page reachable. Each expander is named for its nearest heading,
-table caption or Item title; inside it, the chunk ID is shown beside a link to
-the source filing on EDGAR. Prose is marked with an article icon and rendered
-as text; table passages are marked with a table icon and rendered in a
+and makes every page reachable. Each expander is named for its nearest heading
+or table caption, then the end of its chunk ID, so no two panels in one
+selection read alike (#127): a table with no caption is named from its own
+label line, which carries the statement title, where 61 of Apple's 64 FY2025
+Item 8 tables used to fall back to "Financial Statements". The full chunk ID is
+shown inside, beside a link to the source filing on EDGAR. Prose is marked with
+an article icon and rendered as text; table passages are marked with a table
+icon and rendered in a
 spacing-preserving block so the two cannot be mistaken for one another.
 
 ### Where things go in `src/app/`
@@ -1882,7 +1886,7 @@ what the first one does:
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
 | `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, and Browse's `corpus_picker`, `corpus_passage_page` and `corpus_passage`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
