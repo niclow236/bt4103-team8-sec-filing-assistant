@@ -43,7 +43,7 @@ def test_browse_is_registered_in_the_app_navigation(monkeypatch):
     app.switch_page("app_pages/browse.py").run()
     assert not app.exception
     assert app.title[0].value == "Browse filing corpus"
-    assert app.main.status[0].label == "Selected heading"
+    assert app.main.status[0].label == "Selected heading · registered"
     assert any(caption.value == "Chunk ID: registered" for caption in app.caption)
 
 
@@ -58,7 +58,7 @@ def test_picker_only_offers_existing_company_year_item_combinations(monkeypatch)
     assert list(app.selectbox[0].options) == ["AAPL — Apple Inc.", "MSFT — Microsoft Corp."]
     assert list(app.selectbox[1].options) == ["FY2024", "FY2023"]
     assert list(app.selectbox[2].options) == ["Item 7", "Item 8"]
-    assert app.main.status[0].label == "Selected heading"
+    assert app.main.status[0].label == "Selected heading · a-2024-7"
 
     # An upstream change replaces stale downstream values, so the three menus
     # can never describe an empty combination.
@@ -66,14 +66,14 @@ def test_picker_only_offers_existing_company_year_item_combinations(monkeypatch)
     assert not app.exception
     assert list(app.selectbox[1].options) == ["FY2022"]
     assert list(app.selectbox[2].options) == ["Item 8"]
-    assert [panel.label for panel in app.main.status] == ["Selected heading"]
+    assert [panel.label for panel in app.main.status] == ["Selected heading · m-2022-8"]
     assert any(caption.value == "Chunk ID: m-2022-8" for caption in app.caption)
 
     app.selectbox[0].set_value("AAPL").run()
     app.selectbox[1].set_value(2023).run()
     assert not app.exception
     assert list(app.selectbox[2].options) == ["Item 1A"]
-    assert app.main.status[0].label == "Selected heading"
+    assert app.main.status[0].label == "Selected heading · a-2023-1a"
 
 
 def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monkeypatch):
@@ -86,8 +86,8 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
 
     panels = app.main.status
     assert [(panel.label, panel.icon) for panel in panels] == [
-        ("Selected heading", ":material/article:"),
-        ("Consolidated statements", ":material/table_chart:"),
+        ("Selected heading · prose-chunk", ":material/article:"),
+        ("Consolidated statements · table-chunk", ":material/table_chart:"),
     ]
     assert {caption.value for caption in app.caption} >= {
         "Chunk ID: prose-chunk", "Chunk ID: table-chunk"}
@@ -112,7 +112,7 @@ def test_pagination_makes_a_large_item_fully_reachable(monkeypatch):
     app.selectbox[3].set_value(2).run()
     assert not app.exception
     assert [panel.label for panel in app.main.status] == [
-        "Selected heading", "Selected heading"]
+        "Selected heading · chunk-025", "Selected heading · chunk-026"]
     assert {caption.value for caption in app.caption} >= {
         "Chunk ID: chunk-025", "Chunk ID: chunk-026"}
     assert any("Showing passages 26–27 of 27" in caption.value for caption in app.caption)
@@ -160,7 +160,7 @@ def test_a_passage_without_heading_or_safe_link_says_so(monkeypatch):
     row = passage("bare")
     row.update(heading="", url="javascript:alert(1)")
     app = browse(monkeypatch, [row])
-    assert app.main.status[0].label == "Selected Item"
+    assert app.main.status[0].label == "Selected Item · bare"
     assert not app.get("link_button")
     assert any(caption.value == "Filing link unavailable" for caption in app.caption)
 
@@ -169,7 +169,8 @@ def test_dollar_signs_in_a_heading_are_not_read_as_math(monkeypatch):
     row = passage("dollars")
     row["heading"] = "Losses on strategic investments, net$(277)$(239)"
     app = browse(monkeypatch, [row])
-    assert app.main.status[0].label == r"Losses on strategic investments, net\$(277)\$(239)"
+    assert app.main.status[0].label == (
+        r"Losses on strategic investments, net\$(277)\$(239) · dollars")
 
 
 def test_passages_without_a_scope_are_counted_not_hidden(monkeypatch):
@@ -196,3 +197,89 @@ def test_an_empty_corpus_is_read_again_on_the_next_rerun(monkeypatch):
         assert state.corpus_passages() == (passage("arrived"),)
     finally:
         state.corpus_passages.clear()
+
+
+# --- #127: telling a page of panels apart without opening each one -----------
+
+def table(chunk_id, text, *, caption="", heading="", **changes):
+    """A table passage as the chunker writes one: a label line, then the grid."""
+    row = passage(chunk_id, content_type="table", text=text, **changes)
+    row.update(table_caption=caption, heading=heading)
+    return row
+
+
+STATEMENT = ("Financial Statements (part 2 of 3)\n\n"
+             "| | 2025 | 2024 |\n| Total net sales | 391,035 | 383,285 |")
+
+
+def test_an_uncaptioned_table_is_titled_from_its_own_label_line(monkeypatch):
+    # 7,232 of the corpus's 10,615 tables have no caption and no heading, so
+    # they all fell back to the Item title and read as the same entry.
+    app = browse(monkeypatch, [table("t000", STATEMENT, item="8")])
+    assert app.main.status[0].label == "Financial Statements (part 2 of 3) · t000"
+
+
+def test_a_stored_caption_still_wins_over_the_label_line(monkeypatch):
+    row = table("t001", STATEMENT, caption="Consolidated statements of operations", item="8")
+    app = browse(monkeypatch, [row])
+    assert app.main.status[0].label.startswith("Consolidated statements of operations")
+
+
+def test_a_table_that_opens_with_its_grid_keeps_the_item_title(monkeypatch):
+    app = browse(monkeypatch, [table("t002", "| | 2025 |\n| Net sales | 391,035 |", item="8")])
+    assert app.main.status[0].label == "Selected Item · t002"
+
+
+def test_the_label_line_is_not_used_for_prose(monkeypatch):
+    # A prose passage's first line is its text, not a label.
+    row = passage("p000", text="The Company is subject to various legal proceedings.")
+    row["heading"] = ""
+    app = browse(monkeypatch, [row])
+    assert app.main.status[0].label == "Selected Item · p000"
+
+
+def test_no_two_panels_in_one_selection_share_a_label(monkeypatch):
+    # Apple's FY2025 Item 8 holds 64 tables, 61 of them titled the same way.
+    rows = [table(f"t{number:03d}", STATEMENT, item="8") for number in range(64)]
+    app = browse(monkeypatch, rows)
+    labels = [panel.label for panel in app.main.status]
+    assert len(labels) == 25 and len(set(labels)) == 25
+    app.selectbox[3].set_value(3).run()
+    assert not app.exception
+    rest = [panel.label for panel in app.main.status]
+    assert len(set(rest)) == len(rest)
+    assert not set(rest) & set(labels)
+
+
+def test_a_marker_drops_the_accession_every_passage_in_a_filing_shares(monkeypatch):
+    rows = [passage("0000320193-25-000073_part_ii_item_8_026", item="8"),
+            passage("0000320193-25-000073_part_ii_item_8_027", item="8")]
+    for row in rows:
+        row["accession_no"] = "0000320193-25-000073"
+    app = browse(monkeypatch, rows)
+    assert [panel.label for panel in app.main.status] == [
+        "Selected heading · part_ii_item_8_026",
+        "Selected heading · part_ii_item_8_027",
+    ]
+
+
+def test_markers_fall_back_to_the_whole_chunk_id_when_the_short_one_repeats(monkeypatch):
+    # Two filings for one company and year should not happen, but if they did,
+    # the short markers would collide and the page would be unreadable again.
+    first = passage("acc-a_part_ii_item_8_000", item="8")
+    first["accession_no"] = "acc-a"
+    second = passage("acc-b_part_ii_item_8_000", item="8")
+    second["accession_no"] = "acc-b"
+    app = browse(monkeypatch, [first, second])
+    assert [panel.label for panel in app.main.status] == [
+        "Selected heading · acc-a_part_ii_item_8_000",
+        "Selected heading · acc-b_part_ii_item_8_000",
+    ]
+
+
+def test_a_passage_with_no_chunk_id_is_still_labelled(monkeypatch):
+    row = passage("", item="8")
+    row["heading"] = ""
+    row["title"] = ""
+    app = browse(monkeypatch, [row])
+    assert app.main.status[0].label == "Prose passage"

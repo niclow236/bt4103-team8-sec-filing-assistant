@@ -158,16 +158,85 @@ def _passage_kind(row: Mapping[str, Any]) -> tuple[str, str, str]:
     return "Prose passage", "blue", ":material/article:"
 
 
-def corpus_passage(row: Mapping[str, Any]) -> None:
-    """Render one full passage with its chunk ID, type and EDGAR filing link."""
+def _table_label(text: Any) -> str:
+    """A table passage's own label line, or "" when it opens with the grid.
+
+    The chunker writes a table as its label, a blank line, then rows that each
+    start with "|", so the label is the first line when that line is not a
+    row. It is the only thing that tells 61 of Apple's 64 FY2025 Item 8 tables
+    apart: none of them has a caption or a heading, so all 61 fall back to the
+    Item title and read as the same entry (#127).
+    """
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return "" if stripped.startswith("|") else stripped
+    return ""
+
+
+def _passage_heading(row: Mapping[str, Any]) -> str:
+    """What a collapsed panel calls a passage, before its marker.
+
+    A table prefers its stored caption, then its own label line, then the
+    headings a prose passage would use. 7,232 of the corpus's 10,615 tables
+    have no caption, and the label line names 4,884 of those better than the
+    Item title does.
+    """
+    if row.get("content_type") == "table":
+        heading = (row.get("table_caption") or _table_label(row.get("text"))
+                   or row.get("heading") or row.get("title"))
+    else:
+        heading = row.get("heading") or row.get("title")
+    return str(heading or "")
+
+
+def _passage_marker(row: Mapping[str, Any]) -> str:
+    """The end of a passage's chunk ID: what differs inside one filing.
+
+    A chunk ID is "<accession>_<section>_<index>", so dropping the accession
+    leaves the part that varies within a filing, which is short enough to sit
+    in a panel label and is what someone holding a chunk ID from a citation
+    scans the page for.
+    """
+    chunk_id = str(row.get("chunk_id") or "")
+    accession = str(row.get("accession_no") or "")
+    prefix = f"{accession}_"
+    return chunk_id[len(prefix):] if accession and chunk_id.startswith(prefix) else chunk_id
+
+
+def passage_labels(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """One collapsed label per row, none of them equal to another's.
+
+    Two passages in one Item routinely share a heading, so each label carries
+    a marker from its chunk ID. The short marker is enough within a filing,
+    and a scope is normally one filing; where it would not be -- a corpus
+    holding two filings for one company and year -- every label in the scope
+    falls back to the whole chunk ID rather than some of them, so the page
+    stays readable in one glance.
+    """
+    markers = [_passage_marker(row) for row in rows]
+    if len(set(markers)) != len(markers):
+        markers = [str(row.get("chunk_id") or "") for row in rows]
+    labels = []
+    for row, marker in zip(rows, markers):
+        heading = _passage_heading(row) or _passage_kind(row)[0]
+        labels.append(" · ".join(part for part in (heading, marker) if part))
+    return labels
+
+
+def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
+    """Render one full passage with its chunk ID, type and EDGAR filing link.
+
+    ``label`` is the collapsed label, from :func:`passage_labels` over the
+    whole selection, so that panels listed together can be told apart. Without
+    one, a passage is labelled on its own and may read like its neighbours.
+    """
     kind, colour, icon = _passage_kind(row)
     chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
-    if row.get("content_type") == "table":
-        passage_title = row.get("table_caption") or row.get("heading") or row.get("title")
-    else:
-        passage_title = row.get("heading") or row.get("title")
+    passage_title = label or passage_labels([row])[0]
     # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
-    passage_title = str(passage_title or kind).replace("$", r"\$")
+    passage_title = passage_title.replace("$", r"\$")
 
     with st.expander(passage_title, icon=icon):
         with st.container(horizontal=True, vertical_alignment="center"):
@@ -222,8 +291,11 @@ def corpus_passage_page(passages: Sequence[Mapping[str, Any]], selection: Corpus
             f"Showing passages {start + 1}–{stop} of {len(selected)} "
             f"across {len(filings)} filing{'s' if len(filings) != 1 else ''}.")
 
-    for row in selected[start:stop]:
-        corpus_passage(row)
+    # Labelled over the whole selection, not the page, so a marker is unique
+    # however the pages are cut.
+    labels = passage_labels(selected)
+    for row, label in zip(selected[start:stop], labels[start:stop]):
+        corpus_passage(row, label=label)
 
 
 def _citation_html(citation: Citation, passages: Sequence[RetrievedPassage], *,
@@ -784,6 +856,8 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
+    "CorpusSelection", "filter_sidebar", "passage_labels", "provider_picker",
+    "resolved_filters", "retrieval_trace", "select_corpus_passages", "trace_rows",
     "CorpusSelection", "filter_sidebar", "provider_error", "provider_picker", "resolved_filters",
     "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]
