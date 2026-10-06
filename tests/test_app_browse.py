@@ -219,6 +219,22 @@ def test_an_uncaptioned_table_is_titled_from_its_own_label_line(monkeypatch):
     assert app.main.status[0].label == "Financial Statements (part 2 of 3)"
 
 
+def test_same_named_fragmented_tables_use_one_unambiguous_part_count(monkeypatch):
+    rows = [
+        table("first-1", "Financial Statements (part 1 of 2)\n\n| First | 1 |"),
+        table("first-2", "Financial Statements (part 2 of 2)\n\n| First | 2 |"),
+        table("second-1", "Financial Statements (part 1 of 2)\n\n| Second | 1 |"),
+        table("second-2", "Financial Statements (part 2 of 2)\n\n| Second | 2 |"),
+    ]
+    app = browse(monkeypatch, rows)
+    assert [panel.label for panel in app.main.status] == [
+        "Financial Statements (Part 1 of 4)",
+        "Financial Statements (Part 2 of 4)",
+        "Financial Statements (Part 3 of 4)",
+        "Financial Statements (Part 4 of 4)",
+    ]
+
+
 def test_a_stored_caption_still_wins_over_the_label_line(monkeypatch):
     row = table("t001", STATEMENT, caption="Consolidated statements of operations", item="8")
     app = browse(monkeypatch, [row])

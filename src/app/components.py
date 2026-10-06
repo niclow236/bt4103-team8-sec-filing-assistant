@@ -192,23 +192,30 @@ def _passage_heading(row: Mapping[str, Any]) -> str:
     return str(heading or "")
 
 
+_PART_SUFFIX = re.compile(r"\s+\(part\s+\d+\s+of\s+\d+\)\s*$", re.IGNORECASE)
+
+
 def passage_labels(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     """Return panel names, numbering rows that share the same display name.
 
     Chunk IDs remain inside expanded panels. When an Item contains several
     chunks with the same heading, their collapsed labels instead identify the
     chunk's position as ``Name (Part x of x)``. Counts cover the full selected
-    Item, so numbering remains stable when the result is paginated.
+    Item, so numbering remains stable when the result is paginated. A table
+    fragment's stored label can already end in ``(part x of x)``; that suffix
+    is normalized before counting so a panel never shows two competing part
+    counters.
     """
     headings = [_passage_heading(row) or _passage_kind(row)[0] for row in rows]
-    totals = Counter(headings)
+    names = [_PART_SUFFIX.sub("", heading) for heading in headings]
+    totals = Counter(names)
     seen: Counter[str] = Counter()
     labels = []
-    for heading in headings:
-        seen[heading] += 1
+    for heading, name in zip(headings, names):
+        seen[name] += 1
         labels.append(
-            f"{heading} (Part {seen[heading]} of {totals[heading]})"
-            if totals[heading] > 1 else heading
+            f"{name} (Part {seen[name]} of {totals[name]})"
+            if totals[name] > 1 else heading
         )
     return labels
 
