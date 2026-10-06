@@ -2185,12 +2185,14 @@ A stopped or interrupted provider run saves completed answers, its stop reason
 and both summaries before exiting unsuccessfully. Completed runs print the
 table and output path. Use a fresh run ID; existing results are never overwritten.
 
-#### Real corpus measurements — 4 October 2026
+#### Measured on the full corpus
 
-Measured on application commit `a0cb411`, on an Apple M1 Mac with 16 GiB RAM,
-macOS 15.6.1, Python 3.13.7, PyTorch 2.14.0, sentence-transformers 6.0.1,
-Chroma 1.5.9 and Ollama 0.33.3. Encoders used MPS; Ollama used Metal. These
-are real model runs over downloaded SEC filings, separate from the synthetic
+The embedding matrix was measured on 4 October 2026 at application commit
+`a0cb411`; the provider matrix was rerun through the standard CLI on
+6 October 2026 at `1cf4458` (including main at `840be50`). Both used an
+Apple M1 Mac with 16 GiB RAM, macOS 15.6.1, Python 3.13.7, PyTorch 2.14.0,
+sentence-transformers 6.0.1, Chroma 1.5.9 and Ollama 0.33.3. Encoders used MPS;
+Ollama used Metal. These are real model runs over downloaded SEC filings, separate from the synthetic
 regression tests.
 
 The rebuilt corpus contains **75 10-K filings from 15 companies, FY2021–2025,
@@ -2200,19 +2202,20 @@ and 28,289 passages**. All nine corpus checks passed. The facts store contains
 The benchmark has 12,579 numeric questions and SHA-256
 `63b23a5d81c7e7d0b46f8127b575566c61e23bfebe19c2dc55083efba1541a93`.
 
-Commands below were run from the repository root, using the existing virtual
-environment in its parent directory. SEC identity was configured in the local
-`.env`; real encoder weights were downloaded before setting `HF_HUB_OFFLINE=1`.
+To reproduce these runs, activate the project virtual environment as described
+in Setup, then run the commands below from the repository root. SEC identity
+was configured in the local `.env`; real encoder weights were downloaded before
+setting `HF_HUB_OFFLINE=1`.
 That flag prevents Hugging Face network lookups, not provider calls.
 
 ```bash
-../.venv/bin/python -u -m src.pipeline rebuild
-../.venv/bin/python -u -m src.retrieval bm25
-../.venv/bin/python -u -m src.retrieval facts
-HF_HUB_OFFLINE=1 ../.venv/bin/python -u -m src.retrieval embed
-HF_HUB_OFFLINE=1 ../.venv/bin/python -u -m src.retrieval check
-../.venv/bin/python -u -m src.retrieval benchmark
-HF_HUB_OFFLINE=1 ../.venv/bin/python -u -m src.evaluation.model_ablation embedding \
+python -u -m src.pipeline rebuild
+python -u -m src.retrieval bm25
+python -u -m src.retrieval facts
+HF_HUB_OFFLINE=1 python -u -m src.retrieval embed
+HF_HUB_OFFLINE=1 python -u -m src.retrieval check
+python -u -m src.retrieval benchmark
+HF_HUB_OFFLINE=1 python -u -m src.evaluation.model_ablation embedding \
   benchmark/generated.jsonl --prepare-indexes --limit 1500 \
   --run-id embeddings-real-20261004
 ```
@@ -2252,8 +2255,9 @@ compared as one. Encoder snapshots were BGE
 
 Full precision embedding summaries and the six per-question reports are kept
 locally under `results/embeddings-real-20261004/`. Data, indexes, model weights,
-logs and run artifacts remain ignored; the results PR includes the complete
-summary CSV for review.
+logs and run artifacts remain ignored. The description of
+[PR #121](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/pull/121)
+pastes the complete embedding and provider `summary.csv` files for review.
 
 Both generation rows used the same corpus and default BGE/hybrid C4 stack,
 with a **passage budget of 16, facts disabled, decomposition and refusal enabled**,
@@ -2265,62 +2269,41 @@ call. The question IDs and C4 stack settings match between the two reports.
 The installed `llama3.2:3b` model is Q4_K_M, digest
 `a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72`.
 
-The providers were measured in separate processes: G1 completed while the
-Mistral key was unavailable, and G2 ran once it was configured locally.
-Because the normal generation command preflights both providers, each command
-selected its registered experiment in the running process. Both used the
-existing runner and real provider without changing application code or any
-C4 answer setting:
+Both providers were measured in one invocation of the supported CLI, with
+Ollama running and `MISTRAL_API_KEY` configured in the local `.env`. The runner
+preflights both stacks and writes each report and the shared comparison table
+directly; no experiment overrides or separate report-combination step are needed.
 
 ```bash
-HF_HUB_OFFLINE=1 LLM_BASE_URL=http://127.0.0.1:11434 ../.venv/bin/python -u -c \
-  'from src.evaluation import model_ablation as a; a.GENERATION_EXPERIMENTS = tuple(e for e in a.GENERATION_EXPERIMENTS if e.id == "G1"); a.main(["generation", "benchmark/generated.jsonl", "--no-facts", "--limit", "30", "--run-id", "providers-local-real-20261004"])'
-HF_HUB_OFFLINE=1 MISTRAL_BASE_URL=https://api.mistral.ai/v1 ../.venv/bin/python -u -c \
-  'from src.evaluation import model_ablation as a; a.GENERATION_EXPERIMENTS = tuple(e for e in a.GENERATION_EXPERIMENTS if e.id == "G2"); a.main(["generation", "benchmark/generated.jsonl", "--no-facts", "--limit", "30", "--run-id", "providers-hosted-real-20261004"])'
+HF_HUB_OFFLINE=1 LLM_BASE_URL=http://127.0.0.1:11434 \
+  MISTRAL_BASE_URL=https://api.mistral.ai/v1 \
+  python -u -m src.evaluation.model_ablation generation \
+  benchmark/generated.jsonl --no-facts --limit 30 \
+  --run-id providers-real-20261006
 ```
 
 | Row | Provider | Model | Questions | Abstention | Provider-routed questions | Provider abstention | Median generation (ms) | Retried questions |
 |---|---|---|---:|---:|---:|---:|---:|---:|
-| G1 | Ollama | llama3.2:3b | 30 | 3.33% | 30 | 3.33% | 28,472.9 | 0 |
-| G2 | Mistral | ministral-8b-2512 | 30 | 6.67% | 30 | 6.67% | 1,662.5 | 0 |
+| G1 | Ollama | llama3.2:3b | 30 | 3.33% | 30 | 3.33% | 28,833.5 | 0 |
+| G2 | Mistral | ministral-8b-2512 | 30 | 6.67% | 30 | 6.67% | 1,782.9 | 0 |
 
-Mistral has the lower median generation latency here: 1.66 seconds versus
-Ollama's 28.47 seconds. Neither run needed a retry. Mistral abstained on two
+Mistral has the lower median generation latency here: 1.78 seconds versus
+Ollama's 28.83 seconds. Neither run needed a retry. Mistral abstained on two
 questions and Ollama on one; a one-question difference in a 30-question sample
 does not establish a reliable abstention advantage. Latency excludes
 retrieval, verification and retry waits. Abstention measures willingness to
 answer, not correctness or faithfulness. The numeric verifier classified
 Ollama's 29 non-abstained answers as 3 supported, 7 mismatch and 19 unverified;
-Mistral's 28 as 4 supported, 10 mismatch and 14 unverified. These checks concern
+Mistral's 28 as 6 supported, 8 mismatch and 14 unverified. These checks concern
 figures, not whole-answer faithfulness, and do not establish a quality winner.
 
-The combined table uses the existing C/E/G comparison writer. Its source
-reports were checked for the same 30 question IDs, C4 settings and pinned
-provider/model configurations, then copied byte-for-byte into
-`results/providers-real-20261004/`. Both summary rows match their source CSVs
-exactly. The original runs remain under `results/providers-local-real-20261004/`
-and `results/providers-hosted-real-20261004/`. The combination was written with:
+The native per-question reports and full precision summaries are under the
+ignored local `results/providers-real-20261006/` directory. PR #121's
+description preserves its complete provider CSV alongside the embedding CSV.
 
-```bash
-../.venv/bin/python - <<'PY'
-import json
-from pathlib import Path
-from src.evaluation.model_ablation import GENERATION_EXPERIMENTS, MODEL_FIELDS, _generation_summary, _write_report
-from src.evaluation.results import available_run_dir, write_comparison
-run_id = 'providers-real-20261004'
-sources = {'G1': 'providers-local-real-20261004', 'G2': 'providers-hosted-real-20261004'}
-reports = {e.id: json.loads((Path('results') / sources[e.id] / e.id / 'report.json').read_text()) for e in GENERATION_EXPERIMENTS}
-run_dir = available_run_dir(Path('results'), run_id)
-summaries = [_generation_summary(e, reports[e.id]) for e in GENERATION_EXPERIMENTS]
-write_comparison(run_dir, run_id=run_id, top_k=16, summaries=summaries, extra_fields=MODEL_FIELDS, matrix='generation', source_runs=sources)
-for e in GENERATION_EXPERIMENTS:
-    _write_report(run_dir, e.id, reports[e.id])
-PY
-```
-
-All six E rows and both G rows required by issue #46 are now measured and
-documented. Validation of the application at `a0cb411` passed all **1,229
-tests**; `git diff --check` also passed for this documentation update.
+All six E rows and both G rows required by issue #46 are measured and
+documented. The embedding run's application commit `a0cb411` passed all
+**1,229 tests**; the provider rerun's commit `1cf4458` passed all **1,294 tests**.
 
 ## Team and course
 
