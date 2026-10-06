@@ -13,6 +13,7 @@ an index or asking a model.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from hashlib import sha256
@@ -191,37 +192,31 @@ def _passage_heading(row: Mapping[str, Any]) -> str:
     return str(heading or "")
 
 
-def _passage_marker(row: Mapping[str, Any]) -> str:
-    """The end of a passage's chunk ID: what differs inside one filing.
-
-    A chunk ID is "<accession>_<section>_<index>", so dropping the accession
-    leaves the part that varies within a filing, which is short enough to sit
-    in a panel label and is what someone holding a chunk ID from a citation
-    scans the page for.
-    """
-    chunk_id = str(row.get("chunk_id") or "")
-    accession = str(row.get("accession_no") or "")
-    prefix = f"{accession}_"
-    return chunk_id[len(prefix):] if accession and chunk_id.startswith(prefix) else chunk_id
+_PART_SUFFIX = re.compile(r"\s+\(part\s+\d+\s+of\s+\d+\)\s*$", re.IGNORECASE)
 
 
 def passage_labels(rows: Sequence[Mapping[str, Any]]) -> list[str]:
-    """One collapsed label per row, none of them equal to another's.
+    """Return panel names, numbering rows that share the same display name.
 
-    Two passages in one Item routinely share a heading, so each label carries
-    a marker from its chunk ID. The short marker is enough within a filing,
-    and a scope is normally one filing; where it would not be -- a corpus
-    holding two filings for one company and year -- every label in the scope
-    falls back to the whole chunk ID rather than some of them, so the page
-    stays readable in one glance.
+    Chunk IDs remain inside expanded panels. When an Item contains several
+    chunks with the same heading, their collapsed labels instead identify the
+    chunk's position as ``Name (Part x of x)``. Counts cover the full selected
+    Item, so numbering remains stable when the result is paginated. A table
+    fragment's stored label can already end in ``(part x of x)``; that suffix
+    is normalized before counting so a panel never shows two competing part
+    counters.
     """
-    markers = [_passage_marker(row) for row in rows]
-    if len(set(markers)) != len(markers):
-        markers = [str(row.get("chunk_id") or "") for row in rows]
+    headings = [_passage_heading(row) or _passage_kind(row)[0] for row in rows]
+    names = [_PART_SUFFIX.sub("", heading) for heading in headings]
+    totals = Counter(names)
+    seen: Counter[str] = Counter()
     labels = []
-    for row, marker in zip(rows, markers):
-        heading = _passage_heading(row) or _passage_kind(row)[0]
-        labels.append(" · ".join(part for part in (heading, marker) if part))
+    for heading, name in zip(headings, names):
+        seen[name] += 1
+        labels.append(
+            f"{name} (Part {seen[name]} of {totals[name]})"
+            if totals[name] > 1 else heading
+        )
     return labels
 
 
