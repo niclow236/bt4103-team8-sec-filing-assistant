@@ -496,12 +496,18 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
 
 
 def _fix_in_app(provider: str, available: AnswerModels) -> str:
-    """What to do in the app about a provider's settings: fix ``.env`` and
-    restart, or pick a provider that lacks nothing."""
+    """What to do in the app about a provider's settings: change them and
+    restart, or pick a provider that lacks nothing.
+
+    The environment as well as ``.env``: a variable exported in the shell wins
+    over the file, so advice to fix ``.env`` alone could be followed to no
+    effect.
+    """
     ready = [_PROVIDERS[other][0] for other in available.models
              if other != provider and other not in available.unready]
     instead = f", or pick {' or '.join(ready)}" if ready else ""
-    return f"Fix it in `.env` (README, {_PROVIDERS[provider][2]}) and restart the app{instead}."
+    return (f"Update it in your environment or `.env` (README, {_PROVIDERS[provider][2]}), "
+            f"then restart the app{instead}.")
 
 
 def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
