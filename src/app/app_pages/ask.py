@@ -13,6 +13,7 @@ from src.app.components import (
     answer_summary,
     configuration_picker,
     filter_sidebar,
+    provider_error,
     provider_picker,
     resolved_filters,
     retrieval_trace,
@@ -42,7 +43,8 @@ question = question.strip()
 # FY2024?") was taken for prose and searched with no lean toward tables.
 parsed = parse_question(question) if question else None
 query = filter_sidebar(question, parsed=parsed)
-provider = provider_picker(state.answer_models())
+available = state.answer_models()
+provider = provider_picker(available)
 config_id = configuration_picker(dict(state.measured()))
 config = STACKS[config_id]
 
@@ -73,9 +75,7 @@ if asked and question:
                 question, query=query, parsed=parsed, on_token=show)
             answer = verify_answer(answer, parsed=scoped)
     except ProviderUnavailable as error:
-        # What the provider lacks, without the advice for a notebook or a
-        # command that the full message goes on to give.
-        st.error(error.reason, icon=":material/error:")
+        provider_error(error, provider, available)
     except (OSError, ValueError) as error:
         # OSError for an index that is not there, and for a .env saved in an
         # encoding that cannot be read, which the sidebar has already named.
