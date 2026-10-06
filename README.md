@@ -2203,7 +2203,8 @@ The benchmark has 12,579 numeric questions and SHA-256
 `63b23a5d81c7e7d0b46f8127b575566c61e23bfebe19c2dc55083efba1541a93`.
 
 To reproduce these runs, activate the project virtual environment as described
-in Setup, then run the commands below from the repository root. SEC identity
+in [Getting started](#getting-started), then run the commands below from the
+repository root. SEC identity
 was configured in the local `.env`; real encoder weights were downloaded before
 setting `HF_HUB_OFFLINE=1`.
 That flag prevents Hugging Face network lookups, not provider calls.
