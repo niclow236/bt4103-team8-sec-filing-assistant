@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
     from src.app.state import AnswerModels
+    from src.rag.generate import ProviderUnavailable
 
 
 _MARKER = re.compile(r"\[(-?\d+)\]")
@@ -397,12 +398,6 @@ def answer_card(answer: Answer, *, key: str = "answer", show_question: bool = Tr
             unsafe_allow_javascript=True)
 
 
-def _not_in_corpus(parsed: ParsedQuestion) -> str:
-    """The companies and years a question named that the corpus does not hold,
-    in the one wording the sidebar and the filters line both show."""
-    return "not in the corpus: " + ", ".join(parsed.unresolved)
-
-
 def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None:
     """Show what a question will be searched in, as soon as it is read (#38).
 
@@ -418,8 +413,9 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
     parts = [" ".join(f":blue-badge[{value}]" for value in values) or f":gray-badge[{every}]"
              for values, every in _scope(query)]
     if parsed is not None:
-        if parsed.unresolved:
-            parts.append(f":orange-badge[{_not_in_corpus(parsed)}]")
+        if missing := parsed.not_in_corpus:
+            # Lower case inside the sentence the badges make.
+            parts.append(f":orange-badge[{missing[0].lower() + missing[1:]}]")
         parts.append(f":violet-badge[{parsed.question_type} question]")
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
@@ -491,14 +487,44 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
             # Short, and with no icon: the sidebar is narrow, and a warning
             # that ran to twenty lines pushed the Configuration box below it
             # off the screen.
-            ready = [_PROVIDERS[other][0] for other in models if other not in unready]
-            instead = f", or pick {' or '.join(ready)}" if ready else ""
-            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. Fix it in "
-                       f"`.env` (README, {setup}) and restart the app{instead}. "
+            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. "
+                       f"{_fix_in_app(provider, available)} "
                        "A figure the facts store holds is still answered.")
         if available.problem:
             st.warning(available.problem)
     return provider
+
+
+def _fix_in_app(provider: str, available: AnswerModels) -> str:
+    """What to do in the app about a provider's settings: change them and
+    restart, or pick a provider that lacks nothing.
+
+    The environment as well as ``.env``: a variable exported in the shell wins
+    over the file, so advice to fix ``.env`` alone could be followed to no
+    effect.
+    """
+    ready = [_PROVIDERS[other][0] for other in available.models
+             if other != provider and other not in available.unready]
+    instead = f", or pick {' or '.join(ready)}" if ready else ""
+    return (f"Update it in your environment or `.env` (README, {_PROVIDERS[provider][2]}), "
+            f"then restart the app{instead}.")
+
+
+def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
+    """Say why the provider picked could not answer an Ask.
+
+    ``available`` is what :func:`provider_picker` was given. What the provider
+    lacks, without the advice to restart a notebook or a command that the
+    full message goes on to give. Where the sidebar has not said what to do in
+    the app, because the settings looked right until a request was sent, as
+    a key the API refuses does, the error says it. A failure that names no
+    reason of its own, such as a rate limit, says what to do itself, and
+    nothing in ``.env`` would fix it, so its whole message is shown.
+    """
+    shown = error.reason
+    if error.reason != str(error) and provider not in available.unready:
+        shown += f". {_fix_in_app(provider, available)}"
+    st.error(shown, icon=":material/error:")
 
 
 def _writer(answer: Answer) -> Literal["facts", "model"] | None:
@@ -742,9 +768,8 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
         tickers = st.multiselect("Company", options["companies"], key=f"{key}:companies")
         selected_years = st.multiselect("Fiscal year", options["years"], key=f"{key}:years")
         selected_items = st.multiselect("Item", options["items"], key=f"{key}:items")
-        if parsed and parsed.unresolved:
-            said = _not_in_corpus(parsed)
-            st.warning(said[0].upper() + said[1:])
+        if parsed and parsed.not_in_corpus:
+            st.warning(parsed.not_in_corpus)
         unknown_items = [i for i in mentions if i not in items]
         if unknown_items:
             st.warning("Unrecognised Items (kept as filters): " + ", ".join(unknown_items))
@@ -759,6 +784,6 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
-    "CorpusSelection", "filter_sidebar", "provider_picker", "resolved_filters",
+    "CorpusSelection", "filter_sidebar", "provider_error", "provider_picker", "resolved_filters",
     "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]

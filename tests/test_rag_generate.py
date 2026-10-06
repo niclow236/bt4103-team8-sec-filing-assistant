@@ -499,6 +499,28 @@ def test_one_ollama_client_serves_every_answer_of_a_model():
     assert chat_model(config, environ={"LLM_NUM_GPU": "0"}) is not first
 
 
+def test_a_timeout_a_notebook_lengthens_reaches_the_next_ollama_client(monkeypatch):
+    # The client was kept with the old limit, while the timeout error named
+    # the new one (review of #119). Set where a notebook sets it: generate.py's
+    # own copy of the constant is out of reach behind src.rag's generate
+    # function (review of #129).
+    config = GenerationConfig("ollama", "llama3.2:3b", "grounded_v4")
+    chat_model(config, environ={})
+    monkeypatch.setattr("src.rag.constants.GENERATION_TIMEOUT_S", 1800.0)
+    assert chat_model(config, environ={}).client_kwargs == {"timeout": 1800.0}
+    with pytest.raises(ProviderUnavailable, match="sent nothing for 1800s"):
+        generate(PROMPT, _config(), llm=_failing(httpx.ReadTimeout))
+
+
+def test_a_timeout_a_notebook_lengthens_reaches_the_next_mistral_client(monkeypatch):
+    environ = {"MISTRAL_API_KEY": "test-key"}
+    chat_model(_mistral_config(), environ=environ)
+    monkeypatch.setattr("src.rag.constants.HOSTED_TIMEOUT_S", 300)
+    assert chat_model(_mistral_config(), environ=environ).timeout == 300
+    with pytest.raises(ProviderUnavailable, match="sent nothing for 300s"):
+        generate(PROMPT, _mistral_config(), llm=_mistral(_raises(httpx.ReadTimeout)))
+
+
 @pytest.mark.parametrize("values", [{}, {"MISTRAL_API_KEY": ""}])
 def test_a_missing_key_says_where_to_make_one(tmp_path, values):
     # No key line is what .env.example leaves, and an empty value what removing
