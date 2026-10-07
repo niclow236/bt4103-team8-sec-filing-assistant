@@ -116,6 +116,33 @@ def test_a_block_whose_figure_a_shorter_cell_covers_only_in_part_is_kept():
     assert kept == [flattened] and dropped == []
 
 
+def test_a_figure_two_unrelated_cells_cover_between_them_is_kept():
+    """"$14" and "879" leave only the comma of "$14,879": neither cell is that figure."""
+    from dataclasses import replace
+
+    headcount = replace(SHARES, table_index=2, caption="Employees",
+                        rows=[["Engineering", "879", "$90.10"]])
+    flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+    kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, SHARES, headcount]))
+    assert kept == [flattened] and dropped == []
+
+
+def test_a_digit_no_cell_covers_keeps_a_figure_with_no_comma():
+    """Salesforce's "Fiscal 2026" run into 1355: "355" is a cell, the 1 is in none."""
+    maturities = TableRecord(table_index=0, caption="Maturities", headers=["", "Amount"],
+                             rows=[["Fiscal 2026", "$1"], ["Fiscal 2027", "355"]],
+                             n_rows=2, n_cols=2)
+    assert not _is_table_debris(
+        "Fiscal 20261355", table_figures([maturities]), table_cells([maturities]))
+
+
+def test_a_comma_after_a_figure_does_not_keep_its_block():
+    """The figure pattern takes the comma in "2,500, " too, but it divides no digits."""
+    totals = TableRecord(table_index=0, caption="Totals", headers=["", "Shares", "Price"],
+                         rows=[["Total", "2,500", "$6.53"]], n_rows=1, n_cols=3)
+    assert _is_table_debris("Total2,500, $6.53", table_figures([totals]), table_cells([totals]))
+
+
 def test_a_table_with_no_header_row_does_not_account_for_a_block():
     """chunk_tables cuts no passage from it, so its figures would be in none."""
     flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"

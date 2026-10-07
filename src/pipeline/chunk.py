@@ -424,11 +424,20 @@ def _blanked(block: str, cells: dict[str, list[str]]) -> tuple[str, str]:
 
 
 def _figures_left_in(block: str, remainder: str) -> list[str]:
-    """The figures of a block that kept a digit once its cells were blanked."""
+    """The figures of a block that its blanked cells do not wholly account for.
+
+    A figure is left when one of its digits is, or when a comma between two of
+    its digits is. "$14" and "879" blank every digit of "$14,879" and leave
+    its comma: two cells that each hold a piece, and neither is the figure.
+    """
     return [
         figure.group()
         for figure in _FIGURE.finditer(block)
-        if any(remainder[position].isdigit() for position in range(*figure.span()))
+        if any(
+            remainder[position].isdigit()
+            or (remainder[position] == "," and block[position + 1:position + 2].isdigit())
+            for position in range(*figure.span())
+        )
     ]
 
 
