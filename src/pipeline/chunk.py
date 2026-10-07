@@ -56,7 +56,7 @@ import json
 import logging
 import re
 import statistics
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict
 from pathlib import Path
 
@@ -348,9 +348,13 @@ def _split_table_columns(
     ]
 
 
-def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
-    """The distinct cells of an Item's rebuilt tables, keyed by their first three
-    characters.
+def figures_in(text: str) -> set[str]:
+    """Every figure in a text, as the debris rule reads one."""
+    return set(_FIGURE.findall(text))
+
+
+def cell_index(cells: Iterable[str]) -> dict[str, list[str]]:
+    """Distinct table cells, keyed by their first three characters.
 
     Keyed that way so a block can be matched against the thousands of cells an
     Item 8 holds by looking only at cells that could begin somewhere in it.
@@ -358,10 +362,15 @@ def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
     about whether a block came from the table.
     """
     index: dict[str, list[str]] = {}
-    for cell in {cell for table in tables for row in [table.headers, *table.rows] for cell in row}:
+    for cell in set(cells):
         if len(cell) >= 3:
             index.setdefault(cell[:3], []).append(cell)
     return index
+
+
+def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
+    """The cells of an Item's rebuilt tables, indexed by ``cell_index``."""
+    return cell_index(cell for table in tables for row in [table.headers, *table.rows] for cell in row)
 
 
 def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
@@ -380,6 +389,26 @@ def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
     for cell in found:
         block = block.replace(cell, " " * len(cell))
     return block
+
+
+def _left_in(block: str, remainder: str) -> list[str]:
+    """The figures of a block that kept a digit once its cells were blanked."""
+    return [
+        figure.group()
+        for figure in _FIGURE.finditer(block)
+        if any(remainder[position].isdigit() for position in range(*figure.span()))
+    ]
+
+
+def uncovered_figures(block: str, cells: dict[str, list[str]]) -> list[str]:
+    """The figures in a block that the cells found in it do not wholly cover.
+
+    The test ``_is_table_debris`` keeps a block by, offered whole so ``verify``
+    can put it to the cells of a filing's passages and judge a figure exactly as
+    the chunker does.
+    """
+    normalised = " ".join(block.split())
+    return _left_in(normalised, _unexplained(normalised, cells))
 
 
 def _is_table_debris(
@@ -435,9 +464,8 @@ def _is_table_debris(
     # non-breaking spaces where the rebuilt grid has plain ones.
     normalised = " ".join(block.split())
     remainder = _unexplained(normalised, cells)
-    for figure in _FIGURE.finditer(normalised):
-        if any(remainder[position].isdigit() for position in range(*figure.span())):
-            return False
+    if _left_in(normalised, remainder):
+        return False
     before = sum(character.isalnum() for character in block)
     after = sum(character.isalnum() for character in remainder)
     return after <= 0.2 * before

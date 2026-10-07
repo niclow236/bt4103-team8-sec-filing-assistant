@@ -423,7 +423,7 @@ Measured on the fifteen-company corpus, 75 filings, over a home connection, with
 | download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
 | parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
 | chunk | 15s | pure text processing over the parsed Items |
-| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then nine checks over 28,000 passages |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then ten checks over 28,000 passages |
 | **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
 
 Parse is quoted as a range because it is CPU-bound and single-threaded: the same
@@ -444,7 +444,7 @@ and exits non-zero when it cannot. It is the last thing to run before handing th
 corpus to retrieval, and it takes no options: a gate you can narrow is one that
 gets narrowed until it passes.
 
-Nine checks, cheapest first:
+Ten checks, cheapest first:
 
 | Check | What would fail it |
 |---|---|
@@ -453,6 +453,7 @@ Nine checks, cheapest first:
 | key Items | Items 1, 1A, 7, 7A or 8 absent, or a stub with nothing to resolve to |
 | chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
 | no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage, unless the chunker dropped it as a flattened copy of a table it rebuilt |
+| no figure lost | a figure of four characters or more in a chunked Item's text that no passage of the filing prints, and whose digits the cells of the Item's table passages do not all cover |
 | passage sizes | any table passage, or more than 0.5% of prose passages, past the 512 tokens bge reads, counted with the model's own tokenizer over the passage and its context header |
 | statement titles | a filing whose balance sheet, income statement or cash flow statement carries no title a question could name it by |
 | matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
@@ -578,8 +579,14 @@ say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
 All but 6 of the tables that hold data rebuild cleanly, 5,422 of 5,428; where one
-cannot, its flattened copy is left in the prose, so no figure is ever lost, it
-is just harder to read.
+cannot, its flattened copy is left in the prose, where it is just harder to read.
+A grid that rebuilds can still drop a cell: Meta's FY2021 table of marketable
+securities comes back with a bare `$` where the filing prints 14,879. So a
+flattened copy is only removed when every digit of every figure in it (four
+characters or more, such as `1,182`) is in a cell of a table passage, and
+`python -m src.pipeline verify` fails a corpus in which a removed copy held a
+figure that no passage of its filing does. A shorter number, such as a count of
+46, gets no such guarantee.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
