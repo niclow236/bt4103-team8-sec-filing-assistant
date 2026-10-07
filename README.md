@@ -2060,6 +2060,86 @@ which returns the report. A run that stops part-way raises instead:
 `RunInterrupted`, a `KeyboardInterrupt`, on Ctrl-C. Either carries the report
 of the questions before it on `.report`, as the command writes it.
 
+Answer-quality evaluation (#47) adds `quality`, `latency_ms` and `cost` to
+each result, together with its gold answer and supporting chunk IDs. To score
+semantic faithfulness and correctness, add `--judge`:
+
+```bash
+python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --no-facts \
+  --judge --run-id answer-quality --output logs/answer-quality.json
+```
+
+The judge uses the answering provider/model by default; `--judge-model` selects
+another model on that provider. Its client is built once and checked against
+the recorded model/provider before any answers are generated. It makes a
+separate structured call using the versioned `answer-quality-v1` rubric.
+Faithfulness scores factual claims against
+their own cited passages; correctness compares the response with the gold
+answer, accepting equivalent wording and numeric units. Both scores range from
+0 to 1, with reasons recorded per question. These are model judgements, so
+inspect the reasons and compare with human review before treating them as gold
+labels. Use `--judge` for the per-question semantic scoring required by #47;
+without it, faithfulness and correctness are null on every row, including
+abstentions. Numeric verification and token overlap are not semantic proof.
+The separate `answerability_correct` metric always records whether the answer
+abstained exactly where the benchmark says it should (1 if so, 0 otherwise).
+Only with `--judge`, abstention correctness is 1 on an unanswerable question
+and 0 otherwise; a successfully judged answer to an unanswerable question has
+correctness 0. Failed judge rows remain unscored even on unanswerable questions.
+Faithfulness is null for abstentions because they assert no claims.
+Invalid, truncated or filtered output from a working judge records
+`judge_failed` and leaves semantic scores unscored for that question. Other
+judge failures, including unmapped client errors, stop with a partial report;
+retryable failures follow the normal retry policy. Construction-time
+configuration errors fail before answering. The already completed answer and
+its resources are retained, including on Ctrl-C during judging. A judge stop
+records `stopped.stage: "judge"`: its question is retained in `results` and
+needs only judging if a caller resumes it. The CLI counts earlier questions
+separately, so that retained answer is not reported as "answered before it".
+The CLI prints quality means and scored/total denominators so missing scoring
+is visible. Judge identity, rubric and
+configuration are recorded; judge latency and API cost appear in
+`judge_overhead`, separately from query resources.
+
+Citation precision is the number of correctly cited distinct chunk IDs divided
+by all distinct resolved cited chunk IDs; recall divides by the distinct gold
+chunk IDs. Repeated citations count once, and retrieved but uncited passages do
+not count. Empty denominators produce null, so a question with no gold chunks
+has no citation recall. An answerable abstention has recall 0. Unresolved and
+invalid markers are recorded separately and do not enter resolved-ID precision.
+Thus high precision alone does not certify citation validity or coverage.
+Report `quality` contains macro means and explicit scored/total denominators.
+
+Per-query stage timings include all outer retrieval searches (including facts
+evidence, decomposition and candidate diagnostics), active model attempts,
+separate `retry_wait`, and total answer time including verification and waits.
+`generate` excludes retry backoff; `other` holds parsing,
+facts lookup, prompt construction and verification overhead. The current stack
+has no reranker: `rerank` is 0 and `rerank_enabled` is false; hybrid fusion is
+included in retrieval. `Answer.latency_ms` retains its original generation-only
+meaning. Judge calls are excluded from query timing. `resources` reports mean
+stage latency and API costs with known/unknown query counts, including in
+partial reports. Its separate `judge_overhead` section aggregates judge
+generation time, retry waits, total time and API cost. Per-row judge overhead
+uses `latency_ms` for active attempts, `retry_wait_ms` for waits and `total_ms`
+for their sum. Time outside retry attempts is recorded with the retry waits.
+
+Hosted API cost requires the provider's token counts and explicit current USD
+rates, supplied as `--input-usd-per-million` and `--output-usd-per-million`.
+Supply judge rates separately with `--judge-input-usd-per-million` and
+`--judge-output-usd-per-million`, especially when using a different judge model.
+No rates are hardcoded. Missing prices/usage, or unknown charges from failed
+retry attempts, produce null cost with a reason. Facts, pre-model abstentions
+and Ollama have zero hosted API cost; this does not price hardware or electricity.
+Known usage on invalid, truncated or filtered judge output is retained and
+priced when rates are supplied. Each cost record includes observed token
+counts, attempted `model_calls`, normally completed `successful_calls` and
+`usage_calls` with token-usage records; a billed but invalid response is not counted as a
+successful judgement. A cost aggregate's `known_total` is null when no cost is
+known, including an empty run; an observed zero-cost run still reports zero.
+Programmatic callers can pass `judge=LLMJudge(config)`, `token_prices=TokenPrices(...)`
+and `judge_token_prices=TokenPrices(...)` from `src.evaluation.quality` to `evaluate`.
+
 `--no-facts` sends every question to retrieval and generation instead of looking
 a numeric one up in the XBRL facts store first, which is the without half of
 that comparison. Each row records the `route` that answered it and the report

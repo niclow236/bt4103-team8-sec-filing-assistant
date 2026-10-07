@@ -181,18 +181,7 @@ def stream(
             f"records {config.prompt_template_id!r}; the results row would lie"
         )
     provider = _provider(config)
-    model = llm if llm is not None else chat_model(config)
-    served = getattr(model, "model", None)
-    if served is not None and served != config.model:
-        raise ValueError(
-            f"the chat model serves {served!r} but the config records {config.model!r}"
-        )
-    client = _client_package(model)
-    if client is not None and client != provider.package:
-        raise ValueError(
-            f"the chat model is a {type(model).__name__} but the config records the "
-            f"provider {config.provider!r}"
-        )
+    model = checked_model(config, llm)
 
     schema = GroundedAnswer.for_sources(prompt.n_sources)
     request = provider.request(config, model, schema, max_tokens)
@@ -260,6 +249,28 @@ def stream(
         stop_reason=stop_reason,
         parse_error=parse_error,
     )
+
+
+def checked_model(config: GenerationConfig, llm: Any | None = None) -> Any:
+    """Build or validate a client against the recorded model and provider.
+
+    Test doubles without client metadata retain the same contract as stream().
+    Recognized LangChain clients must match both their model and API package.
+    """
+    provider = _provider(config)
+    model = llm if llm is not None else chat_model(config)
+    served = getattr(model, "model", None)
+    if served is not None and served != config.model:
+        raise ValueError(
+            f"the chat model serves {served!r} but the config records {config.model!r}"
+        )
+    client = _client_package(model)
+    if client is not None and client != provider.package:
+        raise ValueError(
+            f"the chat model is a {type(model).__name__} but the config records the "
+            f"provider {config.provider!r}"
+        )
+    return model
 
 
 def _client_package(model: Any) -> str | None:
