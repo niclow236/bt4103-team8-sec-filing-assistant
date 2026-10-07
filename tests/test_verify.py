@@ -294,3 +294,12 @@ def test_an_item_cut_into_no_passages_is_not_held_to_its_figures():
     chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
     check = check_no_figure_lost([(parsed, chunks)])
     assert check.passed, check.failures
+
+
+def test_the_gate_runs_the_figure_check_under_the_name_it_reports():
+    """run_checks runs these, or lists them as skipped by these names."""
+    from src.pipeline.verify import corpus_checks
+
+    listed = corpus_checks([], [])
+    assert "no figure lost" in [name for name, _ in listed]
+    assert [name for name, _ in listed] == [run().name for _, run in listed]
