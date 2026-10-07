@@ -318,17 +318,26 @@ def stub_the_gate(monkeypatch, complete):
     monkeypatch.setattr(verify, "iter_chunks", lambda: [])
     monkeypatch.setattr(verify, "configure_edgar", lambda: "test")
     monkeypatch.setattr(verify, "check_against_edgar", lambda *_: Check("matches EDGAR", True, ""))
+    # Each corpus check answers with a result only it could give, and "second"
+    # fails, so what the gate reports is shown to be what the checks returned.
     monkeypatch.setattr(verify, "corpus_checks", lambda records, corpus: [
-        (name, lambda name=name: Check(name, True, "ran")) for name in ("first", "second")
+        ("first", lambda: Check("first", True, "first ran")),
+        ("second", lambda: Check("second", False, "second ran")),
     ])
     return verify.run_checks()
 
 
-def test_a_complete_corpus_runs_every_corpus_check(monkeypatch):
-    checks = {check.name: check for check in stub_the_gate(monkeypatch, complete=True)}
-    assert checks["first"].detail == "ran" and checks["second"].detail == "ran"
+def test_a_complete_corpus_runs_every_corpus_check_once(monkeypatch):
+    checks = stub_the_gate(monkeypatch, complete=True)
+    assert [(check.name, check.passed, check.detail) for check in checks[2:4]] == [
+        ("first", True, "first ran"), ("second", False, "second ran"),
+    ]
+    assert [check.name for check in checks].count("first") == 1
 
 
 def test_an_incomplete_corpus_lists_every_corpus_check_as_skipped(monkeypatch):
-    checks = {check.name: check for check in stub_the_gate(monkeypatch, complete=False)}
-    assert checks["first"].skipped and checks["second"].skipped
+    checks = stub_the_gate(monkeypatch, complete=False)
+    assert [(check.name, check.skipped) for check in checks[2:4]] == [
+        ("first", True), ("second", True),
+    ]
+    assert "ran" not in " ".join(check.detail for check in checks)
