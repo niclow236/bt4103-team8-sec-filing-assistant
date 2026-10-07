@@ -290,14 +290,16 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
     else, and each one stores the digest of that text and the passage's id. So
     where a donor holds a vector under the digest a passage of this corpus
     has, encoding the passage again would only produce that vector again.
-    Copying it takes milliseconds and encoding it about half a second on a
-    laptop CPU. A copy matches its original to the last place a 32-bit float
-    holds, since Chroma normalises a vector each time it stores one.
+    Copying it takes milliseconds, and encoding it took a laptop CPU from
+    under half a second at 1,200 characters to a second at 4,000. A copy
+    matches its original to the last place a 32-bit float holds, since Chroma
+    normalises a vector each time it stores one.
 
     That is the whole of the 1,800-character build when ``data/index/chroma``
-    is current, since that build is the corpus the app already indexed, and
-    between a twentieth and a quarter of the others: an Item or a table small
-    enough to be one passage at every size.
+    is current, since that build is the corpus the app already indexed. Of
+    the others it is the passages that read the same at every size, an Item
+    or a table small enough not to be cut: on the fifteen FY2025 filings, 6%
+    of the 1,200-character build, 18% of the 2,400 and 31% of the 4,000.
 
     Only the vector and its token count are taken from the donor. The text and
     the metadata stored with it come from this corpus, and the digest is

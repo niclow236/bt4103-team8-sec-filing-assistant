@@ -296,7 +296,7 @@ results/
 # The chunk-size sweep's two reported runs (#45). That issue's acceptance
 # criteria ask for the result to be committed with the fingerprint of each
 # build, so these are the one exception to the rule above: the table of each
-# run and its JSON, 16 KB between them. Everything else under results/ stays
+# run and its JSON, 47 KB in four files. Everything else under results/ stays
 # out, the per-question files of these two runs included.
 !/results/
 /results/*
