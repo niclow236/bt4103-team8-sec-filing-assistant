@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,7 @@ from src.evaluation.chunk_sweep import (
     compared_with,
     curve,
     describe_corpus,
+    measure_build,
     run_chunk_sweep,
     sample_questions,
     seed_vectors,
@@ -49,6 +51,7 @@ from src.retrieval import embed
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.constants import CANDIDATE_K, FINAL_K, QUERY_PREFIX
 from src.retrieval.records import Query, corpus_fingerprint
+from src.stack import measured_runs
 from conftest import FakeModel
 
 COMPANIES = {"AAA": "Alpha Corp", "BBB": "Beta Inc."}
@@ -370,7 +373,25 @@ def test_the_run_is_written_in_the_table_the_other_runners_share(finished):
         assert row_summary["recall"] == config["recall"]
 
 
+def test_a_sweep_row_is_not_offered_as_a_configuration_the_app_can_build(finished):
+    """The app labels a configuration with the run that measured it, read from
+    the same ``results/``. A sweep row was measured on a build of its own under
+    ``data/sweep/``, which the app does not search, so it must not be offered."""
+    results_root = finished["run_dir"].parent
+    saved = json.loads((finished["run_dir"] / "summary.json").read_text(encoding="utf-8"))
+    assert len(saved["configurations"]) == len(SIZES) * 3
+    assert measured_runs(results_root) == []
+
+
 def test_what_the_encoder_cut_short_is_read_off_each_dense_index(finished):
+    # The stand-in tokenizer counts 600 tokens, over the limit of 512, for a
+    # passage that holds this word, and 10 for any other.
+    long = {
+        build.budget: sum(
+            "LONGLONG" in row["text"] for row in iter_chunks(processed_dir=build.processed_dir))
+        for build in finished["builds"]
+    }
+    assert all(count >= 1 for count in long.values())
     for row in finished["manifest"]["configurations"]:
         if row["config"]["retriever"] == "bm25":
             # BM25 reads a passage whole, so it has nothing to report.
@@ -378,7 +399,7 @@ def test_what_the_encoder_cut_short_is_read_off_each_dense_index(finished):
             continue
         assert row["max_tokens"] == 512
         assert row["n_indexed"] == row["n_passages"]
-        assert row["n_truncated"] >= 1
+        assert row["n_truncated"] == long[row["config"]["chunk_budget"]] < row["n_indexed"]
         assert row["truncation_rate"] == row["n_truncated"] / row["n_indexed"]
 
 
@@ -409,6 +430,67 @@ def test_the_curve_has_a_column_for_each_size(finished):
     assert len(beside) == 6
     # Two sizes of the three have a count each way, as "found here/found there".
     assert all(len(re.findall("[0-9]+/[0-9]+", line)) == 2 for line in beside)
+
+
+def _curve_row(budget: int, retriever: str, n: int, pair: tuple[int, ...] | None = None) -> dict:
+    """A row whose every measure is a number no other measure or row has."""
+    return {
+        "config": {"id": f"S{budget}-{retriever}", "retriever": retriever,
+                   "chunk_budget": budget, "context_k": {1800: 16, 4000: 7}[budget]},
+        "n_passages": 1000 * n, "median_chars": 100.0 * n,
+        # What the encoder cut short is a dense index's to say.
+        "max_tokens": 512 if retriever == "dense" else None,
+        "truncation_rate": n / 100 if retriever == "dense" else None,
+        "recall": round(0.1 + n / 1000, 3), "ndcg": round(0.2 + n / 1000, 3),
+        "mrr": round(0.3 + n / 1000, 3), "hit_rate": round(0.4 + n / 1000, 3),
+        "top_chars": 1000.0 * n + 5, "context_hit_rate": round(0.6 + n / 1000, 3),
+        "context_chars": 1000.0 * n + 7, "median_latency_ms": 10.0 * n + 8,
+        "against_reference": pair and {
+            "reference": f"S1800-{retriever}",
+            "top_k": {"both": 0, "only_this": pair[0], "only_reference": pair[1], "neither": 0},
+            "context_k": {"both": 0, "only_this": pair[2], "only_reference": pair[3], "neither": 0},
+        },
+    }
+
+
+def test_the_curve_prints_each_measure_from_the_field_that_holds_it():
+    """A line read from the wrong field, the wrong row or the wrong way round
+    prints a number that is not the one expected here. In the shared run the
+    two cutoffs find the same questions, so their lines print the same."""
+    printed = curve([
+        _curve_row(1800, "bm25", 1), _curve_row(4000, "bm25", 2, pair=(21, 22, 23, 24)),
+        _curve_row(1800, "dense", 3), _curve_row(4000, "dense", 4, pair=(31, 32, 33, 34)),
+    ], 10)
+
+    # A label fills the first 52 columns, and an empty cell leaves no word.
+    assert [(line[:52].rstrip(), line[52:].split()) for line in printed.splitlines()] == [
+        ("chunk budget, characters", ["1,800", "4,000"]),
+        ("passages", ["1,000", "2,000"]),
+        ("median passage, characters", ["100", "200"]),
+        ("cut short by the encoder at 512 tokens", ["3.0%", "4.0%"]),
+        ("bm25", []),
+        ("  Recall@10", ["0.101", "0.102"]),
+        ("  nDCG@10", ["0.201", "0.202"]),
+        ("  MRR@10", ["0.301", "0.302"]),
+        ("  supporting passage in the top 10", ["40.1%", "40.2%"]),
+        ("  characters in the top 10, mean", ["1,005", "2,005"]),
+        ("  in the same prompt (top 16/7)", ["60.1%", "60.2%"]),
+        ("  characters in that prompt, mean", ["1,007", "2,007"]),
+        ("  median search, ms", ["18", "28"]),
+        ("  found only here / only at reference, top 10", ["21/22"]),
+        ("  found only here / only at reference, same prompt", ["23/24"]),
+        ("dense", []),
+        ("  Recall@10", ["0.103", "0.104"]),
+        ("  nDCG@10", ["0.203", "0.204"]),
+        ("  MRR@10", ["0.303", "0.304"]),
+        ("  supporting passage in the top 10", ["40.3%", "40.4%"]),
+        ("  characters in the top 10, mean", ["3,005", "4,005"]),
+        ("  in the same prompt (top 16/7)", ["60.3%", "60.4%"]),
+        ("  characters in that prompt, mean", ["3,007", "4,007"]),
+        ("  median search, ms", ["38", "48"]),
+        ("  found only here / only at reference, top 10", ["31/32"]),
+        ("  found only here / only at reference, same prompt", ["33/34"]),
+    ]
 
 
 # --- running again ----------------------------------------------------------
@@ -584,8 +666,56 @@ def test_a_vector_whose_text_has_changed_is_not_copied(sources, fake_model):
                         [donor.chroma_dir]) == len(shared) - 1
     held = embed.open_collection(target.chroma_dir, create=False).get(include=[])["ids"]
     assert changed["chunk_id"] not in held
-    # Copying leaves the index between two states, so it has no manifest yet.
+
+
+def test_a_build_already_indexed_takes_the_copy_in_place_of_its_stale_vector(
+        sources, fake_model):
+    """A build indexed before one of its passages changed.
+
+    The donor holds the vector for what the passage says now. That vector
+    replaces the stale one, stored with this corpus's own text and metadata,
+    and the manifest is gone while the index is between the two.
+    """
+    donor, target = _two_builds(sources)
+    embed.build(chroma_dir=donor.chroma_dir, processed_dir=donor.processed_dir)
+    shared = _shared(donor, target)
+    path = next(target.processed_dir.glob("AAA/*.json"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    passage = next(chunk for chunk in data["chunks"] if chunk["chunk_id"] in shared)
+    chunk_id, current = passage["chunk_id"], passage["text"]
+
+    # The target is indexed while that passage still reads differently.
+    passage["text"] = current + " As first reported."
+    passage["n_chars"] = len(passage["text"])
+    path.write_text(json.dumps(data), encoding="utf-8")
+    embed.build(chroma_dir=target.chroma_dir, processed_dir=target.processed_dir)
+    stale = _vectors(target.chroma_dir)[chunk_id]
+    assert embed.manifest_file_for(target.chroma_dir).exists()
+    # Then it is cut again, and reads as the donor indexed it.
+    passage["text"], passage["n_chars"] = current, len(current)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    # What the donor stored beside the vector is not what this corpus says.
+    theirs = embed.open_collection(donor.chroma_dir, create=False)
+    stored = theirs.get(ids=[chunk_id], include=["metadatas"])["metadatas"][0]
+    theirs.update(ids=[chunk_id], metadatas=[{**stored, "ticker": "ZZZ"}])
+
+    assert seed_vectors(target.chroma_dir, target.processed_dir, [donor.chroma_dir]) == 1
+    # Copying leaves the index between two states, so its manifest goes first.
     assert not embed.manifest_file_for(target.chroma_dir).exists()
+    found = embed.open_collection(target.chroma_dir, create=False).get(
+        ids=[chunk_id], include=["embeddings", "documents", "metadatas"])
+    original = _vectors(donor.chroma_dir)[chunk_id]
+    assert np.allclose(found["embeddings"][0], original, rtol=0, atol=1e-6)
+    assert not np.allclose(found["embeddings"][0], stale, rtol=0, atol=1e-6)
+    assert found["documents"] == [current]
+    assert found["metadatas"][0]["ticker"] == "AAA"
+    assert found["metadatas"][0][embed.DIGEST_FIELD] == stored[embed.DIGEST_FIELD]
+
+    # Nothing is left for the encoder, and the index is whole again.
+    calls = fake_model.calls
+    embed.build(chroma_dir=target.chroma_dir, processed_dir=target.processed_dir)
+    assert fake_model.calls == calls
+    assert embed.check_index(target.chroma_dir, target.processed_dir) == []
 
 
 # --- the questions ----------------------------------------------------------
@@ -639,6 +769,40 @@ def test_each_size_is_set_beside_the_reference_size_question_by_question(finishe
         row["against_reference"] for row in rows.values()]
 
 
+def test_a_row_is_set_beside_the_reference_row_of_its_retriever(sources, fake_model):
+    """The counts a row records, worked out again from the questions of both rows.
+
+    At a top 1 the three sizes find different questions. In the shared run
+    every size finds the same ones, and a row set beside itself would read
+    exactly as one set beside the reference.
+    """
+    manifest = run_chunk_sweep(
+        run_id="top-one", budgets=SIZES, retrievers=["bm25"], per_filing=0, top_k=1, **sources)
+    run_dir = sources["results_root"] / "top-one"
+    found = {
+        size: {row["question_id"]: (row["hit"], row["context_hit"])
+               for row in _rows(run_dir, f"S{size}-bm25")}
+        for size in SIZES
+    }
+    disagreed = 0
+    for row in manifest["configurations"]:
+        size = row["config"]["chunk_budget"]
+        if size == 1200:
+            assert row["against_reference"] is None
+            continue
+        assert row["against_reference"]["reference"] == "S1200-bm25"
+        for position, cutoff in enumerate(("top_k", "context_k")):
+            here = {name for name, hits in found[size].items() if hits[position]}
+            there = {name for name, hits in found[1200].items() if hits[position]}
+            assert row["against_reference"][cutoff] == {
+                "both": len(here & there), "only_this": len(here - there),
+                "only_reference": len(there - here), "neither": QUESTIONS - len(here | there),
+            }
+            disagreed += len(here ^ there)
+    # With no question the sizes disagree on, the counts above would prove nothing.
+    assert disagreed > 0
+
+
 def test_two_rows_are_compared_on_the_questions_one_found_and_the_other_did_not():
     here = {"q1": (True, True), "q2": (True, False), "q3": (False, True), "q4": (False, False),
             "q5": (True, True)}
@@ -681,6 +845,64 @@ def test_slicing_a_deep_search_is_refused_where_the_order_depends_on_the_cutoff(
         check_slicing({"bm25": _Ranked(stable=False)}, queries, top_k=10)
 
 
+class _Fixed:
+    """A retriever that returns the same twelve passages, best first, for every question."""
+
+    name = "bm25"
+
+    def __init__(self):
+        self.depths: list[int] = []
+
+    def search(self, query, k=None):
+        wanted = query.top_k if k is None else k
+        self.depths.append(wanted)
+        # The passage ranked n holds n characters.
+        return [
+            SimpleNamespace(chunk_id=f"c{rank}", text="x" * rank, score=1.0 / rank, rank=rank,
+                            retriever="bm25")
+            for rank in range(1, 13)
+        ][:wanted]
+
+
+def test_each_cutoff_is_scored_on_its_own_share_of_one_ranking(tmp_path, monkeypatch):
+    """Twelve passages of 2,400 characters fill the prompt, and ten are the top 10.
+
+    A supporting passage ranked eleventh is missed by the top 10 and found in
+    the prompt. One ranked third is found by both. The synthetic filings are
+    too small to tell the two cutoffs apart, so the ranking is fixed here.
+    """
+    retriever = _Fixed()
+    monkeypatch.setattr(sweep, "build_retriever", lambda key, **_: retriever)
+    build = SweepBuild(2400, tmp_path / "2400")
+    assert build.context_k == 12
+    questions = [_question("near", "AAA", 2024, ["c3"]), _question("far", "AAA", 2024, ["c11"])]
+
+    summaries, found = measure_build(
+        build, questions, ("bm25",), run_dir=tmp_path / "run", top_k=10,
+        described={}, support={"near": "prose", "far": "tables"},
+    )
+
+    near, far = _rows(tmp_path / "run", "S2400-bm25")
+    # Each question is searched once, to the deeper cutoff.
+    assert retriever.depths[-2:] == [12, 12]
+    assert far["retrieved_chunk_ids"] == [f"c{rank}" for rank in range(1, 13)]
+    assert (near["hit"], near["context_hit"]) == (True, True)
+    assert (far["hit"], far["context_hit"]) == (False, True)
+    # The metrics are the top 10's, so the eleventh passage earns nothing.
+    assert (far["recall"], far["ndcg"], far["mrr"]) == (0.0, 0.0, 0.0)
+    assert near["recall"] == 1.0 and near["mrr"] == pytest.approx(1 / 3)
+    assert (far["top_chars"], far["context_chars"]) == (sum(range(1, 11)), sum(range(1, 13)))
+    assert found == {"S2400-bm25": {"near": (True, True), "far": (False, True)}}
+
+    (summary,) = summaries
+    assert (summary["hit_rate"], summary["context_hit_rate"]) == (0.5, 1.0)
+    assert (summary["top_chars"], summary["context_chars"]) == (55, 78)
+    assert summary["by_support"]["tables"] == {
+        "questions": 1, "hit_rate": 0.0, "context_hit_rate": 1.0, "mrr": 0.0}
+    # BM25 reads a passage whole, so it has nothing cut short to report.
+    assert summary["n_truncated"] is None
+
+
 # --- what a run refuses before it starts ------------------------------------
 
 
@@ -692,13 +914,15 @@ def test_slicing_a_deep_search_is_refused_where_the_order_depends_on_the_cutoff(
     ({"per_filing": -1}, "per_filing zero or more"),
     ({"run_id": "../elsewhere"}, "run_id must contain only"),
 ])
-def test_a_bad_setting_is_refused_before_anything_is_built(sources, settings, message):
+def test_a_bad_setting_is_refused_before_anything_is_built(
+        sources, fake_model, settings, message):
     with pytest.raises(ValueError, match=message):
         run_chunk_sweep(**{"run_id": "refused", "budgets": SIZES, **sources, **settings})
     assert not sources["sweep_dir"].exists() and not sources["results_root"].exists()
+    assert fake_model.calls == 0
 
 
-def test_a_size_that_needs_more_passages_than_hybrid_fuses_is_refused(sources):
+def test_a_size_that_needs_more_passages_than_hybrid_fuses_is_refused(sources, fake_model):
     """500 characters would take 58 passages to fill the prompt, and hybrid fuses 50."""
     assert SweepBuild(500, Path()).context_k > CANDIDATE_K
     with pytest.raises(ValueError, match="CANDIDATE_K"):
@@ -708,7 +932,7 @@ def test_a_size_that_needs_more_passages_than_hybrid_fuses_is_refused(sources):
     assert not sources["sweep_dir"].exists()
 
 
-def test_a_run_without_its_inputs_says_which_command_makes_them(sources):
+def test_a_run_without_its_inputs_says_which_command_makes_them(sources, fake_model):
     missing = {**sources, "facts_file": sources["facts_file"].parent / "absent.parquet"}
     with pytest.raises(FileNotFoundError, match="python -m src.retrieval facts"):
         run_chunk_sweep(run_id="refused", budgets=SIZES, **missing)
@@ -720,7 +944,7 @@ def test_a_run_without_its_inputs_says_which_command_makes_them(sources):
     assert not sources["sweep_dir"].exists() and not sources["results_root"].exists()
 
 
-def test_a_fiscal_year_no_filing_reports_on_uses_no_run_id(sources):
+def test_a_fiscal_year_no_filing_reports_on_uses_no_run_id(sources, fake_model):
     with pytest.raises(FileNotFoundError, match="fiscal years asked for"):
         run_chunk_sweep(run_id="refused", budgets=SIZES, fiscal_years=[1999], **sources)
     assert not sources["results_root"].exists()
