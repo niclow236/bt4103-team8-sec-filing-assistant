@@ -485,12 +485,13 @@ def _is_table_debris(
     because two cells can cover a figure in pieces: "$14" and an unrelated "879"
     blank every digit of "$14,879" and leave only its comma.
 
-    That reads only what a comma shows. A figure printed without one is not
-    told apart from two cells run together: "$14" and "879" cover "$14879" as
-    "July 31, 2020" and "0.4" cover "20200.4", so such a figure, lost from its
-    grid, would still be dropped. No filing in the corpus has one. A number
-    under four characters gets no promise either, since cells under three
-    characters are not matched at all.
+    That reads only what a comma shows. Two cells that meet between two digits
+    are not told apart from two cells run together: "$14" and "879" cover
+    "$14879", and "$12,34" and "5,678" cover "$12,345,678", exactly as "July 31,
+    2020" and "0.4" cover "20200.4". So a figure lost from its grid that
+    unrelated cells split that way would still be dropped. No filing in the
+    corpus has one. A number under four characters gets no promise either,
+    since cells under three characters are not matched at all.
 
     A real sentence is spared because it closes with punctuation, and a heading
     such as "Americas" is spared because it carries no figures at all.
