@@ -377,7 +377,8 @@ def check_no_figure_lost(filings: Iterable[tuple[ParsedFiling, list[dict]]]) -> 
     still had it was dropped (#134).
 
     A figure is held when a passage of the filing prints it, or when cells of
-    its Item's table passages cover every one of its digits. The second is what
+    its Item's table passages cover every one of its digits and every comma
+    between two of them, judged by the chunker's own test. The second is what
     lets a flattened copy go, since flattening runs cells together: "July 31,
     2020" and "0.4" become "20200.4", a figure printed nowhere, though both
     cells are. The cells are the Item's alone, as the chunker's are, because

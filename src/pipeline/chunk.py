@@ -474,15 +474,23 @@ def _is_table_debris(
     "20200.4", a figure no table holds, and one such join keeps the whole block.
     Those were 199 of the 286 passages the encoder was truncating. So a block
     is also debris when the table's own cells account for it: remove every cell
-    found in it, and if every digit of every figure went with a cell, and at
-    most a fifth of its letters and digits are left, the block was the table.
+    found in it, and if no figure kept a digit, or a comma between two of its
+    digits, and at most a fifth of its letters and digits are left, the block
+    was the table.
 
     Every digit, because a cell can cover a figure in part. Meta's FY2021 rebuild
     lost "$14,879" from one row, and "$14" is a cell of another table, so
     removing it left ",879": too short to read as a figure, and the only copy of
-    14,879 in the filing was dropped (#134). A figure of four characters or more
-    that no passage carries now always keeps its block. A shorter number gets
-    no such promise, since cells under three characters are not matched at all.
+    14,879 in the filing was dropped (#134). And the commas between digits,
+    because two cells can cover a figure in pieces: "$14" and an unrelated "879"
+    blank every digit of "$14,879" and leave only its comma.
+
+    That reads only what a comma shows. A figure printed without one is not
+    told apart from two cells run together: "$14" and "879" cover "$14879" as
+    "July 31, 2020" and "0.4" cover "20200.4", so such a figure, lost from its
+    grid, would still be dropped. No filing in the corpus has one. A number
+    under four characters gets no promise either, since cells under three
+    characters are not matched at all.
 
     A real sentence is spared because it closes with punctuation, and a heading
     such as "Americas" is spared because it carries no figures at all.

@@ -588,7 +588,10 @@ from one table and `879` from another do not pass for 14,879. A figure here is a
 run of four or more digits and commas, such as `1,182`, and `python -m
 src.pipeline verify` fails a corpus in which a removed copy held one that no
 passage of its filing does. Anything shorter gets no such guarantee: a count of
-46, or the 345 of a decimal such as 12.345.
+46, or the 345 of a decimal such as 12.345. Nor does a figure printed without a
+comma that two unrelated cells happen to cover, `$14` and `879` for `$14879`,
+since that reads exactly like two cells run together; no filing in the corpus
+has one.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
