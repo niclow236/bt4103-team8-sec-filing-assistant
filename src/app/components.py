@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
 import streamlit as st
+import pandas as pd
 
 from src.config import read_tickers
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
@@ -45,6 +46,82 @@ _ITEM_MENTION = re.compile(
     r"\bitems?\s+((?:\d{1,2}[a-z]?)(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)\d{1,2}[a-z]?\b)*)",
     re.IGNORECASE,
 )
+
+
+def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
+    rows = []
+    for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        rows.append({"Configuration": item["config_id"], "Name": item["name"],
+                     "Questions": saved.get("questions", item["questions"]),
+                     **{metric.replace("_", " ").title(): saved.get(metric)
+                        for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy")}})
+    return pd.DataFrame(rows)
+
+
+def _render_results_benchmark(title: str, configurations: list[dict[str, Any]],
+                              benchmark: str) -> None:
+    st.subheader(title)
+    if not configurations:
+        st.info("No saved results for this benchmark.")
+        return
+    st.dataframe(_results_table(configurations, benchmark), width="stretch", hide_index=True)
+    chart_rows = result_chart_rows(configurations, benchmark)
+    if chart_rows:
+        chart = pd.DataFrame(chart_rows).pivot(index="Configuration", columns="Metric",
+                                                values="Value")
+        st.bar_chart(chart)
+
+
+def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
+    """Return only the four retrieval metrics; counts are not scores."""
+    rows = []
+    for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy"):
+            value = saved.get(metric)
+            if value is not None:
+                rows.append({"Configuration": item["config_id"],
+                             "Metric": metric.replace("_", " ").title(),
+                             "Value": float(value)})
+    return rows
+
+
+def render_results(runs: list[dict[str, Any]]) -> None:
+    """Draw the saved Results page; loading and caching remain in state.py."""
+    st.header("Results")
+    st.caption("Saved benchmark results are read from results/<run-id>/; no evaluation is rerun.")
+    if not runs:
+        st.info("No completed benchmark runs were found under results/.")
+        return
+    if st.button("Reload saved results"):
+        st.cache_data.clear()
+        st.rerun()
+    run_id = st.selectbox("Run", [run["run_id"] for run in runs])
+    selected = next(run for run in runs if run["run_id"] == run_id)
+    retrieval = [item for item in selected["configurations"]
+                 if any(item["benchmark_metrics"].get(kind, {}).get("recall") is not None
+                        for kind in ("handwritten", "mechanical"))]
+    manual = [item for item in retrieval if "handwritten" in item["benchmark_metrics"]]
+    mechanical = [item for item in retrieval if "mechanical" in item["benchmark_metrics"]]
+    tab_manual, tab_mechanical = st.tabs(["Hand-written benchmark", "Mechanical XBRL benchmark"])
+    with tab_manual:
+        _render_results_benchmark("Hand-written benchmark", manual, "handwritten")
+    with tab_mechanical:
+        _render_results_benchmark("Mechanical XBRL benchmark", mechanical, "mechanical")
+
+    models = [item for item in selected["configurations"]
+              if item["metrics"].get("abstention_rate") is not None]
+    if models:
+        st.subheader("Answer-model ablation")
+        st.dataframe(pd.DataFrame([
+            {"Configuration": item["config_id"], "Name": item["name"],
+             "Questions": item["questions"],
+             "Abstention rate": item["metrics"].get("abstention_rate"),
+             "Median latency (ms)": item["metrics"].get("median_latency_ms"),
+             "LLM questions": item["metrics"].get("llm_questions")}
+            for item in models
+        ]), width="stretch", hide_index=True)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
