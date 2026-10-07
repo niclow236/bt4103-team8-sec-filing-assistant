@@ -71,6 +71,15 @@ def test_a_flattened_table_with_cells_run_together_is_debris():
     assert debris("Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82")
 
 
+def test_a_row_label_is_removed_before_a_shorter_cell_inside_it():
+    """"Balance" taken first would leave "-July 31, 2020" and strand the year."""
+    from dataclasses import replace
+
+    table = replace(OPTIONS, rows=[*OPTIONS.rows, ["Balance", "0.1", "$6.00"]])
+    flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
+    assert _is_table_debris(flattened, table_figures([table]), table_cells([table]))
+
+
 def test_a_block_holding_a_figure_the_table_lacks_is_kept():
     assert not debris("Balance-July 31, 20200.4 $6.53 Granted0.5 $101.43 Forfeited 9,999")
 
@@ -257,3 +266,35 @@ def test_the_row_label_caption_is_kept_beside_the_statement_title():
 def test_a_table_with_no_statement_title_is_unchanged():
     passages = chunk_tables(section_with(long_table("Operations")), accession_no="acc")
     assert all(p.text.startswith("Operations") for p in passages)
+
+
+def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
+    """Cells of one length were blanked in set order, which Python shuffles per process.
+
+    "951" taken before "395" and "107" strands the 3 and the 7 of "395107", so the
+    same block was kept on one run and dropped on the next.
+    """
+    import os
+    import subprocess
+    import sys
+
+    script = (
+        "from src.pipeline.records import TableRecord\n"
+        "from tests.test_chunk import section\n"
+        "from src.pipeline.chunk import prose_blocks\n"
+        "leases = TableRecord(table_index=0, caption='Leases', headers=['', '2021', '2020'],\n"
+        "    rows=[['Finance leases', '395', '107'], ['Operating leases', '951', '88']],\n"
+        "    n_rows=2, n_cols=3)\n"
+        "print(prose_blocks(section('Finance leases395107', tables=[leases]))[1])\n"
+    )
+    # Started together, since each one spends a second importing edgar.
+    runs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True,
+            env={**os.environ, "PYTHONHASHSEED": str(seed)},
+        )
+        for seed in range(12)
+    ]
+    verdicts = {run.communicate()[0].strip() for run in runs}
+    assert [run.returncode for run in runs] == [0] * 12
+    assert verdicts == {"['Finance leases395107']"}

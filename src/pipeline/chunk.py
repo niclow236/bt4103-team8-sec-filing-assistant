@@ -380,11 +380,16 @@ def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
     that happens to sit inside it. Each cell is blanked character for character
     rather than cut out, so what is left lines up with the block: a figure only
     part of which a cell covered still shows which of its digits were not.
+
+    Cells of one length go in alphabetical order. Which of two overlapping
+    cells is blanked first decides what is left, and in set order, which Python
+    shuffles per process, the same block was dropped on one run and kept on
+    the next.
     """
     grams = {block[start:start + 3] for start in range(len(block) - 2)}
     found = sorted(
         {cell for gram in grams & cells.keys() for cell in cells[gram] if cell in block},
-        key=len, reverse=True,
+        key=lambda cell: (-len(cell), cell),
     )
     for cell in found:
         block = block.replace(cell, " " * len(cell))
