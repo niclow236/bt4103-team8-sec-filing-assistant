@@ -40,6 +40,12 @@ is the number of passages of a size that fill the prompt the app sends today,
 the four sizes. The first asks which size ranks best, the second which size
 puts the answer in front of the model for the same prompt.
 
+Because the questions are the same, each row is also set beside the row of
+the shipped size that the same retriever searched: how many questions it
+finds that 1,800 misses, and how many 1,800 finds that it misses. Two rates a
+point apart can be a handful of questions or a hundred traded each way, and
+only the counts say which.
+
 Every question is searched once per retriever, at the deeper of the two
 cutoffs, and the ranking sliced. ``check_slicing`` compares that with direct
 searches before a build's numbers are taken.
@@ -126,8 +132,8 @@ SEED_PAGE = 500
 # one table lines up under the other.
 SWEEP_FIELDS = (
     "retriever", "chunk_budget", "chunk_overlap", "table_budget", "n_passages",
-    "n_filings", "median_chars", "supporting_per_question", "hit_rate", "context_k",
-    "context_hit_rate", "context_chars", "max_tokens", "n_indexed", "n_truncated",
+    "n_filings", "median_chars", "supporting_per_question", "hit_rate", "top_chars",
+    "context_k", "context_hit_rate", "context_chars", "max_tokens", "n_indexed", "n_truncated",
     "truncation_rate", "build_ms", "median_latency_ms", "corpus_fingerprint",
     "dense_fingerprint",
 )
@@ -487,8 +493,13 @@ def measure_build(
     top_k: int,
     described: Mapping[str, Any],
     support: Mapping[str, str],
-) -> list[dict[str, Any]]:
-    """Ask one build every question through each retriever, and write its rows."""
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, tuple[bool, bool]]]]:
+    """Ask one build every question through each retriever, and write its rows.
+
+    Returns each row's summary, and for each row whether every question found a
+    supporting passage at the two cutoffs, for ``compared_with`` to set one size
+    beside another question by question.
+    """
     parts: dict[Any, Any] = {}
     try:
         built = {
@@ -512,6 +523,7 @@ def measure_build(
     truncation = _truncation(built.get(DENSE) or built.get(HYBRID))
 
     summaries: list[dict[str, Any]] = []
+    found: dict[str, dict[str, tuple[bool, bool]]] = {}
     for key, retriever in built.items():
         configuration = {
             "id": f"{build.id}-{key}",
@@ -550,6 +562,7 @@ def measure_build(
                 **{name: metrics[name] for name in METRICS},
                 "hit": any(passage.chunk_id in supporting for passage in top),
                 "context_hit": any(passage.chunk_id in supporting for passage in context),
+                "top_chars": sum(len(passage.text) for passage in top),
                 "context_chars": sum(len(passage.text) for passage in context),
                 "supported_by": support[question.question_id],
                 "latency_ms": latency_ms,
@@ -564,6 +577,7 @@ def measure_build(
             **_summary(rows),
             "hit_rate": overall["hit_rate"],
             "context_hit_rate": overall["context_hit_rate"],
+            "top_chars": mean(row["top_chars"] for row in rows),
             "context_chars": mean(row["context_chars"] for row in rows),
             # The benchmark names at most three passages that print a figure.
             # A smaller size cuts a filing into more passages, so more of its
@@ -589,10 +603,34 @@ def measure_build(
         (output_dir / "summary.json").write_text(
             json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         summaries.append(summary)
+        found[configuration["id"]] = {
+            row["question_id"]: (row["hit"], row["context_hit"]) for row in rows}
         print(f"  {configuration['id']}: recall {summary['recall']:.3f}, "
               f"supporting passage in the top {top_k} for {summary['hit_rate']:.1%}, "
               f"in the top {build.context_k} for {summary['context_hit_rate']:.1%}", flush=True)
-    return summaries
+    return summaries, found
+
+
+def compared_with(
+    found: Mapping[str, tuple[bool, bool]], reference: Mapping[str, tuple[bool, bool]],
+) -> dict[str, dict[str, int]]:
+    """One row set beside another, question by question, at each cutoff.
+
+    Every size is asked the same questions, so the gap between two hit rates
+    is made of questions one size found and the other did not. Two sizes a
+    point apart may differ on a handful of questions or trade a hundred each
+    way, and a rate cannot say which. ``only_this`` and ``only_reference``
+    can: where they are close, the sizes are not told apart by this run.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for position, cutoff in enumerate(("top_k", "context_k")):
+        tally = {"both": 0, "only_this": 0, "only_reference": 0, "neither": 0}
+        for question_id, hits in found.items():
+            here, there = hits[position], reference[question_id][position]
+            tally["both" if here and there else "only_this" if here
+                  else "only_reference" if there else "neither"] += 1
+        counts[cutoff] = tally
+    return counts
 
 
 # --- the run ----------------------------------------------------------------
@@ -620,7 +658,7 @@ def curve(summaries: Sequence[Mapping[str, Any]], top_k: int) -> str:
     first = {budget: of_size[budget][0] for budget in budgets}
 
     def line(label: str, cells: Sequence[str]) -> str:
-        return f"{label:<44}" + "".join(f"{cell:>10}" for cell in cells)
+        return f"{label:<52}" + "".join(f"{cell:>10}" for cell in cells)
 
     lines = [
         line("chunk budget, characters", [f"{budget:,}" for budget in budgets]),
@@ -649,6 +687,7 @@ def curve(summaries: Sequence[Mapping[str, Any]], top_k: int) -> str:
             (f"  nDCG@{top_k}", "ndcg", "{:.3f}"),
             (f"  MRR@{top_k}", "mrr", "{:.3f}"),
             (f"  supporting passage in the top {top_k}", "hit_rate", "{:.1%}"),
+            (f"  characters in the top {top_k}, mean", "top_chars", "{:,.0f}"),
             (f"  in the same prompt (top {depths})", "context_hit_rate", "{:.1%}"),
             ("  characters in that prompt, mean", "context_chars", "{:,.0f}"),
             ("  median search, ms", "median_latency_ms", "{:.0f}"),
@@ -657,6 +696,17 @@ def curve(summaries: Sequence[Mapping[str, Any]], top_k: int) -> str:
                 "" if row is None or row[field] is None else form.format(row[field])
                 for row in rows
             ]))
+        # How many questions each size finds that the reference size misses,
+        # then how many the reference finds that it misses.
+        for label, cutoff in ((f"  found only here / only at reference, top {top_k}", "top_k"),
+                              ("  found only here / only at reference, same prompt", "context_k")):
+            pairs = [None if row is None else row.get("against_reference") for row in rows]
+            if any(pairs):
+                lines.append(line(label, [
+                    "" if pair is None
+                    else f"{pair[cutoff]['only_this']}/{pair[cutoff]['only_reference']}"
+                    for pair in pairs
+                ]))
     return "\n".join(lines)
 
 
@@ -748,8 +798,10 @@ def run_chunk_sweep(
     chosen = sample_questions(generated, per_filing=per_filing, seed=seed)
     if not chosen:
         raise ValueError("no question has a supporting passage in every build")
-    # Grouped once, by what supports a question in the build nearest the
-    # shipped size, so a group holds the same questions in every column.
+    # The size every other is set beside: the shipped one, or the nearest to
+    # it in a run that leaves it out. Questions are grouped once, by what
+    # supports them at this size, so a group holds the same questions in
+    # every column.
     reference = min(budgets, key=lambda budget: abs(budget - CHUNK_CHAR_BUDGET))
     by_id = {budget: {question.question_id: question for question in questions}
              for budget, questions in generated.items()}
@@ -761,13 +813,23 @@ def run_chunk_sweep(
           f"through {', '.join(retrievers)}", flush=True)
 
     summaries: list[dict[str, Any]] = []
+    found: dict[str, dict[str, tuple[bool, bool]]] = {}
     for build in builds:
-        summaries += measure_build(
+        measured, hits = measure_build(
             build, [by_id[build.budget][question_id] for question_id in chosen], retrievers,
             run_dir=run_dir, top_k=top_k, described=described[build.budget], support=support,
         )
+        summaries += measured
+        found.update(hits)
         # One size's BM25 fit and encoder are released before the next loads.
         gc.collect()
+    # Each row beside the row of the reference size that the same retriever
+    # searched. The reference row has nothing to be set beside.
+    for summary in summaries:
+        config = summary["config"]
+        beside = f"S{reference}-{config['retriever']}"
+        summary["against_reference"] = None if config["id"] == beside else {
+            "reference": beside, **compared_with(found[config["id"]], found[beside])}
 
     return write_comparison(
         run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
@@ -776,6 +838,7 @@ def run_chunk_sweep(
         commit=commit,
         embedding_model=EMBED_MODEL if dense else None,
         context_chars=CONTEXT_CHARS,
+        reference_budget=reference,
         corpus={
             "tickers": sorted({ticker.upper() for ticker in tickers}) if tickers else None,
             "fiscal_years": sorted(set(fiscal_years)) if fiscal_years else None,

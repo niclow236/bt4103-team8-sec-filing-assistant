@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from src.evaluation.chunk_sweep import (
     build_indexes,
     check_slicing,
     chunk_corpus,
+    compared_with,
     curve,
     describe_corpus,
     run_chunk_sweep,
@@ -323,7 +325,10 @@ def test_both_cutoffs_are_scored_from_one_ranking(finished):
             # A deeper cutoff holds everything a shallower one does.
             if settings["context_k"] >= settings["top_k"]:
                 assert row["context_hit"] >= row["hit"]
-            assert row["context_chars"] > 0
+            assert row["context_chars"] > 0 and row["top_chars"] > 0
+            # And holds at least as much text.
+            if settings["context_k"] >= settings["top_k"]:
+                assert row["context_chars"] >= row["top_chars"]
 
 
 def test_each_row_records_the_fingerprint_of_the_build_it_was_measured_on(finished):
@@ -398,6 +403,12 @@ def test_the_curve_has_a_column_for_each_size(finished):
     assert sum(line.strip().startswith("Recall@10") for line in lines) == 3
     assert any("in the same prompt (top 48/24/12)" in line for line in lines)
     assert sum("characters in that prompt, mean" in line for line in lines) == 3
+    assert sum("characters in the top 10, mean" in line for line in lines) == 3
+    # One line a retriever at each cutoff, with nothing under the reference size itself.
+    beside = [line for line in lines if "found only here / only at reference" in line]
+    assert len(beside) == 6
+    # Two sizes of the three have a count each way, as "found here/found there".
+    assert all(len(re.findall("[0-9]+/[0-9]+", line)) == 2 for line in beside)
 
 
 # --- running again ----------------------------------------------------------
@@ -603,6 +614,43 @@ def test_the_draw_is_the_same_every_run_and_takes_all_of_a_small_filing():
     assert [question_id for question_id in drawn if question_id.startswith("b")] == [
         "b0", "b1", "b2"]
     assert len(drawn) == 5 + 3
+
+
+def test_each_size_is_set_beside_the_reference_size_question_by_question(finished):
+    """1,200 stands in for the shipped size here, as the nearest to it of the three."""
+    assert finished["manifest"]["reference_budget"] == 1200
+    rows = {row["config"]["id"]: row for row in finished["manifest"]["configurations"]}
+    for config_id, row in rows.items():
+        retriever = row["config"]["retriever"]
+        pair = row["against_reference"]
+        if row["config"]["chunk_budget"] == 1200:
+            assert pair is None
+            continue
+        reference = rows[f"S1200-{retriever}"]
+        assert pair["reference"] == reference["config"]["id"]
+        for cutoff, rate in (("top_k", "hit_rate"), ("context_k", "context_hit_rate")):
+            counts = pair[cutoff]
+            assert sum(counts.values()) == QUESTIONS
+            # The two rates, taken apart into the questions they are made of.
+            assert counts["both"] + counts["only_this"] == round(row[rate] * QUESTIONS)
+            assert counts["both"] + counts["only_reference"] == round(reference[rate] * QUESTIONS)
+    saved = json.loads((finished["run_dir"] / "summary.json").read_text(encoding="utf-8"))
+    assert [row["against_reference"] for row in saved["configurations"]] == [
+        row["against_reference"] for row in rows.values()]
+
+
+def test_two_rows_are_compared_on_the_questions_one_found_and_the_other_did_not():
+    here = {"q1": (True, True), "q2": (True, False), "q3": (False, True), "q4": (False, False),
+            "q5": (True, True)}
+    there = {"q1": (True, True), "q2": (False, True), "q3": (True, True), "q4": (False, False),
+             "q5": (False, False)}
+    assert compared_with(here, there) == {
+        "top_k": {"both": 1, "only_this": 2, "only_reference": 1, "neither": 1},
+        "context_k": {"both": 2, "only_this": 1, "only_reference": 1, "neither": 1},
+    }
+    # A row beside itself differs on nothing.
+    assert compared_with(here, here)["top_k"] == {
+        "both": 3, "only_this": 0, "only_reference": 0, "neither": 2}
 
 
 def test_a_question_is_grouped_by_the_kind_of_passage_that_supports_it():
