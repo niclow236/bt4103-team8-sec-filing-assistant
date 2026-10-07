@@ -55,14 +55,16 @@ def test_resolved_citations_do_not_claim_fact_verification():
     assert not page.select(".sec-supported")
 
 
-def test_unverified_and_global_checks_remain_visible():
+def test_unverified_paraphrase_is_not_an_ask_page_warning_but_global_checks_remain_visible():
     answer = replace(sample_answer("q"), verification=VerificationResult("factual", (
         VerificationCheck("groundedness", "unverified", 0, "Claim", "No semantic check."),
         VerificationCheck("output", "unverified", None, "Whole answer", "Output needs review."),
     )))
     page = soup(answer)
-    assert "sec-warning" in page.select(".sec-claim")[0]["class"]
-    assert "No semantic check." in page.text
+    claim = page.select(".sec-claim")[0]
+    assert "sec-warning" not in claim["class"]
+    assert claim.select_one(".sec-label") is None
+    assert "No semantic check." not in page.text
     assert "Output needs review." in page.text
 
 
@@ -77,8 +79,8 @@ def test_supported_evidence_outranks_unverified_groundedness_but_not_citation_de
     page = soup(answer)
     rows = page.select(".sec-claim")
     assert "sec-supported" in rows[0]["class"]
-    assert "Completed checks support this claim" in rows[0].text
-    assert "No semantic entailment check was run." in page.text
+    assert "Checked against cited evidence" in rows[0].text
+    assert "No semantic entailment check was run." not in page.text
     assert "sec-warning" in rows[1]["class"]
     assert "sec-supported" not in rows[1]["class"]
 
@@ -90,7 +92,7 @@ def test_word_for_word_sentence_with_only_a_groundedness_check_is_supported():
     )))
     row = soup(answer).select(".sec-claim")[0]
     assert "sec-supported" in row["class"]
-    assert "Completed checks support this claim" in row.text
+    assert "Checked against cited evidence" in row.text
 
 
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html,bad", "https://", "https://[bad"])
