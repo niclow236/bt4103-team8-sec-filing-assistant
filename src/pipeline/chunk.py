@@ -274,6 +274,12 @@ def _rejoin_page_breaks(blocks: list[str]) -> list[str]:
     return joined
 
 
+def _becomes_passages(table: TableRecord) -> bool:
+    """Whether ``chunk_tables`` cuts this table into passages: it needs a header
+    row to repeat on every piece and at least one row beneath it."""
+    return bool(table.rows and table.headers)
+
+
 def table_figures(tables: list[TableRecord]) -> set[str]:
     """Every multi-digit figure the rebuilt tables of an Item actually carry."""
     return {
@@ -359,10 +365,12 @@ def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
 
 
 def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
-    """What is left of a block once every table cell found in it is removed.
+    """The block with every table cell found in it blanked out.
 
     Longest cells first, so a row label is removed whole before a shorter cell
-    that happens to sit inside it.
+    that happens to sit inside it. Each cell is blanked character for character
+    rather than cut out, so what is left lines up with the block: a figure only
+    part of which a cell covered still shows which of its digits were not.
     """
     grams = {block[start:start + 3] for start in range(len(block) - 2)}
     found = sorted(
@@ -370,7 +378,7 @@ def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
         key=len, reverse=True,
     )
     for cell in found:
-        block = block.replace(cell, " ")
+        block = block.replace(cell, " " * len(cell))
     return block
 
 
@@ -390,16 +398,22 @@ def _is_table_debris(
     shareholders' equity comes back with its row labels but without its figures,
     so dropping the flattened copy there would delete numbers that exist nowhere
     else. A block is therefore only dropped once its own figures are confirmed
-    present in a rebuilt table, which makes the loss impossible by construction.
+    present in a rebuilt table that is cut into passages.
 
     That test alone misses most of them, because flattening also runs cells
     into each other: "Balance -- July 31, 2020" followed by "0.4" becomes
     "20200.4", a figure no table holds, and one such join keeps the whole block.
     Those were 199 of the 286 passages the encoder was truncating. So a block
     is also debris when the table's own cells account for it: remove every cell
-    found in it, and if no figure is left and at most a fifth of its letters
-    and digits, the block was the table. The guarantee is the same one -- a
-    figure present nowhere else survives the removal and keeps the block.
+    found in it, and if every digit of every figure went with a cell, and at
+    most a fifth of its letters and digits are left, the block was the table.
+
+    Every digit, because a cell can cover a figure in part. Meta's FY2021 rebuild
+    lost "$14,879" from one row, and "$14" is a cell of another table, so
+    removing it left ",879": too short to read as a figure, and the only copy of
+    14,879 in the filing was dropped (#134). A figure of four characters or more
+    that no passage carries now always keeps its block. A shorter number gets
+    no such promise, since cells under three characters are not matched at all.
 
     A real sentence is spared because it closes with punctuation, and a heading
     such as "Americas" is spared because it carries no figures at all.
@@ -419,9 +433,11 @@ def _is_table_debris(
 
     # Whitespace normalised the way cells were, since the extractor writes
     # non-breaking spaces where the rebuilt grid has plain ones.
-    remainder = _unexplained(" ".join(block.split()), cells)
-    if _FIGURE.search(remainder):
-        return False
+    normalised = " ".join(block.split())
+    remainder = _unexplained(normalised, cells)
+    for figure in _FIGURE.finditer(normalised):
+        if any(remainder[position].isdigit() for position in range(*figure.span())):
+            return False
     before = sum(character.isalnum() for character in block)
     after = sum(character.isalnum() for character in remainder)
     return after <= 0.2 * before
@@ -637,11 +653,13 @@ def prose_blocks(section: SectionRecord) -> tuple[list[str], list[str]]:
     blocks = _rejoin_page_breaks(blocks)
     # Where the Item's tables were rebuilt properly, the flattened copies
     # still sitting in the prose are pure noise, so they are dropped rather
-    # than indexed alongside the readable version.
-    if not section.tables:
+    # than indexed alongside the readable version. Only a table that is cut
+    # into passages can stand in for its copy.
+    tables = [table for table in section.tables if _becomes_passages(table)]
+    if not tables:
         return blocks, []
-    figures = table_figures(section.tables)
-    cells = table_cells(section.tables)
+    figures = table_figures(tables)
+    cells = table_cells(tables)
     kept: list[str] = []
     dropped: list[str] = []
     for block in blocks:
@@ -839,7 +857,7 @@ def chunk_tables(
     budget = table_budget if table_budget is not None else table_budget_for(budget)
     passages: list[ChunkRecord] = []
     for table in section.tables:
-        if not table.rows or not table.headers:
+        if not _becomes_passages(table):
             continue
 
         # The caption line opens every piece, so like the header it is charged

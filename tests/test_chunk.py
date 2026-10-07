@@ -86,6 +86,40 @@ def test_prose_blocks_reports_what_it_dropped():
     assert kept == [PROSE] and dropped == [flattened]
 
 
+# Meta's FY2021 Item 8 (#134). The rebuild lost the last figure of this row and
+# left a bare "$" in its place, and "$14" is a cell of another table, so the
+# flattened copy is the only place "14,879" is printed.
+MARKETABLE = TableRecord(
+    table_index=0, caption="Cash equivalents and marketable securities",
+    headers=["", "Cost", "Fair value", "Unrealized"],
+    rows=[["Total cash equivalents and marketable securities", "$40,690", "$25,811", "$"]],
+    n_rows=1, n_cols=4,
+)
+SHARES = TableRecord(
+    table_index=1, caption="Restricted stock units",
+    headers=["", "Units", "Price"], rows=[["Granted", "$14", "$186.65"]], n_rows=1, n_cols=3,
+)
+
+
+def test_a_block_whose_figure_a_shorter_cell_covers_only_in_part_is_kept():
+    flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+    kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, SHARES]))
+    assert kept == [flattened] and dropped == []
+
+
+def test_a_table_with_no_header_row_does_not_account_for_a_block():
+    """chunk_tables cuts no passage from it, so its figures would be in none."""
+    flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
+    headerless = TableRecord(**{**OPTIONS.__dict__, "headers": []})
+    kept, dropped = prose_blocks(section(flattened, tables=[headerless]))
+    assert kept == [flattened] and dropped == []
+
+
+def test_a_table_with_no_header_row_is_cut_into_no_passage():
+    headerless = TableRecord(**{**OPTIONS.__dict__, "headers": []})
+    assert chunk_tables(section_with(headerless), accession_no="acc") == []
+
+
 def test_one_recorded_pair_is_the_answer():
     assert resolve_chunk_settings({(1200, 100)}) == (1200, 100, None)
 
