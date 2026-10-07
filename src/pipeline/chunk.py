@@ -396,7 +396,17 @@ def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
     return block
 
 
-def _left_in(block: str, remainder: str) -> list[str]:
+def _blanked(block: str, cells: dict[str, list[str]]) -> tuple[str, str]:
+    """A block with its whitespace normalised, and the same with its cells blanked.
+
+    Normalised the way cells were, since the extractor writes non-breaking
+    spaces where the rebuilt grid has plain ones.
+    """
+    normalised = " ".join(block.split())
+    return normalised, _unexplained(normalised, cells)
+
+
+def _figures_left_in(block: str, remainder: str) -> list[str]:
     """The figures of a block that kept a digit once its cells were blanked."""
     return [
         figure.group()
@@ -412,8 +422,7 @@ def uncovered_figures(block: str, cells: dict[str, list[str]]) -> list[str]:
     can put it to the cells of a filing's passages and judge a figure exactly as
     the chunker does.
     """
-    normalised = " ".join(block.split())
-    return _left_in(normalised, _unexplained(normalised, cells))
+    return _figures_left_in(*_blanked(block, cells))
 
 
 def _is_table_debris(
@@ -459,17 +468,14 @@ def _is_table_debris(
     if visible == 0:
         return False
 
-    figures = {match.group() for match in _FIGURE.finditer(block)}
+    figures = figures_in(block)
     if dense / visible >= 0.3 and figures and figures <= figures_in_tables:
         return True
     if cells is None or dense / visible < 0.15:
         return False
 
-    # Whitespace normalised the way cells were, since the extractor writes
-    # non-breaking spaces where the rebuilt grid has plain ones.
-    normalised = " ".join(block.split())
-    remainder = _unexplained(normalised, cells)
-    if _left_in(normalised, remainder):
+    normalised, remainder = _blanked(block, cells)
+    if _figures_left_in(normalised, remainder):
         return False
     before = sum(character.isalnum() for character in block)
     after = sum(character.isalnum() for character in remainder)

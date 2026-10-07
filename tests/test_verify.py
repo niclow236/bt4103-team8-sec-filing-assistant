@@ -13,6 +13,7 @@ from src.pipeline.verify import (
     check_passage_sizes,
     check_statement_titles,
 )
+from tests.test_chunk import MARKETABLE, OPTIONS, SHARES, section
 
 FILING = {"ticker": "AAA", "company": "Alpha Corp", "fiscal_year": 2024, "form": "10-K"}
 
@@ -206,15 +207,6 @@ def test_a_pension_row_does_not_make_an_oci_statement_an_income_statement():
 
 # --- no figure lost (#134) ----------------------------------------------------
 
-def item_8(text, tables):
-    return SectionRecord(
-        section_id="part_ii_item_8", part="II", item="8", title="Financial Statements",
-        text=text, n_chars=len(text), n_tables=len(tables), n_data_tables=len(tables),
-        is_key_section=True, is_stub=False, resolved_from=None, confidence=None,
-        detection_method=None, validated=True, tables=list(tables),
-    )
-
-
 def parsed_filing(*sections):
     from src.pipeline.records import ParsedFiling
 
@@ -225,44 +217,26 @@ def parsed_filing(*sections):
     )
 
 
-# Meta's FY2021 Item 8. The rebuild lost the last figure of this row, and "$14"
-# is a cell of another table, so the flattened row is the only place 14,879 is.
-MARKETABLE = TableRecord(
-    table_index=0, caption="Cash equivalents and marketable securities",
-    headers=["", "Cost", "Fair value", "Unrealized"],
-    rows=[["Total cash equivalents and marketable securities", "$40,690", "$25,811", "$"]],
-    n_rows=1, n_cols=4,
-)
-SHARES = TableRecord(
-    table_index=1, caption="Restricted stock units",
-    headers=["", "Units", "Price"], rows=[["Granted", "$14", "$186.65"]], n_rows=1, n_cols=3,
-)
+# Meta's FY2021 Item 8: the flattened row is the only place 14,879 is.
 FLATTENED = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
 
 
-def table_passages(section):
+def table_passages(item):
     from dataclasses import asdict
 
-    return [asdict(chunk) for chunk in chunk_tables(section, accession_no="acc")]
+    return [asdict(chunk) for chunk in chunk_tables(item, accession_no="acc")]
 
 
 def test_a_corpus_whose_passages_lose_a_figure_fails():
     """Cut by the old debris rule: the tables are indexed, the flattened row is not."""
     from src.pipeline.verify import check_no_figure_lost
 
-    section = item_8(FLATTENED, [MARKETABLE, SHARES])
-    check = check_no_figure_lost([(parsed_filing(section), table_passages(section))])
+    item = section(FLATTENED, [MARKETABLE, SHARES])
+    check = check_no_figure_lost([(parsed_filing(item), table_passages(item))])
     assert not check.passed
     assert any("14,879" in failure for failure in check.failures)
 
 
-OPTIONS = TableRecord(
-    table_index=0, caption="Stock options",
-    headers=["", "Shares", "Weighted average price"],
-    rows=[["Balance-July 31, 2020", "0.4", "$6.53"], ["Granted", "0.5", "$101.43"],
-          ["Exercised", "(0.2)", "$4,127.82"]],
-    n_rows=3, n_cols=3,
-)
 PROSE = ("Options granted during fiscal 2021 vested over four years, and the Company "
          "recognized $1,250 of compensation expense for them.")
 
@@ -275,7 +249,7 @@ def test_a_corpus_the_chunker_cut_passes_though_its_dropped_cells_ran_together()
     from src.pipeline.verify import check_no_figure_lost
 
     flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
-    parsed = parsed_filing(item_8(f"{PROSE}\n\n{flattened}", [OPTIONS]))
+    parsed = parsed_filing(section(f"{PROSE}\n\n{flattened}", [OPTIONS]))
     assert prose_blocks(parsed.sections[0])[1] == [flattened]
     chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
     check = check_no_figure_lost([(parsed, chunks)])
@@ -298,8 +272,8 @@ def test_a_dropped_block_is_judged_by_its_own_items_cells():
         rows=[["Boise campus", "9510"]], n_rows=1, n_cols=2,
     )
     flattened = "Finance leases395107"
-    item_8_section = item_8(f"{PROSE}\n\n{flattened}", [leases])
-    item_2 = replace(item_8(PROSE, [elsewhere]), section_id="part_i_item_2", part="I", item="2")
+    item_8_section = section(f"{PROSE}\n\n{flattened}", [leases])
+    item_2 = replace(section(PROSE, [elsewhere]), section_id="part_i_item_2", part="I", item="2")
     parsed = parsed_filing(item_2, item_8_section)
     assert prose_blocks(item_8_section)[1] == [flattened]
     chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
@@ -314,9 +288,9 @@ def test_an_item_cut_into_no_passages_is_not_held_to_its_figures():
     from src.pipeline.chunk import chunk_filing
     from src.pipeline.verify import check_no_figure_lost
 
-    stub = replace(item_8("See pages 2,345 through 2,410 of the Annual Report", []),
+    stub = replace(section("See pages 2,345 through 2,410 of the Annual Report", []),
                    section_id="part_ii_item_7", item="7", is_stub=True)
-    parsed = parsed_filing(stub, item_8(PROSE, []))
+    parsed = parsed_filing(stub, section(PROSE, []))
     chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
     check = check_no_figure_lost([(parsed, chunks)])
     assert check.passed, check.failures

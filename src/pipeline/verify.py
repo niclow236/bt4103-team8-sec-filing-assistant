@@ -743,6 +743,25 @@ def check_statement_titles(corpus: list[dict]) -> Check:
 # --- running the gate -------------------------------------------------------
 
 
+def corpus_checks(
+    records: list[FilingRecord], corpus: list[dict],
+) -> list[tuple[str, Callable[[], Check]]]:
+    """The checks that read every interim and processed file, each under the
+    name it reports.
+
+    Listed once, for both the run and the skip, so a check added to one cannot
+    be missing from the other.
+    """
+    return [
+        ("key Items", lambda: check_key_items(records)),
+        ("chunk integrity", lambda: check_chunk_integrity(records)),
+        ("no prose lost", lambda: check_no_prose_lost(records)),
+        ("no figure lost", lambda: check_no_figure_lost(_filings(records))),
+        ("passage sizes", lambda: check_passage_sizes(corpus)),
+        ("statement titles", lambda: check_statement_titles(corpus)),
+    ]
+
+
 def run_checks() -> list[Check]:
     """Every check, cheapest first, so an obvious fault is reported quickly."""
     tickers = read_tickers()
@@ -764,20 +783,12 @@ def run_checks() -> list[Check]:
     # summary cannot be mistaken for a corpus that passed them.
     if all(check.passed for check in checks):
         corpus = list(iter_chunks())
-        checks += [
-            check_key_items(records),
-            check_chunk_integrity(records),
-            check_no_prose_lost(records),
-            check_no_figure_lost(_filings(records)),
-            check_passage_sizes(corpus),
-            check_statement_titles(corpus),
-        ]
+        checks += [run() for _, run in corpus_checks(records, corpus)]
     else:
         blocked = ", ".join(check.name for check in checks if not check.passed)
         checks += [
             Check(name, False, f"not run: {blocked} failed first", skipped=True)
-            for name in ("key Items", "chunk integrity", "no prose lost", "no figure lost",
-                         "passage sizes", "statement titles")
+            for name, _ in corpus_checks(records, corpus)
         ]
 
     identity = configure_edgar()
