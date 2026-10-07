@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.pipeline.chunk import (
     _cost,
     _is_table_debris,
+    _removal_order,
     chunk_section,
     chunk_tables,
     prose_blocks,
@@ -84,6 +85,83 @@ def test_prose_blocks_reports_what_it_dropped():
     flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
     kept, dropped = prose_blocks(section(f"{PROSE}\n\n{flattened}", tables=[OPTIONS]))
     assert kept == [PROSE] and dropped == [flattened]
+
+
+# --- the same cut in every process ------------------------------------------------
+#
+# Cisco's FY2022 Item 8, reduced to what decided it. One table holds a row as
+# the grid stores it, the dollar signs in cells of their own and the figures
+# bare. Other tables of the same Item happen to hold "$12", "$17" and "$55",
+# each of which is the start of a figure in that row as the filing printed it.
+
+RATED = TableRecord(
+    table_index=0, caption="July 30, 2022 Internal Credit Risk Rating",
+    headers=["Internal Credit Risk Rating", "Prior", "", "Fiscal Year", "", "Fiscal Year", "",
+             "Fiscal Year", "", "Fiscal Year", "", "Fiscal Year", "", "Total", ""],
+    rows=[["1 to 4", "$", "2", "$", "25", "$", "74", "$", "124", "$", "176", "$", "152",
+           "$", "553"]],
+    n_rows=1, n_cols=15,
+)
+ELSEWHERE = TableRecord(
+    table_index=1, caption="Allowance for credit loss",
+    headers=["", "Lease", "Loan", "Service", "Total"],
+    rows=[["Provisions", "$12", "$17", "$74", "$55"]], n_rows=1, n_cols=5,
+)
+PRINTED_ROW = "1 to 4$2\xa0$25\xa0$74\xa0$124\xa0$176\xa0$152\xa0$553"
+
+
+def printed_row_is_debris(row: str = PRINTED_ROW) -> bool:
+    tables = [RATED, ELSEWHERE]
+    return _is_table_debris(row, table_figures(tables), table_cells(tables))
+
+
+def test_cells_are_taken_out_longest_first_and_in_one_order_within_a_length():
+    """Ordered by length alone, cells of one length came out in the order of a set."""
+    import random
+
+    cells = ["$12", "124", "$17", "176", "152", "$55", "553", "$74", "1 to 4"]
+    expected = ["1 to 4", "553", "176", "152", "124", "$74", "$55", "$17", "$12"]
+    shuffled = random.Random(4103)
+    for _ in range(20):
+        shuffled.shuffle(cells)
+        assert _removal_order(cells) == expected
+    assert _removal_order(set(cells)) == expected
+
+
+def test_a_row_its_own_table_accounts_for_is_debris_whichever_cell_is_found_first():
+    """"124" and "$12" both sit in "$124". Removing the table's own cell leaves a "$".
+    Removing the other one leaves a "4", and that left the row in the corpus as prose
+    in some processes and out of it in others."""
+    assert printed_row_is_debris()
+    kept, dropped = prose_blocks(section(f"{PROSE}\n\n{PRINTED_ROW}", tables=[RATED, ELSEWHERE]))
+    assert kept == [PROSE] and dropped == [PRINTED_ROW]
+    # A figure no cell of any table touches still keeps its block.
+    assert not printed_row_is_debris(PRINTED_ROW.replace("$553", "$9,999"))
+
+
+def test_a_filing_is_cut_the_same_way_under_every_hash_seed():
+    """Python seeds the hash of a string afresh in each process, so a set of strings
+    is walked in a different order from one run to the next. Each of these is a
+    process of its own, and before the order of removal was fixed they disagreed."""
+    import os
+    import subprocess
+    import sys
+
+    from src.config import PROJECT_ROOT
+
+    command = [sys.executable, "-c",
+               "from tests.test_chunk import printed_row_is_debris; print(printed_row_is_debris())"]
+    running = [
+        subprocess.Popen(command, cwd=PROJECT_ROOT, text=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, env={**os.environ, "PYTHONHASHSEED": seed})
+        for seed in ("0", "1", "2", "6")
+    ]
+    verdicts = []
+    for process in running:
+        printed, errors = process.communicate(timeout=300)
+        assert process.returncode == 0, errors
+        verdicts.append(printed.strip())
+    assert verdicts == ["True", "True", "True", "True"]
 
 
 def test_one_recorded_pair_is_the_answer():
