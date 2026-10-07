@@ -399,23 +399,30 @@ def answer_card_html(answer: Answer, *, key: str = "answer", show_question: bool
     for index, (text, flagged) in enumerate(rows):
         checks = [c for c in (() if answer.verification is None else answer.verification.checks)
                   if c.sentence_index == index]
-        warnings = [c for c in checks if c.status in {"unverified", "mismatch"}]
+        # The deterministic groundedness check can only confirm wording copied
+        # from a passage.  A normal paraphrase is therefore ``unverified`` even
+        # when its citation resolves and its figures pass the evidence checks.
+        # Keep that diagnostic on the Answer for evaluation, but do not present
+        # it as an actionable citation warning on the Ask page.
+        warnings = [c for c in checks if c.status in {"unverified", "mismatch"}
+                    and not (c.kind == "groundedness" and c.status == "unverified")]
         missing = any(int(m[1]) < 1 or not any(
             c.marker == int(m[1]) and c.resolved for c in answer.citations
         ) for m in _MARKER.finditer(text))
         flagged = flagged or missing or not _MARKER.search(text)
         evidence_supported = any(c.status == "supported" for c in checks)
         if any(c.status == "mismatch" for c in warnings):
-            status, label = "sec-warning sec-mismatch", "Mismatch — needs review"
+            status, label = "sec-warning sec-mismatch", "Verification found a mismatch"
         elif flagged or answer.truncated or answer.parse_error:
-            status, label = "sec-warning", "Needs review — unresolved, missing or unverified support"
-        elif evidence_supported:
-            status, label = "sec-supported", "Completed checks support this claim"
+            status, label = "sec-warning", "Citation needs attention"
         elif warnings:
-            status, label = "sec-warning", "Needs review — unresolved, missing or unverified support"
+            status, label = "sec-warning", "Evidence could not be fully verified"
+        elif evidence_supported:
+            status, label = "sec-supported", "Verification checks passed"
         else:
-            status, label = "", "Citations resolved · factual support not checked"
-        parts.append(f'<div class="sec-claim {status}"><span class="sec-label">{label}</span>'
+            status, label = "", None
+        status_label = "" if label is None else f'<span class="sec-label">{label}</span>'
+        parts.append(f'<div class="sec-claim {status}">{status_label}'
                      f'{_inline(text, answer, namespace)}</div>')
         for check in warnings:
             parts.append(f'<p class="sec-warning">{escape(check.reason)}</p>')
