@@ -277,6 +277,7 @@ def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
     import os
     import subprocess
     import sys
+    from pathlib import Path
 
     script = (
         "from src.pipeline.records import TableRecord\n"
@@ -287,10 +288,13 @@ def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
         "    n_rows=2, n_cols=3)\n"
         "print(prose_blocks(section('Finance leases395107', tables=[leases]))[1])\n"
     )
-    # Started together, since each one spends a second importing edgar.
+    # Started together, since each one spends a second importing edgar. From
+    # the project root, which is what puts src and tests on the child's path:
+    # pytest.ini's pythonpath reaches only pytest's own process.
+    root = Path(__file__).resolve().parents[1]
     runs = [
         subprocess.Popen(
-            [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True,
+            [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, cwd=root,
             env={**os.environ, "PYTHONHASHSEED": str(seed)},
         )
         for seed in range(12)
