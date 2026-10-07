@@ -472,7 +472,7 @@ source, and a filing can be amended after you fetch it.
 A check that finds the corpus incomplete skips the per-file checks below it,
 since each would report the same missing filing once per filing. Those are listed
 as `SKIP` rather than left out, so a run that checked four things cannot be
-mistaken for a clean bill of health on nine.
+mistaken for a clean bill of health on ten.
 
 What verify does **not** fail on is imperfection the pipeline already handles: 6
 of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one
@@ -582,11 +582,13 @@ All but 6 of the tables that hold data rebuild cleanly, 5,422 of 5,428; where on
 cannot, its flattened copy is left in the prose, where it is just harder to read.
 A grid that rebuilds can still drop a cell: Meta's FY2021 table of marketable
 securities comes back with a bare `$` where the filing prints 14,879. So a
-flattened copy is only removed when every digit of every figure in it (four
-characters or more, such as `1,182`) is in a cell of a table passage, and
-`python -m src.pipeline verify` fails a corpus in which a removed copy held a
-figure that no passage of its filing does. A shorter number, such as a count of
-46, gets no such guarantee.
+flattened copy is only removed when every figure in it is wholly inside cells of
+a table passage: every digit, and every comma between two digits, so that `$14`
+from one table and `879` from another do not pass for 14,879. A figure here is a
+run of four or more digits and commas, such as `1,182`, and `python -m
+src.pipeline verify` fails a corpus in which a removed copy held one that no
+passage of its filing does. Anything shorter gets no such guarantee: a count of
+46, or the 345 of a decimal such as 12.345.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
@@ -646,7 +648,9 @@ passages there:
   since its surrounding evidence can differ.
 - The flattened copy of a table the parser rebuilt is dropped from the prose, so
   the same figures are not indexed twice, once unreadable. A block is judged a
-  copy when the table's own cells account for it and no figure is left over.
+  copy when cells of the Item's tables account for it, with no digit of any
+  figure left over and no comma between two of its digits, and only tables that
+  are cut into passages count.
 - The blank lines between paragraphs count against the budget as well as the
   paragraphs, since they are in the passage too.
 - Cells are rendered without alignment padding. Padding would be the largest
