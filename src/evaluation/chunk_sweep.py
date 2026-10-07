@@ -14,9 +14,11 @@ one the same benchmark questions.
 
 Each size is a build of its own, in ``data/sweep/<budget>/``: the passages,
 ``bm25.pkl``, ``chroma/`` with its manifest, and the benchmark generated for
-those passages. Nothing is shared with ``data/processed/`` or ``data/index/``,
-so a sweep cannot leave the app searching a corpus it was not built for, and
-the four builds stay on disk for the next run to reuse.
+those passages. Nothing is written to ``data/processed/`` or ``data/index/``,
+so a sweep cannot leave the app searching a corpus its indexes were not built
+for, and the four builds stay on disk for the next run to reuse. The app's
+dense index is opened to read the vectors it already holds (``seed_vectors``),
+unless ``--no-reuse`` is given, and nothing is added to it or taken from it.
 
 Three things keep the sizes comparable.
 
@@ -185,9 +187,44 @@ class SweepBuild:
 # --- building one size ------------------------------------------------------
 
 
-def chunk_corpus(
-    build: SweepBuild, paths: Sequence[Path], fiscal_years: Sequence[int] | None = None,
-) -> int:
+def filings_in_scope(
+    interim_dir: Path = INTERIM_DIR,
+    tickers: Sequence[str] | None = None,
+    fiscal_years: Sequence[int] | None = None,
+) -> list[Path]:
+    """The parsed filings a run covers, found before anything is cut or built.
+
+    Every size is cut from this one list, so no two sizes can cover different
+    filings. A run that names a company or a fiscal year no parsed filing
+    matches is refused here, while each build is still as the last run left it.
+    ``fiscal_years`` is the year a filing reports on, as ``iter_chunks`` reads
+    it from the period of report.
+    """
+    paths = interim_files(interim_dir)
+    if tickers:
+        wanted = {ticker.upper() for ticker in tickers}
+        paths = [path for path in paths if path.parent.name in wanted]
+    if not paths:
+        raise FileNotFoundError(
+            f"No parsed filing under {interim_dir} is in scope. Parse the corpus first: "
+            "python -m src.pipeline parse"
+        )
+    if fiscal_years:
+        years = set(fiscal_years)
+
+        def reports_on(path: Path) -> bool:
+            year = load_parsed(path).period_of_report[:4]
+            return year.isdigit() and int(year) in years
+
+        paths = [path for path in paths if reports_on(path)]
+        if not paths:
+            raise FileNotFoundError(
+                f"No parsed filing under {interim_dir} reports on the fiscal years asked for."
+            )
+    return paths
+
+
+def chunk_corpus(build: SweepBuild, paths: Sequence[Path]) -> int:
     """Cut the filings in scope at this build's budget, and return how many.
 
     Written from nothing every time. Chunking takes seconds, and a folder left
@@ -198,20 +235,13 @@ def chunk_corpus(
     """
     if build.processed_dir.exists():
         shutil.rmtree(build.processed_dir)
-    wanted = set(fiscal_years) if fiscal_years else None
-    filings = 0
     for path in paths:
-        parsed = load_parsed(path)
-        year = parsed.period_of_report[:4]
-        if wanted is not None and (not year.isdigit() or int(year) not in wanted):
-            continue
         chunked = chunk_filing(
-            parsed, source_path=manifest_path(path),
+            load_parsed(path), source_path=manifest_path(path),
             budget=build.budget, overlap=build.overlap,
         )
         write_chunks(chunked, processed_path_for(path, build.processed_dir))
-        filings += 1
-    return filings
+    return len(paths)
 
 
 def describe_corpus(build: SweepBuild) -> tuple[dict[str, Any], dict[str, str]]:
@@ -581,7 +611,9 @@ def measure_build(
             "context_chars": mean(row["context_chars"] for row in rows),
             # The benchmark names at most three passages that print a figure.
             # A smaller size cuts a filing into more passages, so more of its
-            # questions reach that ceiling, and this mean says by how much.
+            # questions could reach that ceiling and Recall would then be
+            # measured against more. This mean says whether they do: on the
+            # whole corpus it is 1.9 at every size.
             "supporting_per_question": mean(
                 len(question.supporting_chunk_ids) for question in questions),
             "median_latency_ms": median(row["latency_ms"] for row in rows),
@@ -729,9 +761,12 @@ def run_chunk_sweep(
 ) -> dict[str, Any]:
     """Build every size, measure each, and write ``results/<run-id>/``.
 
-    Every build is finished before a question is asked or the run directory
-    made, so a run that stops while encoding has used no run id and is
-    carried on by running the same command again.
+    Every size is cut and given its questions before an index is built. That
+    takes minutes, so a run with no filing in scope, or with nothing to ask,
+    is refused then and not after the hours an encoder takes. Every build is
+    then finished before a question is asked or the run directory made, so a
+    run that stops while encoding has used no run id and is carried on by
+    running the same command again.
     """
     budgets = tuple(budgets)
     retrievers = tuple(dict.fromkeys(retrievers))
@@ -754,50 +789,55 @@ def run_chunk_sweep(
     # this process loaded that the numbers come from.
     commit = _commit()
 
-    paths = interim_files(interim_dir)
-    if tickers:
-        wanted = {ticker.upper() for ticker in tickers}
-        paths = [path for path in paths if path.parent.name in wanted]
-    if not paths:
-        raise FileNotFoundError(
-            f"No parsed filing under {interim_dir} is in scope. Parse the corpus first: "
-            "python -m src.pipeline parse"
-        )
+    paths = filings_in_scope(interim_dir, tickers, fiscal_years)
     if not facts_file.exists():
         raise FileNotFoundError(
             f"No facts store at {facts_file}, and the questions are generated from it. "
             "Build it with: python -m src.retrieval facts"
         )
 
-    dense = bool({DENSE, HYBRID} & set(retrievers))
     described: dict[int, dict[str, Any]] = {}
     kinds: dict[int, dict[str, str]] = {}
     generated: dict[int, list[BenchmarkQuestion]] = {}
     for build in builds:
         print(f"\n{build.id}: {build.budget:,} characters a passage, {build.overlap} carried "
               f"over, {build.table_budget} a table passage", flush=True)
-        filings = chunk_corpus(build, paths, fiscal_years)
-        if not filings:
-            raise FileNotFoundError(
-                f"No parsed filing under {interim_dir} reports on the fiscal years asked for."
-            )
-        corpus, kinds[build.budget] = describe_corpus(build)
-        print(f"chunked:  {corpus['n_passages']:,} passages from {filings} filings, "
-              f"{corpus['n_tables']:,} of them tables", flush=True)
-        # Every other size's index, and the app's own, may hold a vector this
-        # one needs: the passages too short for the budget to have cut them.
-        others = [other.chroma_dir for other in builds if other is not build]
-        indexes = build_indexes(
-            build, dense=dense, donors=[*donors, *others], threads=threads)
-        described[build.budget] = {**corpus, **indexes}
-        generated[build.budget] = generate_xbrl_questions(
-            facts_file, processed_dir=build.processed_dir, output_path=build.benchmark)
+        filings = chunk_corpus(build, paths)
+        described[build.budget], kinds[build.budget] = describe_corpus(build)
+        print(f"chunked:  {described[build.budget]['n_passages']:,} passages from {filings} "
+              f"filings, {described[build.budget]['n_tables']:,} of them tables", flush=True)
+        try:
+            generated[build.budget] = generate_xbrl_questions(
+                facts_file, processed_dir=build.processed_dir, output_path=build.benchmark)
+        except ValueError as error:
+            # The generator's advice is to chunk the app's corpus. This build
+            # was cut a moment ago, so what it lacks is in the facts store.
+            raise ValueError(
+                f"{build.id}: no question could be generated for this size, so there is "
+                f"nothing to measure. The questions come from {facts_file}: check that it "
+                "holds figures for the filings in scope, or build it again with: "
+                f"python -m src.retrieval facts\n{error}"
+            ) from error
         print(f"asked:    {len(generated[build.budget]):,} questions have a supporting "
               "passage in this build", flush=True)
 
     chosen = sample_questions(generated, per_filing=per_filing, seed=seed)
     if not chosen:
-        raise ValueError("no question has a supporting passage in every build")
+        raise ValueError(
+            "No question has a supporting passage in every size, so there is nothing to "
+            "measure."
+        )
+
+    dense = bool({DENSE, HYBRID} & set(retrievers))
+    for build in builds:
+        print(f"\n{build.id}: indexing {described[build.budget]['n_passages']:,} passages",
+              flush=True)
+        # Every other size's index, and the app's own, may hold a vector this
+        # one needs: the passages too short for the budget to have cut them.
+        others = [other.chroma_dir for other in builds if other is not build]
+        described[build.budget].update(build_indexes(
+            build, dense=dense, donors=[*donors, *others], threads=threads))
+
     # The size every other is set beside: the shipped one, or the nearest to
     # it in a run that leaves it out. Questions are grouped once, by what
     # supports them at this size, so a group holds the same questions in

@@ -32,6 +32,7 @@ from src.evaluation.chunk_sweep import (
     compared_with,
     curve,
     describe_corpus,
+    filings_in_scope,
     measure_build,
     run_chunk_sweep,
     sample_questions,
@@ -238,11 +239,29 @@ def test_each_size_is_cut_into_its_own_corpus_with_its_settings_recorded(sources
     assert len(tables(cut_small)) > len(tables(cut_large)) == 4
 
 
+def test_the_filings_in_scope_are_found_before_anything_is_cut(sources):
+    interim = sources["interim_dir"]
+    assert filings_in_scope(interim) == interim_files(interim)
+    assert {path.parent.name for path in filings_in_scope(interim, tickers=["bbb"])} == {"BBB"}
+    # A filing dated February 2025 reports on fiscal 2024.
+    narrowed = filings_in_scope(interim, tickers=["AAA", "BBB"], fiscal_years=[2024])
+    assert len(narrowed) == 2 and all("_2025-02-01_" in path.name for path in narrowed)
+    assert len(filings_in_scope(interim, fiscal_years=[2023, 2024])) == 4
+
+    with pytest.raises(FileNotFoundError, match="is in scope"):
+        filings_in_scope(interim, tickers=["ZZZ"])
+    with pytest.raises(FileNotFoundError, match="fiscal years asked for"):
+        filings_in_scope(interim, fiscal_years=[1999])
+    with pytest.raises(FileNotFoundError, match="python -m src.pipeline parse"):
+        filings_in_scope(interim.parent / "absent")
+
+
 def test_cutting_again_leaves_out_filings_the_run_no_longer_covers(sources):
     paths = interim_files(sources["interim_dir"])
     build = SweepBuild(1200, sources["sweep_dir"] / "1200")
-    chunk_corpus(build, paths)
-    assert chunk_corpus(build, paths, fiscal_years=[2024]) == 2
+    assert chunk_corpus(build, paths) == 4
+    assert chunk_corpus(
+        build, filings_in_scope(sources["interim_dir"], fiscal_years=[2024])) == 2
 
     rows = list(iter_chunks(processed_dir=build.processed_dir))
     assert {row["fiscal_year"] for row in rows} == {2024}
@@ -944,9 +963,58 @@ def test_a_run_without_its_inputs_says_which_command_makes_them(sources, fake_mo
     assert not sources["sweep_dir"].exists() and not sources["results_root"].exists()
 
 
-def test_a_fiscal_year_no_filing_reports_on_uses_no_run_id(sources, fake_model):
+def _indexes_under(sweep_dir: Path) -> list[str]:
+    """The BM25 and dense indexes any size has under ``sweep_dir``."""
+    return sorted(str(path.relative_to(sweep_dir)) for path in sweep_dir.rglob("*")
+                  if path.name in ("bm25.pkl", "chroma"))
+
+
+def test_a_fiscal_year_no_filing_reports_on_is_refused_before_a_build_is_touched(
+        sources, fake_model):
+    """The builds an earlier run made are as it left them, and no run id is used."""
+    run_chunk_sweep(run_id="kept", budgets=SIZES[:1], retrievers=["bm25"], per_filing=1, **sources)
+    build = SweepBuild(SIZES[0], sources["sweep_dir"] / str(SIZES[0]))
+    held = sorted(path.name for path in build.processed_dir.glob("*/*.json"))
+    assert len(held) == 4
+
     with pytest.raises(FileNotFoundError, match="fiscal years asked for"):
         run_chunk_sweep(run_id="refused", budgets=SIZES, fiscal_years=[1999], **sources)
+
+    assert sorted(path.name for path in build.processed_dir.glob("*/*.json")) == held
+    assert [path.name for path in sources["sweep_dir"].iterdir()] == [str(SIZES[0])]
+    assert not (sources["results_root"] / "refused").exists()
+
+
+def test_a_run_with_nothing_to_ask_is_refused_before_an_index_is_built(sources, fake_model):
+    """The facts store holds figures for one company, and the run covers the other.
+
+    Cutting each size and looking for its questions takes seconds. Building a
+    dense index takes hours on a real corpus, so the refusal has to come first.
+    """
+    facts = pd.read_parquet(sources["facts_file"])
+    facts[facts["ticker"] == "BBB"].to_parquet(sources["facts_file"], index=False)
+
+    with pytest.raises(ValueError, match="nothing to measure") as refusal:
+        run_chunk_sweep(run_id="refused", budgets=SIZES, tickers=["AAA"], **sources)
+
+    # The size it stopped at, what to check, and the generator's own reason under it.
+    message = str(refusal.value)
+    assert message.startswith("S600: ") and "python -m src.retrieval facts\n" in message
+    assert "No benchmark questions generated" in message.splitlines()[-1]
+    assert _indexes_under(sources["sweep_dir"]) == [] and fake_model.calls == 0
+    assert not sources["results_root"].exists()
+
+
+def test_sizes_with_no_question_in_common_are_refused_before_an_index_is_built(
+        sources, fake_model, monkeypatch):
+    """Each size can be asked something, and no question can be asked of both."""
+    asked = iter([[_question("small-only", "AAA", 2024)], [_question("large-only", "AAA", 2024)]])
+    monkeypatch.setattr(sweep, "generate_xbrl_questions", lambda *_, **__: next(asked))
+
+    with pytest.raises(ValueError, match="in every size, so there is nothing to measure"):
+        run_chunk_sweep(run_id="refused", budgets=SIZES[:2], **sources)
+
+    assert _indexes_under(sources["sweep_dir"]) == [] and fake_model.calls == 0
     assert not sources["results_root"].exists()
 
 
