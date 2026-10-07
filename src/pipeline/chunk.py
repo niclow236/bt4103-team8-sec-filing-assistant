@@ -373,25 +373,42 @@ def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
     return cell_index(cell for table in tables for row in [table.headers, *table.rows] for cell in row)
 
 
+def _removal_order(found: Iterable[str]) -> list[str]:
+    """The order cells are taken out of a block in: longest first, then by text.
+
+    Longest first, so a row label is removed whole before a shorter cell that
+    happens to sit inside it.
+
+    Within a length the order is fixed too, because cells of one length can
+    overlap, and then the first one removed takes the other's characters with
+    it. Cisco's FY2022 Item 8 prints a row "$124 $176 $152 $553" whose table
+    holds the cells "124", "176", "152" and "553", and other tables of the
+    Item hold "$12", "$17" and "$55". Take "124" out and a "$" is left, which
+    reads as the copy of a table it is. Take "$12" out and a "4" is left, the
+    "124" is no longer there to find, and the row reads as prose. Ordered by
+    length alone, which of the two came first was the order of a set, and a
+    set of strings is ordered by a hash Python seeds afresh in every process.
+    So the same filing was cut two ways from run to run, and its corpus
+    fingerprint moved with it.
+
+    Descending, so a cell that opens with a digit or a letter goes before one
+    that opens with "$" or "(": the figure as the grid holds it, before a
+    fragment that only shares its first characters.
+    """
+    return sorted(found, key=lambda cell: (len(cell), cell), reverse=True)
+
+
 def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
-    """The block with every table cell found in it blanked out.
+    """The block with every table cell found in it blanked out, in
+    ``_removal_order``.
 
-    Longest cells first, so a row label is removed whole before a shorter cell
-    that happens to sit inside it. Each cell is blanked character for character
-    rather than cut out, so what is left lines up with the block: a figure only
-    part of which a cell covered still shows which of its digits were not.
-
-    Cells of one length go in alphabetical order. Which of two overlapping
-    cells is blanked first decides what is left, and in set order, which Python
-    shuffles per process, the same block was dropped on one run and kept on
-    the next.
+    Each cell is blanked character for character rather than cut out, so what
+    is left lines up with the block: a figure only part of which a cell
+    covered still shows which of its digits were not.
     """
     grams = {block[start:start + 3] for start in range(len(block) - 2)}
-    found = sorted(
-        {cell for gram in grams & cells.keys() for cell in cells[gram] if cell in block},
-        key=lambda cell: (-len(cell), cell),
-    )
-    for cell in found:
+    found = {cell for gram in grams & cells.keys() for cell in cells[gram] if cell in block}
+    for cell in _removal_order(found):
         block = block.replace(cell, " " * len(cell))
     return block
 

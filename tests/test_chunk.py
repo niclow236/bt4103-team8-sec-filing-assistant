@@ -271,8 +271,9 @@ def test_a_table_with_no_statement_title_is_unchanged():
 def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
     """Cells of one length were blanked in set order, which Python shuffles per process.
 
-    "951" taken before "395" and "107" strands the 3 and the 7 of "395107", so the
-    same block was kept on one run and dropped on the next.
+    Cisco's FY2022 Item 8 prints "$124 $176", its own table holds "124" and "176",
+    and other tables of the Item hold "$12" and "$17". Taking "$12" first strands
+    the 4, and the row its own table holds was kept as prose on some runs (#133).
     """
     import os
     import subprocess
@@ -283,10 +284,11 @@ def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
         "from src.pipeline.records import TableRecord\n"
         "from tests.test_chunk import section\n"
         "from src.pipeline.chunk import prose_blocks\n"
-        "leases = TableRecord(table_index=0, caption='Leases', headers=['', '2021', '2020'],\n"
-        "    rows=[['Finance leases', '395', '107'], ['Operating leases', '951', '88']],\n"
-        "    n_rows=2, n_cols=3)\n"
-        "print(prose_blocks(section('Finance leases395107', tables=[leases]))[1])\n"
+        "own = TableRecord(table_index=0, caption='Revenue', headers=['', '2022', '2021'],\n"
+        "    rows=[['Product', '124', '176']], n_rows=1, n_cols=3)\n"
+        "other = TableRecord(table_index=1, caption='Leases', headers=['', '2022', '2021'],\n"
+        "    rows=[['Finance', '$12', '$17']], n_rows=1, n_cols=3)\n"
+        "print(prose_blocks(section('$124 $176', tables=[own, other]))[1])\n"
     )
     # Started together, since each one spends a second importing edgar. From
     # the project root, which is what puts src and tests on the child's path:
@@ -301,4 +303,4 @@ def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
     ]
     verdicts = {run.communicate()[0].strip() for run in runs}
     assert [run.returncode for run in runs] == [0] * 12
-    assert verdicts == {"['Finance leases395107']"}
+    assert verdicts == {"['$124 $176']"}
