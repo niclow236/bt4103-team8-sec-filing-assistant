@@ -2185,6 +2185,127 @@ A stopped or interrupted provider run saves completed answers, its stop reason
 and both summaries before exiting unsuccessfully. Completed runs print the
 table and output path. Use a fresh run ID; existing results are never overwritten.
 
+#### Measured on the full corpus
+
+The embedding matrix was measured on 4 October 2026 at application commit
+`a0cb411`; the provider matrix was rerun through the standard CLI on
+6 October 2026 at `1cf4458` (including main at `840be50`). Both used an
+Apple M1 Mac with 16 GiB RAM, macOS 15.6.1, Python 3.13.7, PyTorch 2.14.0,
+sentence-transformers 6.0.1, Chroma 1.5.9 and Ollama 0.33.3. Encoders used MPS;
+Ollama used Metal. These are real model runs over downloaded SEC filings, separate from the synthetic
+regression tests.
+
+The rebuilt corpus contains **75 10-K filings from 15 companies, FY2021–2025,
+and 28,289 passages**. All nine corpus checks passed. The facts store contains
+41,710 rows; `src.retrieval check` reported both `dense: current` and
+`bm25: current`. Every embedding index contains the full 28,289 passages.
+The benchmark has 12,579 numeric questions and SHA-256
+`63b23a5d81c7e7d0b46f8127b575566c61e23bfebe19c2dc55083efba1541a93`.
+
+To reproduce these runs, activate the project virtual environment as described
+in [Getting started](#getting-started), then run the commands below from the
+repository root. SEC identity
+was configured in the local `.env`; real encoder weights were downloaded before
+setting `HF_HUB_OFFLINE=1`.
+That flag prevents Hugging Face network lookups, not provider calls.
+
+```bash
+python -u -m src.pipeline rebuild
+python -u -m src.retrieval bm25
+python -u -m src.retrieval facts
+HF_HUB_OFFLINE=1 python -u -m src.retrieval embed
+HF_HUB_OFFLINE=1 python -u -m src.retrieval check
+python -u -m src.retrieval benchmark
+HF_HUB_OFFLINE=1 python -u -m src.evaluation.model_ablation embedding \
+  benchmark/generated.jsonl --prepare-indexes --limit 1500 \
+  --run-id embeddings-real-20261004
+```
+
+Each embedding row measures the same **1,500 questions**, with metadata filters
+and a retrieval cutoff of 10. Sampling uses file indices
+`i * (12579 - 1) // (1500 - 1)`, including both endpoints. This covers all 15
+companies and 74 filings, with 1–37 questions per represented filing; PANW
+FY2023 is absent from the sample. It is not a balanced or random sample.
+
+| Row | Encoder | Retrieval | Recall@10 | nDCG@10 | MRR@10 | Median search (ms) | Truncated passages |
+|---|---|---|---:|---:|---:|---:|---:|
+| E1 | BGE base | Hybrid | 0.5870 | 0.4476 | 0.4656 | 223.2 | 0 (0%) |
+| E1-dense | BGE base | Dense | 0.4817 | 0.3528 | 0.3732 | 111.8 | 0 (0%) |
+| E2 | MiniLM | Hybrid | 0.5778 | 0.4235 | 0.4366 | 151.4 | 15,489 (54.75%) |
+| E2-dense | MiniLM | Dense | 0.4249 | 0.2898 | 0.2986 | 71.1 | 15,489 (54.75%) |
+| E3 | E5 base | Hybrid | 0.5996 | 0.4689 | 0.4918 | 156.7 | 0 (0%) |
+| E3-dense | E5 base | Dense | 0.5479 | 0.4221 | 0.4489 | 82.4 | 0 (0%) |
+
+E5 leads recall, nDCG and MRR in both retrieval views on this sample. Hybrid
+retrieval improves all three encoders over their dense-only rows. MiniLM has
+the lowest median search latency, but its native 256-token window truncates
+54.75% of indexed passages, including 2,094 table passages. BGE and E5 use
+512-token windows with no truncation here. These observations do not isolate
+truncation as the cause of MiniLM's lower scores or establish a winner for
+other question types. This is a single run; differences below about 0.005
+should not drive a model choice. The application default remains BGE.
+
+Search latency includes query encoding and retrieval, excluding index
+preparation. The CSV records E1 preparation as 10.9 seconds for validation and
+reuse of an already built index, E2 as 214.8 seconds and E3 as 1,708.5 seconds
+for new index builds. E1's value is not a cold encoding time and must not be
+compared as one. Encoder snapshots were BGE
+`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, MiniLM
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, and E5
+`f52bf8ec8c7124536f0efb74aca902b2995e5bcd`.
+
+Full precision embedding summaries and the six per-question reports are kept
+locally under `results/embeddings-real-20261004/`. Data, indexes, model weights,
+logs and run artifacts remain ignored. The description of
+[PR #121](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/pull/121)
+pastes the complete embedding and provider `summary.csv` files for review.
+
+Both generation rows used the same corpus and default BGE/hybrid C4 stack,
+with a **passage budget of 16, facts disabled, decomposition and refusal enabled**,
+`grounded_v4` and temperature 0. Each measures 30 questions at indices
+`i * (12579 - 1) // (30 - 1)`: 14 companies and 25 filings, with 1–2 questions
+per represented filing. PANW is absent. All 30 questions reached the real
+provider in each run with retrieved evidence; none was refused before a model
+call. The question IDs and C4 stack settings match between the two reports.
+The installed `llama3.2:3b` model is Q4_K_M, digest
+`a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72`.
+
+Both providers were measured in one invocation of the supported CLI, with
+Ollama running and `MISTRAL_API_KEY` configured in the local `.env`. The runner
+preflights both stacks and writes each report and the shared comparison table
+directly; no experiment overrides or separate report-combination step are needed.
+
+```bash
+HF_HUB_OFFLINE=1 LLM_BASE_URL=http://127.0.0.1:11434 \
+  MISTRAL_BASE_URL=https://api.mistral.ai/v1 \
+  python -u -m src.evaluation.model_ablation generation \
+  benchmark/generated.jsonl --no-facts --limit 30 \
+  --run-id providers-real-20261006
+```
+
+| Row | Provider | Model | Questions | Abstention | Provider-routed questions | Provider abstention | Median generation (ms) | Retried questions |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| G1 | Ollama | llama3.2:3b | 30 | 3.33% | 30 | 3.33% | 28,833.5 | 0 |
+| G2 | Mistral | ministral-8b-2512 | 30 | 6.67% | 30 | 6.67% | 1,782.9 | 0 |
+
+Mistral has the lower median generation latency here: 1.78 seconds versus
+Ollama's 28.83 seconds. Neither run needed a retry. Mistral abstained on two
+questions and Ollama on one; a one-question difference in a 30-question sample
+does not establish a reliable abstention advantage. Latency excludes
+retrieval, verification and retry waits. Abstention measures willingness to
+answer, not correctness or faithfulness. The numeric verifier classified
+Ollama's 29 non-abstained answers as 3 supported, 7 mismatch and 19 unverified;
+Mistral's 28 as 6 supported, 8 mismatch and 14 unverified. These checks concern
+figures, not whole-answer faithfulness, and do not establish a quality winner.
+
+The native per-question reports and full precision summaries are under the
+ignored local `results/providers-real-20261006/` directory. PR #121's
+description preserves its complete provider CSV alongside the embedding CSV.
+
+All six E rows and both G rows required by issue #46 are measured and
+documented. The embedding run's application commit `a0cb411` passed all
+**1,229 tests**; the provider rerun's commit `1cf4458` passed all **1,294 tests**.
+
 ## Team and course
 
 BT4103 Business Analytics Capstone, Team 8, AY26/27 Semester 1, supervised by A/Prof Oh Hyelim. The main milestones are the requirements presentation in Week 6, the interim presentation in Week 9, and the final presentation in Week 13, with deliverables handed over the following week.
