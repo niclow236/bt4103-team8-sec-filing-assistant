@@ -9,6 +9,7 @@ from src.pipeline.constants import CHUNK_CHAR_BUDGET
 from src.pipeline.records import SectionRecord, TableRecord
 from src.pipeline.verify import (
     OVERRUN_TOLERANCE,
+    Check,
     bge_token_counter,
     check_passage_sizes,
     check_statement_titles,
@@ -303,3 +304,31 @@ def test_the_gate_runs_the_figure_check_under_the_name_it_reports():
     listed = corpus_checks([], [])
     assert "no figure lost" in [name for name, _ in listed]
     assert [name for name, _ in listed] == [run().name for _, run in listed]
+
+
+def stub_the_gate(monkeypatch, complete):
+    """run_checks with its manifest, EDGAR and completeness checks stood in for,
+    and two corpus checks named "first" and "second"."""
+    from src.pipeline import verify
+
+    monkeypatch.setattr(verify, "read_tickers", lambda: ["AAA"])
+    monkeypatch.setattr(verify, "load_manifest", lambda: ["a filing"])
+    monkeypatch.setattr(verify, "check_coverage", lambda *_: Check("coverage", complete, ""))
+    monkeypatch.setattr(verify, "check_stage_parity", lambda *_: Check("stage parity", True, ""))
+    monkeypatch.setattr(verify, "iter_chunks", lambda: [])
+    monkeypatch.setattr(verify, "configure_edgar", lambda: "test")
+    monkeypatch.setattr(verify, "check_against_edgar", lambda *_: Check("matches EDGAR", True, ""))
+    monkeypatch.setattr(verify, "corpus_checks", lambda records, corpus: [
+        (name, lambda name=name: Check(name, True, "ran")) for name in ("first", "second")
+    ])
+    return verify.run_checks()
+
+
+def test_a_complete_corpus_runs_every_corpus_check(monkeypatch):
+    checks = {check.name: check for check in stub_the_gate(monkeypatch, complete=True)}
+    assert checks["first"].detail == "ran" and checks["second"].detail == "ran"
+
+
+def test_an_incomplete_corpus_lists_every_corpus_check_as_skipped(monkeypatch):
+    checks = {check.name: check for check in stub_the_gate(monkeypatch, complete=False)}
+    assert checks["first"].skipped and checks["second"].skipped
