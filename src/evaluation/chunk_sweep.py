@@ -121,14 +121,15 @@ CONTEXT_CHARS = FINAL_K * CHUNK_CHAR_BUDGET
 # How many seeded vectors are read from a donor and written at once.
 SEED_PAGE = 500
 
-# The columns a sweep row adds to the ones every C, E and G row has. The last
-# six of the first eleven are named as the E rows name them, so one table
-# lines up under the other.
+# The columns a sweep row adds to the ones every C, E and G row has. The six
+# from max_tokens to median_latency_ms are named as the E rows name them, so
+# one table lines up under the other.
 SWEEP_FIELDS = (
     "retriever", "chunk_budget", "chunk_overlap", "table_budget", "n_passages",
-    "n_filings", "median_chars", "hit_rate", "context_k", "context_hit_rate",
-    "context_chars", "max_tokens", "n_indexed", "n_truncated", "truncation_rate",
-    "build_ms", "median_latency_ms", "corpus_fingerprint", "dense_fingerprint",
+    "n_filings", "median_chars", "supporting_per_question", "hit_rate", "context_k",
+    "context_hit_rate", "context_chars", "max_tokens", "n_indexed", "n_truncated",
+    "truncation_rate", "build_ms", "median_latency_ms", "corpus_fingerprint",
+    "dense_fingerprint",
 )
 
 METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
@@ -222,7 +223,7 @@ def describe_corpus(build: SweepBuild) -> tuple[dict[str, Any], dict[str, str]]:
         "n_prose": len(kinds) - tables,
         "n_tables": tables,
         "n_filings": len(filings),
-        "median_chars": median(sizes) if sizes else None,
+        "median_chars": float(median(sizes)) if sizes else None,
     }, kinds
 
 
@@ -564,6 +565,11 @@ def measure_build(
             "hit_rate": overall["hit_rate"],
             "context_hit_rate": overall["context_hit_rate"],
             "context_chars": mean(row["context_chars"] for row in rows),
+            # The benchmark names at most three passages that print a figure.
+            # A smaller size cuts a filing into more passages, so more of its
+            # questions reach that ceiling, and this mean says by how much.
+            "supporting_per_question": mean(
+                len(question.supporting_chunk_ids) for question in questions),
             "median_latency_ms": median(row["latency_ms"] for row in rows),
             "by_support": {
                 kind: _group([row for row in rows if row["supported_by"] == kind])
@@ -644,6 +650,7 @@ def curve(summaries: Sequence[Mapping[str, Any]], top_k: int) -> str:
             (f"  MRR@{top_k}", "mrr", "{:.3f}"),
             (f"  supporting passage in the top {top_k}", "hit_rate", "{:.1%}"),
             (f"  in the same prompt (top {depths})", "context_hit_rate", "{:.1%}"),
+            ("  characters in that prompt, mean", "context_chars", "{:,.0f}"),
             ("  median search, ms", "median_latency_ms", "{:.0f}"),
         ):
             lines.append(line(label, [

@@ -47,7 +47,7 @@ from src.retrieval import embed
 from src.retrieval.bm25 import BM25Retriever
 from src.retrieval.constants import CANDIDATE_K, FINAL_K, QUERY_PREFIX
 from src.retrieval.records import Query, corpus_fingerprint
-from tests.conftest import FakeModel
+from conftest import FakeModel
 
 COMPANIES = {"AAA": "Alpha Corp", "BBB": "Beta Inc."}
 YEARS = (2023, 2024)
@@ -272,6 +272,13 @@ def test_every_size_is_measured_through_every_retriever(finished):
         assert config["context_k"] == SweepBuild(size, Path()).context_k
         assert row["questions"] == QUESTIONS
         assert row["n_filings"] == 4
+        # What the benchmark generated for that size says supports each question.
+        build = SweepBuild(size, finished["root"] / "sweep" / str(size))
+        generated = [json.loads(line) for line in
+                     build.benchmark.read_text(encoding="utf-8").splitlines()]
+        assert row["supporting_per_question"] == pytest.approx(
+            sum(len(q["supporting_chunk_ids"]) for q in generated) / len(generated))
+        assert 1.0 <= row["supporting_per_question"] <= 3.0
 
 
 def test_the_same_questions_are_asked_of_every_size(finished):
@@ -390,6 +397,7 @@ def test_the_curve_has_a_column_for_each_size(finished):
         assert retriever in lines
     assert sum(line.strip().startswith("Recall@10") for line in lines) == 3
     assert any("in the same prompt (top 48/24/12)" in line for line in lines)
+    assert sum("characters in that prompt, mean" in line for line in lines) == 3
 
 
 # --- running again ----------------------------------------------------------
