@@ -229,6 +229,9 @@ data/processed/
 data/diagnostics/
 # Built search indexes: rebuilt from data/processed/, and large.
 data/index/
+# The chunk-size sweep's copies of the corpus, one per budget with its own
+# indexes: rebuilt from data/interim/ by `python -m src.evaluation.chunk_sweep`.
+data/sweep/
 # The mechanical XBRL benchmark: regenerated from the facts store by
 # `python -m src.retrieval benchmark`, and every chunk id in it is invalidated
 # by a re-chunk. benchmark/questions.jsonl, for hand-written questions, is not ignored.

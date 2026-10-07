@@ -39,6 +39,12 @@ INDEX_DIR = DATA_DIR / "index"
 BM25_INDEX_FILE = INDEX_DIR / "bm25.pkl"
 CHROMA_DIR = INDEX_DIR / "chroma"
 
+# The chunk-size sweep's working copies: data/interim/ cut again at each budget
+# it measures, with that copy's own indexes beside it, one folder per budget.
+# Git-ignored and rebuildable like the rest. Nothing the app reads is here, so
+# a sweep leaves data/processed/ and the indexes built from it as they were.
+SWEEP_DIR = DATA_DIR / "sweep"
+
 CONFIG_DIR = PROJECT_ROOT / "config"
 COMPANIES_FILE = CONFIG_DIR / "companies.txt"
 
