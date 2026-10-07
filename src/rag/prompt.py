@@ -4,7 +4,7 @@ The prompt is where the citation contract is made. The model is shown the
 retrieved passages as sources ``[1]`` to ``[k]``, each under a header naming
 the company, the fiscal year and the Item, and is told to answer from those
 alone and to cite by number. A source's stored URL is never put in the prompt
--- a passage's own text may quote one, as 168 of the corpus's 28,179 chunks do
+-- a passage's own text may quote one, as 168 of the corpus's 28,203 chunks do
 -- and the model is never asked to name a document, so what it writes about a
 source is its integer, and an integer is the one thing the resolver (#31) can
 check. Everything the citation shows, it takes from the passage's own stored
