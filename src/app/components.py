@@ -412,13 +412,13 @@ def answer_card_html(answer: Answer, *, key: str = "answer", show_question: bool
         flagged = flagged or missing or not _MARKER.search(text)
         evidence_supported = any(c.status == "supported" for c in checks)
         if any(c.status == "mismatch" for c in warnings):
-            status, label = "sec-warning sec-mismatch", "Figure does not match the cited source"
+            status, label = "sec-warning sec-mismatch", "Verification found a mismatch"
         elif flagged or answer.truncated or answer.parse_error:
             status, label = "sec-warning", "Citation needs attention"
-        elif evidence_supported:
-            status, label = "sec-supported", "Checked against cited evidence"
         elif warnings:
             status, label = "sec-warning", "Evidence could not be fully verified"
+        elif evidence_supported:
+            status, label = "sec-supported", "Verification checks passed"
         else:
             status, label = "", None
         status_label = "" if label is None else f'<span class="sec-label">{label}</span>'

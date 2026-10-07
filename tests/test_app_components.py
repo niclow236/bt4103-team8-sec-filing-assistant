@@ -4,18 +4,58 @@ from dataclasses import replace
 from html import escape
 
 from bs4 import BeautifulSoup
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from src.app.components import answer_card_html
+from src.rag import resolve_citations, verify_answer
 from src.rag.citations import render_citation
-from src.rag.constants import ABSTAIN_PHRASE
-from src.rag.records import Citation, VerificationCheck, VerificationResult
+from src.rag.constants import ABSTAIN_PHRASE, PROMPT_TEMPLATE_ID
+from src.rag.records import (
+    Citation,
+    CitedSentence,
+    Generation,
+    GenerationConfig,
+    GroundedAnswer,
+    VerificationCheck,
+    VerificationResult,
+)
+from src.retrieval.records import RetrievedPassage
 from tests.sample_answers import sample_answer
 
 
 def soup(answer=None, key="answer"):
     return BeautifulSoup(answer_card_html(answer or sample_answer("Example?"), key=key), "html.parser")
+
+
+_ACCESSION = "0000320193-24-000123"
+_NUMERIC_QUESTION = "What was Apple's revenue in FY2024?"
+
+
+def verified_numeric_answer(tmp_path, passage_text, *, content_type="text", claim="Revenue was $5.2 billion."):
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([{
+        "ticker": "AAPL", "accession": _ACCESSION, "fiscal_year": 2024,
+        "concept": "RevenueFromContractWithCustomerExcludingAssessedTax", "unit": "USD",
+        "value": 5_200_000_000, "period_start": "2023-10-01", "period_end": "2024-09-28",
+        "period_of_report": "2024-09-28",
+    }]).to_parquet(facts_file, index=False)
+    passage = RetrievedPassage(
+        chunk_id=f"{_ACCESSION}_item8_0", text=passage_text, score=1, rank=1,
+        retriever="test", ticker="AAPL", company="Apple Inc.", fiscal_year=2024,
+        item="8", title="Financial Statements", url="https://example.test/filing",
+        content_type=content_type,
+    )
+    structured = GroundedAnswer(
+        answerable=True, sentences=(CitedSentence(text=claim, sources=(1,)),))
+    generation = Generation(
+        text=structured.render(), answer=structured, raw=structured.model_dump_json(),
+        config=GenerationConfig("ollama", "test", PROMPT_TEMPLATE_ID), latency_ms=0,
+        input_tokens=None, output_tokens=None, stop_reason="stop",
+    )
+    return verify_answer(resolve_citations(_NUMERIC_QUESTION, generation, (passage,)),
+                         facts_file=facts_file)
 
 
 def test_inline_links_target_the_correct_expandable_passage():
@@ -79,7 +119,7 @@ def test_supported_evidence_outranks_unverified_groundedness_but_not_citation_de
     page = soup(answer)
     rows = page.select(".sec-claim")
     assert "sec-supported" in rows[0]["class"]
-    assert "Checked against cited evidence" in rows[0].text
+    assert "Verification checks passed" in rows[0].text
     assert "No semantic entailment check was run." not in page.text
     assert "sec-warning" in rows[1]["class"]
     assert "sec-supported" not in rows[1]["class"]
@@ -92,7 +132,31 @@ def test_word_for_word_sentence_with_only_a_groundedness_check_is_supported():
     )))
     row = soup(answer).select(".sec-claim")[0]
     assert "sec-supported" in row["class"]
-    assert "Checked against cited evidence" in row.text
+    assert "Verification checks passed" in row.text
+
+
+def test_fact_mismatch_does_not_blame_the_cited_passage(tmp_path):
+    answer = verified_numeric_answer(tmp_path, "Revenue was $6 billion.",
+                                     claim="Revenue was $6 billion.")
+    statuses = {(check.kind, check.status) for check in answer.verification.checks}
+    assert {("passage", "supported"), ("fact", "mismatch")} <= statuses
+
+    row = soup(answer).select_one(".sec-claim")
+    assert "sec-mismatch" in row["class"]
+    assert "Verification found a mismatch" in row.text
+    assert "does not match the cited source" not in row.text
+
+
+def test_supported_fact_does_not_hide_an_unverified_cited_passage(tmp_path):
+    table = "| Metric | 2024 |\n| --- | --- |\n| Revenue | 5,200 |"
+    answer = verified_numeric_answer(tmp_path, table, content_type="table")
+    statuses = {(check.kind, check.status) for check in answer.verification.checks}
+    assert {("passage", "unverified"), ("fact", "supported")} <= statuses
+
+    row = soup(answer).select_one(".sec-claim")
+    assert "sec-warning" in row["class"]
+    assert "sec-supported" not in row["class"]
+    assert "Evidence could not be fully verified" in row.text
 
 
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html,bad", "https://", "https://[bad"])
