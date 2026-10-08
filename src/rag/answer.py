@@ -12,7 +12,7 @@ from typing import Any
 from ..retrieval.base import Retriever, has_candidates
 from ..retrieval.constants import FINAL_K
 from ..retrieval.facts import FACTS_FILE
-from ..retrieval.records import Query
+from ..retrieval.records import Query, RetrievedPassage
 from .citations import resolve_citations
 from .constants import ABSTAIN_PHRASE, MAX_OUTPUT_TOKENS, UnanswerableBecause
 from .decompose import search_decomposed
@@ -41,6 +41,7 @@ def answer_question(
     llm: Any | None = None,
     max_tokens: int = MAX_OUTPUT_TOKENS,
     on_token: Callable[[str], None] | None = None,
+    on_retrieved: Callable[[tuple[RetrievedPassage, ...]], None] | None = None,
     facts_file: Path = FACTS_FILE,
     use_facts: bool = True,
     use_decomposition: bool = True,
@@ -108,6 +109,10 @@ def answer_question(
     relaxing the actual search. A custom retriever may implement
     ``has_candidates(query)``; otherwise an empty result has an unknown cause.
     Provider/index failures propagate as errors, not successful abstentions.
+
+    ``on_retrieved`` receives the admitted evidence in citation order before
+    any answer tokens are emitted. It is a display notification, including
+    an empty tuple for a refusal or empty search, and never repeats retrieval.
     """
     if not question or not question.strip():
         raise ValueError("question must not be blank")
@@ -131,6 +136,8 @@ def answer_question(
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(), passages=(),
                         abstained=True, config=config, latency_ms=0.0,
                         abstention_reason=refusal)
+        if on_retrieved is not None:
+            on_retrieved(())
         if on_token is not None:
             on_token(answer.text)
         return answer
@@ -145,6 +152,8 @@ def answer_question(
             facts_file=facts_file, min_score=min_score,
         )
         if looked_up is not None:
+            if on_retrieved is not None:
+                on_retrieved(looked_up.passages)
             if on_token is not None:
                 on_token(looked_up.text)
             return looked_up
@@ -173,11 +182,15 @@ def answer_question(
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(),
                         passages=(), abstained=True, config=config, latency_ms=0.0,
                         abstention_reason=reason, sub_questions=sub_questions)
+        if on_retrieved is not None:
+            on_retrieved(())
         if on_token is not None:
             on_token(answer.text)
         return answer
 
     prompt = build_prompt(question, passages)
+    if on_retrieved is not None:
+        on_retrieved(prompt.passages)
     run = partial(generate, prompt, config, llm=llm, max_tokens=max_tokens, on_token=on_token)
     generation = run() if ask_model is None else ask_model(run)
     answered = resolve_citations(question, generation, prompt.passages)

@@ -225,7 +225,7 @@ def test_live_app_replaces_the_streamed_prose_with_the_checked_answer(monkeypatc
         return sample_answer(question)
 
     ui = _ask(monkeypatch, answer)
-    assert not ui.text
+    assert [text.value for text in ui.text] == [sample_answer("q").passages[0].text]
     assert len(ui.get("html")) == 1
 
 
@@ -360,7 +360,8 @@ def test_ask_page_lists_the_passages_an_answer_was_written_from(monkeypatch):
         f":gray-badge[:material/tune: {DEFAULT_STACK} · {stack_config(DEFAULT_STACK).name}]",
         ":gray-badge[:material/edit_note: test (ollama)]",
     ]
-    assert [heading.value for heading in ui.main.subheader] == ["Answer", "Retrieval trace"]
+    assert [heading.value for heading in ui.main.subheader] == [
+        "Answer", "Retrieved evidence", "Retrieval trace"]
     lines = _trace(ui)[1]
     assert "Provider: ollama · Model: test · Prompt: grounded_v4" in lines
     assert "Generation took 0.00s" in lines
@@ -611,7 +612,9 @@ def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_sta
     # and the sidebar has already said what to do in the app.
     ui = _ask_mistral("What risks does Apple describe in its FY2024 10-K?")
     assert ui.error[0].value == "MISTRAL_API_KEY is not set"
-    assert not ui.get("html") and not ui.main.status and not ui.text
+    assert not ui.get("html") and not ui.main.status
+    # Retrieval completed before the model failed, so its evidence remains visible.
+    assert [text.value for text in ui.text] == [sample_answer("q").passages[0].text]
 
 
 def test_a_key_mistral_refuses_is_told_without_the_advice_for_a_command(

@@ -16,6 +16,7 @@ from src.app.components import (
     provider_error,
     provider_picker,
     resolved_filters,
+    retrieved_evidence,
     retrieval_trace,
 )
 from src.rag.generate import ProviderUnavailable
@@ -60,10 +61,21 @@ if question:
 elif asked:
     st.caption("Type a question first.")
 
+answer_space, evidence_space = st.empty(), st.empty()
+evidence_shown = []
+
 if asked and question:
     # The answer as the model writes it, until the checked answer replaces
     # it. Plain text, because a "$" in prose is not the start of a formula.
-    draft, written = st.empty(), []
+    with answer_space.container():
+        st.subheader("Answer", anchor=False)
+        draft = st.empty()
+    written = []
+
+    def show_evidence(passages) -> None:
+        with evidence_space.container():
+            retrieved_evidence(passages)
+        evidence_shown.append(True)
 
     def show(token: str) -> None:
         written.append(token)
@@ -72,7 +84,8 @@ if asked and question:
     try:
         with st.spinner("Searching filings and generating an answer…"), state.Stopwatch() as watch:
             answer = state.load_stack(config_id, provider).answer(
-                question, query=query, parsed=parsed, on_token=show)
+                question, query=query, parsed=parsed, on_token=show,
+                on_retrieved=show_evidence)
             answer = verify_answer(answer, parsed=scoped)
     except ProviderUnavailable as error:
         provider_error(error, provider, available)
@@ -84,15 +97,19 @@ if asked and question:
         state.keep(PAGE, request, answer, watch.seconds)
     # Also where the provider failed part way, so that half an answer is
     # not left on the page above the error.
-    draft.empty()
+    answer_space.empty()
 
 shown = state.kept(PAGE, request)
 if shown is not None:
     # Kept with the answer, so the summary is still there when a rerun draws
     # the answer again.
-    st.subheader("Answer", anchor=False)
-    answer_summary(shown.answer, config, shown.seconds)
-    answer_card(shown.answer, key="ask-answer", show_question=False)
+    with answer_space.container():
+        st.subheader("Answer", anchor=False)
+        answer_summary(shown.answer, config, shown.seconds)
+        answer_card(shown.answer, key="ask-answer", show_question=False)
+    if not evidence_shown:
+        with evidence_space.container():
+            retrieved_evidence(shown.answer.passages)
     st.subheader("Retrieval trace", anchor=False)
     retrieval_trace(shown.answer, scoped, config, key="ask-trace")
 elif state.has_kept(PAGE) and question and not asked:

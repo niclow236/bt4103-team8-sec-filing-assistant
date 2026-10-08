@@ -729,6 +729,21 @@ def _checking_step(answer: Answer) -> str:
     return f"Checked: {found}" if found else "Checked: nothing to check"
 
 
+def retrieved_evidence(passages: Sequence[RetrievedPassage]) -> None:
+    """Show the evidence as soon as it is admitted, before generation (#42)."""
+    st.subheader("Retrieved evidence", anchor=False)
+    if not passages:
+        st.caption("No supporting passages were retrieved.")
+        return
+    for number, passage in enumerate(passages, 1):
+        label = (f"[{number}] {passage.ticker} · FY{passage.fiscal_year} · "
+                 f"Item {passage.item} · score {passage.score:.4f}")
+        with st.expander(label, expanded=number == 1):
+            st.text(passage.text)
+            if passage.url and _safe_url(passage.url):
+                st.link_button("Open filing", passage.url)
+
+
 def retrieval_trace(answer: Answer, parsed: ParsedQuestion, config: StackConfig, *,
                     key: str = "trace") -> None:
     """How an answer came about, a step at a time: read, searched, written, checked (#38).

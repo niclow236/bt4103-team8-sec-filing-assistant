@@ -38,9 +38,9 @@ if TYPE_CHECKING:
     from src.stack import Stack
 
 # What a caller passes with a question that does not change its answer:
-# ``parsed`` is read from the question, and ``on_token`` only shows the
-# answer arriving.
-NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
+# ``parsed`` is read from the question; the callbacks only show evidence
+# and the answer arriving.
+NOT_PART_OF_THE_ANSWER = ("parsed", "on_token", "on_retrieved")
 
 # How many answers one configuration keeps. Each holds the passages it was
 # written from, sixteen of them, so the memory of a process left running
@@ -300,7 +300,8 @@ class Remembered:
         ``overrides`` go to ``Stack.answer`` with that first request. A
         remembered answer comes back at once, and so does one another session
         was already being given, so nothing is streamed to ``on_token`` for
-        either.
+        either. The caller's ``on_retrieved`` is still notified of cached
+        evidence, outside the lock, without repeating the search.
         """
         asked_with = tuple(sorted(
             (name, value) for name, value in overrides.items()
@@ -308,14 +309,20 @@ class Remembered:
         ))
         key = (question, asked_with)
         while True:
+            remembered = None
             with self._lock:
                 if key in self._answers:
                     self._answers.move_to_end(key)
-                    return self._answers[key]
-                done = self._being_answered.get(key)
-                if done is None:
-                    done = self._being_answered[key] = Event()
-                    break
+                    remembered = self._answers[key]
+                else:
+                    done = self._being_answered.get(key)
+                    if done is None:
+                        done = self._being_answered[key] = Event()
+                        break
+            if remembered is not None:
+                if overrides.get("on_retrieved") is not None:
+                    overrides["on_retrieved"](remembered.passages)
+                return remembered
             # Another session is asking this now. Wait for it, then look again:
             # its answer is there, or it failed and this one asks in its turn.
             done.wait()
