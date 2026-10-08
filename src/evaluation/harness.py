@@ -1,13 +1,13 @@
-"""Run grounded QA and report abstention rates over a validated benchmark."""
+"""Run grounded QA with gold-answer quality and query resource metrics."""
 
 from __future__ import annotations
 
 import logging
 from collections import Counter
 from collections.abc import Callable, Iterable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from math import isfinite
-from time import sleep
+from time import perf_counter, sleep
 from typing import Any, TypeVar
 
 from src.rag import (
@@ -24,6 +24,9 @@ from src.rag.records import Generation, GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from .records import BenchmarkQuestion, UNANSWERABLE
+from .quality import (
+    JudgeInvalid, LLMJudge, TokenPrices, citation_scores, quality_summary, query_cost, resource_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,34 @@ RETRY_WAITS_S = (10, 60)
 # asks for more has hit a limit a run cannot wait out, so the run stops then,
 # keeping the answers it has.
 MAX_RETRY_WAIT_S = 300
+
+
+class _TimedRetriever:
+    """Time outer searches once, including decomposition and facts evidence.
+
+    Forward optional index capabilities, timing candidate diagnostics too.
+    Hybrid's inner searches are already contained in its outer search.
+    """
+
+    def __init__(self, retriever):
+        self.retriever = retriever
+        self.latency_ms = 0.0
+
+    def _call(self, method, *args, **kwargs):
+        started = perf_counter()
+        try:
+            return method(*args, **kwargs)
+        finally:
+            self.latency_ms += (perf_counter() - started) * 1000
+
+    def search(self, query, k=None):
+        return self._call(self.retriever.search, query, k=k)
+
+    def __getattr__(self, name):
+        value = getattr(self.retriever, name)
+        if name == "has_candidates":
+            return lambda *args, **kwargs: self._call(value, *args, **kwargs)
+        return value
 
 
 class _Stopped:
@@ -127,6 +158,50 @@ def answer_with_retries(label: str, ask: Callable[[], Asked]) -> tuple[Asked, in
     return ask(), len(RETRY_WAITS_S) + 1
 
 
+@dataclass
+class _ModelCalls:
+    """Calls, observed usage, active attempt time and separate retry waits."""
+
+    calls: int = 0
+    usages: list[dict[str, Any]] = field(default_factory=list)
+    ms: float = 0.0
+    waited_ms: float = 0.0
+    successes: int = 0
+
+    def ask(self, label: str, ask: Callable[[], Asked],
+            usage: Callable[[Asked], dict[str, Any]]) -> tuple[Asked, int]:
+        def call():
+            self.calls += 1
+            started = perf_counter()
+            try:
+                result = ask()
+                self.usages.append(usage(result))
+                self.successes += 1
+                return result
+            except Exception as error:
+                if (spent := getattr(error, "usage", None)) is not None:
+                    self.usages.append(spent)
+                raise
+            finally:
+                self.ms += (perf_counter() - started) * 1000
+
+        started = perf_counter()
+        previous_ms = self.ms
+        try:
+            return answer_with_retries(label, call)
+        finally:
+            elapsed_ms = (perf_counter() - started) * 1000
+            self.waited_ms += max(0.0, elapsed_ms - (self.ms - previous_ms))
+
+
+class _JudgeStopped(Exception):
+    """A completed answer whose judging stopped, with the original failure."""
+
+    def __init__(self, row: dict[str, Any], cause: Exception | KeyboardInterrupt):
+        super().__init__(str(cause))
+        self.row, self.cause = row, cause
+
+
 def evaluate(
     questions: Iterable[BenchmarkQuestion],
     retriever: Retriever,
@@ -140,6 +215,9 @@ def evaluate(
     use_decomposition: bool = True,
     use_refusal: bool = True,
     stack: Any | None = None,
+    judge: LLMJudge | None = None,
+    token_prices: TokenPrices | None = None,
+    judge_token_prices: TokenPrices | None = None,
 ) -> dict[str, Any]:
     """One configuration per run; count every completed question exactly once.
 
@@ -155,7 +233,9 @@ def evaluate(
     free plan a rate limit can come at question 40 of 48, and it should not
     throw away the 39 answers before it. Ctrl-C raises :class:`RunInterrupted`,
     a ``KeyboardInterrupt``, carrying the same report. A complete report has
-    ``stopped`` None. Any other error, such as a bug, comes through as itself.
+    ``stopped`` None. Outside judging, other errors such as bugs come through
+    as themselves. Judge errors retain the completed answer in a partial report
+    with ``stopped.stage`` set to ``judge``; that row needs only judging on resume.
     Empty subsets have a
     null rate, with their denominators explicit. The unanswerable subset is
     reported separately so a high overall rate cannot masquerade as quality.
@@ -192,6 +272,17 @@ def evaluate(
     the corpus: False searches those too and leaves the abstaining to a model.
     A refused row abstains with the reason that says so, and ``refused`` counts
     them.
+
+    ``judge`` optionally scores semantic faithfulness and gold correctness;
+    absent it, semantic scores are null on every row. A separate
+    ``answerability_correct`` metric scores abstention decisions on every row.
+    Numeric checks remain separate. Citation precision/recall,
+    stage timings and token usage are always recorded. ``token_prices`` and
+    ``judge_token_prices`` are explicit USD rates per million tokens. Unknown
+    usage/prices produce null hosted cost. Judge resources are recorded
+    separately. Invalid judge output leaves an answer unscored; other judge
+    failures stop the run, retaining that completed answer and any observed
+    usage. Model attempt time and retry waits are separate resource stages.
     """
     if not run_id.strip():
         raise ValueError("run_id must be non-empty")
@@ -216,6 +307,10 @@ def evaluate(
             "stack": None if stack is None else stack.to_dict(),
             "retriever": retriever.name,
             "config": config.to_dict(),
+            "judge": None if judge is None else judge.to_dict(),
+            "token_prices": None if token_prices is None else token_prices.to_dict(),
+            "judge_token_prices": (None if judge_token_prices is None
+                                   else judge_token_prices.to_dict()),
             "min_score": min_score,
             "top_k": top_k,
             "use_facts": use_facts,
@@ -227,6 +322,8 @@ def evaluate(
                            if row["answer"]["abstention_reason"] in REFUSALS.values()),
             "summary": _rates(rows),
             "checks": _checks(rows),
+            "quality": quality_summary(rows),
+            "resources": resource_summary(rows),
             "by_answerability": {
                 "unanswerable": _rates([r for r in rows if r["question_type"] == UNANSWERABLE]),
                 "answerable": _rates([r for r in rows if r["question_type"] != UNANSWERABLE]),
@@ -237,6 +334,9 @@ def evaluate(
 
     def row_for(question: BenchmarkQuestion) -> dict[str, Any]:
         # One question asked and answered, as its row in the report.
+        started = perf_counter()
+        timed = _TimedRetriever(retriever)
+        generation_calls = _ModelCalls()
         parsed = parse_question(question.question)
         query = parsed.to_query(top_k=top_k)
         if question.ticker is not None:
@@ -258,11 +358,15 @@ def evaluate(
 
         def ask_model(run: Callable[[], Generation]) -> Generation:
             nonlocal attempts
-            generation, attempts = answer_with_retries(question.question_id, run)
+            generation, attempts = generation_calls.ask(
+                question.question_id, run,
+                lambda result: {"input_tokens": result.input_tokens,
+                                "output_tokens": result.output_tokens},
+            )
             return generation
 
         answer = answer_question(
-            question.question, retriever, config, query=query, min_score=min_score,
+            question.question, timed, config, query=query, min_score=min_score,
             llm=llm, use_facts=use_facts, use_decomposition=use_decomposition,
             use_refusal=use_refusal, parsed=parsed, ask_model=ask_model,
         )
@@ -273,7 +377,64 @@ def evaluate(
         # every filing, and the app still checks its answer against the
         # sidebar's company and year, so that is the scope here too.
         answer = verify_answer(answer, parsed=asked)
-        return {"question_id": question.question_id, "run_id": run_id,
+        total_ms = (perf_counter() - started) * 1000
+        answerable = question.question_type != UNANSWERABLE
+        quality = citation_scores(question, answer) | {
+            "faithfulness": None, "correctness": None, "method": "not_scored",
+            "answerability_correct": float(answer.abstained != answerable),
+            "faithfulness_reason": None, "correctness_reason": None,
+            "error": None,
+        }
+        judge_calls = _ModelCalls()
+        judge_stopped = None
+        if answer.abstained:
+            # No factual claims to ground; do not reward vacuous faithfulness.
+            quality.update(method="abstention")
+            if judge is not None:
+                quality.update(correctness=float(not answerable),
+                               correctness_reason="Benchmark answerability")
+        elif judge is not None:
+            try:
+                result, _ = judge_calls.ask(
+                    question.question_id + ":judge", lambda: judge(question, answer),
+                    lambda result: {"input_tokens": result.get("input_tokens"),
+                                    "output_tokens": result.get("output_tokens")},
+                )
+                # LLMJudge validates scores once, at the provider boundary.
+                quality.update({key: result[key] for key in
+                                ("faithfulness", "correctness", "faithfulness_reason",
+                                 "correctness_reason")}, method="llm_judge")
+                if not answerable:
+                    quality.update(correctness=0.0,
+                                   correctness_reason="Answered an unanswerable question")
+            except JudgeInvalid as error:
+                quality.update(method="judge_failed", error=str(error))
+            except (Exception, KeyboardInterrupt) as error:
+                judge_stopped = error
+                quality.update(method="judge_failed",
+                               error="interrupted" if isinstance(error, KeyboardInterrupt) else str(error))
+        cost = query_cost(config.provider, generation_calls.usages,
+                          attempts=generation_calls.calls, prices=token_prices,
+                          successful_calls=generation_calls.successes)
+        judge_provider = config.provider if judge is None else judge.config.provider
+        judge_cost = query_cost(judge_provider, judge_calls.usages, attempts=judge_calls.calls,
+                                prices=judge_token_prices, successful_calls=judge_calls.successes)
+        row = {"question_id": question.question_id, "run_id": run_id,
+                "expected_answer": question.expected_answer,
+                "supporting_chunk_ids": list(question.supporting_chunk_ids),
+                "quality": quality,
+                # No reranker exists in the current stack; fusion is retrieval.
+                "latency_ms": {"retrieve": timed.latency_ms, "rerank": 0.0,
+                               "generate": generation_calls.ms, "total": total_ms,
+                               "retry_wait": generation_calls.waited_ms,
+                               "other": max(0.0, total_ms - timed.latency_ms - generation_calls.ms
+                                            - generation_calls.waited_ms)},
+                "rerank_enabled": False,
+                "cost": cost,
+                "judge_overhead": {"latency_ms": judge_calls.ms,
+                                   "retry_wait_ms": judge_calls.waited_ms,
+                                   "total_ms": judge_calls.ms + judge_calls.waited_ms,
+                                   "cost": judge_cost},
                 "question_type": question.question_type,
                 # Which route answered it. The Answer records the provider
                 # that produced it, and a looked-up answer says "facts"
@@ -285,10 +446,20 @@ def evaluate(
                 # provider was busy: how often a hosted free plan was.
                 "attempts": attempts,
                 "answer": answer.to_dict()}
+        if judge_stopped is not None:
+            # The answer and its paid model call completed before judging failed.
+            # Keep them in the partial report before the outer handler stops it.
+            raise _JudgeStopped(row, judge_stopped)
+        return row
 
     for question in questions:
         try:
             rows.append(row_for(question))
+        except _JudgeStopped as stop:
+            rows.append(stop.row)
+            stopped = _stopped(question, f"{type(stop.cause).__name__}: {stop.cause}") | {"stage": "judge"}
+            error_type = RunInterrupted if isinstance(stop.cause, KeyboardInterrupt) else RunStopped
+            raise error_type(report(stopped)) from stop.cause
         except ProviderUnavailable as error:
             stopped = _stopped(question, f"{type(error).__name__}: {error}")
             raise RunStopped(report(stopped)) from error

@@ -449,6 +449,52 @@ def _describe(differences: Mapping[str, int]) -> str:
     )
 
 
+class MixedIndexError(RuntimeError):
+    """An index holds vectors that the ones about to be added cannot sit beside."""
+
+
+def refuse_mixed_index(
+    held: Mapping[str, tuple[str | None, str | None, str | None]],
+    manifest: IndexManifest | None,
+    *,
+    chroma_dir: Path,
+    model_name: str,
+    max_tokens: int | None,
+) -> None:
+    """Refuse to add vectors to an index that holds vectors made another way.
+
+    ``held`` is what ``_scan`` read from the index and ``manifest`` the one
+    beside it, both as they are before anything is written. Whatever adds
+    vectors to an existing index calls this first, and before it removes the
+    manifest: the manifest is the only record of the token limit the vectors
+    already there were encoded under, so once it is gone a build under another
+    limit has nothing to be refused by, and the manifest written at the end
+    would vouch for all of them at the new one.
+
+    Refused rather than repaired: every vector would change, with another
+    model possibly its width too, and that is a decision to make on purpose.
+    """
+    foreign = sum(1 for entry in held.values() if entry[2] != model_name)
+    if foreign:
+        models = sorted({str(entry[2]) for entry in held.values() if entry[2] != model_name})
+        raise MixedIndexError(
+            f"{foreign:,} of the {len(held):,} vectors in {chroma_dir} were not "
+            f"encoded by {model_name} (found: {', '.join(models)}; 'None' means "
+            f"built before this stage recorded the model). Mixing encoders in "
+            f"one index makes their scores incomparable. Rebuild it:\n"
+            f"  python -m src.retrieval embed --rebuild"
+        )
+    if (held and manifest is not None and manifest.max_tokens is not None
+            and max_tokens is not None and max_tokens != manifest.max_tokens):
+        raise MixedIndexError(
+            f"changing the encoder token limit requires rebuild=True: the "
+            f"{len(held):,} vectors in {chroma_dir} were encoded reading at most "
+            f"{manifest.max_tokens} tokens of a passage, and this build reads "
+            f"{max_tokens}. One index holding both would be recorded as all "
+            f"{max_tokens}."
+        )
+
+
 def build(
     tickers: list[str] | None = None,
     fiscal_years: range | list[int] | None = None,
@@ -572,22 +618,10 @@ def build(
     else:
         collection = open_collection(chroma_dir)
         held = _scan(collection)
-        # Refused rather than repaired: every vector would change, possibly its
-        # width too, and that is a decision to make on purpose.
-        foreign = sum(1 for entry in held.values() if entry[2] != model_name)
-        if foreign:
-            models = sorted({str(entry[2]) for entry in held.values() if entry[2] != model_name})
-            raise RuntimeError(
-                f"{foreign:,} of the {len(held):,} vectors in {chroma_dir} were not "
-                f"encoded by {model_name} (found: {', '.join(models)}; 'None' means "
-                f"built before this stage recorded the model). Mixing encoders in "
-                f"one index makes their scores incomparable. Rebuild it:\n"
-                f"  python -m src.retrieval embed --rebuild"
-            )
-
-    if (held and previous_manifest is not None and previous_manifest.max_tokens is not None
-            and max_tokens is not None and max_tokens != previous_manifest.max_tokens):
-        raise RuntimeError("changing the encoder token limit requires rebuild=True")
+        refuse_mixed_index(
+            held, previous_manifest, chroma_dir=chroma_dir, model_name=model_name,
+            max_tokens=max_tokens,
+        )
 
     before = _differences(held, corpus)
     if held:

@@ -332,3 +332,163 @@ def test_empty_generation_leaves_existing_output_untouched(tmp_path):
         generate_xbrl_questions(facts_file, processed_dir=processed_dir, output_path=output)
 
     assert output.read_text(encoding="utf-8") == "previous benchmark\n"
+
+
+# --- what the contract refuses (#49) ---------------------------------------------
+#
+# A benchmark file is written by hand, by six people, so each way a line can be
+# wrong is refused with a message that says which field and why. Skipping a bad
+# line would shrink the benchmark without anybody noticing.
+
+
+@pytest.mark.parametrize("change, said", [
+    ({"question_id": "  "}, "question_id must be a non-empty string"),
+    ({"question": 7}, "question must be a non-empty string"),
+    ({"expected_answer": ""}, "expected_answer must be a non-empty string"),
+    ({"difficulty": None}, "difficulty must be a non-empty string"),
+    ({"source": ""}, "source must be a non-empty string"),
+    ({"ticker": ""}, "ticker must be a non-empty string"),
+    ({"supporting_chunk_ids": "AAPL-2024-1"}, "supporting_chunk_ids must be a list"),
+    ({"supporting_chunk_ids": ["AAPL-2024-1", ""]}, "supporting_chunk_ids must be a list"),
+    ({"supporting_chunk_ids": ["AAPL-2024-1", "AAPL-2024-1"]},
+     "supporting_chunk_ids must not contain duplicate values"),
+    ({"hard_negative_chunk_ids": [3]}, "hard_negative_chunk_ids must be a list"),
+    ({"hard_negative_chunk_ids": ["AAPL-2024-1"]},
+     "supporting and hard-negative IDs overlap: AAPL-2024-1"),
+    ({"fiscal_year": "2024"}, "fiscal_year must be an integer year or null"),
+    ({"fiscal_year": True}, "fiscal_year must be an integer year or null"),
+    ({"fiscal_year": 24}, "fiscal_year must be an integer year or null"),
+    ({"reviewer": "Daryl"}, "unknown fields: reviewer"),
+])
+def test_each_way_a_question_breaks_the_contract_is_named(tmp_path, change, said):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question(**change))
+    with pytest.raises(BenchmarkValidationError, match=said) as refusal:
+        load_questions(path, chunk_ids=["AAPL-2024-1", "AAPL-2023-1"])
+    assert str(refusal.value).startswith(f"{path}:1: ")
+
+
+def test_a_question_missing_a_field_is_refused_with_every_field_it_lacks(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    partial = {key: value for key, value in _question().items()
+               if key not in ("difficulty", "source")}
+    _write_question(path, partial)
+    with pytest.raises(BenchmarkValidationError,
+                       match="missing required fields: difficulty, source"):
+        load_questions(path, chunk_ids=["AAPL-2024-1", "AAPL-2023-1"])
+
+
+@pytest.mark.parametrize("text, said", [
+    ('{"question_id": "q001",\n', r"questions\.jsonl:1: invalid JSON"),
+    ('["q001"]\n', r"questions\.jsonl:1: expected a JSON object"),
+    ("\n\n   \n", "benchmark contains no questions"),
+])
+def test_a_file_that_is_not_one_question_a_line_is_refused(tmp_path, text, said):
+    path = tmp_path / "questions.jsonl"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(BenchmarkValidationError, match=said):
+        load_questions(path, chunk_ids=["AAPL-2024-1"])
+
+
+def test_a_benchmark_that_is_not_there_is_not_an_empty_one(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Benchmark questions file not found"):
+        load_questions(tmp_path / "absent.jsonl", chunk_ids=[])
+
+
+def test_passages_may_be_given_as_rows_as_well_as_ids(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    _write_question(path, _question())
+    rows = [{"chunk_id": "AAPL-2024-1", "text": "a"}, {"chunk_id": "AAPL-2023-1", "text": "b"}]
+    assert load_questions(path, chunk_ids=rows)[0].supporting_chunk_ids == ("AAPL-2024-1",)
+
+
+def test_a_result_holds_one_score_for_each_passage_and_each_passage_once():
+    with pytest.raises(ValueError, match="must have equal lengths"):
+        RunResult("q001", "bm25", ("a", "b"), (1.0,))
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        RunResult("q001", "bm25", ("a", "a"), (2.0, 1.0))
+
+
+def test_a_result_is_not_built_from_another_retrievers_passages():
+    from src.retrieval.records import RetrievedPassage
+
+    passage = RetrievedPassage(
+        chunk_id="a", text="a", score=1.0, rank=1, retriever="dense", ticker="AAPL",
+        company="Apple", fiscal_year=2024, item="7", title="MD&A", url="https://example.com",
+    )
+    with pytest.raises(ValueError, match="must come from retriever 'bm25'"):
+        RunResult.from_passages("q001", [passage], retriever="bm25")
+    built = RunResult.from_passages("q001", [passage], retriever="dense", latency_ms=3.5,
+                                    config={"id": "C2"})
+    assert built.to_dict() == {
+        "question_id": "q001", "retriever": "dense", "retrieved_chunk_ids": ["a"],
+        "retrieved_scores": [1.0], "latency_ms": 3.5, "config": {"id": "C2"},
+    }
+
+
+def test_generation_needs_facts_about_the_year_a_filing_reports_on(tmp_path):
+    """A comparative printed in a later filing is not that filing's own figure."""
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, ["Revenue was 100."])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([_xbrl_fact(period_end="2023-12-31", period_start="2023-01-01")]).to_parquet(
+        facts_file, index=False)
+
+    with pytest.raises(ValueError, match="No current-year facts found"):
+        generate_xbrl_questions(facts_file, processed_dir=processed_dir,
+                                output_path=tmp_path / "generated.jsonl")
+
+
+def test_a_fact_with_no_filing_or_no_printed_figure_makes_no_question(tmp_path):
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, ["Revenue was 100 and assets were 250."])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        _xbrl_fact(raw_value="100", label="Revenue"),
+        _xbrl_fact(raw_value="250", label="Assets", accession=""),      # no filing to cite
+        _xbrl_fact(raw_value="777", label="Liabilities"),               # printed nowhere
+    ]).to_parquet(facts_file, index=False)
+
+    questions = generate_xbrl_questions(facts_file, processed_dir=processed_dir,
+                                        output_path=tmp_path / "generated.jsonl")
+
+    assert [question.question for question in questions] == [
+        "What was Revenue for AAPL in FY2024?"]
+
+
+def test_the_expected_answer_is_the_figure_as_filed_with_its_unit(tmp_path):
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, ["Shares outstanding were 15,550 and revenue was 100."])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([
+        _xbrl_fact(raw_value="100", unit="USD", label="Revenue."),
+        _xbrl_fact(raw_value="15550", unit="", label="  Shares   outstanding "),
+    ]).to_parquet(facts_file, index=False)
+
+    questions = generate_xbrl_questions(facts_file, processed_dir=processed_dir,
+                                        output_path=tmp_path / "generated.jsonl")
+
+    assert {question.expected_answer for question in questions} == {"100 USD", "15550"}
+    # A label is tidied into a question a person could have typed.
+    assert {question.question for question in questions} == {
+        "What was Revenue for AAPL in FY2024?",
+        "What was Shares outstanding for AAPL in FY2024?",
+    }
+
+
+def test_a_generated_question_lists_at_most_three_supporting_chunks(tmp_path):
+    """Recall divides by every supporting chunk (src/evaluation/metrics.py), so a
+    question with more of them than the cutoff could never score 1.0. Three a
+    question, the first three in the filing's order, keeps a perfect score in
+    reach at every cutoff the README reports, and is why changing the divisor
+    from min(supporting, k) in #140 moved no reported figure."""
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, [f"Note {i}: revenue was 4,103." for i in range(5)])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([_xbrl_fact(raw_value="4103")]).to_parquet(facts_file, index=False)
+
+    [question] = generate_xbrl_questions(facts_file, processed_dir=processed_dir,
+                                         output_path=tmp_path / "generated.jsonl")
+
+    assert question.supporting_chunk_ids == tuple(
+        f"0000000001-25-000001_part_ii_item_8_{i:03d}" for i in range(3))

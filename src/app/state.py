@@ -5,7 +5,8 @@ worth keeping has to be held outside it. Everything a page keeps is here, so
 no page holds a cache of its own:
 
 - for the process, with ``st.cache_resource``: the indexes and the embedding
-  model (``_indexes``) and each built configuration (``load_stack``), and with
+  model (``_indexes``), each built configuration (``load_stack``), and the
+  local passages shown by the Browse page (``corpus_passages``), and with
   ``st.cache_data`` the runs under ``results/`` (``measured``);
 - from ``.env``, read on every rerun: the providers a page can offer, the one
   it opens on, and what any of them lacks (``answer_models``);
@@ -29,6 +30,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import streamlit as st
 
+from src.pipeline.chunk import iter_chunks
 from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
 from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
 from src.stack import RESULTS_ROOT, build_stack, measured_runs
@@ -142,6 +144,23 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
             runs.append({"run_id": str(manifest.get("run_id") or run_dir.name),
                          "configurations": configurations})
     return runs
+
+
+@st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
+def corpus_passages() -> tuple[dict[str, Any], ...]:
+    """Read the processed passages once for the process (#40).
+
+    The Browse page needs the passage text and filing metadata, not a search
+    index and not a model. ``iter_chunks`` is the pipeline's common seam for
+    joining those two records, so the page sees exactly what retrieval can
+    see. The corpus is large and read-only while the app is running; a
+    resource cache shares this tuple between reruns and browser sessions
+    instead of copying all passage text into each session. Restart the app (or
+    clear Streamlit's cache) after rebuilding ``data/processed/``.
+
+    Callers must treat the dictionaries as read-only.
+    """
+    return tuple(iter_chunks())
 
 
 @st.cache_resource

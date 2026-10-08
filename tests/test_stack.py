@@ -236,6 +236,34 @@ def test_configurations_built_with_the_same_parts_share_their_indexes(monkeypatc
     assert loaded == ["bm25", "dense", "bm25", "dense"]
 
 
+def test_a_second_corpus_is_searched_through_its_own_bm25_index(monkeypatch, tmp_path):
+    # The chunk-size sweep (#45) holds a corpus and both indexes per budget.
+    # Without the path, a second corpus could only be checked against the
+    # app's own bm25.pkl, which refuses it.
+    import src.retrieval.bm25 as bm25_module
+    import src.retrieval.dense as dense_module
+
+    loaded = []
+    monkeypatch.setattr(bm25_module.BM25Retriever, "load",
+                        classmethod(lambda cls, **kw: loaded.append(kw) or object()))
+    monkeypatch.setattr(dense_module.DenseRetriever, "load",
+                        classmethod(lambda cls, **kw: object()))
+    corpus, index = tmp_path / "processed", tmp_path / "bm25.pkl"
+    parts = {}
+
+    build_retriever("bm25", parts=parts)
+    assert "index_path" not in loaded[0]
+
+    own = build_retriever("bm25", processed_dir=corpus, bm25_index=index, parts=parts)
+    assert loaded[1] == {"processed_dir": corpus, "index_path": index}
+    # The hybrid row of that corpus searches the index already loaded for it,
+    # and no other corpus's.
+    hybrid = build_retriever("hybrid", processed_dir=corpus, bm25_index=index,
+                             chroma_dir=tmp_path / "chroma", parts=parts)
+    assert hybrid.bm25 is own and len(loaded) == 2
+    assert build_retriever("bm25", processed_dir=corpus, parts=parts) is not own
+
+
 # --- answering through a stack -------------------------------------------------------
 
 def test_a_stack_answers_with_its_own_settings(monkeypatch):

@@ -91,6 +91,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── interim/             # parsed sections (git-ignored)
 │   ├── processed/           # chunks ready for indexing (git-ignored)
 │   ├── index/               # built BM25 and Chroma indexes (git-ignored)
+│   ├── sweep/               # the corpus cut and indexed at each size the sweep measures (git-ignored)
 │   └── diagnostics/         # why a run did what it did (git-ignored, on demand)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
@@ -132,6 +133,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── cli.py           #   python -m src.evaluation: answers a benchmark, reports abstentions
 │   │   ├── harness.py       #   evaluate(): one configuration end to end through answer_question
 │   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
+│   │   ├── chunk_sweep.py   #   python -m src.evaluation.chunk_sweep: retrieval at four passage sizes
 │   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
@@ -139,23 +141,24 @@ bt4103-team8-sec-filing-assistant/
 │   └── app/                 # the Streamlit app, and the viewer for saved answers
 │       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
 │       ├── app_pages/       #   one script per page
-│       │   └── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
-│       ├── state.py         #   what is kept between reruns: indexes, stacks, answers
-│       ├── components.py    #   what pages draw: answer card, filters, trace
+│       │   ├── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
+│       │   └── browse.py    #     Browse: company/year/Item passage explorer
+│       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
+│       ├── components.py    #   what pages draw: answers, filters, trace, corpus passages
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
 ├── tests/                   # the pytest suite (see Getting started)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
 │   ├── answers/             #   test questions and headline figures through the app's answer path; each writes a git-ignored results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path; writes a git-ignored results/
-│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words, the chunk sweep at equal text
 │   ├── test_data/           #   the team's 48 test questions
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
-├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id (git-ignored)
+├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
     └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
 ```
@@ -258,11 +261,26 @@ Run the tests:
 python -m pytest
 ```
 
-They need no network, no EDGAR identity and nothing under `data/`: each builds
-its own small corpus in a temporary directory, and the dense-index tests replace
-the embedding model with a deterministic stand-in, so the suite runs in seconds.
-One test counts tokens with the real bge tokenizer and is skipped if that cannot
-be downloaded.
+That one command runs the whole suite. The tests need no network, no EDGAR
+identity and nothing under `data/`: each builds its own small corpus in a
+temporary directory, the dense-index tests replace the embedding model with a
+deterministic stand-in, and a test of a command replaces the stage the command
+calls. The suite takes a few minutes on a laptop. One test counts tokens with
+the real bge tokenizer and is skipped if that cannot be downloaded.
+
+What the suite holds in place, and where (#49):
+
+| What has to keep holding | Tested in |
+|---|---|
+| The chunk contract: a passage's id, its one Item, its size, the heading it sits under, a table's header on every part, and the fields a stored row carries | `tests/test_chunk_contract.py` |
+| A filing is cut the same way in every process | `tests/test_chunk.py` |
+| The metadata filter is applied before scoring, and selects the same passages in every retriever | `tests/test_base.py`, `tests/test_prefilter.py`, `tests/test_dense.py` |
+| The order reciprocal rank fusion gives, worked out by hand | `tests/test_hybrid.py` |
+| An index built against a different corpus is refused, BM25 and dense alike | `tests/test_index_guard.py` |
+| A citation resolves to the passage the prompt numbered, and a marker the model invented is flagged and never shown as a source | `tests/test_rag_citations.py`, `tests/test_end_to_end.py`, `tests/test_app_components.py` |
+| Recall, nDCG, reciprocal rank and hard-negative accuracy, worked out by hand | `tests/test_metrics.py` |
+| The corpus gate fails on each fault it is for | `tests/test_verify.py`, `tests/test_verify_gate.py` |
+| The stages together: one corpus from the chunker to a scored, cited answer | `tests/test_end_to_end.py` |
 
 To see which code the tests reach, run them with coverage:
 
@@ -276,10 +294,13 @@ settings are in `.coveragerc`, so everyone measures the same code the same way,
 branches included. `--cov-report=html` writes a browsable version to
 `htmlcov/` instead, which git ignores. Coverage says which lines ran, not
 whether a test checked what they did, so it shows where tests are missing
-rather than proving the ones that exist are good. On 27 September 2026 it
-measured 73% across `src/`: the RAG stage at 96 to 100%, and the pipeline least
-covered, with its command line and passage reader at 0%, the downloader at 11%
-and the verifier at 25% (#49).
+rather than proving the ones that exist are good. On 8 October 2026 it measured
+94% across `src/`, over 1,718 tests. On 27 September it had measured 73%, with
+the pipeline least covered: its command line and passage reader at 0%, the
+downloader at 11% and the verifier at 25%. Those four are now at 99%, 100%,
+100% and 98% (#49). The least covered file is `src/pipeline/parse.py`, at 63%:
+what the tests do not reach there is the reading of a filing's HTML through
+edgartools, which the suite has no filing to give.
 
 Set up environment variables:
 
@@ -368,9 +389,11 @@ each one carries the nearest heading above it so a passage taken from the middle
 of Item 1A still knows which risk it sits under. Like parsing, this works only
 from files already on disk, so it is cheap to re-run as the strategy changes.
 
-`--budget` and `--overlap` are the two knobs the retrieval comparison will
-sweep, and `--key-items-only` builds a narrow index from the targeted Items
-alone, for comparison against the full one.
+`--budget` and `--overlap` are the two knobs the
+[chunk-size sweep](#chunk-size-sweep) turns, on builds of its own under
+`data/sweep/` rather than on `data/processed/`, and `--key-items-only` builds
+a narrow index from the targeted Items alone, for comparison against the full
+one.
 
 Read the passages back, to see what retrieval will actually be searching:
 
@@ -422,7 +445,7 @@ Measured on the fifteen-company corpus, 75 filings, over a home connection, with
 | download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
 | parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
 | chunk | 15s | pure text processing over the parsed Items |
-| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then nine checks over 28,000 passages |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then ten checks over 28,000 passages |
 | **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
 
 Parse is quoted as a range because it is CPU-bound and single-threaded: the same
@@ -443,7 +466,7 @@ and exits non-zero when it cannot. It is the last thing to run before handing th
 corpus to retrieval, and it takes no options: a gate you can narrow is one that
 gets narrowed until it passes.
 
-Nine checks, cheapest first:
+Ten checks, cheapest first:
 
 | Check | What would fail it |
 |---|---|
@@ -452,6 +475,7 @@ Nine checks, cheapest first:
 | key Items | Items 1, 1A, 7, 7A or 8 absent, or a stub with nothing to resolve to |
 | chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
 | no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage, unless the chunker dropped it as a flattened copy of a table it rebuilt |
+| no figure lost | a figure of four characters or more in a chunked Item's text that no passage of the filing prints, and whose digits the cells of the Item's table passages do not all cover |
 | passage sizes | any table passage, or more than 0.5% of prose passages, past the 512 tokens bge reads, counted with the model's own tokenizer over the passage and its context header |
 | statement titles | a filing whose balance sheet, income statement or cash flow statement carries no title a question could name it by |
 | matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
@@ -470,7 +494,7 @@ source, and a filing can be amended after you fetch it.
 A check that finds the corpus incomplete skips the per-file checks below it,
 since each would report the same missing filing once per filing. Those are listed
 as `SKIP` rather than left out, so a run that checked four things cannot be
-mistaken for a clean bill of health on nine.
+mistaken for a clean bill of health on ten.
 
 What verify does **not** fail on is imperfection the pipeline already handles: 6
 of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one
@@ -559,8 +583,8 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 28,179 passages over 75 filings: 17,564 of prose
-and 10,615 of tables. Prose runs to a median of 1,529 characters and 95% of it
+The corpus currently chunks to 28,203 passages over 75 filings: 17,588 of prose
+and 10,615 of tables. Prose runs to a median of 1,527 characters and 95% of it
 carries a heading; tables, cut to fit the embedding window, run to a median of
 624 and 32%, since a table sits under a caption more often than under a heading.
 
@@ -577,8 +601,22 @@ say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
 All but 6 of the tables that hold data rebuild cleanly, 5,422 of 5,428; where one
-cannot, its flattened copy is left in the prose, so no figure is ever lost, it
-is just harder to read.
+cannot, its flattened copy is left in the prose, where it is just harder to read.
+A grid that rebuilds can still drop a cell: Meta's FY2021 table of marketable
+securities comes back with a bare `$` where the filing prints 14,879. So a
+flattened copy is only removed when every figure in it is wholly inside cells of
+a table passage: every digit, and every comma between two digits in one cell
+with both those digits, so that neither `$14` and `879` nor `$14,` and `879`,
+from tables that have nothing to do with each other, pass for 14,879. The cost
+is 26 flattened date headers kept in the prose, such as `June 30,2023`, where
+the cells `June 30,` and `2023` ran together. A figure here is a
+run of four or more digits and commas, such as `1,182`, and `python -m
+src.pipeline verify` fails a corpus in which a removed copy held one that no
+passage of its filing does. Anything shorter gets no such guarantee: a count of
+46, or the 345 of a decimal such as 12.345. Nor does a figure that two
+unrelated cells cover by meeting between two of its digits, such as `$14` and
+`879` for `$14879`, or `$12,34` and `5,678` for `$12,345,678`, since that reads
+exactly like two cells run together; no filing in the corpus has one.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
@@ -638,14 +676,16 @@ passages there:
   since its surrounding evidence can differ.
 - The flattened copy of a table the parser rebuilt is dropped from the prose, so
   the same figures are not indexed twice, once unreadable. A block is judged a
-  copy when the table's own cells account for it and no figure is left over.
+  copy when cells of the Item's tables account for it, with no digit of any
+  figure left over and each comma between two of its digits in one cell with
+  both of them, and only tables that are cut into passages count.
 - The blank lines between paragraphs count against the budget as well as the
   paragraphs, since they are in the passage too.
 - Cells are rendered without alignment padding. Padding would be the largest
   single item in a wide table and carries no meaning to a model reading it.
 
 The result, counted in bge's own tokens with the context header the encoder also
-reads: **none of the 28,179 passages exceeds 512 tokens.** The largest prose
+reads: **none of the 28,203 passages exceeds 512 tokens.** The largest prose
 passage is 504 tokens and the largest table passage 385. `verify` checks this on
 every run. Before the last of these rules, 287 prose passages were being
 truncated, almost all of them flattened tables left in the text.
@@ -1791,9 +1831,10 @@ differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 
-The real app reads the processed filings and indexes on this machine, searches
-them, sends retrieved passages to the configured answer model, verifies the
-result, and shows citations to those filings:
+The app's Ask page reads the processed filings and indexes on this machine,
+searches them, sends retrieved passages to the configured answer model,
+verifies the result, and shows citations to those filings. Its Browse page
+reads the processed passages directly, without an index or model:
 
 ```bash
 streamlit run src/app/main.py
@@ -1802,9 +1843,10 @@ streamlit run src/app/main.py
 Run it from the project root. `python -m streamlit run src/app/main.py` does
 the same.
 
-Build the local indexes first if they do not exist (`python -m src.retrieval
-bm25` and `python -m src.retrieval embed`). The app checks each index against
-the current processed corpus before searching. The sidebar's Configuration box
+For the Ask page, build the local indexes first if they do not exist (`python
+-m src.retrieval bm25` and `python -m src.retrieval embed`). The app checks each
+index against the current processed corpus before searching. The sidebar's
+Configuration box
 picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
 the metadata filter, so the first Ask also checks the dense index and loads the
 embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
@@ -1859,6 +1901,20 @@ The Ask page (#38) shows, in order:
   what the checks found. It is drawn from the answer already given, so
   opening it searches nothing.
 
+The Browse page (#40) reads `data/processed/` directly and needs neither an
+index nor an answer model. Its company, fiscal-year and Item menus are
+dependent: each contains only values that exist under the choices before it,
+so every selectable combination has passages. It shows 25 passages at a time
+and makes every page reachable. Each expander is named for its nearest heading
+or table caption, then the end of its chunk ID, so no two panels in one
+selection read alike (#127): a table with no caption is named from its own
+label line, which carries the statement title, where 61 of Apple's 64 FY2025
+Item 8 tables used to fall back to "Financial Statements". The full chunk ID is
+shown inside, beside a link to the source filing on EDGAR. Prose is marked with
+an article icon and rendered as text; table passages are marked with a table
+icon and rendered in a
+spacing-preserving block so the two cannot be mistaken for one another.
+
 ### Where things go in `src/app/`
 
 Each file has one job, so that a second page does not grow its own copy of
@@ -1868,8 +1924,8 @@ what the first one does:
 |---|---|
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
-| `state.py` | Everything kept between reruns: `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`. A component builds no stack, asks no model and caches nothing. The sidebar's own selections are the only thing one holds. |
+| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
@@ -2007,6 +2063,16 @@ accuracy, the cutoff, question type, retriever, and latency. Unanswerable
 questions leave the supporting-chunk metrics unset and are evaluated through
 their hard-negative accuracy instead.
 
+Recall@k is the supporting chunks found in the top `k` divided by all the
+supporting chunks, found or not: five of twenty in a top 5 is 0.25. Until #140
+the divisor was `min(supporting chunks, k)`, which scored that case 1.0 (#97).
+No Recall figure in this README moved with the change. The two divisors differ
+only for a question with more supporting chunks than `k`, and the generated
+benchmark has none: `generate_xbrl_questions` lists at most three supporting
+chunks a question, and no cutoff reported here is under 3. nDCG still cuts its
+ideal ranking at `k`, as it is defined, so a question with more supporting
+chunks than `k` can reach 1.0 on nDCG and not on Recall.
+
 The answer evaluation harness runs the same `answer_question` path and reports
 abstentions divided by all completed questions, both overall and separately
 for answerable and unanswerable questions. Each summary includes its total,
@@ -2042,6 +2108,86 @@ which returns the report. A run that stops part-way raises instead:
 `RunStopped`, a `ProviderUnavailable`, when the provider cannot answer, and
 `RunInterrupted`, a `KeyboardInterrupt`, on Ctrl-C. Either carries the report
 of the questions before it on `.report`, as the command writes it.
+
+Answer-quality evaluation (#47) adds `quality`, `latency_ms` and `cost` to
+each result, together with its gold answer and supporting chunk IDs. To score
+semantic faithfulness and correctness, add `--judge`:
+
+```bash
+python -m src.evaluation benchmark/questions.jsonl --retriever hybrid --no-facts \
+  --judge --run-id answer-quality --output logs/answer-quality.json
+```
+
+The judge uses the answering provider/model by default; `--judge-model` selects
+another model on that provider. Its client is built once and checked against
+the recorded model/provider before any answers are generated. It makes a
+separate structured call using the versioned `answer-quality-v1` rubric.
+Faithfulness scores factual claims against
+their own cited passages; correctness compares the response with the gold
+answer, accepting equivalent wording and numeric units. Both scores range from
+0 to 1, with reasons recorded per question. These are model judgements, so
+inspect the reasons and compare with human review before treating them as gold
+labels. Use `--judge` for the per-question semantic scoring required by #47;
+without it, faithfulness and correctness are null on every row, including
+abstentions. Numeric verification and token overlap are not semantic proof.
+The separate `answerability_correct` metric always records whether the answer
+abstained exactly where the benchmark says it should (1 if so, 0 otherwise).
+Only with `--judge`, abstention correctness is 1 on an unanswerable question
+and 0 otherwise; a successfully judged answer to an unanswerable question has
+correctness 0. Failed judge rows remain unscored even on unanswerable questions.
+Faithfulness is null for abstentions because they assert no claims.
+Invalid, truncated or filtered output from a working judge records
+`judge_failed` and leaves semantic scores unscored for that question. Other
+judge failures, including unmapped client errors, stop with a partial report;
+retryable failures follow the normal retry policy. Construction-time
+configuration errors fail before answering. The already completed answer and
+its resources are retained, including on Ctrl-C during judging. A judge stop
+records `stopped.stage: "judge"`: its question is retained in `results` and
+needs only judging if a caller resumes it. The CLI counts earlier questions
+separately, so that retained answer is not reported as "answered before it".
+The CLI prints quality means and scored/total denominators so missing scoring
+is visible. Judge identity, rubric and
+configuration are recorded; judge latency and API cost appear in
+`judge_overhead`, separately from query resources.
+
+Citation precision is the number of correctly cited distinct chunk IDs divided
+by all distinct resolved cited chunk IDs; recall divides by the distinct gold
+chunk IDs. Repeated citations count once, and retrieved but uncited passages do
+not count. Empty denominators produce null, so a question with no gold chunks
+has no citation recall. An answerable abstention has recall 0. Unresolved and
+invalid markers are recorded separately and do not enter resolved-ID precision.
+Thus high precision alone does not certify citation validity or coverage.
+Report `quality` contains macro means and explicit scored/total denominators.
+
+Per-query stage timings include all outer retrieval searches (including facts
+evidence, decomposition and candidate diagnostics), active model attempts,
+separate `retry_wait`, and total answer time including verification and waits.
+`generate` excludes retry backoff; `other` holds parsing,
+facts lookup, prompt construction and verification overhead. The current stack
+has no reranker: `rerank` is 0 and `rerank_enabled` is false; hybrid fusion is
+included in retrieval. `Answer.latency_ms` retains its original generation-only
+meaning. Judge calls are excluded from query timing. `resources` reports mean
+stage latency and API costs with known/unknown query counts, including in
+partial reports. Its separate `judge_overhead` section aggregates judge
+generation time, retry waits, total time and API cost. Per-row judge overhead
+uses `latency_ms` for active attempts, `retry_wait_ms` for waits and `total_ms`
+for their sum. Time outside retry attempts is recorded with the retry waits.
+
+Hosted API cost requires the provider's token counts and explicit current USD
+rates, supplied as `--input-usd-per-million` and `--output-usd-per-million`.
+Supply judge rates separately with `--judge-input-usd-per-million` and
+`--judge-output-usd-per-million`, especially when using a different judge model.
+No rates are hardcoded. Missing prices/usage, or unknown charges from failed
+retry attempts, produce null cost with a reason. Facts, pre-model abstentions
+and Ollama have zero hosted API cost; this does not price hardware or electricity.
+Known usage on invalid, truncated or filtered judge output is retained and
+priced when rates are supplied. Each cost record includes observed token
+counts, attempted `model_calls`, normally completed `successful_calls` and
+`usage_calls` with token-usage records; a billed but invalid response is not counted as a
+successful judgement. A cost aggregate's `known_total` is null when no cost is
+known, including an empty run; an observed zero-cost run still reports zero.
+Programmatic callers can pass `judge=LLMJudge(config)`, `token_prices=TokenPrices(...)`
+and `judge_token_prices=TokenPrices(...)` from `src.evaluation.quality` to `evaluate`.
 
 `--no-facts` sends every question to retrieval and generation instead of looking
 a numeric one up in the XBRL facts store first, which is the without half of
@@ -2167,6 +2313,426 @@ index or key fails before any question is measured or run directory is created.
 A stopped or interrupted provider run saves completed answers, its stop reason
 and both summaries before exiting unsuccessfully. Completed runs print the
 table and output path. Use a fresh run ID; existing results are never overwritten.
+
+#### Measured on the full corpus
+
+The embedding matrix was measured on 4 October 2026 at application commit
+`a0cb411`; the provider matrix was rerun through the standard CLI on
+6 October 2026 at `1cf4458` (including main at `840be50`). Both used an
+Apple M1 Mac with 16 GiB RAM, macOS 15.6.1, Python 3.13.7, PyTorch 2.14.0,
+sentence-transformers 6.0.1, Chroma 1.5.9 and Ollama 0.33.3. Encoders used MPS;
+Ollama used Metal. These are real model runs over downloaded SEC filings, separate from the synthetic
+regression tests.
+
+The rebuilt corpus contains **75 10-K filings from 15 companies, FY2021–2025,
+and 28,289 passages**. All nine corpus checks passed. The facts store contains
+41,710 rows; `src.retrieval check` reported both `dense: current` and
+`bm25: current`. Every embedding index contains the full 28,289 passages.
+The benchmark has 12,579 numeric questions and SHA-256
+`63b23a5d81c7e7d0b46f8127b575566c61e23bfebe19c2dc55083efba1541a93`.
+
+To reproduce these runs, activate the project virtual environment as described
+in [Getting started](#getting-started), then run the commands below from the
+repository root. SEC identity
+was configured in the local `.env`; real encoder weights were downloaded before
+setting `HF_HUB_OFFLINE=1`.
+That flag prevents Hugging Face network lookups, not provider calls.
+
+```bash
+python -u -m src.pipeline rebuild
+python -u -m src.retrieval bm25
+python -u -m src.retrieval facts
+HF_HUB_OFFLINE=1 python -u -m src.retrieval embed
+HF_HUB_OFFLINE=1 python -u -m src.retrieval check
+python -u -m src.retrieval benchmark
+HF_HUB_OFFLINE=1 python -u -m src.evaluation.model_ablation embedding \
+  benchmark/generated.jsonl --prepare-indexes --limit 1500 \
+  --run-id embeddings-real-20261004
+```
+
+Each embedding row measures the same **1,500 questions**, with metadata filters
+and a retrieval cutoff of 10. Sampling uses file indices
+`i * (12579 - 1) // (1500 - 1)`, including both endpoints. This covers all 15
+companies and 74 filings, with 1–37 questions per represented filing; PANW
+FY2023 is absent from the sample. It is not a balanced or random sample.
+
+| Row | Encoder | Retrieval | Recall@10 | nDCG@10 | MRR@10 | Median search (ms) | Truncated passages |
+|---|---|---|---:|---:|---:|---:|---:|
+| E1 | BGE base | Hybrid | 0.5870 | 0.4476 | 0.4656 | 223.2 | 0 (0%) |
+| E1-dense | BGE base | Dense | 0.4817 | 0.3528 | 0.3732 | 111.8 | 0 (0%) |
+| E2 | MiniLM | Hybrid | 0.5778 | 0.4235 | 0.4366 | 151.4 | 15,489 (54.75%) |
+| E2-dense | MiniLM | Dense | 0.4249 | 0.2898 | 0.2986 | 71.1 | 15,489 (54.75%) |
+| E3 | E5 base | Hybrid | 0.5996 | 0.4689 | 0.4918 | 156.7 | 0 (0%) |
+| E3-dense | E5 base | Dense | 0.5479 | 0.4221 | 0.4489 | 82.4 | 0 (0%) |
+
+E5 leads recall, nDCG and MRR in both retrieval views on this sample. Hybrid
+retrieval improves all three encoders over their dense-only rows. MiniLM has
+the lowest median search latency, but its native 256-token window truncates
+54.75% of indexed passages, including 2,094 table passages. BGE and E5 use
+512-token windows with no truncation here. These observations do not isolate
+truncation as the cause of MiniLM's lower scores or establish a winner for
+other question types. This is a single run; differences below about 0.005
+should not drive a model choice. The application default remains BGE.
+
+Search latency includes query encoding and retrieval, excluding index
+preparation. The CSV records E1 preparation as 10.9 seconds for validation and
+reuse of an already built index, E2 as 214.8 seconds and E3 as 1,708.5 seconds
+for new index builds. E1's value is not a cold encoding time and must not be
+compared as one. Encoder snapshots were BGE
+`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, MiniLM
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, and E5
+`f52bf8ec8c7124536f0efb74aca902b2995e5bcd`.
+
+Full precision embedding summaries and the six per-question reports are kept
+locally under `results/embeddings-real-20261004/`. Data, indexes, model weights,
+logs and run artifacts remain ignored. The description of
+[PR #121](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/pull/121)
+pastes the complete embedding and provider `summary.csv` files for review.
+
+Both generation rows used the same corpus and default BGE/hybrid C4 stack,
+with a **passage budget of 16, facts disabled, decomposition and refusal enabled**,
+`grounded_v4` and temperature 0. Each measures 30 questions at indices
+`i * (12579 - 1) // (30 - 1)`: 14 companies and 25 filings, with 1–2 questions
+per represented filing. PANW is absent. All 30 questions reached the real
+provider in each run with retrieved evidence; none was refused before a model
+call. The question IDs and C4 stack settings match between the two reports.
+The installed `llama3.2:3b` model is Q4_K_M, digest
+`a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72`.
+
+Both providers were measured in one invocation of the supported CLI, with
+Ollama running and `MISTRAL_API_KEY` configured in the local `.env`. The runner
+preflights both stacks and writes each report and the shared comparison table
+directly; no experiment overrides or separate report-combination step are needed.
+
+```bash
+HF_HUB_OFFLINE=1 LLM_BASE_URL=http://127.0.0.1:11434 \
+  MISTRAL_BASE_URL=https://api.mistral.ai/v1 \
+  python -u -m src.evaluation.model_ablation generation \
+  benchmark/generated.jsonl --no-facts --limit 30 \
+  --run-id providers-real-20261006
+```
+
+| Row | Provider | Model | Questions | Abstention | Provider-routed questions | Provider abstention | Median generation (ms) | Retried questions |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| G1 | Ollama | llama3.2:3b | 30 | 3.33% | 30 | 3.33% | 28,833.5 | 0 |
+| G2 | Mistral | ministral-8b-2512 | 30 | 6.67% | 30 | 6.67% | 1,782.9 | 0 |
+
+Mistral has the lower median generation latency here: 1.78 seconds versus
+Ollama's 28.83 seconds. Neither run needed a retry. Mistral abstained on two
+questions and Ollama on one; a one-question difference in a 30-question sample
+does not establish a reliable abstention advantage. Latency excludes
+retrieval, verification and retry waits. Abstention measures willingness to
+answer, not correctness or faithfulness. The numeric verifier classified
+Ollama's 29 non-abstained answers as 3 supported, 7 mismatch and 19 unverified;
+Mistral's 28 as 6 supported, 8 mismatch and 14 unverified. These checks concern
+figures, not whole-answer faithfulness, and do not establish a quality winner.
+
+The native per-question reports and full precision summaries are under the
+ignored local `results/providers-real-20261006/` directory. PR #121's
+description preserves its complete provider CSV alongside the embedding CSV.
+
+All six E rows and both G rows required by issue #46 are measured and
+documented. The embedding run's application commit `a0cb411` passed all
+**1,229 tests**; the provider rerun's commit `1cf4458` passed all **1,294 tests**.
+
+### Chunk-size sweep
+
+`CHUNK_CHAR_BUDGET` is 1,800 characters because that much prose fits the 512
+tokens bge reads. That was reasoned from the encoder's limit and had not been
+measured. Issue #45 asks for the measurement: the corpus cut at 1,200, 1,800,
+2,400 and 4,000 characters, and retrieval reported at each size as a curve.
+
+```bash
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-20261007
+python -m src.evaluation.chunk_sweep --run-id bm25-sizes --retrievers bm25
+python -m src.evaluation.chunk_sweep --run-id fy2025 --fiscal-years 2025 --per-filing 100
+```
+
+The one command cuts `data/interim/` again at each size, generates the
+benchmark for each cut, builds a BM25 and a dense index over each, asks every
+size the same questions and writes `results/<run-id>/`. It needs
+`data/interim/` and the facts store. Each size is a build of its own under
+`data/sweep/<budget>/`, with its passages, `bm25.pkl`, `chroma/` and manifest.
+Nothing is written to `data/processed/` or `data/index/`, so a sweep cannot
+leave the app searching a corpus its indexes were not built for. The app's
+dense index is opened to read the vectors it already holds, and `--no-reuse`
+leaves it unopened.
+
+Three things keep the sizes comparable:
+
+- The overlap and the table budget follow the prose budget, through
+  `constants.overlap_for` and `constants.table_budget_for`: 200, 300, 400 and
+  667 characters carried over, and 480, 720, 960 and 1,600 a table passage.
+  A sweep that moved the prose budget alone would report a curve the tables
+  never moved along. `python -m src.pipeline chunk --budget 2400` by itself
+  keeps the 300-character overlap, so it does not cut what the sweep's 2,400
+  build holds.
+- Every size is asked the same questions. Re-chunking renames every passage,
+  so a benchmark written for one cut cannot score another. The mechanical XBRL
+  benchmark is generated again for each build from the same facts store, only
+  the questions every build can be asked are kept, and the same number is
+  drawn from each filing with a fixed seed. A filing is one accession, so a
+  10-K and an amendment to it for the same year would each be drawn from.
+- Every size is scored at two cutoffs, because a larger passage is more text.
+  Over the whole corpus BM25's top 10 holds 7,382 characters on average at
+  1,200 and 26,835 at 4,000, which is 3.6 times the text. So each size is also
+  scored on as many passages as are sure to fit the prompt the app sends
+  today, `FINAL_K` passages of `CHUNK_CHAR_BUDGET` characters: the top 24, 16,
+  12 and 7. The number is rounded down, so a size given with `--budgets` that
+  does not divide that prompt is never allowed more text than it holds.
+
+Because the questions are the same, a row also records how many of them it
+finds that the 1,800-character row misses, and how many 1,800 finds that it
+misses. A gap between two rates is made of those two counts, and where they
+are close the run does not tell the sizes apart.
+
+The dense index is what a sweep costs. On the laptop the runs below were made
+on, bge encodes about 2.3 passages a second at 1,200 characters and about one
+a second at 2,400 and 4,000, and over the whole corpus the three sizes the app
+has not indexed hold 79,593 passages: half a day. Four things keep that in
+hand:
+
+- A build first copies the vectors another index already holds for the same
+  text, matched on the digest each vector stores. The 1,800 build is the
+  corpus the app indexed, so it encodes only the passages the app's index
+  does not hold as they now read. On the FY2025 filings the other three
+  builds copied 6%, 18% and 31% of their passages, the ones that read the
+  same at every size. Nothing is copied into a build whose vectors were
+  encoded another way, by another model or reading fewer tokens of a passage:
+  the run stops before it changes that index and says to delete
+  `data/sweep/<budget>/chroma`, after which the same command encodes it afresh.
+- `--retrievers bm25` encodes nothing, and takes 18 minutes over the whole
+  corpus.
+- `--tickers` and `--fiscal-years` narrow the corpus, and the questions with
+  it.
+- Every size is cut and given its questions before an index is built, so a run
+  with no filing in scope or nothing to ask is refused in minutes. Every
+  build is then finished before a question is asked or the run directory is
+  made. A run that stops while it is encoding has used no run id, and running
+  the same command again carries on from the vectors it had stored. A run
+  that stops once it has written a row has used its run id: run it under a
+  new one, and it finds every build already made.
+
+#### Measured
+
+Two runs, both on 7 October 2026 at commit `e90b2d0`, on a Windows 11 laptop
+with an Intel i5-1135G7 (4 cores), 16 GB of memory and no GPU: Python 3.10.11,
+PyTorch 2.14.0 on the CPU, sentence-transformers 6.0.1 and Chroma 1.5.9. They
+read the downloaded filings, not the synthetic ones the tests cut. The figures
+and fingerprints below are those of `e90b2d0`.
+
+The chunker has changed since, so the same commands now cut a slightly larger
+corpus and record other fingerprints. #136 keeps a flattened block while any
+digit of a figure in it is uncovered: 24 more passages of 28,289 at 1,800
+characters, and 28, 13 and 5 more at the other sizes. The benchmark generates
+12 more questions from them, so the fixed seed draws a slightly different
+1,490, of which 1,441 are the ones the first run asked. That run made again on
+8 October with #136 merged in:
+
+| BM25, all 75 filings | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Supporting passage in the top 10, at `e90b2d0` | 63.4% | 68.9% | 70.1% | 71.9% |
+| with #136 | 63.3% | 68.5% | 69.5% | 71.8% |
+| In the same prompt, at `e90b2d0` | 73.6% | 74.2% | 72.1% | 66.9% |
+| with #136 | 73.1% | 73.8% | 71.6% | 66.6% |
+
+No size moves by more than 0.6 of a point and the order of the sizes is the
+same at both cutoffs. The second run was not made again, since its dense
+indexes are hours of encoding, so the tables below remain the measurement.
+
+```bash
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-bm25-20261007 --retrievers bm25
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-fy2025-20261007 \
+  --fiscal-years 2025 --per-filing 100
+```
+
+The first is BM25 over all 75 filings. The second is BM25, dense and hybrid
+over the 15 filings that report on fiscal 2025, because encoding the three
+sizes the app has not indexed is half a day on this CPU over the whole corpus
+and was about two and a half hours over those filings.
+
+`summary.csv` and `summary.json` of both runs are committed under `results/`,
+as #45 asks, and each row in them carries the fingerprint of the build it was
+measured on. They are the one exception to the rule that a run's output is not
+committed (see `.gitignore`): 47 KB between the four files, and a retrieval
+row comes out the same when the same commit measures the same corpus again.
+The per-question files stay local.
+
+**BM25, the whole corpus.** 1,490 questions: 20 drawn from each of the 75
+filings, and the 17 and 13 that Palo Alto Networks' FY2024 and FY2025 filings
+have. A question names 1.9 supporting passages on average at every size.
+
+|  | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Passages in the build | 44,688 | 28,289 | 20,983 | 13,922 |
+| Median passage, characters | 697 | 1,180 | 1,665 | 2,462 |
+| Recall@10 | 0.506 | 0.556 | 0.567 | 0.585 |
+| nDCG@10 | 0.367 | 0.410 | 0.425 | 0.440 |
+| MRR@10 | 0.371 | 0.418 | 0.434 | 0.448 |
+| Supporting passage in the top 10 | 63.4% | 68.9% | 70.1% | 71.9% |
+| Found only at this size / only at 1,800 | 25 / 107 |  | 65 / 47 | 91 / 46 |
+| Characters in the top 10, mean | 7,382 | 11,361 | 15,504 | 26,835 |
+| Passages that fill the app's prompt | 24 | 16 | 12 | 7 |
+| Supporting passage in the app's prompt | 73.6% | 74.2% | 72.1% | 66.9% |
+| Found only at this size / only at 1,800 | 49 / 58 |  | 35 / 65 | 32 / 140 |
+| Characters in that prompt, mean | 18,194 | 18,520 | 18,720 | 18,462 |
+| Median search, ms | 213 | 126 | 96 | 65 |
+
+Passage for passage, a larger passage ranks better. The top 10 holds a
+supporting passage for 63.4% of the questions at 1,200 characters and 71.9% at
+4,000, and Recall, nDCG and MRR rise at every step. The step from 1,200 to
+1,800 is 107 questions found only at 1,800 against 25 found only at 1,200.
+The step from 1,800 to 2,400 is 65 against 47, which an exact sign test on
+those 112 questions puts at p = 0.11, so this run does not tell those two
+apart. 4,000 is ahead of 1,800 by 91 against 46.
+
+That top 10 is not the same amount of text: 7,382 characters at 1,200 and
+26,835 at 4,000. Given the room in the prompt the app sends, which BM25's
+passages filled to about 18,500 characters at every size, the order turns
+over. 1,200 and 1,800 are level (49 against 58, p = 0.44), 2,400 is behind
+1,800 (35 against 65, p = 0.004), and 4,000 is well behind (32 against 140):
+seven passages of 4,000 characters hold the answer for 66.9% of the questions,
+where sixteen of 1,800 hold it for 74.2%. The sign test treats the questions
+as independent, which twenty drawn from one filing are not quite, so read a p
+near 0.05 as undecided.
+
+The fall at the larger sizes is in the questions a table answers. Grouped by
+what supports a question at 1,800 characters, the share with a supporting
+passage in the app's prompt:
+
+| Supported by | Questions | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|---:|
+| Tables only | 1,078 | 76.2% | 77.4% | 74.9% | 69.0% |
+| Tables and prose | 298 | 74.5% | 73.8% | 72.5% | 67.8% |
+| Prose only | 114 | 46.5% | 44.7% | 45.6% | 44.7% |
+
+A figure only prose states is found for under half the questions at every
+size, and no size moves it.
+
+**BM25, dense and hybrid, the 15 FY2025 filings.** 1,413 questions: 100 drawn
+from each filing, and the 13 that Palo Alto Networks' has.
+
+|  | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Passages in the build | 8,926 | 5,631 | 4,170 | 2,783 |
+| Cut short by the encoder at 512 tokens | 0 | 0 | 106 (2.5%) | 1,470 (52.8%) |
+| **BM25** |  |  |  |  |
+| Recall@10 | 0.501 | 0.554 | 0.573 | 0.583 |
+| nDCG@10 | 0.364 | 0.405 | 0.420 | 0.431 |
+| MRR@10 | 0.367 | 0.411 | 0.425 | 0.436 |
+| Supporting passage in the top 10 | 63.3% | 69.0% | 71.3% | 71.9% |
+| Found only at this size / only at 1,800 | 26 / 107 |  | 67 / 34 | 89 / 48 |
+| Characters in the top 10, mean | 7,404 | 11,347 | 15,591 | 26,641 |
+| Supporting passage in the app's prompt | 74.5% | 74.3% | 73.4% | 66.2% |
+| Found only at this size / only at 1,800 | 55 / 52 |  | 45 / 58 | 43 / 157 |
+| Characters in that prompt, mean | 18,378 | 18,520 | 18,928 | 18,343 |
+| **Dense** |  |  |  |  |
+| Recall@10 | 0.464 | 0.510 | 0.522 | 0.514 |
+| nDCG@10 | 0.327 | 0.367 | 0.377 | 0.372 |
+| MRR@10 | 0.338 | 0.380 | 0.390 | 0.385 |
+| Supporting passage in the top 10 | 61.0% | 66.0% | 66.7% | 66.3% |
+| Found only at this size / only at 1,800 | 63 / 134 |  | 77 / 67 | 85 / 81 |
+| Characters in the top 10, mean | 4,099 | 5,328 | 6,237 | 7,370 |
+| Supporting passage in the app's prompt | 72.6% | 72.0% | 69.4% | 60.6% |
+| Found only at this size / only at 1,800 | 76 / 67 |  | 43 / 80 | 27 / 188 |
+| Characters in that prompt, mean | 9,909 | 8,576 | 7,502 | 5,106 |
+| **Hybrid** |  |  |  |  |
+| Recall@10 | 0.557 | 0.613 | 0.640 | 0.656 |
+| nDCG@10 | 0.422 | 0.470 | 0.495 | 0.509 |
+| MRR@10 | 0.441 | 0.487 | 0.511 | 0.523 |
+| Supporting passage in the top 10 | 70.1% | 76.1% | 78.3% | 79.8% |
+| Found only at this size / only at 1,800 | 28 / 112 |  | 65 / 33 | 87 / 34 |
+| Characters in the top 10, mean | 4,761 | 6,593 | 8,228 | 11,220 |
+| Supporting passage in the app's prompt | 79.5% | 80.2% | 80.3% | 75.4% |
+| Found only at this size / only at 1,800 | 48 / 57 |  | 47 / 46 | 44 / 112 |
+| Characters in that prompt, mean | 13,654 | 11,786 | 10,268 | 7,232 |
+
+BM25 does on these filings what it did on the whole corpus.
+
+Dense search gains from 1,200 to 1,800: in the top 10, 134 questions are
+found only at 1,800 against 63 only at 1,200. It gains nothing after that.
+2,400 and 4,000 are level with 1,800 in the top 10 (77 against 67, and
+85 against 81) and behind it in the prompt. At 4,000 characters the encoder
+reads only the first 512 tokens of 1,470 of the 2,783 passages. At 2,400 it is
+106 passages, and at 1,800 and under none.
+
+Hybrid, which is what the app searches with, follows BM25 in the top 10:
+each larger size finds more. In the app's prompt 1,200, 1,800 and 2,400 are
+level (79.5%, 80.2% and 80.3%; 48 against 57, and 47 against 46), and 4,000
+is behind (44 against 112).
+
+The prompt cutoff is a number of passages: as many of a size as are sure to
+fit. BM25's passages fill it to about 18,500 characters at every size. Dense
+and hybrid return table passages, which are shorter than the budget, so the
+same cutoff held 13,654 characters at 1,200 and 7,232 at 4,000 for hybrid,
+and 9,909 and 5,106 for dense. There the larger sizes are compared on less
+text. `python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007`
+scores the same rankings again at an equal amount of text, from the run's
+per-question files. Each row of those files holds the passages that support
+its question and the length of every passage it ranked, so a run is scored
+against what it was measured against whatever a later run has since written
+under `data/sweep/`. The two runs here were written before a row held either.
+For them the script reads both from the builds under `data/sweep/`, and first
+checks the builds are the ones the run measured: each corpus by its
+fingerprint, and each benchmark by working out again, for every row, whether
+its question was found at both cutoffs and its Recall. The second run passes
+both checks, and the table below is what the script prints for it. The first
+is refused, as it should be: the second run cut `data/sweep/` again over
+fifteen filings. The share of questions with a supporting passage in the first
+4,000 characters of a ranking:
+
+|  | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| BM25 | 53.7% | 50.5% | 47.5% | 37.2% |
+| Dense | 59.9% | 61.1% | 59.2% | 55.8% |
+| Hybrid | 67.7% | 70.2% | 69.3% | 66.4% |
+
+On equal text BM25 does better the smaller the passage, dense is within two
+points from 1,200 to 2,400, and hybrid is highest at 1,800 and 2,400. 4,000 is
+the lowest of the four for all three. A run stores a ranking to its deeper
+cutoff only, and for 3% of the dense rankings at 4,000 those ten passages
+held less than 4,000 characters. For every other row it is under 1%.
+
+So which size is ahead depends on what is held fixed. Given the same number
+of passages a larger passage wins, because it is more text. Given the same
+room in the prompt, or the same amount of text, the largest size loses and
+the other three are close, with 1,800 at or beside the top for the hybrid
+search the app uses. The app runs with a prompt of fixed size, and under that
+nothing in these runs argues for moving `CHUNK_CHAR_BUDGET` from 1,800 while
+bge is the encoder. The dense rows say why not to raise it far: past 1,800
+the encoder no longer reads every passage to its end.
+
+What the runs do not say:
+
+- The dense and hybrid rows cover 15 of the 75 filings. The whole-corpus run
+  is `python -m src.evaluation.chunk_sweep --run-id <a new id>` with no other
+  flag. It carries on from the vectors these runs stored, and the rest is
+  about half a day of encoding on this laptop.
+- Every question is a figure looked up in a filing. Nothing here measures a
+  question that needs an argument read across paragraphs, which is where a
+  larger passage would be expected to help, and `benchmark/questions.jsonl`
+  holds no such question yet.
+- These are retrieval rates. The app answers most figure questions from the
+  facts store before it searches, so they are not how often the app gets such
+  a question right.
+- One draw of questions, with seed 4103, and one run of each. The paired
+  counts say how far a gap between two sizes can be read.
+- The search times are a laptop's, with each size searched to its own deeper
+  cutoff, and show a direction more than a figure.
+
+The fingerprint of each build, as its indexes wrote it. A row's own columns
+in the committed files hold the full values:
+
+| Run | Size | Corpus fingerprint | Dense fingerprint |
+|---|---|---|---|
+| `chunk-sweep-bm25-20261007` | 1,200 | `cc078db610be43ed` | not encoded |
+|  | 1,800 | `69ad5c438a07c458` | not encoded |
+|  | 2,400 | `9fadd3070b6047d8` | not encoded |
+|  | 4,000 | `1973cc6054514a43` | not encoded |
+| `chunk-sweep-fy2025-20261007` | 1,200 | `782e4df8bb6c7d33` | `e1ce0b140879ee73` |
+|  | 1,800 | `25d1726858402526` | `08598b98129db929` |
+|  | 2,400 | `cce6b0ff4d867dea` | `100c6b7816d74abb` |
+|  | 4,000 | `021c66f42e377435` | `1404022af27f455e` |
 
 ## Team and course
 

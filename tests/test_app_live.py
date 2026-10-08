@@ -614,6 +614,60 @@ def test_a_question_that_needs_the_model_is_told_what_the_provider_lacks(own_sta
     assert not ui.get("html") and not ui.main.status and not ui.text
 
 
+def test_a_key_mistral_refuses_is_told_without_the_advice_for_a_command(
+        own_stack, monkeypatch, tmp_path):
+    # The sidebar cannot know a key is refused until a request is sent, and
+    # the full message says to restart a notebook or a command (review of #119).
+    import httpx
+    import langchain_mistralai
+    from dotenv import load_dotenv
+
+    keys = []
+
+    def refusing(request):
+        return httpx.Response(401, json={"detail": "Unauthorized"})
+
+    def building(**settings):
+        keys.append(settings["api_key"])
+        return built(**settings, client=httpx.Client(base_url=settings["base_url"],
+                                                     transport=httpx.MockTransport(refusing)))
+
+    built = langchain_mistralai.ChatMistralAI
+    monkeypatch.setattr(langchain_mistralai, "ChatMistralAI", building)
+    # A key exported in the shell wins over the one in .env, so advice to fix
+    # .env alone was followed to no effect (review of #129).
+    env = tmp_path / ".env"
+    env.write_text("MISTRAL_API_KEY=key-in-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr(importlib.import_module("src.rag.generate"), "load_env",
+                        lambda *args, **kwargs: load_dotenv(env))
+    monkeypatch.setenv("MISTRAL_API_KEY", "key-in-shell")
+    ui = _ask_mistral("What risks does Apple describe in its FY2024 10-K?")
+    assert keys == ["key-in-shell"]
+    # The key is set, so the sidebar has no warning: the error says what to
+    # do in the app in its place, as the sidebar does for a missing key.
+    assert not ui.sidebar.warning
+    assert ui.error[0].value == (
+        "Mistral refused the API key (HTTP 401: Unauthorized). Update it in your "
+        "environment or `.env` (README, Setting up Mistral), then restart the app, "
+        "or pick Ollama.")
+    assert not ui.get("html")
+
+
+def test_a_failure_with_no_reason_of_its_own_is_shown_whole(monkeypatch):
+    # A rate limit says what to do itself, and nothing in .env would fix it.
+    from src.rag.generate import ProviderBusy
+
+    _standing_in(monkeypatch)
+
+    def busy(self, question, **overrides):
+        raise ProviderBusy("Mistral's rate limit was reached; wait a minute and ask again")
+
+    monkeypatch.setattr(FakeStack, "answer", busy)
+    ui = _submit(AppTest.from_file(APP, default_timeout=30).run(),
+                 "What risks does Apple describe in its FY2024 10-K?")
+    assert ui.error[0].value == "Mistral's rate limit was reached; wait a minute and ask again"
+
+
 def test_a_failed_ask_is_not_followed_by_the_line_for_a_changed_question(monkeypatch):
     # An older answer is kept for another question. Under the error of an Ask
     # that had just failed, "the question changed, select Ask" read as its cause.
@@ -643,9 +697,9 @@ def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypat
     # What is wrong and what to do about it in the app, in a few lines: the
     # whole command-line error ran to twenty in a sidebar this narrow.
     assert [warning.value for warning in ui.sidebar.warning] == [
-        "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Fix it in `.env` "
-        "(README, Setting up Mistral) and restart the app, or pick Ollama. "
-        "A figure the facts store holds is still answered."]
+        "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Update it in your "
+        "environment or `.env` (README, Setting up Mistral), then restart the app, or pick "
+        "Ollama. A figure the facts store holds is still answered."]
     # A key set in the process is seen on the next rerun.
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     ui.run()
@@ -655,8 +709,8 @@ def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypat
     monkeypatch.setenv("LLM_NUM_GPU", "many")
     ui.run()
     assert ui.sidebar.warning[0].value == (
-        "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Fix it in `.env` "
-        "(README, Setting up Mistral) and restart the app. "
+        "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Update it in your "
+        "environment or `.env` (README, Setting up Mistral), then restart the app. "
         "A figure the facts store holds is still answered.")
 
 

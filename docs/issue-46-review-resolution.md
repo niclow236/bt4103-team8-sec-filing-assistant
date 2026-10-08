@@ -34,10 +34,14 @@ The follow-up review on 4 October identified four further comments:
 Follow-up validation: 1,227 full-suite tests passed, 113 affected-suite tests
 passed, and git diff --check passed.
 
-Tests use deterministic encoders and synthetic filings; they do not measure real
-model quality. This checkout has no processed corpus or built indexes, so real
-E1–E3/G1–G2 measurements required to close issue 46 remain to be run using the
-README commands. After implementation commit `73ac53b` was pushed, each of the
-28 review threads received a change explanation and was marked resolved.
-These resolutions cover the review findings; final model measurements are
-still pending.
+Those regression tests use deterministic encoders and synthetic filings; they
+do not measure real model quality. After implementation commit `73ac53b` was
+pushed, each of the 28 review threads received a change explanation and was
+marked resolved. PR 114 subsequently merged as `a0cb411`.
+
+The real-data follow-up measured all six embedding rows on 4 October and
+both provider rows through the standard CLI on 6 October 2026. See the README's
+[full corpus measurements](../README.md#measured-on-the-full-corpus)
+for the tables, commands, hardware, provenance, sampling limitations and
+interpretation. [PR #121](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/pull/121)
+records those results and closes issue 46.

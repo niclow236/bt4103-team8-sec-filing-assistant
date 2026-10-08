@@ -169,3 +169,88 @@ def test_c0_labels_every_window_a_passage_overlaps(monkeypatch):
         "fixed-acc-00000000",
         "fixed-acc-00000100",
     ]
+
+
+# --- the command (#49) ----------------------------------------------------------------
+
+
+@pytest.fixture
+def command(monkeypatch, tmp_path):
+    """``python -m src.evaluation.run`` with the indexes and the benchmark replaced."""
+    import src.evaluation.run as run
+
+    seen = {"built": [], "parts": []}
+
+    def build(key, *, processed_dir, parts):
+        seen["built"].append((key, processed_dir))
+        seen["parts"].append(parts)
+        return FakeRetriever()
+
+    monkeypatch.setattr(run, "build_retriever", build)
+    monkeypatch.setattr(run, "FixedSizeBM25Retriever",
+                        lambda processed_dir: seen["built"].append(("fixed", processed_dir))
+                        or FakeRetriever())
+    monkeypatch.setattr(run, "load_questions",
+                        lambda path, processed_dir: seen.update(questions=(path, processed_dir))
+                        or [_question()])
+    monkeypatch.setattr(run, "run_ablation",
+                        lambda questions, retrievers, **settings: seen.update(
+                            ran=(questions, sorted(retrievers), settings)))
+    return run, seen, tmp_path
+
+
+def test_the_command_builds_each_index_once_and_runs_every_row_by_default(command):
+    run, seen, tmp_path = command
+
+    run.main(["benchmark.jsonl", "--run-id", "baseline", "--processed-dir", str(tmp_path),
+              "--results-root", str(tmp_path / "results")])
+
+    # One shared dict, so the hybrid rows search the BM25 and dense indexes the
+    # BM25 and dense rows loaded, and no index is read twice.
+    assert [key for key, _ in seen["built"]] == ["bm25", "dense", "hybrid", "fixed"]
+    assert all(parts is seen["parts"][0] for parts in seen["parts"])
+    assert {directory for _, directory in seen["built"]} == {tmp_path}
+    assert seen["questions"] == (run.Path("benchmark.jsonl"), tmp_path)
+    questions, retrievers, settings = seen["ran"]
+    assert retrievers == ["bm25", "bm25-fixed-size", "dense", "hybrid"]
+    assert settings == {"run_id": "baseline", "results_root": tmp_path / "results",
+                        "top_k": 10, "configurations": tuple(CONFIGURATIONS)}
+
+
+def test_the_command_runs_only_the_rows_asked_for_at_the_depth_asked_for(command):
+    run, seen, _ = command
+
+    run.main(["--run-id", "two-rows", "--config", "C1", "--config", "C4", "--top-k", "5"])
+
+    assert seen["questions"][0] == run.DEFAULT_QUESTIONS_PATH
+    assert seen["ran"][2]["configurations"] == ["C1", "C4"]
+    assert seen["ran"][2]["top_k"] == 5
+
+
+@pytest.mark.parametrize("arguments", [
+    [], ["--run-id", "r", "--top-k", "0"], ["--run-id", "r", "--config", "C9"],
+])
+def test_the_command_refuses_a_bad_argument_before_it_loads_anything(command, arguments):
+    run, seen, _ = command
+    with pytest.raises(SystemExit) as stopped:
+        run.main(arguments)
+    assert stopped.value.code == 2
+    assert seen["built"] == [] and "ran" not in seen
+
+
+def test_a_row_is_refused_by_name_when_it_is_not_one_of_the_registry(tmp_path):
+    with pytest.raises(ValueError, match="unknown configuration: C9"):
+        run_configuration([], FakeRetriever(), config_id="C9", output_dir=tmp_path)
+    with pytest.raises(ValueError, match="unknown configuration: C9"):
+        run_ablation([_question()], {"bm25": FakeRetriever()}, run_id="run",
+                     results_root=tmp_path, configurations=("C9",))
+
+
+def test_the_answer_harness_is_what_python_m_src_evaluation_runs(monkeypatch, capsys):
+    import runpy
+
+    monkeypatch.setattr("sys.argv", ["src.evaluation", "--help"])
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_module("src.evaluation", run_name="__main__")
+    assert stopped.value.code == 0
+    assert "--retriever" in capsys.readouterr().out

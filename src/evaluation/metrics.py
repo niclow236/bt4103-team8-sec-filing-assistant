@@ -18,14 +18,26 @@ def recall_at_k(
     *,
     k: int = 10,
 ) -> float | None:
-    """Fraction of relevant chunks reachable at ``k`` that were retrieved."""
+    """Recall at ``k``: the share of all the relevant chunks that are in the top ``k``.
+
+    Every relevant chunk is in the divisor, found or not: with twenty relevant
+    chunks and five of them in a top 5, this is 0.25. So a question with more
+    relevant chunks than ``k`` cannot reach 1.0, which is what recall means, and
+    is where it parts from nDCG, whose ideal ranking is cut at ``k``.
+
+    Until #140 the divisor was ``min(relevant, k)``, which scored that case 1.0.
+    No reported figure moved with the change: ``generate_xbrl_questions`` lists
+    at most three supporting chunks a question and nothing is scored at a
+    cutoff under 3, so the two divisors were the same number for every
+    question measured.
+    """
     relevant = _as_set(relevant_chunk_ids)
     if not relevant:
         return None
     if k <= 0:
         return 0.0
     seen = set(result.retrieved_chunk_ids[:k])
-    return len(seen & relevant) / min(len(relevant), k)
+    return len(seen & relevant) / len(relevant)
 
 
 def ndcg_at_k(

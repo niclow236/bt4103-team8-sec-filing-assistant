@@ -1,4 +1,4 @@
-"""Reusable Streamlit answer, evidence, trace and filter components (#37, #38).
+"""Reusable Streamlit answer, trace, filter and corpus components (#37, #38, #40).
 
 Each component draws what it is handed. None builds a stack, asks a model or
 caches anything: a page reads the question, loads through ``state.py``, asks,
@@ -7,16 +7,19 @@ the same way. The sidebar's own selections are the only thing one holds.
 
 The sidebar returns the Query to pass to ``answer_question(query=...)``.
 Render completed Answer records; citation numbers always refer to prompt order.
+The corpus controls and passage panels render processed rows without searching
+an index or asking a model.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from hashlib import sha256
 from html import escape
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
 import streamlit as st
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
     from src.app.state import AnswerModels
+    from src.rag.generate import ProviderUnavailable
 
 
 _MARKER = re.compile(r"\[(-?\d+)\]")
@@ -150,6 +154,222 @@ def _safe_url(url: str) -> bool:
         return False
 
 
+class CorpusSelection(NamedTuple):
+    """One filing scope selected on the Browse page."""
+
+    ticker: str
+    fiscal_year: int
+    item: str
+
+
+def _item_order(item: str) -> tuple[int, str]:
+    """Sort SEC Item labels in Form 10-K order, with any unknown label after them."""
+    return (_ITEMS.index(item), "") if item in _ITEMS else (len(_ITEMS), item)
+
+
+def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None):
+    """Draw a required selectbox and discard a stale dependent selection."""
+    if not options:
+        raise ValueError(f"{label} has no options")
+    if st.session_state.get(key) not in options:
+        st.session_state[key] = options[0]
+    return st.selectbox(label, options, key=key, format_func=format_func)
+
+
+def corpus_picker(passages: Sequence[Mapping[str, Any]], *, key: str = "browse") -> CorpusSelection:
+    """Pick a company, fiscal year and Item that actually exist in ``passages``.
+
+    Each choice narrows the choices after it. This prevents the Browse page
+    from offering a company/year/Item combination that resolves to an empty
+    page, and resets a now-invalid downstream value when an upstream widget
+    changes.
+    """
+    usable = [row for row in passages
+              if row.get("ticker") and row.get("fiscal_year") is not None and row.get("item")]
+    if not usable:
+        raise ValueError("The local corpus has no passages with company, fiscal year and Item metadata")
+    if skipped := len(passages) - len(usable):
+        st.caption(f"{skipped} of {len(passages)} passages have no company, fiscal year or Item "
+                   "and are not listed.")
+
+    names: dict[str, str] = {}
+    for row in usable:
+        names.setdefault(str(row["ticker"]), str(row.get("company") or row["ticker"]))
+    tickers = sorted(names)
+
+    with st.container(border=True):
+        st.caption("Choose a filing scope. Each menu contains only values present in the corpus.")
+        company_col, year_col, item_col = st.columns(3)
+        with company_col:
+            ticker = _existing_choice(
+                "Company", tickers, key=f"{key}:company",
+                format_func=lambda value: f"{value} — {names[value]}")
+        years = sorted({int(row["fiscal_year"]) for row in usable if row["ticker"] == ticker},
+                       reverse=True)
+        with year_col:
+            fiscal_year = _existing_choice(
+                "Fiscal year", years, key=f"{key}:year",
+                format_func=lambda value: f"FY{value}")
+        items = sorted({str(row["item"]).upper() for row in usable
+                        if row["ticker"] == ticker and row["fiscal_year"] == fiscal_year},
+                       key=_item_order)
+        with item_col:
+            item = _existing_choice(
+                "Item", items, key=f"{key}:item",
+                format_func=lambda value: f"Item {value}")
+    return CorpusSelection(ticker, fiscal_year, item)
+
+
+def select_corpus_passages(passages: Sequence[Mapping[str, Any]],
+                           selection: CorpusSelection) -> list[Mapping[str, Any]]:
+    """Return the passages in one selected company/year/Item, in corpus order."""
+    return [row for row in passages
+            if row.get("ticker") == selection.ticker
+            and row.get("fiscal_year") == selection.fiscal_year
+            and str(row.get("item") or "").upper() == selection.item]
+
+
+def _passage_kind(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    """The visible label, badge colour and icon for a stored content type."""
+    if row.get("content_type") == "table":
+        return "Table passage", "orange", ":material/table_chart:"
+    return "Prose passage", "blue", ":material/article:"
+
+
+def _table_label(text: Any) -> str:
+    """A table passage's own label line, or "" when it opens with the grid.
+
+    The chunker writes a table as its label, a blank line, then rows that each
+    start with "|", so the label is the first line when that line is not a
+    row. It is the only thing that tells 61 of Apple's 64 FY2025 Item 8 tables
+    apart: none of them has a caption or a heading, so all 61 fall back to the
+    Item title and read as the same entry (#127).
+    """
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return "" if stripped.startswith("|") else stripped
+    return ""
+
+
+def _passage_heading(row: Mapping[str, Any]) -> str:
+    """What a collapsed panel calls a passage, before its marker.
+
+    A table prefers its stored caption, then its own label line, then the
+    headings a prose passage would use. 7,232 of the corpus's 10,615 tables
+    have no caption, and the label line names 4,884 of those better than the
+    Item title does.
+    """
+    if row.get("content_type") == "table":
+        heading = (row.get("table_caption") or _table_label(row.get("text"))
+                   or row.get("heading") or row.get("title"))
+    else:
+        heading = row.get("heading") or row.get("title")
+    return str(heading or "")
+
+
+_PART_SUFFIX = re.compile(r"\s+\(part\s+\d+\s+of\s+\d+\)\s*$", re.IGNORECASE)
+
+
+def passage_labels(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return panel names, numbering rows that share the same display name.
+
+    Chunk IDs remain inside expanded panels. When an Item contains several
+    chunks with the same heading, their collapsed labels instead identify the
+    chunk's position as ``Name (Part x of x)``. Counts cover the full selected
+    Item, so numbering remains stable when the result is paginated. A table
+    fragment's stored label can already end in ``(part x of x)``; that suffix
+    is normalized before counting so a panel never shows two competing part
+    counters.
+    """
+    headings = [_passage_heading(row) or _passage_kind(row)[0] for row in rows]
+    names = [_PART_SUFFIX.sub("", heading) for heading in headings]
+    totals = Counter(names)
+    seen: Counter[str] = Counter()
+    labels = []
+    for heading, name in zip(headings, names):
+        seen[name] += 1
+        labels.append(
+            f"{name} (Part {seen[name]} of {totals[name]})"
+            if totals[name] > 1 else heading
+        )
+    return labels
+
+
+def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
+    """Render one full passage with its chunk ID, type and EDGAR filing link.
+
+    ``label`` is the collapsed label, from :func:`passage_labels` over the
+    whole selection, so that panels listed together can be told apart. Without
+    one, a passage is labelled on its own and may read like its neighbours.
+    """
+    kind, colour, icon = _passage_kind(row)
+    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    passage_title = label or passage_labels([row])[0]
+    # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
+    passage_title = passage_title.replace("$", r"\$")
+
+    with st.expander(passage_title, icon=icon):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.badge(kind, color=colour, icon=icon)
+            st.caption(f"Chunk ID: {chunk_id}")
+        url = str(row.get("url") or "")
+        if _safe_url(url):
+            st.link_button("Open filing on EDGAR", url, icon=":material/open_in_new:")
+        else:
+            st.caption("Filing link unavailable")
+
+        text = str(row.get("text") or "")
+        if row.get("content_type") == "table":
+            # Tables are stored as aligned plain text. A code block preserves
+            # their rows and spacing and makes them visibly unlike prose.
+            st.code(text, language=None, wrap_lines=True)
+        else:
+            st.text(text)
+
+
+def corpus_passage_page(passages: Sequence[Mapping[str, Any]], selection: CorpusSelection,
+                        *, key: str = "browse", page_size: int = 25) -> None:
+    """Render a paginated selection without hiding how many passages exist."""
+    if page_size < 1:
+        raise ValueError("page_size must be positive")
+    selected = select_corpus_passages(passages, selection)
+    if not selected:
+        # ``corpus_picker`` only makes existing combinations, so this guards a
+        # malformed or concurrently replaced corpus rather than normal use.
+        st.warning("No passages exist for this selection.", icon=":material/search_off:")
+        return
+
+    filings = {str(row.get("accession_no") or row.get("url") or "") for row in selected}
+    page_count = (len(selected) + page_size - 1) // page_size
+    scope_key, page_key = f"{key}:scope", f"{key}:page"
+    scope = tuple(selection)
+    if st.session_state.get(scope_key) != scope:
+        st.session_state[scope_key] = scope
+        st.session_state[page_key] = 1
+    if st.session_state.get(page_key) not in range(1, page_count + 1):
+        st.session_state[page_key] = 1
+
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        page = st.selectbox(
+            "Page", range(1, page_count + 1), key=page_key,
+            format_func=lambda value: f"Page {value} of {page_count}",
+            width=180,
+        )
+        start = (page - 1) * page_size
+        stop = min(start + page_size, len(selected))
+        st.caption(
+            f"Showing passages {start + 1}–{stop} of {len(selected)} "
+            f"across {len(filings)} filing{'s' if len(filings) != 1 else ''}.")
+
+    # Labelled over the whole selection, not the page, so a marker is unique
+    # however the pages are cut.
+    labels = passage_labels(selected)
+    for row, label in zip(selected[start:stop], labels[start:stop]):
+        corpus_passage(row, label=label)
+
+
 def _citation_html(citation: Citation, passages: Sequence[RetrievedPassage], *,
                    namespace: str, expanded: bool = False) -> str:
     label = escape(render_citation(citation, passages))
@@ -256,23 +476,30 @@ def answer_card_html(answer: Answer, *, key: str = "answer", show_question: bool
     for index, (text, flagged) in enumerate(rows):
         checks = [c for c in (() if answer.verification is None else answer.verification.checks)
                   if c.sentence_index == index]
-        warnings = [c for c in checks if c.status in {"unverified", "mismatch"}]
+        # The deterministic groundedness check can only confirm wording copied
+        # from a passage.  A normal paraphrase is therefore ``unverified`` even
+        # when its citation resolves and its figures pass the evidence checks.
+        # Keep that diagnostic on the Answer for evaluation, but do not present
+        # it as an actionable citation warning on the Ask page.
+        warnings = [c for c in checks if c.status in {"unverified", "mismatch"}
+                    and not (c.kind == "groundedness" and c.status == "unverified")]
         missing = any(int(m[1]) < 1 or not any(
             c.marker == int(m[1]) and c.resolved for c in answer.citations
         ) for m in _MARKER.finditer(text))
         flagged = flagged or missing or not _MARKER.search(text)
         evidence_supported = any(c.status == "supported" for c in checks)
         if any(c.status == "mismatch" for c in warnings):
-            status, label = "sec-warning sec-mismatch", "Mismatch — needs review"
+            status, label = "sec-warning sec-mismatch", "Verification found a mismatch"
         elif flagged or answer.truncated or answer.parse_error:
-            status, label = "sec-warning", "Needs review — unresolved, missing or unverified support"
-        elif evidence_supported:
-            status, label = "sec-supported", "Completed checks support this claim"
+            status, label = "sec-warning", "Citation needs attention"
         elif warnings:
-            status, label = "sec-warning", "Needs review — unresolved, missing or unverified support"
+            status, label = "sec-warning", "Evidence could not be fully verified"
+        elif evidence_supported:
+            status, label = "sec-supported", "Verification checks passed"
         else:
-            status, label = "", "Citations resolved · factual support not checked"
-        parts.append(f'<div class="sec-claim {status}"><span class="sec-label">{label}</span>'
+            status, label = "", None
+        status_label = "" if label is None else f'<span class="sec-label">{label}</span>'
+        parts.append(f'<div class="sec-claim {status}">{status_label}'
                      f'{_inline(text, answer, namespace)}</div>')
         for check in warnings:
             parts.append(f'<p class="sec-warning">{escape(check.reason)}</p>')
@@ -322,12 +549,6 @@ def answer_card(answer: Answer, *, key: str = "answer", show_question: bool = Tr
             unsafe_allow_javascript=True)
 
 
-def _not_in_corpus(parsed: ParsedQuestion) -> str:
-    """The companies and years a question named that the corpus does not hold,
-    in the one wording the sidebar and the filters line both show."""
-    return "not in the corpus: " + ", ".join(parsed.unresolved)
-
-
 def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None:
     """Show what a question will be searched in, as soon as it is read (#38).
 
@@ -343,8 +564,9 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
     parts = [" ".join(f":blue-badge[{value}]" for value in values) or f":gray-badge[{every}]"
              for values, every in _scope(query)]
     if parsed is not None:
-        if parsed.unresolved:
-            parts.append(f":orange-badge[{_not_in_corpus(parsed)}]")
+        if missing := parsed.not_in_corpus:
+            # Lower case inside the sentence the badges make.
+            parts.append(f":orange-badge[{missing[0].lower() + missing[1:]}]")
         parts.append(f":violet-badge[{parsed.question_type} question]")
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
@@ -416,14 +638,44 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
             # Short, and with no icon: the sidebar is narrow, and a warning
             # that ran to twenty lines pushed the Configuration box below it
             # off the screen.
-            ready = [_PROVIDERS[other][0] for other in models if other not in unready]
-            instead = f", or pick {' or '.join(ready)}" if ready else ""
-            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. Fix it in "
-                       f"`.env` (README, {setup}) and restart the app{instead}. "
+            st.warning(f"{label} cannot write an answer yet: {unready[provider]}. "
+                       f"{_fix_in_app(provider, available)} "
                        "A figure the facts store holds is still answered.")
         if available.problem:
             st.warning(available.problem)
     return provider
+
+
+def _fix_in_app(provider: str, available: AnswerModels) -> str:
+    """What to do in the app about a provider's settings: change them and
+    restart, or pick a provider that lacks nothing.
+
+    The environment as well as ``.env``: a variable exported in the shell wins
+    over the file, so advice to fix ``.env`` alone could be followed to no
+    effect.
+    """
+    ready = [_PROVIDERS[other][0] for other in available.models
+             if other != provider and other not in available.unready]
+    instead = f", or pick {' or '.join(ready)}" if ready else ""
+    return (f"Update it in your environment or `.env` (README, {_PROVIDERS[provider][2]}), "
+            f"then restart the app{instead}.")
+
+
+def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
+    """Say why the provider picked could not answer an Ask.
+
+    ``available`` is what :func:`provider_picker` was given. What the provider
+    lacks, without the advice to restart a notebook or a command that the
+    full message goes on to give. Where the sidebar has not said what to do in
+    the app, because the settings looked right until a request was sent, as
+    a key the API refuses does, the error says it. A failure that names no
+    reason of its own, such as a rate limit, says what to do itself, and
+    nothing in ``.env`` would fix it, so its whole message is shown.
+    """
+    shown = error.reason
+    if error.reason != str(error) and provider not in available.unready:
+        shown += f". {_fix_in_app(provider, available)}"
+    st.error(shown, icon=":material/error:")
 
 
 def _writer(answer: Answer) -> Literal["facts", "model"] | None:
@@ -667,9 +919,8 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
         tickers = st.multiselect("Company", options["companies"], key=f"{key}:companies")
         selected_years = st.multiselect("Fiscal year", options["years"], key=f"{key}:years")
         selected_items = st.multiselect("Item", options["items"], key=f"{key}:items")
-        if parsed and parsed.unresolved:
-            said = _not_in_corpus(parsed)
-            st.warning(said[0].upper() + said[1:])
+        if parsed and parsed.not_in_corpus:
+            st.warning(parsed.not_in_corpus)
         unknown_items = [i for i in mentions if i not in items]
         if unknown_items:
             st.warning("Unrecognised Items (kept as filters): " + ", ".join(unknown_items))
@@ -683,6 +934,9 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
-    "configuration_picker", "filter_sidebar", "provider_picker", "resolved_filters",
-    "retrieval_trace", "trace_rows",
+    "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
+    "CorpusSelection", "filter_sidebar", "passage_labels", "provider_picker",
+    "resolved_filters", "retrieval_trace", "select_corpus_passages", "trace_rows",
+    "CorpusSelection", "filter_sidebar", "provider_error", "provider_picker", "resolved_filters",
+    "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]
