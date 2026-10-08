@@ -176,6 +176,47 @@ def _table_label(text: Any) -> str:
     return ""
 
 
+def _is_separator(line: str) -> bool:
+    """Whether a grid line is the rule under a Markdown table's header row."""
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    return bool(cells) and all(set(cell) <= set("-:") and "-" in cell for cell in cells)
+
+
+def _table_grid(text: Any) -> list[str]:
+    """The pipe-table lines of a stored table passage, one row per line.
+
+    A cell holding a newline broke its row across lines when the table was
+    written -- ``render_table`` joins cells with "|" and does not quote them --
+    and Markdown needs one row per line, so a line that does not start a row
+    is joined back onto the one before it. The label line above the grid is
+    not a row and is dropped; it is the panel's own title (#127).
+
+    Returns [] where the passage holds nothing Markdown would draw as a table.
+    """
+    rows: list[str] = []
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("|"):
+            rows.append(stripped)
+        elif rows:
+            rows[-1] = f"{rows[-1]} {stripped}"
+    # A header and the rule beneath it are what make the rest render as rows.
+    return rows if len(rows) >= 2 and _is_separator(rows[1]) else []
+
+
+def _rendered_table(text: Any) -> str:
+    """A stored table as Markdown, or "" when there is no table to draw.
+
+    Dollar figures are escaped for the reason a panel title's are: Streamlit
+    reads Markdown, where a pair of "$" opens inline math, and a statement is
+    full of them -- "$105,126" and "$98,330" in one row would render as a
+    formula with the figures eaten.
+    """
+    return "\n".join(line.replace("$", r"\$") for line in _table_grid(text))
+
+
 def _passage_heading(row: Mapping[str, Any]) -> str:
     """What a collapsed panel calls a passage, before its marker.
 
@@ -228,7 +269,8 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
     one, a passage is labelled on its own and may read like its neighbours.
     """
     kind, colour, icon = _passage_kind(row)
-    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    stored_id = str(row.get("chunk_id") or "")
+    chunk_id = stored_id or "Chunk ID unavailable"
     passage_title = label or passage_labels([row])[0]
     # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
     passage_title = passage_title.replace("$", r"\$")
@@ -244,12 +286,29 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
             st.caption("Filing link unavailable")
 
         text = str(row.get("text") or "")
-        if row.get("content_type") == "table":
-            # Tables are stored as aligned plain text. A code block preserves
-            # their rows and spacing and makes them visibly unlike prose.
-            st.code(text, language=None, wrap_lines=True)
-        else:
+        if row.get("content_type") != "table":
             st.text(text)
+            return
+
+        # A table is stored as a Markdown pipe table with unpadded cells
+        # (``pipeline.chunk.render_table``), so showing the text shows the
+        # syntax rather than a table, and 5,676 of the 10,615 table passages
+        # have a line over 120 characters for it to wrap. Rendering the grid
+        # lines up the columns; the badge and icon above still say which kind
+        # of passage this is.
+        grid = _rendered_table(text)
+        if not grid:
+            # Nothing Markdown would draw as a table, so the stored text is
+            # the only honest view of it and there is nothing to toggle.
+            st.code(text, language=None, wrap_lines=True)
+            return
+        st.markdown(grid)
+        # Browse exists to show what retrieval sees, which is the text and not
+        # the rendering, so the text stays one click away. Keyed on the chunk
+        # ID, which is unique corpus-wide, falling back to the label, which
+        # ``passage_labels`` makes unique within a selection.
+        if st.toggle("Stored text", key=f"browse:stored:{stored_id or passage_title}"):
+            st.code(text, language=None, wrap_lines=True)
 
 
 def corpus_passage_page(passages: Sequence[Mapping[str, Any]], selection: CorpusSelection,

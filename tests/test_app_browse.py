@@ -208,8 +208,14 @@ def table(chunk_id, text, *, caption="", heading="", **changes):
     return row
 
 
+# A table as ``pipeline.chunk.render_table`` writes one: a label line, a blank
+# line, then a header row, the rule under it, and the body. The rule is what
+# makes Markdown draw it as a table, and the dollar figures are what makes the
+# escaping matter (#128).
 STATEMENT = ("Financial Statements (part 2 of 3)\n\n"
-             "| | 2025 | 2024 |\n| Total net sales | 391,035 | 383,285 |")
+             "|  | 2025 | 2024 |\n"
+             "| --- | --- | --- |\n"
+             "| Total net sales | $416,161 | $391,035 |")
 
 
 def test_an_uncaptioned_table_is_titled_from_its_own_label_line(monkeypatch):
@@ -302,3 +308,85 @@ def test_a_passage_with_no_chunk_id_is_still_labelled(monkeypatch):
     row["title"] = ""
     app = browse(monkeypatch, [row])
     assert app.main.status[0].label == "Prose passage"
+
+
+# --- #128: a stored table is shown as a table --------------------------------
+
+def markdowns(app):
+    """Every Markdown element on the page, badges included."""
+    return [element.value for element in app.get("markdown")]
+
+
+def test_a_table_passage_is_rendered_as_a_table(monkeypatch):
+    # Stored as pipe syntax with unpadded cells, so the text shows the syntax
+    # rather than a table. Rendering it lines the columns up.
+    app = browse(monkeypatch, [table("t000", STATEMENT, item="8")])
+    rendered = [value for value in markdowns(app) if "| ---" in value]
+    assert len(rendered) == 1
+    assert rendered[0].splitlines() == [
+        r"|  | 2025 | 2024 |",
+        r"| --- | --- | --- |",
+        r"| Total net sales | \$416,161 | \$391,035 |",
+    ]
+    # The label line is the panel's own title, so it is not repeated inside.
+    assert "Financial Statements" not in rendered[0]
+
+
+def test_dollar_figures_in_cells_are_not_read_as_math(monkeypatch):
+    app = browse(monkeypatch, [table("t000", STATEMENT, item="8")])
+    rendered = next(value for value in markdowns(app) if "| ---" in value)
+    assert r"\$416,161" in rendered and r"\$391,035" in rendered
+    assert "$416,161" not in rendered.replace(r"\$", "")
+
+
+def test_a_cell_holding_a_newline_is_rejoined_into_its_row(monkeypatch):
+    # render_table joins cells with "|" and does not quote them, so a cell
+    # holding a newline breaks its row across lines. Markdown needs one row
+    # per line, or the table stops at the break.
+    stored = ("Financial Statements (part 1 of 2)\n\n"
+              "|  |  |\n"
+              "| --- | --- |\n"
+              "| Index to Consolidated Financial Statements | Page |\n"
+              "| Consolidated Statements of Operations for the years ended September 27,\n"
+              "2025, September 28, 2024 and September 30, 2023 | 29 |")
+    app = browse(monkeypatch, [table("t000", stored, item="8")])
+    rendered = next(value for value in markdowns(app) if "| ---" in value)
+    assert rendered.splitlines()[-1] == (
+        "| Consolidated Statements of Operations for the years ended September 27, "
+        "2025, September 28, 2024 and September 30, 2023 | 29 |")
+    assert len(rendered.splitlines()) == 4
+
+
+def test_the_stored_text_is_still_reachable_unchanged(monkeypatch):
+    # Browse exists to show what retrieval sees, which is the text.
+    row = table("t000", STATEMENT, item="8")
+    app = browse(monkeypatch, [row])
+    assert [toggle.label for toggle in app.get("toggle")] == ["Stored text"]
+    assert not app.code
+
+    app.get("toggle")[0].set_value(True).run()
+    assert not app.exception
+    assert [code.value for code in app.code] == [STATEMENT]
+
+
+def test_a_table_markdown_cannot_draw_keeps_the_stored_text(monkeypatch):
+    # No rule under a header row, so nothing would render as a table and the
+    # text is the only honest view of it.
+    app = browse(monkeypatch, [table("t000", "Odd table\n\n| one | two |", item="8")])
+    assert [code.value for code in app.code] == ["Odd table\n\n| one | two |"]
+    assert not app.get("toggle")
+    assert not [value for value in markdowns(app) if "| ---" in value]
+
+
+def test_prose_and_table_passages_stay_visually_distinct(monkeypatch):
+    prose = passage("p000", text="Narrative text stays readable as prose.", item="8")
+    app = browse(monkeypatch, [prose, table("t000", STATEMENT, item="8")])
+    # Prose is text, never a rendered grid; the badges keep saying which is which.
+    assert [text.value for text in app.text] == [prose["text"]]
+    assert [value for value in markdowns(app) if value.endswith("]")] == [
+        ":blue-badge[:material/article: Prose passage]",
+        ":orange-badge[:material/table_chart: Table passage]",
+    ]
+    assert len([value for value in markdowns(app) if "| ---" in value]) == 1
+    # Only the table offers its stored text; prose is already shown as stored.
+    assert [toggle.label for toggle in app.get("toggle")] == ["Stored text"]

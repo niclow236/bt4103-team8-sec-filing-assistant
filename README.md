@@ -1867,14 +1867,23 @@ index nor an answer model. Its company, fiscal-year and Item menus are
 dependent: each contains only values that exist under the choices before it,
 so every selectable combination has passages. It shows 25 passages at a time
 and makes every page reachable. Each expander is named for its nearest heading
-or table caption, then the end of its chunk ID, so no two panels in one
-selection read alike (#127): a table with no caption is named from its own
-label line, which carries the statement title, where 61 of Apple's 64 FY2025
-Item 8 tables used to fall back to "Financial Statements". The full chunk ID is
-shown inside, beside a link to the source filing on EDGAR. Prose is marked with
-an article icon and rendered as text; table passages are marked with a table
-icon and rendered in a
-spacing-preserving block so the two cannot be mistaken for one another.
+or table caption, and panels that would read alike are numbered `(Part x of y)`
+over the whole selection, so no two in one selection are the same (#127, #131):
+a table with no caption is named from its own label line, which carries the
+statement title, where 61 of Apple's 64 FY2025 Item 8 tables used to fall back
+to "Financial Statements". The chunk ID is shown inside, beside a link to the
+source filing on EDGAR.
+
+Prose is marked with an article icon and shown as text. A table passage is
+marked with a table icon and drawn as a table (#128): it is stored as a
+Markdown pipe table with unpadded cells, so showing the text showed the syntax
+instead, and 5,676 of the 10,615 table passages have a line over 120
+characters for it to wrap. Dollar figures are escaped on the way, or `$416,161`
+and `$391,035` in one row would be read as inline math, and a row whose cell
+held a newline is joined back together, since Markdown draws one row per line.
+The exact stored text is one click away under "Stored text", because what
+retrieval sees is the text and not the drawing; a passage holding nothing
+Markdown would draw as a table shows the text alone.
 
 ### Where things go in `src/app/`
 
