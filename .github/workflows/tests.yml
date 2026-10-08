@@ -1,0 +1,52 @@
+# Runs the whole test suite on every pull request and on every push to main.
+#
+# The suite needs no network, no EDGAR identity, no .env and nothing under
+# data/: each test builds its own small corpus, and the embedding model is
+# replaced by a stand-in. One test counts tokens with the real bge tokenizer
+# and is skipped where that cannot be downloaded.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to a branch stops the run for the push before it.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest, Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # Let the other Python version finish, so one failure does not hide another.
+      fail-fast: false
+      matrix:
+        # 3.10 is the oldest the README supports, and what most of the team runs.
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # sentence-transformers pulls in torch, and on Linux the default wheel
+      # brings the CUDA libraries with it, a few gigabytes nothing here uses.
+      # Installing the CPU build first means requirements.txt finds torch
+      # already there.
+      - name: Install torch, CPU build
+        run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install the pinned dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run the suite
+        run: python -m pytest
