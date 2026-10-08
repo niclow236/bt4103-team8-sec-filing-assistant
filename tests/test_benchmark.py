@@ -477,10 +477,11 @@ def test_the_expected_answer_is_the_figure_as_filed_with_its_unit(tmp_path):
 
 
 def test_a_generated_question_lists_at_most_three_supporting_chunks(tmp_path):
-    """Recall is capped at the cutoff (src/evaluation/metrics.py), which is plain
-    recall only while a question has no more supporting chunks than the cutoff.
-    Three a question, the first three in the filing's order, is what makes that
-    so for every cutoff the README reports."""
+    """Recall divides by every supporting chunk (src/evaluation/metrics.py), so a
+    question with more of them than the cutoff could never score 1.0. Three a
+    question, the first three in the filing's order, keeps a perfect score in
+    reach at every cutoff the README reports, and is why changing the divisor
+    from min(supporting, k) in #140 moved no reported figure."""
     processed_dir = tmp_path / "processed"
     _write_xbrl_corpus(processed_dir, [f"Note {i}: revenue was 4,103." for i in range(5)])
     facts_file = tmp_path / "facts.parquet"

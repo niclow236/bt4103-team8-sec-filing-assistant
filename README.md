@@ -2063,17 +2063,15 @@ accuracy, the cutoff, question type, retriever, and latency. Unanswerable
 questions leave the supporting-chunk metrics unset and are evaluated through
 their hard-negative accuracy instead.
 
-Recall@k here is capped recall: the supporting chunks found in the top `k`,
-divided by `min(supporting chunks, k)` and not by every supporting chunk. A top
-5 cannot hold more than five, so five of twenty supporting chunks in a top 5
-scores 1.0 where plain recall, `found / supporting`, gives 0.25. The cap keeps
-recall and nDCG agreeing that a full top `k` is a perfect one (#97). The two
-only differ for a question with more supporting chunks than `k`. The generated
+Recall@k is the supporting chunks found in the top `k` divided by all the
+supporting chunks, found or not: five of twenty in a top 5 is 0.25. Until #140
+the divisor was `min(supporting chunks, k)`, which scored that case 1.0 (#97).
+No Recall figure in this README moved with the change. The two divisors differ
+only for a question with more supporting chunks than `k`, and the generated
 benchmark has none: `generate_xbrl_questions` lists at most three supporting
-chunks a question, and no cutoff reported in this README is under 3, so every
-Recall figure here is also the plain one. A hand-written question with many
-supporting chunks would score higher on this than on plain recall, and should
-be read with that in mind.
+chunks a question, and no cutoff reported here is under 3. nDCG still cuts its
+ideal ranking at `k`, as it is defined, so a question with more supporting
+chunks than `k` can reach 1.0 on nDCG and not on Recall.
 
 The answer evaluation harness runs the same `answer_question` path and reports
 abstentions divided by all completed questions, both overall and separately
