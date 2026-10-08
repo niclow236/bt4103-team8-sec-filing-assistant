@@ -60,7 +60,21 @@ def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.D
                      "Questions": saved.get("questions", item["questions"]),
                      **{metric.replace("_", " ").title(): saved.get(metric)
                         for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy")}})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).dropna(axis=1, how="all")
+
+
+def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
+    rows = []
+    for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        if saved.get("abstention_rate") is None:
+            continue
+        rows.append({"Configuration": item["config_id"], "Name": item["name"],
+                     "Questions": saved.get("questions"),
+                     "Abstention rate": saved.get("abstention_rate"),
+                     "Median latency (ms)": saved.get("median_latency_ms"),
+                     "LLM questions": saved.get("llm_questions")})
+    return pd.DataFrame(rows).dropna(axis=1, how="all")
 
 
 def _render_results_benchmark(title: str, configurations: list[dict[str, Any]],
@@ -95,37 +109,33 @@ def render_results(runs: list[dict[str, Any]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py."""
     st.header("Results")
     st.caption("Saved benchmark results are read from results/<run-id>/; no evaluation is rerun.")
-    if not runs:
-        st.info("No completed benchmark runs were found under results/.")
-        return
     if st.button("Reload saved results"):
         st.cache_data.clear()
         st.rerun()
+    if not runs:
+        st.info("No completed benchmark runs were found under results/.")
+        return
     run_id = st.selectbox("Run", [run["run_id"] for run in runs])
     selected = next(run for run in runs if run["run_id"] == run_id)
     retrieval = [item for item in selected["configurations"]
-                 if any(item["benchmark_metrics"].get(kind, {}).get("recall") is not None
+                 if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
+                            for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy"))
                         for kind in ("handwritten", "mechanical"))]
     manual = [item for item in retrieval if "handwritten" in item["benchmark_metrics"]]
     mechanical = [item for item in retrieval if "mechanical" in item["benchmark_metrics"]]
     tab_manual, tab_mechanical = st.tabs(["Hand-written benchmark", "Mechanical XBRL benchmark"])
     with tab_manual:
         _render_results_benchmark("Hand-written benchmark", manual, "handwritten")
+        table = _results_model_table(selected["configurations"], "handwritten")
+        if not table.empty:
+            st.subheader("Answer-model ablation")
+            st.dataframe(table, width="stretch", hide_index=True)
     with tab_mechanical:
         _render_results_benchmark("Mechanical XBRL benchmark", mechanical, "mechanical")
-
-    models = [item for item in selected["configurations"]
-              if item["metrics"].get("abstention_rate") is not None]
-    if models:
-        st.subheader("Answer-model ablation")
-        st.dataframe(pd.DataFrame([
-            {"Configuration": item["config_id"], "Name": item["name"],
-             "Questions": item["questions"],
-             "Abstention rate": item["metrics"].get("abstention_rate"),
-             "Median latency (ms)": item["metrics"].get("median_latency_ms"),
-             "LLM questions": item["metrics"].get("llm_questions")}
-            for item in models
-        ]), width="stretch", hide_index=True)
+        table = _results_model_table(selected["configurations"], "mechanical")
+        if not table.empty:
+            st.subheader("Answer-model ablation")
+            st.dataframe(table, width="stretch", hide_index=True)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:

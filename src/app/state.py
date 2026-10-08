@@ -86,7 +86,7 @@ def _read_result_rows(path: Path) -> list[dict[str, Any]]:
         return []
 
 
-def _saved_benchmark_metrics(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = None) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         grouped.setdefault(benchmark_kind(row), []).append(row)
@@ -103,7 +103,7 @@ def _saved_benchmark_metrics(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
             values.update({
                 "abstention_rate": mean(answer.get("abstained", False) for answer in answers),
                 "median_latency_ms": median(latencies) if latencies else None,
-                "llm_questions": sum(row.get("route") is not None for row in items),
+                "llm_questions": sum(provider is not None and row.get("route") == provider for row in items),
             })
         output[kind] = values
     return output
@@ -121,9 +121,15 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
             manifest = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if not isinstance(manifest, dict):
+            continue
         configurations = []
         for summary in manifest.get("configurations", ()):
+            if not isinstance(summary, dict):
+                continue
             config = summary.get("config") or {}
+            if not isinstance(config, dict):
+                continue
             config_id = str(config.get("id") or "")
             if not config_id:
                 continue
@@ -137,7 +143,8 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
                 "questions": int(summary.get("questions") or len(rows)),
                 "metrics": {key: summary.get(key) for key in (
                     *RESULT_METRICS, "abstention_rate", "median_latency_ms", "llm_questions")},
-                "benchmark_metrics": summary.get("by_benchmark") or _saved_benchmark_metrics(rows),
+                "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
+                                      if rows else summary.get("by_benchmark") or {}),
                 "question_rows": rows,
             })
         if configurations:
