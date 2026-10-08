@@ -494,7 +494,8 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
 
-def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration") -> str:
+def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
+                         label: str = "Configuration", default: str = DEFAULT_STACK) -> str:
     """Pick one of the configurations ``src/stack.py`` can build, in the sidebar.
 
     In the registry's order, each labelled with the run that measured it
@@ -503,8 +504,8 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration")
     """
     with st.sidebar:
         config_id = st.selectbox(
-            "Configuration", SELECTABLE,
-            index=SELECTABLE.index(DEFAULT_STACK),
+            label, SELECTABLE,
+            index=SELECTABLE.index(default),
             format_func=lambda option: runs.get(option, f"{option} — {STACKS[option].name}"),
             help="Named in src/stack.py and built the same way the evaluation "
                  "command builds it. A row measured under results/ is labelled "
@@ -664,6 +665,30 @@ def trace_rows(answer: Answer) -> list[dict[str, object]]:
         "Filing": passage.url if _safe_url(passage.url) else None,
         "Chunk": passage.chunk_id,
     } for number, passage in enumerate(answer.passages, 1)]
+
+
+def comparison_rows(answer: Answer, other: Answer | None, side: str) -> list[dict[str, object]]:
+    """Mark overlap by chunk identity, preserving each answer's citation order."""
+    other_ids = {passage.chunk_id for passage in other.passages} if other is not None else set()
+    return [{"Presence": ("Not compared" if other is None else
+                           "Shared" if row["Chunk"] in other_ids else f"Only {side}"), **row}
+            for row in trace_rows(answer)]
+
+
+def comparison_evidence(answer: Answer, other: Answer | None, *, side: str) -> None:
+    st.subheader("Retrieved passages", anchor=False)
+    rows = comparison_rows(answer, other, side)
+    if not rows:
+        st.caption("No passages were retrieved for this answer.")
+        return
+    st.dataframe(rows, width="stretch", hide_index=True,
+                 column_config={"Filing": st.column_config.LinkColumn(display_text="Open filing"),
+                                "Score": st.column_config.NumberColumn(format="%.4f"),
+                                "Fiscal year": st.column_config.NumberColumn(format="%d")})
+    for row in rows:
+        with st.expander(f"{row['Presence']} · {row['Source']} · {row['Company']} · "
+                         f"FY{row['Fiscal year']} · Item {row['Item']}"):
+            st.text(str(row["Passage"]))
 
 
 def _plural(count: int, noun: str) -> str:

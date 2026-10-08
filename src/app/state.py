@@ -250,6 +250,25 @@ def has_kept(page: str) -> bool:
     return _key(page) in st.session_state
 
 
+class ComparisonSide(NamedTuple):
+    """One side of a comparison, including its independent failure (#39)."""
+
+    answer: Answer | None
+    seconds: float
+    error: str | None = None
+
+
+def keep_comparison(requests: tuple[Request, Request],
+                    sides: tuple[ComparisonSide, ComparisonSide]) -> None:
+    st.session_state["compare:kept"] = (requests, sides)
+
+
+def kept_comparison(requests: tuple[Request, Request]) -> tuple[ComparisonSide, ComparisonSide] | None:
+    """Keep both sides together; changing either request hides the whole pair."""
+    held = st.session_state.get("compare:kept")
+    return held[1] if held is not None and held[0] == requests else None
+
+
 class Remembered:
     """A built configuration that gives a repeated question the answer it gave before.
 
