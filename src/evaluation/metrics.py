@@ -18,7 +18,19 @@ def recall_at_k(
     *,
     k: int = 10,
 ) -> float | None:
-    """Fraction of relevant chunks reachable at ``k`` that were retrieved."""
+    """Capped recall: the relevant chunks retrieved in the top ``k``, out of
+    those a top ``k`` could hold.
+
+    Not plain recall, which divides by every relevant chunk. The divisor here
+    is ``min(relevant, k)``: with twenty relevant chunks and five of them in a
+    top 5, this is 1.0 and plain recall is 0.25. Capped, a full top ``k``
+    scores 1.0 on recall as it does on nDCG, whose ideal ranking is cut at
+    ``k`` the same way.
+
+    The two agree whenever ``k`` is at least the number of relevant chunks.
+    That is every question ``generate_xbrl_questions`` writes, at any cutoff of
+    3 or more, since it lists at most three supporting chunks a question.
+    """
     relevant = _as_set(relevant_chunk_ids)
     if not relevant:
         return None

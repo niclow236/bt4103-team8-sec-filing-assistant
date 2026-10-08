@@ -474,3 +474,20 @@ def test_the_expected_answer_is_the_figure_as_filed_with_its_unit(tmp_path):
         "What was Revenue for AAPL in FY2024?",
         "What was Shares outstanding for AAPL in FY2024?",
     }
+
+
+def test_a_generated_question_lists_at_most_three_supporting_chunks(tmp_path):
+    """Recall is capped at the cutoff (src/evaluation/metrics.py), which is plain
+    recall only while a question has no more supporting chunks than the cutoff.
+    Three a question, the first three in the filing's order, is what makes that
+    so for every cutoff the README reports."""
+    processed_dir = tmp_path / "processed"
+    _write_xbrl_corpus(processed_dir, [f"Note {i}: revenue was 4,103." for i in range(5)])
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([_xbrl_fact(raw_value="4103")]).to_parquet(facts_file, index=False)
+
+    [question] = generate_xbrl_questions(facts_file, processed_dir=processed_dir,
+                                         output_path=tmp_path / "generated.jsonl")
+
+    assert question.supporting_chunk_ids == tuple(
+        f"0000000001-25-000001_part_ii_item_8_{i:03d}" for i in range(3))

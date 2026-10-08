@@ -292,11 +292,11 @@ settings are in `.coveragerc`, so everyone measures the same code the same way,
 branches included. `--cov-report=html` writes a browsable version to
 `htmlcov/` instead, which git ignores. Coverage says which lines ran, not
 whether a test checked what they did, so it shows where tests are missing
-rather than proving the ones that exist are good. On 7 October 2026 it measured
-94% across `src/`, over 1,693 tests. On 27 September it had measured 73%, with
+rather than proving the ones that exist are good. On 8 October 2026 it measured
+94% across `src/`, over 1,718 tests. On 27 September it had measured 73%, with
 the pipeline least covered: its command line and passage reader at 0%, the
 downloader at 11% and the verifier at 25%. Those four are now at 99%, 100%,
-100% and 97% (#49). The least covered file is `src/pipeline/parse.py`, at 63%:
+100% and 98% (#49). The least covered file is `src/pipeline/parse.py`, at 63%:
 what the tests do not reach there is the reading of a filing's HTML through
 edgartools, which the suite has no filing to give.
 
@@ -2058,6 +2058,18 @@ The returned row contains Recall@k, nDCG@k, reciprocal rank, hard-negative
 accuracy, the cutoff, question type, retriever, and latency. Unanswerable
 questions leave the supporting-chunk metrics unset and are evaluated through
 their hard-negative accuracy instead.
+
+Recall@k here is capped recall: the supporting chunks found in the top `k`,
+divided by `min(supporting chunks, k)` and not by every supporting chunk. A top
+5 cannot hold more than five, so five of twenty supporting chunks in a top 5
+scores 1.0 where plain recall, `found / supporting`, gives 0.25. The cap keeps
+recall and nDCG agreeing that a full top `k` is a perfect one (#97). The two
+only differ for a question with more supporting chunks than `k`. The generated
+benchmark has none: `generate_xbrl_questions` lists at most three supporting
+chunks a question, and no cutoff reported in this README is under 3, so every
+Recall figure here is also the plain one. A hand-written question with many
+supporting chunks would score higher on this than on plain recall, and should
+be read with that in mind.
 
 The answer evaluation harness runs the same `answer_question` path and reports
 abstentions divided by all completed questions, both overall and separately

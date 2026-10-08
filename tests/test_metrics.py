@@ -176,13 +176,29 @@ def test_the_cutoff_decides_what_is_counted_and_what_it_is_counted_out_of(
 
 def test_recall_is_out_of_what_the_cutoff_could_hold_not_everything_that_supports():
     """Twenty chunks support a question and a top 5 can hold five of them, so five
-    supporting chunks in the top 5 is all there was to find."""
+    supporting chunks in the top 5 is all there was to find.
+
+    This is capped recall, chosen in #97 so that a full top k is 1.0 on recall
+    as on nDCG. Plain recall would give 5/20 and 2/20 here. The README and the
+    function's docstring say which one the reported figures are."""
     supporting = [f"AAPL-2024-{i}" for i in range(20)]
     full = _result(supporting[:5])
     partial = _result([*supporting[:2], "MSFT-1", "MSFT-2", "MSFT-3"])
 
     assert recall_at_k(full, supporting, k=5) == 1.0
     assert recall_at_k(partial, supporting, k=5) == pytest.approx(2 / 5)
+
+
+@pytest.mark.parametrize("supporting, k", [(1, 3), (2, 3), (3, 3), (3, 7), (3, 10), (3, 16)])
+def test_capped_recall_is_plain_recall_while_the_cutoff_holds_every_supporting_chunk(
+        supporting, k):
+    """The generated benchmark lists at most three supporting chunks a question
+    (see test_a_generated_question_lists_at_most_three_supporting_chunks), so at
+    every cutoff of 3 or more its Recall is found / supporting, the plain one."""
+    relevant = [f"AAPL-2024-{i}" for i in range(supporting)]
+    for found in range(supporting + 1):
+        ranked = [*relevant[:found], *(f"MSFT-{i}" for i in range(k - found))]
+        assert recall_at_k(_result(ranked), relevant, k=k) == pytest.approx(found / supporting)
 
 
 def test_the_best_and_the_worst_rankings_score_one_and_zero():

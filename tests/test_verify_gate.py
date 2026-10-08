@@ -490,10 +490,11 @@ def gate(disk, monkeypatch):
 
 
 NAMES = ["coverage", "stage parity", "key Items", "chunk integrity", "no prose lost",
-         "passage sizes", "statement titles", "matches EDGAR", "XBRL figures findable"]
+         "no figure lost", "passage sizes", "statement titles", "matches EDGAR",
+         "XBRL figures findable"]
 
 
-def test_a_sound_corpus_passes_all_nine_checks_cheapest_first(gate, capsys):
+def test_a_sound_corpus_passes_all_ten_checks_cheapest_first(gate, capsys):
     checks = run_checks()
 
     assert [check.name for check in checks] == NAMES
@@ -503,12 +504,12 @@ def test_a_sound_corpus_passes_all_nine_checks_cheapest_first(gate, capsys):
                                 ("XBRL figures findable", "Jane Tan jane@example.com", passages)]
     assert report(checks) is True
     printed = capsys.readouterr().out
-    assert printed.count("[PASS]") == 9
-    assert "All 9 checks passed. The corpus is ready to index." in printed
+    assert printed.count("[PASS]") == 10
+    assert "All 10 checks passed. The corpus is ready to index." in printed
 
 
 def test_an_incomplete_corpus_skips_the_checks_that_would_only_repeat_the_fault(gate, capsys):
-    """Listed as skipped, so four results cannot be read as a clean bill of health on nine."""
+    """Listed as skipped, so three results cannot be read as a clean bill of health on ten."""
     stage_file(gate.disk, "processed", "BBB", 2024).unlink()
 
     checks = run_checks()
@@ -517,8 +518,9 @@ def test_an_incomplete_corpus_skips_the_checks_that_would_only_repeat_the_fault(
     outcome = {check.name: "skipped" if check.skipped else check.passed for check in checks}
     assert outcome == {
         "coverage": True, "stage parity": False, "key Items": "skipped",
-        "chunk integrity": "skipped", "no prose lost": "skipped", "passage sizes": "skipped",
-        "statement titles": "skipped", "matches EDGAR": True, "XBRL figures findable": "skipped",
+        "chunk integrity": "skipped", "no prose lost": "skipped", "no figure lost": "skipped",
+        "passage sizes": "skipped", "statement titles": "skipped", "matches EDGAR": True,
+        "XBRL figures findable": "skipped",
     }
     assert checks[2].detail == "not run: stage parity failed first"
     # EDGAR is still asked: that check reads the manifest, which is whole.
@@ -526,9 +528,9 @@ def test_an_incomplete_corpus_skips_the_checks_that_would_only_repeat_the_fault(
 
     assert report(checks) is False
     printed = capsys.readouterr().out
-    assert printed.count("[SKIP]") == 6 and printed.count("[FAIL]") == 1
-    assert "1 of 9 checks failed: stage parity" in printed
-    assert "6 were not run: key Items, chunk integrity, no prose lost" in printed
+    assert printed.count("[SKIP]") == 7 and printed.count("[FAIL]") == 1
+    assert "1 of 10 checks failed: stage parity" in printed
+    assert "7 were not run: key Items, chunk integrity, no prose lost" in printed
     assert "The corpus is not ready to index." in printed
 
 
@@ -557,7 +559,7 @@ def test_an_empty_manifest_is_one_failed_check_that_says_what_to_run(gate, monke
 
 def test_a_check_that_was_not_run_is_not_a_check_that_passed(capsys):
     """With nothing failed and one check skipped, the corpus is still not ready: a gate
-    that ran eight checks of nine has not said the ninth would pass."""
+    that ran nine checks of ten has not said the tenth would pass."""
     checks = [Check("coverage", True, "complete"),
               Check("XBRL figures findable", False, "not run", skipped=True)]
 
