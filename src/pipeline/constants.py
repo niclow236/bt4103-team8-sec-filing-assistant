@@ -168,6 +168,19 @@ DENSE_TEXT_AT = 0.35
 # whole paragraphs are moved. Held at a sixth of the budget, as it was before.
 CHUNK_CHAR_OVERLAP = 300
 
+
+def overlap_for(budget: int = CHUNK_CHAR_BUDGET) -> int:
+    """The overlap matching a prose budget, in characters.
+
+    The share of the budget the two constants above stand in, a sixth, so that
+    the chunk-size sweep in #45 carries the same proportion of each passage
+    into the next at every size. Held at 300 instead, a 1,200-character passage
+    would repeat a quarter of itself and a 4,000-character one a thirteenth,
+    and the curve would move with two settings while reporting one.
+    """
+    return round(budget * CHUNK_CHAR_OVERLAP / CHUNK_CHAR_BUDGET)
+
+
 # A passage is only closed once it holds this much, so a paragraph that is
 # bigger than the whole budget joins the passage in front of it rather than
 # stranding it. Without this, an Item whose heading is followed by an oversized

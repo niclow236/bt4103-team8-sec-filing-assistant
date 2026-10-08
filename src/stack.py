@@ -158,6 +158,7 @@ def build_retriever(
     embedding_dimensions: int | None = None,
     embedding_query_prefix: str | None = None,
     embedding_passage_prefix: str | None = None,
+    bm25_index: Path | None = None,
     model: Any | None = None,
     parts: dict[Any, Any] | None = None,
 ) -> Any:
@@ -169,6 +170,12 @@ def build_retriever(
     call, so each index is read and verified once and the hybrid rows share
     it -- without one, a run that builds the bm25, dense and hybrid rows reads
     every index twice and holds two bge encoders.
+
+    ``bm25_index`` is where the BM25 index of ``processed_dir`` is, when that
+    is not ``data/index/bm25.pkl``. ``chroma_dir`` already says so for the
+    dense index. The chunk-size sweep (#45) holds a corpus and both of its
+    indexes per budget, and without this a second corpus could only be
+    checked against the app's own BM25 index, which refuses it.
 
     ``model`` is not read. It was the reranker's cross-encoder, and it stays
     in the signature only because #114 adds parameters on the line above it,
@@ -200,11 +207,13 @@ def build_retriever(
     def part(name: str, load: Any) -> Any:
         # Scope the cache to the corpus and every setting that affects retrieval.
         # Validation happens above even when a slot was already populated.
-        slot = (name, corpus_key, embedding) if name == "dense" else (name, corpus_key)
+        slot = (name, corpus_key, embedding if name == "dense" else bm25_index)
         if slot not in parts:
             kwargs = {"processed_dir": processed_dir}
             if name == "dense":
                 kwargs["embedding"] = embedding
+            elif bm25_index is not None:
+                kwargs["index_path"] = bm25_index
             parts[slot] = load(**kwargs)
         return parts[slot]
 

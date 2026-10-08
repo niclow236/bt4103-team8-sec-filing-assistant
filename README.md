@@ -91,6 +91,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── interim/             # parsed sections (git-ignored)
 │   ├── processed/           # chunks ready for indexing (git-ignored)
 │   ├── index/               # built BM25 and Chroma indexes (git-ignored)
+│   ├── sweep/               # the corpus cut and indexed at each size the sweep measures (git-ignored)
 │   └── diagnostics/         # why a run did what it did (git-ignored, on demand)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
@@ -132,6 +133,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── cli.py           #   python -m src.evaluation: answers a benchmark, reports abstentions
 │   │   ├── harness.py       #   evaluate(): one configuration end to end through answer_question
 │   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
+│   │   ├── chunk_sweep.py   #   python -m src.evaluation.chunk_sweep: retrieval at four passage sizes
 │   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
@@ -149,14 +151,14 @@ bt4103-team8-sec-filing-assistant/
 ├── notebooks/               # exploration and experiments
 │   ├── answers/             #   test questions and headline figures through the app's answer path; each writes a git-ignored results/
 │   ├── mistral/             #   hosted Mistral models through the real RAG path; writes a git-ignored results/
-│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words
+│   ├── retrieval/           #   retrieval sweeps: FINAL_K, fusion weights, search text, table boost, common words, the chunk sweep at equal text
 │   ├── test_data/           #   the team's 48 test questions
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
 │   ├── questions.jsonl      #   hand-written questions (none written yet)
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
-├── results/                 # ablation runs from python -m src.evaluation.run, one per --run-id (git-ignored)
+├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
     └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
 ```
@@ -387,9 +389,11 @@ each one carries the nearest heading above it so a passage taken from the middle
 of Item 1A still knows which risk it sits under. Like parsing, this works only
 from files already on disk, so it is cheap to re-run as the strategy changes.
 
-`--budget` and `--overlap` are the two knobs the retrieval comparison will
-sweep, and `--key-items-only` builds a narrow index from the targeted Items
-alone, for comparison against the full one.
+`--budget` and `--overlap` are the two knobs the
+[chunk-size sweep](#chunk-size-sweep) turns, on builds of its own under
+`data/sweep/` rather than on `data/processed/`, and `--key-items-only` builds
+a narrow index from the targeted Items alone, for comparison against the full
+one.
 
 Read the passages back, to see what retrieval will actually be searching:
 
@@ -2432,6 +2436,305 @@ description preserves its complete provider CSV alongside the embedding CSV.
 All six E rows and both G rows required by issue #46 are measured and
 documented. The embedding run's application commit `a0cb411` passed all
 **1,229 tests**; the provider rerun's commit `1cf4458` passed all **1,294 tests**.
+
+### Chunk-size sweep
+
+`CHUNK_CHAR_BUDGET` is 1,800 characters because that much prose fits the 512
+tokens bge reads. That was reasoned from the encoder's limit and had not been
+measured. Issue #45 asks for the measurement: the corpus cut at 1,200, 1,800,
+2,400 and 4,000 characters, and retrieval reported at each size as a curve.
+
+```bash
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-20261007
+python -m src.evaluation.chunk_sweep --run-id bm25-sizes --retrievers bm25
+python -m src.evaluation.chunk_sweep --run-id fy2025 --fiscal-years 2025 --per-filing 100
+```
+
+The one command cuts `data/interim/` again at each size, generates the
+benchmark for each cut, builds a BM25 and a dense index over each, asks every
+size the same questions and writes `results/<run-id>/`. It needs
+`data/interim/` and the facts store. Each size is a build of its own under
+`data/sweep/<budget>/`, with its passages, `bm25.pkl`, `chroma/` and manifest.
+Nothing is written to `data/processed/` or `data/index/`, so a sweep cannot
+leave the app searching a corpus its indexes were not built for. The app's
+dense index is opened to read the vectors it already holds, and `--no-reuse`
+leaves it unopened.
+
+Three things keep the sizes comparable:
+
+- The overlap and the table budget follow the prose budget, through
+  `constants.overlap_for` and `constants.table_budget_for`: 200, 300, 400 and
+  667 characters carried over, and 480, 720, 960 and 1,600 a table passage.
+  A sweep that moved the prose budget alone would report a curve the tables
+  never moved along. `python -m src.pipeline chunk --budget 2400` by itself
+  keeps the 300-character overlap, so it does not cut what the sweep's 2,400
+  build holds.
+- Every size is asked the same questions. Re-chunking renames every passage,
+  so a benchmark written for one cut cannot score another. The mechanical XBRL
+  benchmark is generated again for each build from the same facts store, only
+  the questions every build can be asked are kept, and the same number is
+  drawn from each filing with a fixed seed. A filing is one accession, so a
+  10-K and an amendment to it for the same year would each be drawn from.
+- Every size is scored at two cutoffs, because a larger passage is more text.
+  Over the whole corpus BM25's top 10 holds 7,382 characters on average at
+  1,200 and 26,835 at 4,000, which is 3.6 times the text. So each size is also
+  scored on as many passages as are sure to fit the prompt the app sends
+  today, `FINAL_K` passages of `CHUNK_CHAR_BUDGET` characters: the top 24, 16,
+  12 and 7. The number is rounded down, so a size given with `--budgets` that
+  does not divide that prompt is never allowed more text than it holds.
+
+Because the questions are the same, a row also records how many of them it
+finds that the 1,800-character row misses, and how many 1,800 finds that it
+misses. A gap between two rates is made of those two counts, and where they
+are close the run does not tell the sizes apart.
+
+The dense index is what a sweep costs. On the laptop the runs below were made
+on, bge encodes about 2.3 passages a second at 1,200 characters and about one
+a second at 2,400 and 4,000, and over the whole corpus the three sizes the app
+has not indexed hold 79,593 passages: half a day. Four things keep that in
+hand:
+
+- A build first copies the vectors another index already holds for the same
+  text, matched on the digest each vector stores. The 1,800 build is the
+  corpus the app indexed, so it encodes only the passages the app's index
+  does not hold as they now read. On the FY2025 filings the other three
+  builds copied 6%, 18% and 31% of their passages, the ones that read the
+  same at every size. Nothing is copied into a build whose vectors were
+  encoded another way, by another model or reading fewer tokens of a passage:
+  the run stops before it changes that index and says to delete
+  `data/sweep/<budget>/chroma`, after which the same command encodes it afresh.
+- `--retrievers bm25` encodes nothing, and takes 18 minutes over the whole
+  corpus.
+- `--tickers` and `--fiscal-years` narrow the corpus, and the questions with
+  it.
+- Every size is cut and given its questions before an index is built, so a run
+  with no filing in scope or nothing to ask is refused in minutes. Every
+  build is then finished before a question is asked or the run directory is
+  made. A run that stops while it is encoding has used no run id, and running
+  the same command again carries on from the vectors it had stored. A run
+  that stops once it has written a row has used its run id: run it under a
+  new one, and it finds every build already made.
+
+#### Measured
+
+Two runs, both on 7 October 2026 at commit `e90b2d0`, on a Windows 11 laptop
+with an Intel i5-1135G7 (4 cores), 16 GB of memory and no GPU: Python 3.10.11,
+PyTorch 2.14.0 on the CPU, sentence-transformers 6.0.1 and Chroma 1.5.9. They
+read the downloaded filings, not the synthetic ones the tests cut. The figures
+and fingerprints below are those of `e90b2d0`.
+
+The chunker has changed since, so the same commands now cut a slightly larger
+corpus and record other fingerprints. #136 keeps a flattened block while any
+digit of a figure in it is uncovered: 24 more passages of 28,289 at 1,800
+characters, and 28, 13 and 5 more at the other sizes. The benchmark generates
+12 more questions from them, so the fixed seed draws a slightly different
+1,490, of which 1,441 are the ones the first run asked. That run made again on
+8 October with #136 merged in:
+
+| BM25, all 75 filings | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Supporting passage in the top 10, at `e90b2d0` | 63.4% | 68.9% | 70.1% | 71.9% |
+| with #136 | 63.3% | 68.5% | 69.5% | 71.8% |
+| In the same prompt, at `e90b2d0` | 73.6% | 74.2% | 72.1% | 66.9% |
+| with #136 | 73.1% | 73.8% | 71.6% | 66.6% |
+
+No size moves by more than 0.6 of a point and the order of the sizes is the
+same at both cutoffs. The second run was not made again, since its dense
+indexes are hours of encoding, so the tables below remain the measurement.
+
+```bash
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-bm25-20261007 --retrievers bm25
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-fy2025-20261007 \
+  --fiscal-years 2025 --per-filing 100
+```
+
+The first is BM25 over all 75 filings. The second is BM25, dense and hybrid
+over the 15 filings that report on fiscal 2025, because encoding the three
+sizes the app has not indexed is half a day on this CPU over the whole corpus
+and was about two and a half hours over those filings.
+
+`summary.csv` and `summary.json` of both runs are committed under `results/`,
+as #45 asks, and each row in them carries the fingerprint of the build it was
+measured on. They are the one exception to the rule that a run's output is not
+committed (see `.gitignore`): 47 KB between the four files, and a retrieval
+row comes out the same when the same commit measures the same corpus again.
+The per-question files stay local.
+
+**BM25, the whole corpus.** 1,490 questions: 20 drawn from each of the 75
+filings, and the 17 and 13 that Palo Alto Networks' FY2024 and FY2025 filings
+have. A question names 1.9 supporting passages on average at every size.
+
+|  | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Passages in the build | 44,688 | 28,289 | 20,983 | 13,922 |
+| Median passage, characters | 697 | 1,180 | 1,665 | 2,462 |
+| Recall@10 | 0.506 | 0.556 | 0.567 | 0.585 |
+| nDCG@10 | 0.367 | 0.410 | 0.425 | 0.440 |
+| MRR@10 | 0.371 | 0.418 | 0.434 | 0.448 |
+| Supporting passage in the top 10 | 63.4% | 68.9% | 70.1% | 71.9% |
+| Found only at this size / only at 1,800 | 25 / 107 |  | 65 / 47 | 91 / 46 |
+| Characters in the top 10, mean | 7,382 | 11,361 | 15,504 | 26,835 |
+| Passages that fill the app's prompt | 24 | 16 | 12 | 7 |
+| Supporting passage in the app's prompt | 73.6% | 74.2% | 72.1% | 66.9% |
+| Found only at this size / only at 1,800 | 49 / 58 |  | 35 / 65 | 32 / 140 |
+| Characters in that prompt, mean | 18,194 | 18,520 | 18,720 | 18,462 |
+| Median search, ms | 213 | 126 | 96 | 65 |
+
+Passage for passage, a larger passage ranks better. The top 10 holds a
+supporting passage for 63.4% of the questions at 1,200 characters and 71.9% at
+4,000, and Recall, nDCG and MRR rise at every step. The step from 1,200 to
+1,800 is 107 questions found only at 1,800 against 25 found only at 1,200.
+The step from 1,800 to 2,400 is 65 against 47, which an exact sign test on
+those 112 questions puts at p = 0.11, so this run does not tell those two
+apart. 4,000 is ahead of 1,800 by 91 against 46.
+
+That top 10 is not the same amount of text: 7,382 characters at 1,200 and
+26,835 at 4,000. Given the room in the prompt the app sends, which BM25's
+passages filled to about 18,500 characters at every size, the order turns
+over. 1,200 and 1,800 are level (49 against 58, p = 0.44), 2,400 is behind
+1,800 (35 against 65, p = 0.004), and 4,000 is well behind (32 against 140):
+seven passages of 4,000 characters hold the answer for 66.9% of the questions,
+where sixteen of 1,800 hold it for 74.2%. The sign test treats the questions
+as independent, which twenty drawn from one filing are not quite, so read a p
+near 0.05 as undecided.
+
+The fall at the larger sizes is in the questions a table answers. Grouped by
+what supports a question at 1,800 characters, the share with a supporting
+passage in the app's prompt:
+
+| Supported by | Questions | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|---:|
+| Tables only | 1,078 | 76.2% | 77.4% | 74.9% | 69.0% |
+| Tables and prose | 298 | 74.5% | 73.8% | 72.5% | 67.8% |
+| Prose only | 114 | 46.5% | 44.7% | 45.6% | 44.7% |
+
+A figure only prose states is found for under half the questions at every
+size, and no size moves it.
+
+**BM25, dense and hybrid, the 15 FY2025 filings.** 1,413 questions: 100 drawn
+from each filing, and the 13 that Palo Alto Networks' has.
+
+|  | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Passages in the build | 8,926 | 5,631 | 4,170 | 2,783 |
+| Cut short by the encoder at 512 tokens | 0 | 0 | 106 (2.5%) | 1,470 (52.8%) |
+| **BM25** |  |  |  |  |
+| Recall@10 | 0.501 | 0.554 | 0.573 | 0.583 |
+| nDCG@10 | 0.364 | 0.405 | 0.420 | 0.431 |
+| MRR@10 | 0.367 | 0.411 | 0.425 | 0.436 |
+| Supporting passage in the top 10 | 63.3% | 69.0% | 71.3% | 71.9% |
+| Found only at this size / only at 1,800 | 26 / 107 |  | 67 / 34 | 89 / 48 |
+| Characters in the top 10, mean | 7,404 | 11,347 | 15,591 | 26,641 |
+| Supporting passage in the app's prompt | 74.5% | 74.3% | 73.4% | 66.2% |
+| Found only at this size / only at 1,800 | 55 / 52 |  | 45 / 58 | 43 / 157 |
+| Characters in that prompt, mean | 18,378 | 18,520 | 18,928 | 18,343 |
+| **Dense** |  |  |  |  |
+| Recall@10 | 0.464 | 0.510 | 0.522 | 0.514 |
+| nDCG@10 | 0.327 | 0.367 | 0.377 | 0.372 |
+| MRR@10 | 0.338 | 0.380 | 0.390 | 0.385 |
+| Supporting passage in the top 10 | 61.0% | 66.0% | 66.7% | 66.3% |
+| Found only at this size / only at 1,800 | 63 / 134 |  | 77 / 67 | 85 / 81 |
+| Characters in the top 10, mean | 4,099 | 5,328 | 6,237 | 7,370 |
+| Supporting passage in the app's prompt | 72.6% | 72.0% | 69.4% | 60.6% |
+| Found only at this size / only at 1,800 | 76 / 67 |  | 43 / 80 | 27 / 188 |
+| Characters in that prompt, mean | 9,909 | 8,576 | 7,502 | 5,106 |
+| **Hybrid** |  |  |  |  |
+| Recall@10 | 0.557 | 0.613 | 0.640 | 0.656 |
+| nDCG@10 | 0.422 | 0.470 | 0.495 | 0.509 |
+| MRR@10 | 0.441 | 0.487 | 0.511 | 0.523 |
+| Supporting passage in the top 10 | 70.1% | 76.1% | 78.3% | 79.8% |
+| Found only at this size / only at 1,800 | 28 / 112 |  | 65 / 33 | 87 / 34 |
+| Characters in the top 10, mean | 4,761 | 6,593 | 8,228 | 11,220 |
+| Supporting passage in the app's prompt | 79.5% | 80.2% | 80.3% | 75.4% |
+| Found only at this size / only at 1,800 | 48 / 57 |  | 47 / 46 | 44 / 112 |
+| Characters in that prompt, mean | 13,654 | 11,786 | 10,268 | 7,232 |
+
+BM25 does on these filings what it did on the whole corpus.
+
+Dense search gains from 1,200 to 1,800: in the top 10, 134 questions are
+found only at 1,800 against 63 only at 1,200. It gains nothing after that.
+2,400 and 4,000 are level with 1,800 in the top 10 (77 against 67, and
+85 against 81) and behind it in the prompt. At 4,000 characters the encoder
+reads only the first 512 tokens of 1,470 of the 2,783 passages. At 2,400 it is
+106 passages, and at 1,800 and under none.
+
+Hybrid, which is what the app searches with, follows BM25 in the top 10:
+each larger size finds more. In the app's prompt 1,200, 1,800 and 2,400 are
+level (79.5%, 80.2% and 80.3%; 48 against 57, and 47 against 46), and 4,000
+is behind (44 against 112).
+
+The prompt cutoff is a number of passages: as many of a size as are sure to
+fit. BM25's passages fill it to about 18,500 characters at every size. Dense
+and hybrid return table passages, which are shorter than the budget, so the
+same cutoff held 13,654 characters at 1,200 and 7,232 at 4,000 for hybrid,
+and 9,909 and 5,106 for dense. There the larger sizes are compared on less
+text. `python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007`
+scores the same rankings again at an equal amount of text, from the run's
+per-question files. Each row of those files holds the passages that support
+its question and the length of every passage it ranked, so a run is scored
+against what it was measured against whatever a later run has since written
+under `data/sweep/`. The two runs here were written before a row held either.
+For them the script reads both from the builds under `data/sweep/`, and first
+checks the builds are the ones the run measured: each corpus by its
+fingerprint, and each benchmark by working out again, for every row, whether
+its question was found at both cutoffs and its Recall. The second run passes
+both checks, and the table below is what the script prints for it. The first
+is refused, as it should be: the second run cut `data/sweep/` again over
+fifteen filings. The share of questions with a supporting passage in the first
+4,000 characters of a ranking:
+
+|  | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| BM25 | 53.7% | 50.5% | 47.5% | 37.2% |
+| Dense | 59.9% | 61.1% | 59.2% | 55.8% |
+| Hybrid | 67.7% | 70.2% | 69.3% | 66.4% |
+
+On equal text BM25 does better the smaller the passage, dense is within two
+points from 1,200 to 2,400, and hybrid is highest at 1,800 and 2,400. 4,000 is
+the lowest of the four for all three. A run stores a ranking to its deeper
+cutoff only, and for 3% of the dense rankings at 4,000 those ten passages
+held less than 4,000 characters. For every other row it is under 1%.
+
+So which size is ahead depends on what is held fixed. Given the same number
+of passages a larger passage wins, because it is more text. Given the same
+room in the prompt, or the same amount of text, the largest size loses and
+the other three are close, with 1,800 at or beside the top for the hybrid
+search the app uses. The app runs with a prompt of fixed size, and under that
+nothing in these runs argues for moving `CHUNK_CHAR_BUDGET` from 1,800 while
+bge is the encoder. The dense rows say why not to raise it far: past 1,800
+the encoder no longer reads every passage to its end.
+
+What the runs do not say:
+
+- The dense and hybrid rows cover 15 of the 75 filings. The whole-corpus run
+  is `python -m src.evaluation.chunk_sweep --run-id <a new id>` with no other
+  flag. It carries on from the vectors these runs stored, and the rest is
+  about half a day of encoding on this laptop.
+- Every question is a figure looked up in a filing. Nothing here measures a
+  question that needs an argument read across paragraphs, which is where a
+  larger passage would be expected to help, and `benchmark/questions.jsonl`
+  holds no such question yet.
+- These are retrieval rates. The app answers most figure questions from the
+  facts store before it searches, so they are not how often the app gets such
+  a question right.
+- One draw of questions, with seed 4103, and one run of each. The paired
+  counts say how far a gap between two sizes can be read.
+- The search times are a laptop's, with each size searched to its own deeper
+  cutoff, and show a direction more than a figure.
+
+The fingerprint of each build, as its indexes wrote it. A row's own columns
+in the committed files hold the full values:
+
+| Run | Size | Corpus fingerprint | Dense fingerprint |
+|---|---|---|---|
+| `chunk-sweep-bm25-20261007` | 1,200 | `cc078db610be43ed` | not encoded |
+|  | 1,800 | `69ad5c438a07c458` | not encoded |
+|  | 2,400 | `9fadd3070b6047d8` | not encoded |
+|  | 4,000 | `1973cc6054514a43` | not encoded |
+| `chunk-sweep-fy2025-20261007` | 1,200 | `782e4df8bb6c7d33` | `e1ce0b140879ee73` |
+|  | 1,800 | `25d1726858402526` | `08598b98129db929` |
+|  | 2,400 | `cce6b0ff4d867dea` | `100c6b7816d74abb` |
+|  | 4,000 | `021c66f42e377435` | `1404022af27f455e` |
 
 ## Team and course
 

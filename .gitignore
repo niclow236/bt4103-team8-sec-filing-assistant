@@ -229,6 +229,9 @@ data/processed/
 data/diagnostics/
 # Built search indexes: rebuilt from data/processed/, and large.
 data/index/
+# The chunk-size sweep's copies of the corpus, one per budget with its own
+# indexes: rebuilt from data/interim/ by `python -m src.evaluation.chunk_sweep`.
+data/sweep/
 # The mechanical XBRL benchmark: regenerated from the facts store by
 # `python -m src.retrieval benchmark`, and every chunk id in it is invalidated
 # by a re-chunk. benchmark/questions.jsonl, for hand-written questions, is not ignored.
@@ -290,3 +293,18 @@ results/
 # Hand-written inputs that no code produces, so they stay in the repo.
 !notebooks/test_data/test_questions.csv
 !benchmark/questions.jsonl
+# The chunk-size sweep's two reported runs (#45). That issue's acceptance
+# criteria ask for the result to be committed with the fingerprint of each
+# build, so these are the one exception to the rule above: the table of each
+# run and its JSON, 47 KB in four files. Everything else under results/ stays
+# out, the per-question files of these two runs included.
+!/results/
+/results/*
+!/results/chunk-sweep-bm25-20261007/
+/results/chunk-sweep-bm25-20261007/*
+!/results/chunk-sweep-bm25-20261007/summary.csv
+!/results/chunk-sweep-bm25-20261007/summary.json
+!/results/chunk-sweep-fy2025-20261007/
+/results/chunk-sweep-fy2025-20261007/*
+!/results/chunk-sweep-fy2025-20261007/summary.csv
+!/results/chunk-sweep-fy2025-20261007/summary.json
