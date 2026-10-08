@@ -423,7 +423,7 @@ Measured on the fifteen-company corpus, 75 filings, over a home connection, with
 | download | 2.1 min | 75 filings, held under the SEC's rate limit by edgartools |
 | parse | 8 to 20 min | the expensive stage, and the one that varies: 75 filings of HTML, several megabytes each |
 | chunk | 15s | pure text processing over the parsed Items |
-| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then nine checks over 28,000 passages |
+| verify | 2.0 min | 15 EDGAR index requests plus 15 XBRL fetches, then ten checks over 28,000 passages |
 | **total** | **10 to 25 min** | a resumed run skips the download and re-parses only what changed |
 
 Parse is quoted as a range because it is CPU-bound and single-threaded: the same
@@ -444,7 +444,7 @@ and exits non-zero when it cannot. It is the last thing to run before handing th
 corpus to retrieval, and it takes no options: a gate you can narrow is one that
 gets narrowed until it passes.
 
-Nine checks, cheapest first:
+Ten checks, cheapest first:
 
 | Check | What would fail it |
 |---|---|
@@ -453,6 +453,7 @@ Nine checks, cheapest first:
 | key Items | Items 1, 1A, 7, 7A or 8 absent, or a stub with nothing to resolve to |
 | chunk integrity | a duplicate passage id, a passage that cannot build a citation, a table row tracing to no source row |
 | no prose lost | a paragraph of 200 characters or more in a chunked Item that reaches no passage, unless the chunker dropped it as a flattened copy of a table it rebuilt |
+| no figure lost | a figure of four characters or more in a chunked Item's text that no passage of the filing prints, and whose digits the cells of the Item's table passages do not all cover |
 | passage sizes | any table passage, or more than 0.5% of prose passages, past the 512 tokens bge reads, counted with the model's own tokenizer over the passage and its context header |
 | statement titles | a filing whose balance sheet, income statement or cash flow statement carries no title a question could name it by |
 | matches EDGAR | a filing disagreeing with EDGAR on CIK, form, filing date or period of report, or one in scope on EDGAR that was never downloaded |
@@ -471,7 +472,7 @@ source, and a filing can be amended after you fetch it.
 A check that finds the corpus incomplete skips the per-file checks below it,
 since each would report the same missing filing once per filing. Those are listed
 as `SKIP` rather than left out, so a run that checked four things cannot be
-mistaken for a clean bill of health on nine.
+mistaken for a clean bill of health on ten.
 
 What verify does **not** fail on is imperfection the pipeline already handles: 6
 of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one
@@ -560,8 +561,8 @@ plus a `chunks` list, one entry per passage:
 | `content_type` | `"prose"` or `"table"`, so retrieval can weight tables when a question is numeric |
 | `table_index`, `table_caption` | which table a table passage came from; `table_index` addresses that Item's `tables` list directly |
 
-The corpus currently chunks to 28,179 passages over 75 filings: 17,564 of prose
-and 10,615 of tables. Prose runs to a median of 1,529 characters and 95% of it
+The corpus currently chunks to 28,203 passages over 75 filings: 17,588 of prose
+and 10,615 of tables. Prose runs to a median of 1,527 characters and 95% of it
 carries a heading; tables, cut to fit the embedding window, run to a median of
 624 and 32%, since a table sits under a caption more often than under a heading.
 
@@ -578,8 +579,22 @@ say it is Microsoft's total revenue for 2024. The parse stage therefore rebuilds
 each table as a grid, and those grids are chunked separately and marked
 `content_type: "table"`, with the header repeated on every slice of a long one.
 All but 6 of the tables that hold data rebuild cleanly, 5,422 of 5,428; where one
-cannot, its flattened copy is left in the prose, so no figure is ever lost, it
-is just harder to read.
+cannot, its flattened copy is left in the prose, where it is just harder to read.
+A grid that rebuilds can still drop a cell: Meta's FY2021 table of marketable
+securities comes back with a bare `$` where the filing prints 14,879. So a
+flattened copy is only removed when every figure in it is wholly inside cells of
+a table passage: every digit, and every comma between two digits in one cell
+with both those digits, so that neither `$14` and `879` nor `$14,` and `879`,
+from tables that have nothing to do with each other, pass for 14,879. The cost
+is 26 flattened date headers kept in the prose, such as `June 30,2023`, where
+the cells `June 30,` and `2023` ran together. A figure here is a
+run of four or more digits and commas, such as `1,182`, and `python -m
+src.pipeline verify` fails a corpus in which a removed copy held one that no
+passage of its filing does. Anything shorter gets no such guarantee: a count of
+46, or the 345 of a decimal such as 12.345. Nor does a figure that two
+unrelated cells cover by meeting between two of its digits, such as `$14` and
+`879` for `$14879`, or `$12,34` and `5,678` for `$12,345,678`, since that reads
+exactly like two cells run together; no filing in the corpus has one.
 
 That rate is measured against `n_data_tables`, not `n_tables`. Filers wrap
 bullet points in a one-cell `<table>` to indent them, and Item 1A is written
@@ -639,14 +654,16 @@ passages there:
   since its surrounding evidence can differ.
 - The flattened copy of a table the parser rebuilt is dropped from the prose, so
   the same figures are not indexed twice, once unreadable. A block is judged a
-  copy when the table's own cells account for it and no figure is left over.
+  copy when cells of the Item's tables account for it, with no digit of any
+  figure left over and each comma between two of its digits in one cell with
+  both of them, and only tables that are cut into passages count.
 - The blank lines between paragraphs count against the budget as well as the
   paragraphs, since they are in the passage too.
 - Cells are rendered without alignment padding. Padding would be the largest
   single item in a wide table and carries no meaning to a model reading it.
 
 The result, counted in bge's own tokens with the context header the encoder also
-reads: **none of the 28,179 passages exceeds 512 tokens.** The largest prose
+reads: **none of the 28,203 passages exceeds 512 tokens.** The largest prose
 passage is 504 tokens and the largest table passage 385. `verify` checks this on
 every run. Before the last of these rules, 287 prose passages were being
 truncated, almost all of them flattened tables left in the text.

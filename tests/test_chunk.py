@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.pipeline.chunk import (
     _cost,
     _is_table_debris,
@@ -71,6 +73,15 @@ def test_a_flattened_table_with_cells_run_together_is_debris():
     assert debris("Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82")
 
 
+def test_a_row_label_is_removed_before_a_shorter_cell_inside_it():
+    """"Balance" taken first would leave "-July 31, 2020" and strand the year."""
+    from dataclasses import replace
+
+    table = replace(OPTIONS, rows=[*OPTIONS.rows, ["Balance", "0.1", "$6.00"]])
+    flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
+    assert _is_table_debris(flattened, table_figures([table]), table_cells([table]))
+
+
 def test_a_block_holding_a_figure_the_table_lacks_is_kept():
     assert not debris("Balance-July 31, 20200.4 $6.53 Granted0.5 $101.43 Forfeited 9,999")
 
@@ -84,6 +95,81 @@ def test_prose_blocks_reports_what_it_dropped():
     flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
     kept, dropped = prose_blocks(section(f"{PROSE}\n\n{flattened}", tables=[OPTIONS]))
     assert kept == [PROSE] and dropped == [flattened]
+
+
+# Meta's FY2021 Item 8 (#134). The rebuild lost the last figure of this row and
+# left a bare "$" in its place, and "$14" is a cell of another table, so the
+# flattened copy is the only place "14,879" is printed.
+MARKETABLE = TableRecord(
+    table_index=0, caption="Cash equivalents and marketable securities",
+    headers=["", "Cost", "Fair value", "Unrealized"],
+    rows=[["Total cash equivalents and marketable securities", "$40,690", "$25,811", "$"]],
+    n_rows=1, n_cols=4,
+)
+SHARES = TableRecord(
+    table_index=1, caption="Restricted stock units",
+    headers=["", "Units", "Price"], rows=[["Granted", "$14", "$186.65"]], n_rows=1, n_cols=3,
+)
+
+
+def test_a_block_whose_figure_a_shorter_cell_covers_only_in_part_is_kept():
+    flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+    kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, SHARES]))
+    assert kept == [flattened] and dropped == []
+
+
+def test_a_figure_two_unrelated_cells_cover_between_them_is_kept():
+    """"$14" and "879" leave only the comma of "$14,879": neither cell is that figure."""
+    from dataclasses import replace
+
+    headcount = replace(SHARES, table_index=2, caption="Employees",
+                        rows=[["Engineering", "879", "$90.10"]])
+    flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+    kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, SHARES, headcount]))
+    assert kept == [flattened] and dropped == []
+
+
+@pytest.mark.parametrize("pieces", [("$14,", "879"), ("$14", ",879")])
+def test_a_figure_two_unrelated_cells_cover_comma_and_all_is_kept(pieces):
+    """Whichever of the two takes the comma, neither holds the digits either side of it."""
+    from dataclasses import replace
+
+    first, second = pieces
+    prices = replace(SHARES, table_index=1, rows=[["Granted", first, "$186.65"]])
+    headcount = replace(SHARES, table_index=2, caption="Employees",
+                        rows=[["Engineering", second, "$90.10"]])
+    flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+    kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, prices, headcount]))
+    assert kept == [flattened] and dropped == []
+
+
+def test_a_digit_no_cell_covers_keeps_a_figure_with_no_comma():
+    """Salesforce's "Fiscal 2026" run into 1355: "355" is a cell, the 1 is in none."""
+    maturities = TableRecord(table_index=0, caption="Maturities", headers=["", "Amount"],
+                             rows=[["Fiscal 2026", "$1"], ["Fiscal 2027", "355"]],
+                             n_rows=2, n_cols=2)
+    assert not _is_table_debris(
+        "Fiscal 20261355", table_figures([maturities]), table_cells([maturities]))
+
+
+def test_a_comma_after_a_figure_does_not_keep_its_block():
+    """The figure pattern takes the comma in "2,500, " too, but it divides no digits."""
+    totals = TableRecord(table_index=0, caption="Totals", headers=["", "Shares", "Price"],
+                         rows=[["Total", "2,500", "$6.53"]], n_rows=1, n_cols=3)
+    assert _is_table_debris("Total2,500, $6.53", table_figures([totals]), table_cells([totals]))
+
+
+def test_a_table_with_no_header_row_does_not_account_for_a_block():
+    """chunk_tables cuts no passage from it, so its figures would be in none."""
+    flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
+    headerless = TableRecord(**{**OPTIONS.__dict__, "headers": []})
+    kept, dropped = prose_blocks(section(flattened, tables=[headerless]))
+    assert kept == [flattened] and dropped == []
+
+
+def test_a_table_with_no_header_row_is_cut_into_no_passage():
+    headerless = TableRecord(**{**OPTIONS.__dict__, "headers": []})
+    assert chunk_tables(section_with(headerless), accession_no="acc") == []
 
 
 def test_one_recorded_pair_is_the_answer():
@@ -223,3 +309,41 @@ def test_the_row_label_caption_is_kept_beside_the_statement_title():
 def test_a_table_with_no_statement_title_is_unchanged():
     passages = chunk_tables(section_with(long_table("Operations")), accession_no="acc")
     assert all(p.text.startswith("Operations") for p in passages)
+
+
+def test_which_blocks_are_dropped_does_not_depend_on_the_hash_seed():
+    """Cells of one length were blanked in set order, which Python shuffles per process.
+
+    Cisco's FY2022 Item 8 prints "$124 $176", its own table holds "124" and "176",
+    and other tables of the Item hold "$12" and "$17". Taking "$12" first strands
+    the 4, and the row its own table holds was kept as prose on some runs (#133).
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = (
+        "from src.pipeline.records import TableRecord\n"
+        "from tests.test_chunk import section\n"
+        "from src.pipeline.chunk import prose_blocks\n"
+        "own = TableRecord(table_index=0, caption='Revenue', headers=['', '2022', '2021'],\n"
+        "    rows=[['Product', '124', '176']], n_rows=1, n_cols=3)\n"
+        "other = TableRecord(table_index=1, caption='Leases', headers=['', '2022', '2021'],\n"
+        "    rows=[['Finance', '$12', '$17']], n_rows=1, n_cols=3)\n"
+        "print(prose_blocks(section('$124 $176', tables=[own, other]))[1])\n"
+    )
+    # Started together, since each one spends a second importing edgar. From
+    # the project root, which is what puts src and tests on the child's path:
+    # pytest.ini's pythonpath reaches only pytest's own process.
+    root = Path(__file__).resolve().parents[1]
+    runs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, cwd=root,
+            env={**os.environ, "PYTHONHASHSEED": str(seed)},
+        )
+        for seed in range(12)
+    ]
+    verdicts = {run.communicate()[0].strip() for run in runs}
+    assert [run.returncode for run in runs] == [0] * 12
+    assert verdicts == {"['$124 $176']"}
