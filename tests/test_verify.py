@@ -238,6 +238,21 @@ def test_a_corpus_whose_passages_lose_a_figure_fails():
     assert any("14,879" in failure for failure in check.failures)
 
 
+def test_a_figure_only_unrelated_cells_cover_comma_and_all_fails():
+    """Passages print "$14," and "879", and between them every character of "$14,879"."""
+    from dataclasses import replace
+
+    from src.pipeline.verify import check_no_figure_lost
+
+    prices = replace(SHARES, rows=[["Granted", "$14,", "$186.65"]])
+    headcount = replace(SHARES, table_index=2, caption="Employees",
+                        rows=[["Engineering", "879", "$90.10"]])
+    item = section(FLATTENED, [MARKETABLE, prices, headcount])
+    check = check_no_figure_lost([(parsed_filing(item), table_passages(item))])
+    assert not check.passed
+    assert any("14,879" in failure for failure in check.failures)
+
+
 PROSE = ("Options granted during fiscal 2021 vested over four years, and the Company "
          "recognized $1,250 of compensation expense for them.")
 

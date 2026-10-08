@@ -398,46 +398,57 @@ def _removal_order(found: Iterable[str]) -> list[str]:
     return sorted(found, key=lambda cell: (len(cell), cell), reverse=True)
 
 
-def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
-    """The block with every table cell found in it blanked out, in
-    ``_removal_order``.
+def _coverage(block: str, cells: dict[str, list[str]]) -> list[int]:
+    """Which copy of a table cell covers each character of a block, numbered
+    from 1, with 0 where none does.
 
-    Each cell is blanked character for character rather than cut out, so what
-    is left lines up with the block: a figure only part of which a cell
-    covered still shows which of its digits were not.
+    Every cell found in the block is blanked out of it in ``_removal_order``,
+    character for character rather than cut out, so what is left lines up with
+    the block: a figure only part of which a cell covered still shows which of
+    its digits were not, and which cell covered the rest.
     """
     grams = {block[start:start + 3] for start in range(len(block) - 2)}
     found = {cell for gram in grams & cells.keys() for cell in cells[gram] if cell in block}
+    covered = [0] * len(block)
+    copies = 0
     for cell in _removal_order(found):
+        for copy in re.finditer(re.escape(cell), block):
+            copies += 1
+            covered[copy.start():copy.end()] = [copies] * len(cell)
         block = block.replace(cell, " " * len(cell))
-    return block
+    return covered
 
 
-def _blanked(block: str, cells: dict[str, list[str]]) -> tuple[str, str]:
-    """A block with its whitespace normalised, and the same with its cells blanked.
+def _blanked(block: str, cells: dict[str, list[str]]) -> tuple[str, list[int]]:
+    """A block with its whitespace normalised, and the ``_coverage`` of that.
 
     Normalised the way cells were, since the extractor writes non-breaking
     spaces where the rebuilt grid has plain ones.
     """
     normalised = " ".join(block.split())
-    return normalised, _unexplained(normalised, cells)
+    return normalised, _coverage(normalised, cells)
 
 
-def _figures_left_in(block: str, remainder: str) -> list[str]:
-    """The figures of a block that its blanked cells do not wholly account for.
+def _figures_left_in(block: str, covered: list[int]) -> list[str]:
+    """The figures of a block that its cells do not wholly account for.
 
-    A figure is left when one of its digits is, or when a comma between two of
-    its digits is. "$14" and "879" blank every digit of "$14,879" and leave
-    its comma: two cells that each hold a piece, and neither is the figure.
+    A figure is left when no cell covers one of its digits, or when no one cell
+    covers a comma between two of its digits along with both those digits.
+    "$14" and "879" cover every digit of "$14,879" and leave its comma; "$14,"
+    and "879" cover the comma too, but not with the 8 after it. Either way it
+    is two cells that each hold a piece, and neither is the figure.
     """
+    def held(position: int) -> bool:
+        if block[position].isdigit():
+            return bool(covered[position])
+        if block[position] != "," or not block[position + 1:position + 2].isdigit():
+            return True
+        return covered[position - 1] == covered[position] == covered[position + 1] != 0
+
     return [
         figure.group()
         for figure in _FIGURE.finditer(block)
-        if any(
-            remainder[position].isdigit()
-            or (remainder[position] == "," and block[position + 1:position + 2].isdigit())
-            for position in range(*figure.span())
-        )
+        if not all(held(position) for position in range(*figure.span()))
     ]
 
 
@@ -474,16 +485,18 @@ def _is_table_debris(
     "20200.4", a figure no table holds, and one such join keeps the whole block.
     Those were 199 of the 286 passages the encoder was truncating. So a block
     is also debris when the table's own cells account for it: remove every cell
-    found in it, and if no figure kept a digit, or a comma between two of its
-    digits, and at most a fifth of its letters and digits are left, the block
-    was the table.
+    found in it, and if every digit of every figure was removed, every comma
+    between two of its digits went in one cell with both those digits, and at
+    most a fifth of the block's letters and digits are left, the block was the
+    table.
 
     Every digit, because a cell can cover a figure in part. Meta's FY2021 rebuild
     lost "$14,879" from one row, and "$14" is a cell of another table, so
     removing it left ",879": too short to read as a figure, and the only copy of
-    14,879 in the filing was dropped (#134). And the commas between digits,
+    14,879 in the filing was dropped (#134). And each comma with its digits,
     because two cells can cover a figure in pieces: "$14" and an unrelated "879"
-    blank every digit of "$14,879" and leave only its comma.
+    blank every digit of "$14,879" and leave only its comma, and "$14," and
+    "879" leave nothing at all, but split it at the comma.
 
     That reads only what a comma shows. Two cells that meet between two digits
     are not told apart from two cells run together: "$14" and "879" cover
@@ -509,11 +522,13 @@ def _is_table_debris(
     if cells is None or dense / visible < 0.15:
         return False
 
-    normalised, remainder = _blanked(block, cells)
-    if _figures_left_in(normalised, remainder):
+    normalised, covered = _blanked(block, cells)
+    if _figures_left_in(normalised, covered):
         return False
     before = sum(character.isalnum() for character in block)
-    after = sum(character.isalnum() for character in remainder)
+    after = sum(
+        character.isalnum() for character, cell in zip(normalised, covered) if not cell
+    )
     return after <= 0.2 * before
 
 

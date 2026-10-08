@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.pipeline.chunk import (
     _cost,
     _is_table_debris,
@@ -124,6 +126,20 @@ def test_a_figure_two_unrelated_cells_cover_between_them_is_kept():
                         rows=[["Engineering", "879", "$90.10"]])
     flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
     kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, SHARES, headcount]))
+    assert kept == [flattened] and dropped == []
+
+
+@pytest.mark.parametrize("pieces", [("$14,", "879"), ("$14", ",879")])
+def test_a_figure_two_unrelated_cells_cover_comma_and_all_is_kept(pieces):
+    """Whichever of the two takes the comma, neither holds the digits either side of it."""
+    from dataclasses import replace
+
+    first, second = pieces
+    prices = replace(SHARES, table_index=1, rows=[["Granted", first, "$186.65"]])
+    headcount = replace(SHARES, table_index=2, caption="Employees",
+                        rows=[["Engineering", second, "$90.10"]])
+    flattened = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+    kept, dropped = prose_blocks(section(flattened, tables=[MARKETABLE, prices, headcount]))
     assert kept == [flattened] and dropped == []
 
 

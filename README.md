@@ -583,8 +583,11 @@ cannot, its flattened copy is left in the prose, where it is just harder to read
 A grid that rebuilds can still drop a cell: Meta's FY2021 table of marketable
 securities comes back with a bare `$` where the filing prints 14,879. So a
 flattened copy is only removed when every figure in it is wholly inside cells of
-a table passage: every digit, and every comma between two digits, so that `$14`
-from one table and `879` from another do not pass for 14,879. A figure here is a
+a table passage: every digit, and every comma between two digits in one cell
+with both those digits, so that neither `$14` and `879` nor `$14,` and `879`,
+from tables that have nothing to do with each other, pass for 14,879. The cost
+is 26 flattened date headers kept in the prose, such as `June 30,2023`, where
+the cells `June 30,` and `2023` ran together. A figure here is a
 run of four or more digits and commas, such as `1,182`, and `python -m
 src.pipeline verify` fails a corpus in which a removed copy held one that no
 passage of its filing does. Anything shorter gets no such guarantee: a count of
@@ -652,8 +655,8 @@ passages there:
 - The flattened copy of a table the parser rebuilt is dropped from the prose, so
   the same figures are not indexed twice, once unreadable. A block is judged a
   copy when cells of the Item's tables account for it, with no digit of any
-  figure left over and no comma between two of its digits, and only tables that
-  are cut into passages count.
+  figure left over and each comma between two of its digits in one cell with
+  both of them, and only tables that are cut into passages count.
 - The blank lines between paragraphs count against the budget as well as the
   paragraphs, since they are in the passage too.
 - Cells are rendered without alignment padding. Padding would be the largest
