@@ -33,7 +33,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,10 +53,18 @@ from .constants import (
     KEY_ITEMS,
     STATEMENT_TITLE_TOLERANCE,
 )
-from .chunk import iter_chunks, load_parsed, processed_path_for, prose_blocks
+from .chunk import (
+    cell_index,
+    figures_in,
+    iter_chunks,
+    load_parsed,
+    processed_path_for,
+    prose_blocks,
+    uncovered_figures,
+)
 from .download import load_manifest
 from .parse import interim_path_for, names_a_statement
-from .records import FilingRecord
+from .records import FilingRecord, ParsedFiling
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +344,73 @@ def check_no_prose_lost(records: list[FilingRecord]) -> Check:
             f"{checked:,} paragraphs of 200 characters or more all accounted for, "
             f"{as_debris:,} of them as flattened copies of a rebuilt table"
         ),
+        failures=problems,
+    )
+
+
+def _filings(records: list[FilingRecord]) -> Iterable[tuple[ParsedFiling, list[dict]]]:
+    """Each filing's parsed Items beside its passages, read one filing at a time."""
+    for record in records:
+        interim = interim_path_for(record)
+        chunks = json.loads(processed_path_for(interim).read_text(encoding="utf-8"))["chunks"]
+        yield load_parsed(interim), chunks
+
+
+def _passage_cells(chunks: list[dict], section_id: str) -> dict[str, list[str]]:
+    """The cells of an Item's table passages, read back from the rows they print."""
+    return cell_index(
+        cell.strip()
+        for chunk in chunks
+        if chunk.get("content_type") == "table" and chunk["section_id"] == section_id
+        for line in chunk["text"].split("\n")
+        if line.strip().startswith("|")
+        for cell in line.strip().strip("|").split("|")
+    )
+
+
+def check_no_figure_lost(filings: Iterable[tuple[ParsedFiling, list[dict]]]) -> Check:
+    """Every figure in the text of a chunked Item is in a passage of its filing.
+
+    "No prose lost" cannot see this. It counts a block dropped as a flattened
+    table as accounted for, and that block may hold the only copy of a figure:
+    Meta's FY2021 rebuild lost 14,879 from a row, and the flattened row that
+    still had it was dropped (#134).
+
+    A figure is held when a passage of the filing prints it, or when cells of
+    its Item's table passages cover every one of its digits and every comma
+    between two of them, judged by the chunker's own test. The second is what
+    lets a flattened copy go, since flattening runs cells together: "July 31,
+    2020" and "0.4" become "20200.4", a figure printed nowhere, though both
+    cells are. The cells are the Item's alone, as the chunker's are, because
+    which cells cover a figure depends on which cells there are to choose from.
+    Each block is judged whether the chunker dropped it or kept it, so a corpus
+    cut under an older rule fails here too, not only one that breaks this rule.
+    """
+    problems: list[str] = []
+    checked = 0
+    for parsed, chunks in filings:
+        held = figures_in("\n".join(chunk["text"] for chunk in chunks))
+        chunked = {chunk["section_id"] for chunk in chunks}
+        for section in parsed.sections:
+            if section.section_id not in chunked:
+                continue
+            cells = _passage_cells(chunks, section.section_id)
+            kept, dropped = prose_blocks(section)
+            for block in kept + dropped:
+                figures = figures_in(block)
+                checked += len(figures)
+                missing = figures - held
+                if not missing:
+                    continue
+                for figure in sorted(missing & set(uncovered_figures(block, cells))):
+                    problems.append(
+                        f"{parsed.ticker} {parsed.filing_date} {section.section_id}: "
+                        f"{figure} is in no passage, from {block.strip()[:60]!r}"
+                    )
+    return Check(
+        name="no figure lost",
+        passed=not problems,
+        detail=f"{checked:,} figures checked in the text of chunked Items",
         failures=problems,
     )
 
@@ -669,6 +744,25 @@ def check_statement_titles(corpus: list[dict]) -> Check:
 # --- running the gate -------------------------------------------------------
 
 
+def corpus_checks(
+    records: list[FilingRecord], corpus: list[dict],
+) -> list[tuple[str, Callable[[], Check]]]:
+    """The checks that read every interim and processed file, each under the
+    name it reports.
+
+    Listed once, for both the run and the skip, so a check added to one cannot
+    be missing from the other.
+    """
+    return [
+        ("key Items", lambda: check_key_items(records)),
+        ("chunk integrity", lambda: check_chunk_integrity(records)),
+        ("no prose lost", lambda: check_no_prose_lost(records)),
+        ("no figure lost", lambda: check_no_figure_lost(_filings(records))),
+        ("passage sizes", lambda: check_passage_sizes(corpus)),
+        ("statement titles", lambda: check_statement_titles(corpus)),
+    ]
+
+
 def run_checks() -> list[Check]:
     """Every check, cheapest first, so an obvious fault is reported quickly."""
     tickers = read_tickers()
@@ -690,19 +784,12 @@ def run_checks() -> list[Check]:
     # summary cannot be mistaken for a corpus that passed them.
     if all(check.passed for check in checks):
         corpus = list(iter_chunks())
-        checks += [
-            check_key_items(records),
-            check_chunk_integrity(records),
-            check_no_prose_lost(records),
-            check_passage_sizes(corpus),
-            check_statement_titles(corpus),
-        ]
+        checks += [run() for _, run in corpus_checks(records, corpus)]
     else:
         blocked = ", ".join(check.name for check in checks if not check.passed)
         checks += [
             Check(name, False, f"not run: {blocked} failed first", skipped=True)
-            for name in ("key Items", "chunk integrity", "no prose lost", "passage sizes",
-                         "statement titles")
+            for name, _ in corpus_checks(records, corpus)
         ]
 
     identity = configure_edgar()

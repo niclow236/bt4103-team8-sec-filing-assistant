@@ -274,6 +274,12 @@ def _rejoin_page_breaks(blocks: list[str]) -> list[str]:
     return joined
 
 
+def _becomes_passages(table: TableRecord) -> bool:
+    """Whether ``chunk_tables`` cuts this table into passages: it needs a header
+    row to repeat on every piece and at least one row beneath it."""
+    return bool(table.rows and table.headers)
+
+
 def table_figures(tables: list[TableRecord]) -> set[str]:
     """Every multi-digit figure the rebuilt tables of an Item actually carry."""
     return {
@@ -342,9 +348,13 @@ def _split_table_columns(
     ]
 
 
-def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
-    """The distinct cells of an Item's rebuilt tables, keyed by their first three
-    characters.
+def figures_in(text: str) -> set[str]:
+    """Every figure in a text, as the debris rule reads one."""
+    return set(_FIGURE.findall(text))
+
+
+def cell_index(cells: Iterable[str]) -> dict[str, list[str]]:
+    """Distinct table cells, keyed by their first three characters.
 
     Keyed that way so a block can be matched against the thousands of cells an
     Item 8 holds by looking only at cells that could begin somewhere in it.
@@ -352,10 +362,15 @@ def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
     about whether a block came from the table.
     """
     index: dict[str, list[str]] = {}
-    for cell in {cell for table in tables for row in [table.headers, *table.rows] for cell in row}:
+    for cell in set(cells):
         if len(cell) >= 3:
             index.setdefault(cell[:3], []).append(cell)
     return index
+
+
+def table_cells(tables: list[TableRecord]) -> dict[str, list[str]]:
+    """The cells of an Item's rebuilt tables, indexed by ``cell_index``."""
+    return cell_index(cell for table in tables for row in [table.headers, *table.rows] for cell in row)
 
 
 def _removal_order(found: Iterable[str]) -> list[str]:
@@ -383,13 +398,68 @@ def _removal_order(found: Iterable[str]) -> list[str]:
     return sorted(found, key=lambda cell: (len(cell), cell), reverse=True)
 
 
-def _unexplained(block: str, cells: dict[str, list[str]]) -> str:
-    """What is left of a block once every table cell found in it is removed."""
+def _coverage(block: str, cells: dict[str, list[str]]) -> list[int]:
+    """Which copy of a table cell covers each character of a block, numbered
+    from 1, with 0 where none does.
+
+    Every cell found in the block is blanked out of it in ``_removal_order``,
+    character for character rather than cut out, so what is left lines up with
+    the block: a figure only part of which a cell covered still shows which of
+    its digits were not, and which cell covered the rest.
+    """
     grams = {block[start:start + 3] for start in range(len(block) - 2)}
     found = {cell for gram in grams & cells.keys() for cell in cells[gram] if cell in block}
+    covered = [0] * len(block)
+    copies = 0
     for cell in _removal_order(found):
-        block = block.replace(cell, " ")
-    return block
+        for copy in re.finditer(re.escape(cell), block):
+            copies += 1
+            covered[copy.start():copy.end()] = [copies] * len(cell)
+        block = block.replace(cell, " " * len(cell))
+    return covered
+
+
+def _blanked(block: str, cells: dict[str, list[str]]) -> tuple[str, list[int]]:
+    """A block with its whitespace normalised, and the ``_coverage`` of that.
+
+    Normalised the way cells were, since the extractor writes non-breaking
+    spaces where the rebuilt grid has plain ones.
+    """
+    normalised = " ".join(block.split())
+    return normalised, _coverage(normalised, cells)
+
+
+def _figures_left_in(block: str, covered: list[int]) -> list[str]:
+    """The figures of a block that its cells do not wholly account for.
+
+    A figure is left when no cell covers one of its digits, or when no one cell
+    covers a comma between two of its digits along with both those digits.
+    "$14" and "879" cover every digit of "$14,879" and leave its comma; "$14,"
+    and "879" cover the comma too, but not with the 8 after it. Either way it
+    is two cells that each hold a piece, and neither is the figure.
+    """
+    def held(position: int) -> bool:
+        if block[position].isdigit():
+            return bool(covered[position])
+        if block[position] != "," or not block[position + 1:position + 2].isdigit():
+            return True
+        return covered[position - 1] == covered[position] == covered[position + 1] != 0
+
+    return [
+        figure.group()
+        for figure in _FIGURE.finditer(block)
+        if not all(held(position) for position in range(*figure.span()))
+    ]
+
+
+def uncovered_figures(block: str, cells: dict[str, list[str]]) -> list[str]:
+    """The figures in a block that the cells found in it do not wholly cover.
+
+    The test ``_is_table_debris`` keeps a block by, offered whole so ``verify``
+    can put it to the cells of a filing's passages and judge a figure exactly as
+    the chunker does.
+    """
+    return _figures_left_in(*_blanked(block, cells))
 
 
 def _is_table_debris(
@@ -408,16 +478,33 @@ def _is_table_debris(
     shareholders' equity comes back with its row labels but without its figures,
     so dropping the flattened copy there would delete numbers that exist nowhere
     else. A block is therefore only dropped once its own figures are confirmed
-    present in a rebuilt table, which makes the loss impossible by construction.
+    present in a rebuilt table that is cut into passages.
 
     That test alone misses most of them, because flattening also runs cells
     into each other: "Balance -- July 31, 2020" followed by "0.4" becomes
     "20200.4", a figure no table holds, and one such join keeps the whole block.
     Those were 199 of the 286 passages the encoder was truncating. So a block
     is also debris when the table's own cells account for it: remove every cell
-    found in it, and if no figure is left and at most a fifth of its letters
-    and digits, the block was the table. The guarantee is the same one -- a
-    figure present nowhere else survives the removal and keeps the block.
+    found in it, and if every digit of every figure was removed, every comma
+    between two of its digits went in one cell with both those digits, and at
+    most a fifth of the block's letters and digits are left, the block was the
+    table.
+
+    Every digit, because a cell can cover a figure in part. Meta's FY2021 rebuild
+    lost "$14,879" from one row, and "$14" is a cell of another table, so
+    removing it left ",879": too short to read as a figure, and the only copy of
+    14,879 in the filing was dropped (#134). And each comma with its digits,
+    because two cells can cover a figure in pieces: "$14" and an unrelated "879"
+    blank every digit of "$14,879" and leave only its comma, and "$14," and
+    "879" leave nothing at all, but split it at the comma.
+
+    That reads only what a comma shows. Two cells that meet between two digits
+    are not told apart from two cells run together: "$14" and "879" cover
+    "$14879", and "$12,34" and "5,678" cover "$12,345,678", exactly as "July 31,
+    2020" and "0.4" cover "20200.4". So a figure lost from its grid that
+    unrelated cells split that way would still be dropped. No filing in the
+    corpus has one. A number under four characters gets no promise either,
+    since cells under three characters are not matched at all.
 
     A real sentence is spared because it closes with punctuation, and a heading
     such as "Americas" is spared because it carries no figures at all.
@@ -429,19 +516,19 @@ def _is_table_debris(
     if visible == 0:
         return False
 
-    figures = {match.group() for match in _FIGURE.finditer(block)}
+    figures = figures_in(block)
     if dense / visible >= 0.3 and figures and figures <= figures_in_tables:
         return True
     if cells is None or dense / visible < 0.15:
         return False
 
-    # Whitespace normalised the way cells were, since the extractor writes
-    # non-breaking spaces where the rebuilt grid has plain ones.
-    remainder = _unexplained(" ".join(block.split()), cells)
-    if _FIGURE.search(remainder):
+    normalised, covered = _blanked(block, cells)
+    if _figures_left_in(normalised, covered):
         return False
     before = sum(character.isalnum() for character in block)
-    after = sum(character.isalnum() for character in remainder)
+    after = sum(
+        character.isalnum() for character, cell in zip(normalised, covered) if not cell
+    )
     return after <= 0.2 * before
 
 
@@ -655,11 +742,13 @@ def prose_blocks(section: SectionRecord) -> tuple[list[str], list[str]]:
     blocks = _rejoin_page_breaks(blocks)
     # Where the Item's tables were rebuilt properly, the flattened copies
     # still sitting in the prose are pure noise, so they are dropped rather
-    # than indexed alongside the readable version.
-    if not section.tables:
+    # than indexed alongside the readable version. Only a table that is cut
+    # into passages can stand in for its copy.
+    tables = [table for table in section.tables if _becomes_passages(table)]
+    if not tables:
         return blocks, []
-    figures = table_figures(section.tables)
-    cells = table_cells(section.tables)
+    figures = table_figures(tables)
+    cells = table_cells(tables)
     kept: list[str] = []
     dropped: list[str] = []
     for block in blocks:
@@ -857,7 +946,7 @@ def chunk_tables(
     budget = table_budget if table_budget is not None else table_budget_for(budget)
     passages: list[ChunkRecord] = []
     for table in section.tables:
-        if not table.rows or not table.headers:
+        if not _becomes_passages(table):
             continue
 
         # The caption line opens every piece, so like the header it is charged

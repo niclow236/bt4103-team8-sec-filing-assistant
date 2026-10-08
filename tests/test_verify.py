@@ -9,10 +9,12 @@ from src.pipeline.constants import CHUNK_CHAR_BUDGET
 from src.pipeline.records import SectionRecord, TableRecord
 from src.pipeline.verify import (
     OVERRUN_TOLERANCE,
+    Check,
     bge_token_counter,
     check_passage_sizes,
     check_statement_titles,
 )
+from tests.test_chunk import MARKETABLE, OPTIONS, SHARES, section
 
 FILING = {"ticker": "AAA", "company": "Alpha Corp", "fiscal_year": 2024, "form": "10-K"}
 
@@ -202,3 +204,155 @@ def test_a_pension_row_does_not_make_an_oci_statement_an_income_statement():
     )
     check = check_statement_titles(corpus)
     assert not check.passed and "income statement" in check.failures[0]
+
+
+# --- no figure lost (#134) ----------------------------------------------------
+
+def parsed_filing(*sections):
+    from src.pipeline.records import ParsedFiling
+
+    return ParsedFiling(
+        ticker="META", cik=1, company="Meta", form="10-K", filing_date="2022-02-02",
+        accession_no="acc", url="u", source_path="s", period_of_report="2021-12-31",
+        sections=list(sections),
+    )
+
+
+# Meta's FY2021 Item 8: the flattened row is the only place 14,879 is.
+FLATTENED = "Total cash equivalents and marketable securities$40,690 $25,811 $14,879"
+
+
+def table_passages(item):
+    from dataclasses import asdict
+
+    return [asdict(chunk) for chunk in chunk_tables(item, accession_no="acc")]
+
+
+def test_a_corpus_whose_passages_lose_a_figure_fails():
+    """Cut by the old debris rule: the tables are indexed, the flattened row is not."""
+    from src.pipeline.verify import check_no_figure_lost
+
+    item = section(FLATTENED, [MARKETABLE, SHARES])
+    check = check_no_figure_lost([(parsed_filing(item), table_passages(item))])
+    assert not check.passed
+    assert any("14,879" in failure for failure in check.failures)
+
+
+def test_a_figure_only_unrelated_cells_cover_comma_and_all_fails():
+    """Passages print "$14," and "879", and between them every character of "$14,879"."""
+    from dataclasses import replace
+
+    from src.pipeline.verify import check_no_figure_lost
+
+    prices = replace(SHARES, rows=[["Granted", "$14,", "$186.65"]])
+    headcount = replace(SHARES, table_index=2, caption="Employees",
+                        rows=[["Engineering", "879", "$90.10"]])
+    item = section(FLATTENED, [MARKETABLE, prices, headcount])
+    check = check_no_figure_lost([(parsed_filing(item), table_passages(item))])
+    assert not check.passed
+    assert any("14,879" in failure for failure in check.failures)
+
+
+PROSE = ("Options granted during fiscal 2021 vested over four years, and the Company "
+         "recognized $1,250 of compensation expense for them.")
+
+
+def test_a_corpus_the_chunker_cut_passes_though_its_dropped_cells_ran_together():
+    """"July 31, 2020" and "0.4" print as "20200.4": both cells are in a passage, so nothing is lost."""
+    from dataclasses import asdict
+
+    from src.pipeline.chunk import chunk_filing, prose_blocks
+    from src.pipeline.verify import check_no_figure_lost
+
+    flattened = "Balance-July 31, 20200.4\xa0$6.53\xa0Granted0.5\xa0$101.43\xa0Exercised(0.2)$4,127.82"
+    parsed = parsed_filing(section(f"{PROSE}\n\n{flattened}", [OPTIONS]))
+    assert prose_blocks(parsed.sections[0])[1] == [flattened]
+    chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
+    check = check_no_figure_lost([(parsed, chunks)])
+    assert check.passed, check.failures
+
+
+def test_a_dropped_block_is_judged_by_its_own_items_cells():
+    """Another Item's "9510" would blank the middle of "395107" and strand the 3 and the 7."""
+    from dataclasses import asdict, replace
+
+    from src.pipeline.chunk import chunk_filing, prose_blocks
+    from src.pipeline.verify import check_no_figure_lost
+
+    leases = TableRecord(
+        table_index=0, caption="Lease costs", headers=["", "2021", "2020"],
+        rows=[["Finance leases", "395", "107"]], n_rows=1, n_cols=3,
+    )
+    elsewhere = TableRecord(
+        table_index=0, caption="Properties", headers=["", "Square feet"],
+        rows=[["Boise campus", "9510"]], n_rows=1, n_cols=2,
+    )
+    flattened = "Finance leases395107"
+    item_8_section = section(f"{PROSE}\n\n{flattened}", [leases])
+    item_2 = replace(section(PROSE, [elsewhere]), section_id="part_i_item_2", part="I", item="2")
+    parsed = parsed_filing(item_2, item_8_section)
+    assert prose_blocks(item_8_section)[1] == [flattened]
+    chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
+    check = check_no_figure_lost([(parsed, chunks)])
+    assert check.passed, check.failures
+
+
+def test_an_item_cut_into_no_passages_is_not_held_to_its_figures():
+    """A cross-reference stub is chunked under the Item it points at, not on its own."""
+    from dataclasses import asdict, replace
+
+    from src.pipeline.chunk import chunk_filing
+    from src.pipeline.verify import check_no_figure_lost
+
+    stub = replace(section("See pages 2,345 through 2,410 of the Annual Report", []),
+                   section_id="part_ii_item_7", item="7", is_stub=True)
+    parsed = parsed_filing(stub, section(PROSE, []))
+    chunks = [asdict(chunk) for chunk in chunk_filing(parsed, source_path="s").chunks]
+    check = check_no_figure_lost([(parsed, chunks)])
+    assert check.passed, check.failures
+
+
+def test_the_gate_runs_the_figure_check_under_the_name_it_reports():
+    """run_checks runs these, or lists them as skipped by these names."""
+    from src.pipeline.verify import corpus_checks
+
+    listed = corpus_checks([], [])
+    assert "no figure lost" in [name for name, _ in listed]
+    assert [name for name, _ in listed] == [run().name for _, run in listed]
+
+
+def stub_the_gate(monkeypatch, complete):
+    """run_checks with its manifest, EDGAR and completeness checks stood in for,
+    and two corpus checks named "first" and "second"."""
+    from src.pipeline import verify
+
+    monkeypatch.setattr(verify, "read_tickers", lambda: ["AAA"])
+    monkeypatch.setattr(verify, "load_manifest", lambda: ["a filing"])
+    monkeypatch.setattr(verify, "check_coverage", lambda *_: Check("coverage", complete, ""))
+    monkeypatch.setattr(verify, "check_stage_parity", lambda *_: Check("stage parity", True, ""))
+    monkeypatch.setattr(verify, "iter_chunks", lambda: [])
+    monkeypatch.setattr(verify, "configure_edgar", lambda: "test")
+    monkeypatch.setattr(verify, "check_against_edgar", lambda *_: Check("matches EDGAR", True, ""))
+    # Each corpus check answers with a result only it could give, and "second"
+    # fails, so what the gate reports is shown to be what the checks returned.
+    monkeypatch.setattr(verify, "corpus_checks", lambda records, corpus: [
+        ("first", lambda: Check("first", True, "first ran")),
+        ("second", lambda: Check("second", False, "second ran")),
+    ])
+    return verify.run_checks()
+
+
+def test_a_complete_corpus_runs_every_corpus_check_once(monkeypatch):
+    checks = stub_the_gate(monkeypatch, complete=True)
+    assert [(check.name, check.passed, check.detail) for check in checks[2:4]] == [
+        ("first", True, "first ran"), ("second", False, "second ran"),
+    ]
+    assert [check.name for check in checks].count("first") == 1
+
+
+def test_an_incomplete_corpus_lists_every_corpus_check_as_skipped(monkeypatch):
+    checks = stub_the_gate(monkeypatch, complete=False)
+    assert [(check.name, check.skipped) for check in checks[2:4]] == [
+        ("first", True), ("second", True),
+    ]
+    assert "ran" not in " ".join(check.detail for check in checks)
