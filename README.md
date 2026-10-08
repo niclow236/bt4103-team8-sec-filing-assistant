@@ -2443,13 +2443,15 @@ Three things keep the sizes comparable:
   so a benchmark written for one cut cannot score another. The mechanical XBRL
   benchmark is generated again for each build from the same facts store, only
   the questions every build can be asked are kept, and the same number is
-  drawn from each filing with a fixed seed.
+  drawn from each filing with a fixed seed. A filing is one accession, so a
+  10-K and an amendment to it for the same year would each be drawn from.
 - Every size is scored at two cutoffs, because a larger passage is more text.
   Over the whole corpus BM25's top 10 holds 7,382 characters on average at
   1,200 and 26,835 at 4,000, which is 3.6 times the text. So each size is also
   scored on as many passages as are sure to fit the prompt the app sends
   today, `FINAL_K` passages of `CHUNK_CHAR_BUDGET` characters: the top 24, 16,
-  12 and 7.
+  12 and 7. The number is rounded down, so a size given with `--budgets` that
+  does not divide that prompt is never allowed more text than it holds.
 
 Because the questions are the same, a row also records how many of them it
 finds that the 1,800-character row misses, and how many 1,800 finds that it
@@ -2467,7 +2469,10 @@ hand:
   corpus the app indexed, so it encodes only the passages the app's index
   does not hold as they now read. On the FY2025 filings the other three
   builds copied 6%, 18% and 31% of their passages, the ones that read the
-  same at every size.
+  same at every size. Nothing is copied into a build whose vectors were
+  encoded another way, by another model or reading fewer tokens of a passage:
+  the run stops before it changes that index and says to delete
+  `data/sweep/<budget>/chroma`, after which the same command encodes it afresh.
 - `--retrievers bm25` encodes nothing, and takes 18 minutes over the whole
   corpus.
 - `--tickers` and `--fiscal-years` narrow the corpus, and the questions with
@@ -2485,10 +2490,27 @@ hand:
 Two runs, both on 7 October 2026 at commit `e90b2d0`, on a Windows 11 laptop
 with an Intel i5-1135G7 (4 cores), 16 GB of memory and no GPU: Python 3.10.11,
 PyTorch 2.14.0 on the CPU, sentence-transformers 6.0.1 and Chroma 1.5.9. They
-read the downloaded filings, not the synthetic ones the tests cut. The commits
-after `e90b2d0` change what a run refuses and the order it prepares in, not
-what it measures: the first run, made again on the later code, gave the same
-table.
+read the downloaded filings, not the synthetic ones the tests cut. The figures
+and fingerprints below are those of `e90b2d0`.
+
+The chunker has changed since, so the same commands now cut a slightly larger
+corpus and record other fingerprints. #136 keeps a flattened block while any
+digit of a figure in it is uncovered: 24 more passages of 28,289 at 1,800
+characters, and 28, 13 and 5 more at the other sizes. The benchmark generates
+12 more questions from them, so the fixed seed draws a slightly different
+1,490, of which 1,441 are the ones the first run asked. That run made again on
+8 October with #136 merged in:
+
+| BM25, all 75 filings | 1,200 | 1,800 | 2,400 | 4,000 |
+|---|---:|---:|---:|---:|
+| Supporting passage in the top 10, at `e90b2d0` | 63.4% | 68.9% | 70.1% | 71.9% |
+| with #136 | 63.3% | 68.5% | 69.5% | 71.8% |
+| In the same prompt, at `e90b2d0` | 73.6% | 74.2% | 72.1% | 66.9% |
+| with #136 | 73.1% | 73.8% | 71.6% | 66.6% |
+
+No size moves by more than 0.6 of a point and the order of the sizes is the
+same at both cutoffs. The second run was not made again, since its dense
+indexes are hours of encoding, so the tables below remain the measurement.
 
 ```bash
 python -m src.evaluation.chunk_sweep --run-id chunk-sweep-bm25-20261007 --retrievers bm25
@@ -2618,8 +2640,18 @@ same cutoff held 13,654 characters at 1,200 and 7,232 at 4,000 for hybrid,
 and 9,909 and 5,106 for dense. There the larger sizes are compared on less
 text. `python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007`
 scores the same rankings again at an equal amount of text, from the run's
-per-question files. The share of questions with a supporting passage in the
-first 4,000 characters of a ranking:
+per-question files. Each row of those files holds the passages that support
+its question and the length of every passage it ranked, so a run is scored
+against what it was measured against whatever a later run has since written
+under `data/sweep/`. The two runs here were written before a row held either.
+For them the script reads both from the builds under `data/sweep/`, and first
+checks the builds are the ones the run measured: each corpus by its
+fingerprint, and each benchmark by working out again, for every row, whether
+its question was found at both cutoffs and its Recall. The second run passes
+both checks, and the table below is what the script prints for it. The first
+is refused, as it should be: the second run cut `data/sweep/` again over
+fifteen filings. The share of questions with a supporting passage in the first
+4,000 characters of a ranking:
 
 |  | 1,200 | 1,800 | 2,400 | 4,000 |
 |---|---:|---:|---:|---:|

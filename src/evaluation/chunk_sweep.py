@@ -164,8 +164,13 @@ class SweepBuild:
 
     @property
     def context_k(self) -> int:
-        """How many passages of this size fill the prompt the app sends today."""
-        return max(1, round(CONTEXT_CHARS / self.budget))
+        """How many passages of this size are sure to fit the prompt the app sends today.
+
+        Rounded down, so the cutoff never allows more text than that prompt
+        holds: at 1,850 characters 15 passages fit and a 16th would not. The
+        four sizes of the issue divide to 24, 16, 12 and 7.2. Never under one.
+        """
+        return max(1, CONTEXT_CHARS // self.budget)
 
     @property
     def processed_dir(self) -> Path:
@@ -306,6 +311,11 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
     computed again from the row being written, so a copied vector is held to
     exactly what an encoded one is. Returns how many were copied; ``embed``
     then encodes the rest and writes the manifest.
+
+    An index that already holds vectors made another way, by another model or
+    under another token limit, is refused before it is changed
+    (``embed.MixedIndexError``): its manifest and its vectors are left as they
+    were.
     """
     donors = [donor for donor in donors if donor.resolve() != chroma_dir.resolve()]
     if not donors:
@@ -314,6 +324,14 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
     wanted, _, _ = embed_stage._corpus_digests(processed_dir)
     target = embed_stage.open_collection(chroma_dir)
     held = embed_stage._scan(target)
+    # What ``embed.build`` refuses, refused here first and by the same test.
+    # It reads the token limit off the manifest, which is removed below, so
+    # left to ``embed.build`` a target encoded under another limit took the
+    # donor's vectors and was then recorded as encoded under this one.
+    embed_stage.refuse_mixed_index(
+        held, embed_stage.read_manifest(embed_stage.manifest_file_for(chroma_dir)),
+        chroma_dir=chroma_dir, model_name=EMBED_MODEL, max_tokens=EMBED_MAX_TOKENS,
+    )
     needed = {
         chunk_id: digest for chunk_id, digest in wanted.items()
         if chunk_id not in held or held[chunk_id][0] != digest
@@ -402,6 +420,9 @@ def build_indexes(
     that follows one over fewer filings, encodes only what is missing. It is
     left alone where no dense or hybrid row was asked for, and a sweep of BM25
     alone then takes minutes over the whole corpus.
+
+    A dense index that was not built the way a sweep builds one is not added
+    to. The error says to delete it, which is how a sweep's index is rebuilt.
     """
     started = perf_counter()
     sparse = bm25_stage.build_index(
@@ -412,20 +433,46 @@ def build_indexes(
     }
     del sparse
     if dense:
-        built["seeded_vectors"] = seed_vectors(build.chroma_dir, build.processed_dir, donors)
-        if built["seeded_vectors"]:
-            print(f"copied:   {built['seeded_vectors']:,} vectors another index already "
-                  "held for the same text", flush=True)
-        manifest = embed_stage.build(
-            chroma_dir=build.chroma_dir, processed_dir=build.processed_dir,
-            threads=threads, max_tokens=EMBED_MAX_TOKENS,
-        )
+        try:
+            built["seeded_vectors"] = seed_vectors(
+                build.chroma_dir, build.processed_dir, donors)
+            if built["seeded_vectors"]:
+                print(f"copied:   {built['seeded_vectors']:,} vectors another index already "
+                      "held for the same text", flush=True)
+            manifest = embed_stage.build(
+                chroma_dir=build.chroma_dir, processed_dir=build.processed_dir,
+                threads=threads, max_tokens=EMBED_MAX_TOKENS,
+            )
+        except embed_stage.MixedIndexError as error:
+            # The refusal names the setting or the command that rebuilds the
+            # app's own index, and neither is what rebuilds this one.
+            raise RuntimeError(
+                f"{build.id}: the dense index in {build.chroma_dir} was not built the way "
+                "a sweep builds one, so nothing was added to it or taken from it. Delete "
+                "that folder and run the same command again, which encodes the build "
+                f"afresh.\n{error}"
+            ) from error
         built["dense_fingerprint"] = manifest.corpus_fingerprint
     built["build_ms"] = (perf_counter() - started) * 1000
     return built
 
 
 # --- the questions every size is asked --------------------------------------
+
+
+def filing_of(question: BenchmarkQuestion) -> tuple[str, int, str]:
+    """The filing a question is asked of: its company, fiscal year and accession.
+
+    The accession is read off a supporting passage, whose id opens with it
+    (``ChunkRecord.chunk_id``). Company and year alone are one filing only
+    while a company files once for a year. Where it also files an amended
+    10-K, the two would be counted as one filing and share one draw of
+    ``per_filing``. Company and year still come first, so filings sort as they
+    did by those two alone and a corpus with one filing for each draws the
+    questions it always drew.
+    """
+    accessions = sorted({chunk_id.split("_", 1)[0] for chunk_id in question.supporting_chunk_ids})
+    return (question.ticker or "", question.fiscal_year or 0, accessions[0] if accessions else "")
 
 
 def sample_questions(
@@ -437,16 +484,15 @@ def sample_questions(
     Only a question every build generated, so no size is scored on a question
     another could not be asked. Then ``per_filing`` from each filing, drawn
     with a fixed seed, or all of them where ``per_filing`` is 0 or a filing
-    holds fewer.
+    holds fewer. A filing is one accession (``filing_of``).
     """
     common = set.intersection(*(
         {question.question_id for question in questions} for questions in generated.values()
     ))
-    by_filing: dict[tuple[str, int], list[str]] = defaultdict(list)
+    by_filing: dict[tuple[str, int, str], list[str]] = defaultdict(list)
     for question in next(iter(generated.values())):
         if question.question_id in common:
-            by_filing[(question.ticker or "", question.fiscal_year or 0)].append(
-                question.question_id)
+            by_filing[filing_of(question)].append(question.question_id)
     rng = random.Random(seed)
     chosen: list[str] = []
     for filing in sorted(by_filing):
@@ -591,6 +637,12 @@ def measure_build(
                 # To the deeper cutoff, so either one can be scored again from this file.
                 "retrieved_chunk_ids": [passage.chunk_id for passage in passages],
                 "retrieved_scores": [float(passage.score) for passage in passages],
+                # What the ranking was scored against and how long each passage
+                # is, as they were when it was measured. A later run rewrites
+                # the build's benchmark and may cut its corpus again, and the
+                # equal-text rescoring must not read this run against either.
+                "retrieved_chars": [len(passage.text) for passage in passages],
+                "supporting_chunk_ids": list(question.supporting_chunk_ids),
                 **{name: metrics[name] for name in METRICS},
                 "hit": any(passage.chunk_id in supporting for passage in top),
                 "context_hit": any(passage.chunk_id in supporting for passage in context),
@@ -849,8 +901,7 @@ def run_chunk_sweep(
              for budget, questions in generated.items()}
     support = {question_id: supported_by(by_id[reference][question_id], kinds[reference])
                for question_id in chosen}
-    filings_asked = len({(by_id[reference][question_id].ticker,
-                          by_id[reference][question_id].fiscal_year) for question_id in chosen})
+    filings_asked = len({filing_of(by_id[reference][question_id]) for question_id in chosen})
     print(f"\nmeasuring {len(chosen):,} questions from {filings_asked} filings at each size, "
           f"through {', '.join(retrievers)}", flush=True)
 

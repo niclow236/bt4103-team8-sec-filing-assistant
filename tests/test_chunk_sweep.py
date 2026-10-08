@@ -11,8 +11,11 @@ measured on.
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
 import re
+import shutil
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +35,7 @@ from src.evaluation.chunk_sweep import (
     compared_with,
     curve,
     describe_corpus,
+    filing_of,
     filings_in_scope,
     measure_build,
     run_chunk_sweep,
@@ -39,6 +43,7 @@ from src.evaluation.chunk_sweep import (
     seed_vectors,
     supported_by,
 )
+from src.config import PROJECT_ROOT
 from src.evaluation.records import BenchmarkQuestion
 from src.pipeline.chunk import interim_files, iter_chunks
 from src.pipeline.constants import (
@@ -212,6 +217,20 @@ def test_the_second_cutoff_fills_the_prompt_the_app_sends():
     # Every size is handed about the same text, which is the point of it.
     assert {round(budget * cutoff, -3) for budget, cutoff in zip(BUDGETS, cutoffs)} <= {
         28_000, 29_000}
+
+
+@pytest.mark.parametrize("budget, cutoff", [
+    (1850, 15),     # 15.6 passages: a 16th would not fit, and rounding gave 16
+    (1900, 15),
+    (3700, 7),      # 7.8
+    (19_000, 1),    # 1.5
+    (28_800, 1),
+    (60_000, 1),    # under one passage, and a prompt still holds one
+])
+def test_the_second_cutoff_never_allows_more_text_than_the_prompt_holds(budget, cutoff):
+    build = SweepBuild(budget, Path("sweep"))
+    assert build.context_k == cutoff
+    assert cutoff == 1 or budget * cutoff <= sweep.CONTEXT_CHARS < budget * (cutoff + 1)
 
 
 # --- building a size --------------------------------------------------------
@@ -737,6 +756,87 @@ def test_a_build_already_indexed_takes_the_copy_in_place_of_its_stale_vector(
     assert embed.check_index(target.chroma_dir, target.processed_dir) == []
 
 
+def _indexed_another_way(sources, fake_model, **how) -> tuple[SweepBuild, SweepBuild, str]:
+    """A donor a sweep built, and a target indexed some other way that has since
+    lost one vector the donor holds."""
+    donor, target = _two_builds(sources)
+    embed.build(chroma_dir=donor.chroma_dir, processed_dir=donor.processed_dir)
+    embed.build(chroma_dir=target.chroma_dir, processed_dir=target.processed_dir, **how)
+    missing = sorted(_shared(donor, target))[0]
+    embed.open_collection(target.chroma_dir, create=False).delete(ids=[missing])
+    return donor, target, missing
+
+
+def _held(build: SweepBuild) -> tuple[str, dict]:
+    """A build's dense index as it stands: its manifest, and every vector with what
+    is stored beside it."""
+    found = embed.open_collection(build.chroma_dir, create=False).get(
+        include=["embeddings", "documents", "metadatas"])
+    rows = {chunk_id: (np.asarray(vector).tobytes(), document, metadata)
+            for chunk_id, vector, document, metadata in zip(
+                found["ids"], found["embeddings"], found["documents"], found["metadatas"])}
+    return embed.manifest_file_for(build.chroma_dir).read_text(encoding="utf-8"), rows
+
+
+@pytest.mark.parametrize("how, said", [
+    # Read 128 tokens of each passage, where a sweep build and its donors read 512.
+    ({"max_tokens": 128}, "token limit"),
+    # Encoded by another model altogether.
+    ({"model_name": "other/model"}, "not encoded by"),
+])
+def test_a_build_indexed_another_way_is_refused_before_a_vector_is_copied_into_it(
+        sources, fake_model, how, said):
+    """Seeding removes the manifest before it writes, and the manifest is where
+    ``embed.build`` reads the token limit an index was encoded under. Copying first,
+    a 128-token index took a 512-token vector and was then recorded as all 512."""
+    donor, target, missing = _indexed_another_way(sources, fake_model, **how)
+    before = _held(target)
+    assert missing not in before[1]
+
+    with pytest.raises(embed.MixedIndexError, match=said):
+        seed_vectors(target.chroma_dir, target.processed_dir, [donor.chroma_dir])
+    assert _held(target) == before
+
+    # Through the sweep's own step, which says what rebuilds this index.
+    calls = fake_model.calls
+    with pytest.raises(RuntimeError, match=said) as refused:
+        build_indexes(target, dense=True, donors=[donor.chroma_dir])
+    assert "Delete that folder and run the same command again" in str(refused.value)
+    assert str(target.chroma_dir) in str(refused.value)
+    assert _held(target) == before and fake_model.calls == calls
+    # And without a donor, where it is embed.build that refuses.
+    with pytest.raises(RuntimeError, match="Delete that folder"):
+        build_indexes(target, dense=True)
+    assert _held(target) == before and fake_model.calls == calls
+
+
+def test_a_refusal_to_mix_vectors_is_still_the_error_callers_catch():
+    """``embed.build`` raised RuntimeError for both, and its callers catch that."""
+    import copy
+    import pickle
+
+    refusal = embed.MixedIndexError("changing the encoder token limit requires rebuild=True")
+    assert isinstance(refusal, RuntimeError)
+    assert str(pickle.loads(pickle.dumps(refusal))) == str(copy.copy(refusal)) == str(refusal)
+
+
+def test_a_build_left_unfinished_or_indexed_as_a_sweep_does_still_takes_copies(
+        sources, fake_model):
+    donor, target, missing = _indexed_another_way(sources, fake_model, max_tokens=512)
+    # Finished, under the limit a sweep uses: the one missing vector is copied.
+    assert seed_vectors(target.chroma_dir, target.processed_dir, [donor.chroma_dir]) == 1
+    assert missing in _vectors(target.chroma_dir)
+    # Interrupted: vectors and no manifest, which is how seeding itself leaves an
+    # index until embed.build finishes it. Nothing recorded says they were encoded
+    # another way, so the build goes on from where it stopped.
+    assert not embed.manifest_file_for(target.chroma_dir).exists()
+    embed.open_collection(target.chroma_dir, create=False).delete(ids=[missing])
+    built = build_indexes(target, dense=True, donors=[donor.chroma_dir])
+    assert built["seeded_vectors"] == 1
+    assert embed.check_index(target.chroma_dir, target.processed_dir) == []
+    assert embed.read_manifest(embed.manifest_file_for(target.chroma_dir)).max_tokens == 512
+
+
 # --- the questions ----------------------------------------------------------
 
 
@@ -763,6 +863,56 @@ def test_the_draw_is_the_same_every_run_and_takes_all_of_a_small_filing():
     assert [question_id for question_id in drawn if question_id.startswith("b")] == [
         "b0", "b1", "b2"]
     assert len(drawn) == 5 + 3
+
+
+def test_a_filing_is_an_accession_so_an_amended_filing_is_drawn_from_on_its_own():
+    """A company that files a 10-K and then a 10-K/A for one year has two filings.
+    By company and year alone they were one, and shared one draw of per_filing."""
+    original = [_question(f"o{n}", "AAA", 2024, supporting=(f"0001-25-000001_item_8_{n:03d}",))
+                for n in range(6)]
+    amended = [_question(f"a{n}", "AAA", 2024, supporting=(f"0001-25-000009_item_8_{n:03d}",))
+               for n in range(6)]
+    assert filing_of(original[0]) == ("AAA", 2024, "0001-25-000001")
+    assert filing_of(amended[0]) == ("AAA", 2024, "0001-25-000009")
+
+    drawn = sample_questions({600: original + amended}, per_filing=2, seed=1)
+
+    assert len(drawn) == 4
+    assert sum(question_id.startswith("o") for question_id in drawn) == 2
+    assert sum(question_id.startswith("a") for question_id in drawn) == 2
+
+
+def test_filings_are_drawn_from_in_the_order_of_company_and_year_as_before():
+    """The accession only splits a company's year. It comes last in the key, so a
+    corpus with one filing for each is drawn from in the order it always was, and
+    a run over it asks the questions the recorded runs asked."""
+    generated = {600: [
+        _question(f"{ticker}{year}-{n}", ticker, year,
+                  supporting=(f"{accession}_item_8_{n:03d}",))
+        # Accessions that sort the other way round from company and year.
+        for ticker, year, accession in [("AAA", 2023, "9999-23-1"), ("AAA", 2024, "5555-24-1"),
+                                        ("BBB", 2023, "0001-23-1")]
+        for n in range(8)
+    ]}
+    drawn = sample_questions(generated, per_filing=3, seed=4103)
+    assert [question_id.split("-")[0] for question_id in drawn] == (
+        ["AAA2023"] * 3 + ["AAA2024"] * 3 + ["BBB2023"] * 3)
+
+    import random
+    from collections import defaultdict
+
+    by_company_and_year = defaultdict(list)
+    for question in generated[600]:
+        by_company_and_year[(question.ticker, question.fiscal_year)].append(question.question_id)
+    rng = random.Random(4103)
+    expected = []
+    for key in sorted(by_company_and_year):
+        expected += sorted(rng.sample(sorted(by_company_and_year[key]), 3))
+    assert drawn == expected
+
+
+def test_a_run_counts_its_filings_by_accession(finished):
+    assert finished["manifest"]["questions"]["filings"] == len(COMPANIES) * len(YEARS)
 
 
 def test_each_size_is_set_beside_the_reference_size_question_by_question(finished):
@@ -905,6 +1055,10 @@ def test_each_cutoff_is_scored_on_its_own_share_of_one_ranking(tmp_path, monkeyp
     # Each question is searched once, to the deeper cutoff.
     assert retriever.depths[-2:] == [12, 12]
     assert far["retrieved_chunk_ids"] == [f"c{rank}" for rank in range(1, 13)]
+    # A length for every passage of that ranking, not only the top 10, and the
+    # passages each question was scored against: what an equal-text rescoring reads.
+    assert far["retrieved_chars"] == near["retrieved_chars"] == list(range(1, 13))
+    assert (near["supporting_chunk_ids"], far["supporting_chunk_ids"]) == (["c3"], ["c11"])
     assert (near["hit"], near["context_hit"]) == (True, True)
     assert (far["hit"], far["context_hit"]) == (False, True)
     # The metrics are the top 10's, so the eleventh passage earns nothing.
@@ -1089,3 +1243,293 @@ def test_the_command_ends_a_run_it_cannot_start_with_what_to_do(command, sources
         sweep.main(["--run-id", "cli", *command])
     assert "python -m src.retrieval facts" in str(stopped.value.code)
     assert "Run log:" in capsys.readouterr().out
+
+
+# --- the same rankings at an equal amount of text ---------------------------
+#
+# notebooks/retrieval/chunk_sweep_equal_text.py scores a finished run again.
+# What it scores against has to be what the run was measured against.
+
+
+@pytest.fixture(scope="module")
+def equal_text():
+    """The script, loaded from its file: ``notebooks/`` is not a package."""
+    path = PROJECT_ROOT / "notebooks" / "retrieval" / "chunk_sweep_equal_text.py"
+    spec = importlib.util.spec_from_file_location("chunk_sweep_equal_text", path)
+    module = importlib.util.module_from_spec(spec)
+    before = list(sys.path)
+    spec.loader.exec_module(module)
+    sys.path[:] = before      # the script puts the project root on the path to run alone
+    return module
+
+
+def test_a_row_stores_what_its_ranking_was_scored_against(finished):
+    for build in finished["builds"]:
+        lengths = {row["chunk_id"]: len(row["text"])
+                   for row in iter_chunks(processed_dir=build.processed_dir)}
+        supporting = {
+            question["question_id"]: question["supporting_chunk_ids"]
+            for question in map(json.loads,
+                                build.benchmark.read_text(encoding="utf-8").splitlines())}
+        for retriever in ("bm25", "dense", "hybrid"):
+            for row in _rows(finished["run_dir"], f"{build.id}-{retriever}"):
+                assert row["supporting_chunk_ids"] == supporting[row["question_id"]]
+                assert row["retrieved_chars"] == [
+                    lengths[chunk_id] for chunk_id in row["retrieved_chunk_ids"]]
+                assert row["retrieved_chars"] and all(row["retrieved_chars"])
+
+
+def _by_hand(run_dir: Path, config_id: str, characters: int) -> tuple[float, float]:
+    """The share found, and the share that ran out, worked out one ranking at a time."""
+    found = ran_out = 0
+    rows = _rows(run_dir, config_id)
+    for row in rows:
+        taken, held = 0, 0
+        for length in row["retrieved_chars"]:
+            if taken and held + length > characters:
+                break
+            taken, held = taken + 1, held + length
+        ran_out += taken == len(row["retrieved_chars"])
+        found += bool(set(row["supporting_chunk_ids"]) & set(row["retrieved_chunk_ids"][:taken]))
+    return found / len(rows), ran_out / len(rows)
+
+
+def test_a_run_is_scored_again_from_its_own_files_alone(finished, equal_text, tmp_path):
+    """Nothing under the sweep folder is read, so a later run cannot change the answer."""
+    characters = (1, 700, 1500, 100_000)
+    scored = equal_text.rescore(finished["run_dir"], characters, sweep_dir=tmp_path / "absent")
+
+    assert len(scored) == len(SIZES) * 3 * len(characters)
+    rates = set()
+    for line in scored:
+        config_id = f"S{line['chunk_budget']}-{line['retriever']}"
+        found, ran_out = _by_hand(finished["run_dir"], config_id, line["characters"])
+        assert (line["hit_rate"], line["ran_out"]) == (found, ran_out)
+        assert line["questions"] == QUESTIONS and line["run_id"] == "three-sizes"
+        rates.add(line["hit_rate"])
+        if line["characters"] == 1:
+            # The first passage always counts, however long it is.
+            assert line["passages_taken"] == 1.0 and line["ran_out"] == 0.0
+        if line["characters"] == 100_000:
+            # More room than any stored ranking fills: every one of them ran out.
+            assert line["ran_out"] == 1.0
+    # The allowances tell the sizes apart, or this would pass on a constant.
+    assert len(rates) > 2
+
+
+def _copy_of(finished, tmp_path: Path, stored: bool) -> tuple[Path, Path]:
+    """The finished run and its builds, copied so a test can change them. With
+    ``stored`` false the rows are as a run before 8 October 2026 wrote them."""
+    run_dir = shutil.copytree(finished["run_dir"], tmp_path / "results" / "three-sizes")
+    sweep_dir = tmp_path / "sweep"
+    for build in finished["builds"]:
+        shutil.copytree(build.processed_dir, sweep_dir / str(build.budget) / "processed")
+        shutil.copy(build.benchmark, sweep_dir / str(build.budget) / "benchmark.jsonl")
+    if not stored:
+        for path in run_dir.glob("*/questions.jsonl"):
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            for row in rows:
+                del row["supporting_chunk_ids"], row["retrieved_chars"]
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    return run_dir, sweep_dir
+
+
+def _relabel(sweep_dir: Path, size: int, change) -> None:
+    path = sweep_dir / str(size) / "benchmark.jsonl"
+    questions = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    for question in questions:
+        change(question)
+    path.write_text("".join(json.dumps(question) + "\n" for question in questions),
+                    encoding="utf-8")
+
+
+def test_a_benchmark_written_again_does_not_change_what_a_run_scores_to(
+        finished, equal_text, tmp_path):
+    """A later sweep over the same filings writes each build's benchmark again. It
+    passes the fingerprint check, and the run was then scored against its labels."""
+    run_dir, sweep_dir = _copy_of(finished, tmp_path, stored=True)
+    before = equal_text.rescore(run_dir, (700, 1500), sweep_dir)
+    for size in SIZES:
+        _relabel(sweep_dir, size, lambda question: question.update(
+            supporting_chunk_ids=["a-passage-of-some-later-benchmark"]))
+    assert equal_text.rescore(run_dir, (700, 1500), sweep_dir) == before
+    assert any(line["hit_rate"] > 0 for line in before)
+
+
+def test_a_run_from_before_rows_stored_their_labels_is_scored_from_its_build(
+        finished, equal_text, tmp_path):
+    run_dir, sweep_dir = _copy_of(finished, tmp_path, stored=False)
+    assert equal_text.rescore(run_dir, (700, 1500), sweep_dir) == equal_text.rescore(
+        finished["run_dir"], (700, 1500), sweep_dir=tmp_path / "absent")
+
+
+@pytest.mark.parametrize("change", [
+    # Another passage named as the support, so a question the run found is not.
+    lambda question: question.update(supporting_chunk_ids=["some-other-passage"]),
+    # One more supporting passage: found as before, and Recall is out of more.
+    lambda question: question["supporting_chunk_ids"].append("one-more-passage"),
+])
+def test_such_a_run_is_refused_once_its_benchmark_has_been_written_again(
+        finished, equal_text, tmp_path, change):
+    run_dir, sweep_dir = _copy_of(finished, tmp_path, stored=False)
+    _relabel(sweep_dir, SIZES[1], change)
+    with pytest.raises(SystemExit) as refused:
+        equal_text.rescore(run_dir, (700,), sweep_dir)
+    assert "is no longer the benchmark three-sizes was scored against" in str(refused.value)
+    assert f"S{SIZES[1]}-" in str(refused.value)
+
+
+def test_such_a_run_is_refused_once_its_build_has_been_cut_again(
+        finished, equal_text, tmp_path):
+    run_dir, sweep_dir = _copy_of(finished, tmp_path, stored=False)
+    path = next((sweep_dir / str(SIZES[0]) / "processed").glob("*/*.json"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["chunks"][0]["text"] += " Restated."
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(SystemExit) as refused:
+        equal_text.rescore(run_dir, (700,), sweep_dir)
+    assert "is no longer the build three-sizes measured" in str(refused.value)
+
+
+def test_a_question_the_benchmark_no_longer_asks_refuses_such_a_run(
+        finished, equal_text, tmp_path):
+    run_dir, sweep_dir = _copy_of(finished, tmp_path, stored=False)
+    path = sweep_dir / str(SIZES[0]) / "benchmark.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join(lines[1:]) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="is no longer the benchmark"):
+        equal_text.rescore(run_dir, (700,), sweep_dir)
+
+
+def test_a_label_moved_past_the_first_cutoff_is_caught_at_the_second(
+        finished, equal_text, tmp_path):
+    """A supporting passage ranked between the two cutoffs earns no Recall, so only
+    the deeper cutoff's record of the question being found can say it has gone."""
+    run_dir, sweep_dir = _copy_of(finished, tmp_path, stored=False)
+    size = SIZES[0]
+    row = _rows(run_dir, f"S{size}-bm25")[0]
+    asked = (sweep_dir / str(size) / "benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    supporting = next(question["supporting_chunk_ids"] for question in map(json.loads, asked)
+                      if question["question_id"] == row["question_id"])
+    others = [chunk["chunk_id"] for chunk in iter_chunks(
+        processed_dir=sweep_dir / str(size) / "processed") if chunk["chunk_id"] not in supporting]
+    # One row, cut off after the first passage and again after the second, with a
+    # supporting passage ranked second: missed by the first cutoff, found by the other.
+    row.update(retrieved_chunk_ids=[others[0], supporting[0]], retrieved_scores=[2.0, 1.0],
+               hit=False, context_hit=True, recall=0.0)
+    (run_dir / f"S{size}-bm25" / "questions.jsonl").write_text(
+        json.dumps(row) + "\n", encoding="utf-8")
+    manifest = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    (kept,) = [summary for summary in manifest["configurations"]
+               if summary["config"]["id"] == f"S{size}-bm25"]
+    kept["config"].update(top_k=1, context_k=2)
+    manifest["configurations"] = [kept]
+    (run_dir / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    (scored,) = equal_text.rescore(run_dir, (100_000,), sweep_dir)
+    assert scored["hit_rate"] == 1.0
+
+    _relabel(sweep_dir, size, lambda question: question.update(
+        supporting_chunk_ids=[others[1]]) if question["question_id"] == row["question_id"]
+        else None)
+    with pytest.raises(SystemExit, match="is no longer the benchmark"):
+        equal_text.rescore(run_dir, (100_000,), sweep_dir)
+
+
+def _written_run(root: Path, rankings: list[dict]) -> Path:
+    """A run of one row, written as the sweep writes one."""
+    run_dir = root / "by-hand"
+    config = {"id": "S1000-bm25", "retriever": "bm25", "chunk_budget": 1000,
+              "top_k": 10, "context_k": 28}
+    (run_dir / "S1000-bm25").mkdir(parents=True)
+    (run_dir / "S1000-bm25" / "questions.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rankings), encoding="utf-8")
+    (run_dir / "summary.json").write_text(json.dumps({
+        "run_id": "by-hand", "configurations": [{"config": config}],
+        "builds": [{"chunk_budget": 1000, "corpus_fingerprint": "f"}],
+    }), encoding="utf-8")
+    return run_dir
+
+
+def _ranking(question_id: str, chars: list[int], supporting_at: int | None) -> dict:
+    ids = [f"{question_id}-p{position}" for position in range(len(chars))]
+    return {"question_id": question_id, "retrieved_chunk_ids": ids, "retrieved_chars": chars,
+            "supporting_chunk_ids": ["elsewhere"] if supporting_at is None
+            else [ids[supporting_at]]}
+
+
+def test_a_ranking_is_read_to_the_last_passage_that_fits_and_no_further(equal_text, tmp_path):
+    run_dir = _written_run(tmp_path, [
+        _ranking("q1", [400, 400, 400], supporting_at=2),      # found only once 1,200 fit
+        _ranking("q2", [900, 100], supporting_at=0),            # the first passage
+        _ranking("q3", [300, 300], supporting_at=None),         # never found
+        _ranking("q4", [2000, 50], supporting_at=1),            # behind a passage over the room
+    ])
+    scored = {line["characters"]: line
+              for line in equal_text.rescore(run_dir, (800, 1000, 1200, 2050), tmp_path)}
+
+    assert [scored[n]["hit_rate"] for n in (800, 1000, 1200, 2050)] == [1 / 4, 1 / 4, 2 / 4, 3 / 4]
+    # q1 takes two of three at 800; q2 one of two (900 + 100 is over); q3 both; q4 its first.
+    assert scored[800]["passages_taken"] == (2 + 1 + 2 + 1) / 4
+    # A ranking whose every stored passage fitted may have had room for more: q3
+    # at 800, q2 and q3 at 1,000, q1 as well at 1,200, and all four at 2,050.
+    assert [scored[n]["ran_out"] for n in (800, 1000, 1200, 2050)] == [
+        1 / 4, 2 / 4, 3 / 4, 4 / 4]
+
+
+@pytest.mark.parametrize("characters", [(0,), (-4000,), (4000, 0), ()])
+def test_an_amount_of_text_that_is_not_positive_is_refused(equal_text, tmp_path, characters):
+    run_dir = _written_run(tmp_path, [_ranking("q1", [400], supporting_at=0)])
+    with pytest.raises(ValueError, match="must be 1 or more"):
+        equal_text.rescore(run_dir, characters, tmp_path)
+
+
+@pytest.fixture
+def equal_text_command(equal_text, finished, monkeypatch, tmp_path):
+    monkeypatch.setattr(equal_text, "RESULTS_ROOT", finished["root"] / "results")
+    monkeypatch.setattr(equal_text, "SWEEP_DIR", tmp_path / "absent")
+    monkeypatch.setattr(equal_text, "ROOT", tmp_path)
+    monkeypatch.setattr(equal_text, "RESULTS_CSV", tmp_path / "out" / "equal_text.csv")
+    return equal_text
+
+
+def test_the_equal_text_command_prints_both_tables_and_saves_its_rows(
+        equal_text_command, tmp_path, capsys):
+    equal_text_command.main(["three-sizes", "700", "1500"])
+
+    printed = capsys.readouterr().out
+    assert "three-sizes: supporting passage within the first N characters" in printed
+    assert "hit_rate" in printed and "ran_out" in printed
+    saved = pd.read_csv(tmp_path / "out" / "equal_text.csv", encoding="utf-8-sig")
+    assert len(saved) == len(SIZES) * 3 * 2
+    assert sorted(set(saved["characters"])) == [700, 1500]
+    assert sorted(set(saved["chunk_budget"])) == list(SIZES)
+
+
+@pytest.mark.parametrize("arguments, said", [
+    ([], "chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007"),
+    (["three-sizes", "many"], "must be a whole number"),
+    (["three-sizes", "4000.5"], "must be a whole number"),
+    (["three-sizes", "0"], "must be 1 or more"),
+    (["three-sizes", "-4000"], "must be 1 or more"),
+    (["no-such-run"], "no finished run at"),
+])
+def test_the_equal_text_command_refuses_what_it_cannot_score(
+        equal_text_command, tmp_path, arguments, said):
+    with pytest.raises(SystemExit) as refused:
+        equal_text_command.main(arguments)
+    assert said in str(refused.value)
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_equal_text_command_says_a_run_without_its_question_files_needs_them(
+        equal_text_command, finished, monkeypatch, tmp_path):
+    """Only a run's summaries are committed, so a clone has no rankings to score."""
+    shutil.copytree(finished["run_dir"], tmp_path / "results" / "three-sizes")
+    for path in (tmp_path / "results" / "three-sizes").glob("*/questions.jsonl"):
+        path.unlink()
+    monkeypatch.setattr(equal_text_command, "RESULTS_ROOT", tmp_path / "results")
+    with pytest.raises(SystemExit) as refused:
+        equal_text_command.main(["three-sizes"])
+    assert "questions.jsonl is missing" in str(refused.value)
+    assert "per-question files are not committed" in str(refused.value)
