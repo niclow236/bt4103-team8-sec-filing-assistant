@@ -81,7 +81,9 @@ def test_an_unanswerable_question_scores_only_hard_negative_accuracy():
     assert row["hard_negative_accuracy"] == 1.0
 
 
-def test_recall_and_ndcg_cap_relevant_chunks_at_the_cutoff():
+def test_ndcg_cuts_its_ideal_at_the_cutoff_and_recall_counts_every_relevant_chunk():
+    """Ten of twenty supporting chunks fill a top 10. No ranking of ten could do
+    better, so nDCG is 1.0, and half of what supports the question was found."""
     supporting = [f"AAPL-2024-{i}" for i in range(1, 21)]
     question = _question(
         supporting_chunk_ids=supporting,
@@ -89,7 +91,7 @@ def test_recall_and_ndcg_cap_relevant_chunks_at_the_cutoff():
     )
     result = _result(supporting[:10])
 
-    assert recall_at_k(result, question.supporting_chunk_ids, k=10) == 1.0
+    assert recall_at_k(result, question.supporting_chunk_ids, k=10) == 10 / 20
     assert ndcg_at_k(result, question.supporting_chunk_ids, k=10) == pytest.approx(1.0)
 
 
@@ -158,9 +160,10 @@ def test_two_of_three_supporting_chunks_at_ranks_two_and_four():
 
 @pytest.mark.parametrize("k, recall, ndcg, reciprocal_rank", [
     (1, 0.0, 0.0, 0.0),
-    # One of the two a top 2 could hold, at rank 2: 1/log2(3) over 1 + 1/log2(3).
-    (2, 1 / 2, 0.38685, 1 / 2),
-    # Both retrieved chunks are inside a top 4, of the three a top 4 could hold.
+    # One of the three, at rank 2. nDCG's ideal is the two a top 2 could hold:
+    # 1/log2(3) over 1 + 1/log2(3).
+    (2, 1 / 3, 0.38685, 1 / 2),
+    # Both retrieved chunks are inside a top 4, of the three that support it.
     (4, 2 / 3, 0.49819, 1 / 2),
 ])
 def test_the_cutoff_decides_what_is_counted_and_what_it_is_counted_out_of(
@@ -174,29 +177,30 @@ def test_the_cutoff_decides_what_is_counted_and_what_it_is_counted_out_of(
     assert row["k"] == k
 
 
-def test_recall_is_out_of_what_the_cutoff_could_hold_not_everything_that_supports():
-    """Twenty chunks support a question and a top 5 can hold five of them, so five
-    supporting chunks in the top 5 is all there was to find.
-
-    This is capped recall, chosen in #97 so that a full top k is 1.0 on recall
-    as on nDCG. Plain recall would give 5/20 and 2/20 here. The README and the
-    function's docstring say which one the reported figures are."""
+def test_recall_is_out_of_everything_that_supports_not_what_the_cutoff_could_hold():
+    """Twenty chunks support a question. Five of them in a top 5 is a quarter of
+    them found, though a top 5 could hold no more: TP / (TP + FN), with the
+    fifteen left out counted as missed. Divided by what the cutoff could hold,
+    as it was until #140, these read 1.0 and 0.4."""
     supporting = [f"AAPL-2024-{i}" for i in range(20)]
     full = _result(supporting[:5])
     partial = _result([*supporting[:2], "MSFT-1", "MSFT-2", "MSFT-3"])
 
-    assert recall_at_k(full, supporting, k=5) == 1.0
-    assert recall_at_k(partial, supporting, k=5) == pytest.approx(2 / 5)
+    assert recall_at_k(full, supporting, k=5) == pytest.approx(5 / 20)
+    assert recall_at_k(partial, supporting, k=5) == pytest.approx(2 / 20)
 
 
-@pytest.mark.parametrize("supporting, k", [(1, 3), (2, 3), (3, 3), (3, 7), (3, 10), (3, 16)])
-def test_capped_recall_is_plain_recall_while_the_cutoff_holds_every_supporting_chunk(
-        supporting, k):
-    """The generated benchmark lists at most three supporting chunks a question
-    (see test_a_generated_question_lists_at_most_three_supporting_chunks), so at
-    every cutoff of 3 or more its Recall is found / supporting, the plain one."""
+@pytest.mark.parametrize("supporting, k", [
+    (1, 3), (2, 3), (3, 3), (3, 7), (3, 10), (3, 16),
+    # More supporting chunks than the cutoff holds: still out of all of them.
+    (5, 3), (12, 10),
+])
+def test_recall_is_found_over_supporting_at_every_cutoff(supporting, k):
+    """The first six are the generated benchmark's cases: at most three supporting
+    chunks a question (test_a_generated_question_lists_at_most_three_supporting_chunks)
+    at a cutoff of 3 or more, where the old divisor gave the same number."""
     relevant = [f"AAPL-2024-{i}" for i in range(supporting)]
-    for found in range(supporting + 1):
+    for found in range(min(supporting, k) + 1):
         ranked = [*relevant[:found], *(f"MSFT-{i}" for i in range(k - found))]
         assert recall_at_k(_result(ranked), relevant, k=k) == pytest.approx(found / supporting)
 
