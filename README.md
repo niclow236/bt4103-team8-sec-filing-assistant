@@ -259,11 +259,26 @@ Run the tests:
 python -m pytest
 ```
 
-They need no network, no EDGAR identity and nothing under `data/`: each builds
-its own small corpus in a temporary directory, and the dense-index tests replace
-the embedding model with a deterministic stand-in, so the suite runs in seconds.
-One test counts tokens with the real bge tokenizer and is skipped if that cannot
-be downloaded.
+That one command runs the whole suite. The tests need no network, no EDGAR
+identity and nothing under `data/`: each builds its own small corpus in a
+temporary directory, the dense-index tests replace the embedding model with a
+deterministic stand-in, and a test of a command replaces the stage the command
+calls. The suite takes a few minutes on a laptop. One test counts tokens with
+the real bge tokenizer and is skipped if that cannot be downloaded.
+
+What the suite holds in place, and where (#49):
+
+| What has to keep holding | Tested in |
+|---|---|
+| The chunk contract: a passage's id, its one Item, its size, the heading it sits under, a table's header on every part, and the fields a stored row carries | `tests/test_chunk_contract.py` |
+| A filing is cut the same way in every process | `tests/test_chunk.py` |
+| The metadata filter is applied before scoring, and selects the same passages in every retriever | `tests/test_base.py`, `tests/test_prefilter.py`, `tests/test_dense.py` |
+| The order reciprocal rank fusion gives, worked out by hand | `tests/test_hybrid.py` |
+| An index built against a different corpus is refused, BM25 and dense alike | `tests/test_index_guard.py` |
+| A citation resolves to the passage the prompt numbered, and a marker the model invented is flagged and never shown as a source | `tests/test_rag_citations.py`, `tests/test_end_to_end.py`, `tests/test_app_components.py` |
+| Recall, nDCG, reciprocal rank and hard-negative accuracy, worked out by hand | `tests/test_metrics.py` |
+| The corpus gate fails on each fault it is for | `tests/test_verify.py`, `tests/test_verify_gate.py` |
+| The stages together: one corpus from the chunker to a scored, cited answer | `tests/test_end_to_end.py` |
 
 To see which code the tests reach, run them with coverage:
 
@@ -277,10 +292,13 @@ settings are in `.coveragerc`, so everyone measures the same code the same way,
 branches included. `--cov-report=html` writes a browsable version to
 `htmlcov/` instead, which git ignores. Coverage says which lines ran, not
 whether a test checked what they did, so it shows where tests are missing
-rather than proving the ones that exist are good. On 27 September 2026 it
-measured 73% across `src/`: the RAG stage at 96 to 100%, and the pipeline least
-covered, with its command line and passage reader at 0%, the downloader at 11%
-and the verifier at 25% (#49).
+rather than proving the ones that exist are good. On 8 October 2026 it measured
+94% across `src/`, over 1,718 tests. On 27 September it had measured 73%, with
+the pipeline least covered: its command line and passage reader at 0%, the
+downloader at 11% and the verifier at 25%. Those four are now at 99%, 100%,
+100% and 98% (#49). The least covered file is `src/pipeline/parse.py`, at 63%:
+what the tests do not reach there is the reading of a filing's HTML through
+edgartools, which the suite has no filing to give.
 
 Set up environment variables:
 
@@ -2040,6 +2058,18 @@ The returned row contains Recall@k, nDCG@k, reciprocal rank, hard-negative
 accuracy, the cutoff, question type, retriever, and latency. Unanswerable
 questions leave the supporting-chunk metrics unset and are evaluated through
 their hard-negative accuracy instead.
+
+Recall@k here is capped recall: the supporting chunks found in the top `k`,
+divided by `min(supporting chunks, k)` and not by every supporting chunk. A top
+5 cannot hold more than five, so five of twenty supporting chunks in a top 5
+scores 1.0 where plain recall, `found / supporting`, gives 0.25. The cap keeps
+recall and nDCG agreeing that a full top `k` is a perfect one (#97). The two
+only differ for a question with more supporting chunks than `k`. The generated
+benchmark has none: `generate_xbrl_questions` lists at most three supporting
+chunks a question, and no cutoff reported in this README is under 3, so every
+Recall figure here is also the plain one. A hand-written question with many
+supporting chunks would score higher on this than on plain recall, and should
+be read with that in mind.
 
 The answer evaluation harness runs the same `answer_question` path and reports
 abstentions divided by all completed questions, both overall and separately

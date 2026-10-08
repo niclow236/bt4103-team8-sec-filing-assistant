@@ -7,6 +7,7 @@ import pytest
 from src.pipeline.chunk import (
     _cost,
     _is_table_debris,
+    _removal_order,
     chunk_section,
     chunk_tables,
     prose_blocks,
@@ -170,6 +171,110 @@ def test_a_table_with_no_header_row_does_not_account_for_a_block():
 def test_a_table_with_no_header_row_is_cut_into_no_passage():
     headerless = TableRecord(**{**OPTIONS.__dict__, "headers": []})
     assert chunk_tables(section_with(headerless), accession_no="acc") == []
+
+
+# --- the same cut in every process ------------------------------------------------
+#
+# Cisco's FY2022 Item 8, reduced to what decided it. One table holds a row as
+# the grid stores it, the dollar signs in cells of their own and the figures
+# bare. Other tables of the same Item happen to hold "$12", "$17" and "$55",
+# each of which is the start of a figure in that row as the filing printed it.
+
+RATED = TableRecord(
+    table_index=0, caption="July 30, 2022 Internal Credit Risk Rating",
+    headers=["Internal Credit Risk Rating", "Prior", "", "Fiscal Year", "", "Fiscal Year", "",
+             "Fiscal Year", "", "Fiscal Year", "", "Fiscal Year", "", "Total", ""],
+    rows=[["1 to 4", "$", "2", "$", "25", "$", "74", "$", "124", "$", "176", "$", "152",
+           "$", "553"]],
+    n_rows=1, n_cols=15,
+)
+ELSEWHERE = TableRecord(
+    table_index=1, caption="Allowance for credit loss",
+    headers=["", "Lease", "Loan", "Service", "Total"],
+    rows=[["Provisions", "$12", "$17", "$74", "$55"]], n_rows=1, n_cols=5,
+)
+PRINTED_ROW = "1 to 4$2\xa0$25\xa0$74\xa0$124\xa0$176\xa0$152\xa0$553"
+
+
+def printed_row_is_debris(row: str = PRINTED_ROW) -> bool:
+    tables = [RATED, ELSEWHERE]
+    return _is_table_debris(row, table_figures(tables), table_cells(tables))
+
+
+def test_cells_are_taken_out_longest_first_and_in_one_order_within_a_length():
+    """Ordered by length alone, cells of one length came out in the order of a set."""
+    import random
+
+    cells = ["$12", "124", "$17", "176", "152", "$55", "553", "$74", "1 to 4"]
+    expected = ["1 to 4", "553", "176", "152", "124", "$74", "$55", "$17", "$12"]
+    shuffled = random.Random(4103)
+    for _ in range(20):
+        shuffled.shuffle(cells)
+        assert _removal_order(cells) == expected
+    assert _removal_order(set(cells)) == expected
+
+
+def test_a_row_its_own_table_accounts_for_is_debris_whichever_cell_is_found_first():
+    """"124" and "$12" both sit in "$124". Removing the table's own cell leaves a "$".
+    Removing the other one leaves a "4", and that left the row in the corpus as prose
+    in some processes and out of it in others."""
+    assert printed_row_is_debris()
+    kept, dropped = prose_blocks(section(f"{PROSE}\n\n{PRINTED_ROW}", tables=[RATED, ELSEWHERE]))
+    assert kept == [PROSE] and dropped == [PRINTED_ROW]
+    # A figure no cell of any table touches still keeps its block.
+    assert not printed_row_is_debris(PRINTED_ROW.replace("$553", "$9,999"))
+
+
+def cut_of_the_rated_filing() -> str:
+    """A filing whose Item 8 holds that row and both tables, cut by ``chunk_filing``
+    and written out as ``write_chunks`` writes it: what its processed file would hold."""
+    import json
+    from dataclasses import asdict
+
+    from src.pipeline.chunk import chunk_filing
+    from src.pipeline.records import ParsedFiling
+
+    parsed = ParsedFiling(
+        ticker="CSCO", cik=858877, company="Cisco", form="10-K", filing_date="2022-09-08",
+        accession_no="acc", url="u", source_path="s", period_of_report="2022-07-30",
+        sections=[section(f"{PROSE}\n\n{PRINTED_ROW}", tables=[RATED, ELSEWHERE])],
+    )
+    return json.dumps(asdict(chunk_filing(parsed, source_path="s")), indent=2)
+
+
+def test_a_filing_is_cut_the_same_way_under_every_hash_seed():
+    """Python seeds the hash of a string afresh in each process, so a set of strings
+    is walked in a different order from one run to the next. Each of these is a
+    process of its own that cuts the whole filing, and before the order of removal
+    was fixed their passages differed: some held the printed row as prose."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from src.config import PROJECT_ROOT
+
+    command = [sys.executable, "-c",
+               "from tests.test_chunk import cut_of_the_rated_filing; "
+               "print(cut_of_the_rated_filing())"]
+    running = [
+        subprocess.Popen(command, cwd=PROJECT_ROOT, text=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, env={**os.environ, "PYTHONHASHSEED": seed})
+        for seed in ("0", "1", "2", "6")
+    ]
+    cuts = []
+    for process in running:
+        printed, errors = process.communicate(timeout=300)
+        assert process.returncode == 0, errors
+        cuts.append(printed.strip())
+
+    here = cut_of_the_rated_filing()
+    assert cuts == [here] * 4
+    # And the cut they agree on is the one the grids support: the row is in its
+    # table's passage, and the sentence above it is the only prose.
+    passages = json.loads(here)["chunks"]
+    assert [p["text"] for p in passages if p["content_type"] == "prose"] == [PROSE]
+    assert sum("| 124 |" in p["text"] for p in passages) == 1
 
 
 def test_one_recorded_pair_is_the_answer():
