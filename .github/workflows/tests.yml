@@ -22,7 +22,9 @@ permissions:
 jobs:
   pytest:
     name: pytest, Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    # Pinned because the matrix includes Python 3.10; verify setup-python has
+    # an Ubuntu 26 build for it before moving this runner forward.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       # Let the other Python version finish, so one failure does not hide another.
