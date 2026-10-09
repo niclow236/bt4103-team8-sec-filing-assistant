@@ -189,7 +189,22 @@ def _passage_heading(row: Mapping[str, Any]) -> str:
                    or row.get("heading") or row.get("title"))
     else:
         heading = row.get("heading") or row.get("title")
-    return str(heading or "")
+    heading = str(heading or "")
+    # The selection heading immediately above the panels already states the
+    # Item. Some filings repeat it at the start of their first section heading
+    # (often separated by several non-breaking spaces), which produces labels
+    # such as "Item 7. Management's Discussion ...". Remove only a prefix that
+    # agrees with this passage's own metadata, and keep a heading that consists
+    # solely of the Item so the panel never becomes nameless.
+    item = str(row.get("item") or "").strip()
+    if item:
+        without_item = re.sub(
+            rf"^\s*Item\s+{re.escape(item)}\.?\s+", "", heading,
+            count=1, flags=re.IGNORECASE,
+        )
+        if without_item:
+            heading = without_item
+    return heading
 
 
 _PART_SUFFIX = re.compile(r"\s+\(part\s+\d+\s+of\s+\d+\)\s*$", re.IGNORECASE)
@@ -220,6 +235,175 @@ def passage_labels(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     return labels
 
 
+_TABLE_SEPARATOR_CELL = re.compile(r":?-{3,}:?")
+
+
+def _table_cells(line: str) -> list[str]:
+    """Split one pipe-delimited table row without its outside delimiters."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _joined_financial_cell(cells: Sequence[str]) -> str:
+    """Join pieces that the SEC table extractor split across a column span."""
+    value = ""
+    for token in (cell for cell in cells if cell):
+        if not value:
+            value = token
+        elif token in {"%", ")", "]", ","} or value[-1:] in {"$", "£", "€", "(", "["}:
+            value += token
+        else:
+            value += f" {token}"
+    return value
+
+
+def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tuple[list[str],
+                                                                                  list[list[str]]]:
+    """Collapse adjacent copies of a header and join their fragmented values.
+
+    EDGAR uses a header such as ``2025`` with ``colspan=3`` above the currency
+    sign, amount and an empty spacer. The parser necessarily repeats that
+    header in its rectangular representation. Showing all three columns makes
+    the browser table technically faithful but visually misleading, so restore
+    the span as one useful value column.
+    """
+    groups: list[tuple[int, int]] = []
+    start = 0
+    while start < len(header):
+        stop = start + 1
+        if header[start]:
+            while stop < len(header) and header[stop] == header[start]:
+                stop += 1
+        groups.append((start, stop))
+        start = stop
+
+    if all(stop - start == 1 for start, stop in groups):
+        return header, rows
+    collapsed_header = [header[start] for start, _ in groups]
+    collapsed_rows = [
+        [_joined_financial_cell(row[start:stop]) for start, stop in groups]
+        for row in rows
+    ]
+    return collapsed_header, collapsed_rows
+
+
+def _corpus_table_html(text: str) -> str:
+    """Render a stored pipe table as an accessible, horizontally scrolling grid.
+
+    The parser preserves multiple header rows. SEC tables often use one row for
+    years and another for subheadings before the Markdown separator, so treating
+    only the last one as a header makes wide financial tables harder to read.
+    Every value is escaped before it is put in the HTML.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first_row = next((index for index, line in enumerate(lines)
+                      if line.startswith("|")), None)
+    if first_row is None:
+        return ""
+
+    caption = " ".join(lines[:first_row])
+    rows = [_table_cells(line) for line in lines[first_row:] if line.startswith("|")]
+    separator = next((index for index, row in enumerate(rows)
+                      if row and all(_TABLE_SEPARATOR_CELL.fullmatch(cell) for cell in row)), None)
+    if separator is None or separator == 0:
+        return ""
+
+    header_rows = rows[:separator]
+    body_rows = rows[separator + 1:]
+    width = max(len(row) for row in (*header_rows, *body_rows))
+
+    # Every table in the current corpus has one rectangular header row. When
+    # a future format carries a true multi-row header, preserve it verbatim
+    # rather than guessing how its spans relate.
+    if len(header_rows) == 1:
+        header, body_rows = _collapse_repeated_columns(
+            header_rows[0] + [""] * (width - len(header_rows[0])),
+            [row + [""] * (width - len(row)) for row in body_rows],
+        )
+        header_rows = [header]
+        width = len(header)
+
+    def padded(row: list[str]) -> list[str]:
+        return row + [""] * (width - len(row))
+
+    def html_row(row: list[str], element: str) -> str:
+        return "<tr>" + "".join(
+            f"<{element}>{escape(cell)}</{element}>" for cell in padded(row)
+        ) + "</tr>"
+
+    caption_html = f"<caption>{escape(caption)}</caption>" if caption else ""
+    head_html = "".join(html_row(row, "th") for row in header_rows)
+    body_html = "".join(html_row(row, "td") for row in body_rows)
+    return f"""
+<style>
+.sec-corpus-table {{
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: .5rem;
+}}
+.sec-corpus-table table {{
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .9rem;
+  font-variant-numeric: tabular-nums;
+}}
+.sec-corpus-table caption {{
+  padding: .65rem .75rem;
+  text-align: left;
+  font-weight: 600;
+}}
+.sec-corpus-table th,
+.sec-corpus-table td {{
+  padding: .45rem .65rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-right: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+}}
+.sec-corpus-table thead th {{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  max-width: 18rem;
+  white-space: normal;
+  background: var(--secondary-background-color, #f4f6f8);
+  font-weight: 600;
+}}
+.sec-corpus-table th:first-child,
+.sec-corpus-table td:first-child {{
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  max-width: 24rem;
+  text-align: left;
+  white-space: normal;
+  background: var(--background-color, white);
+}}
+.sec-corpus-table thead th:first-child {{
+  z-index: 3;
+  background: var(--secondary-background-color, #f4f6f8);
+}}
+.sec-corpus-table tbody tr:nth-child(even) td {{
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}}
+.sec-corpus-table tbody tr:nth-child(even) td:first-child {{
+  background: var(--secondary-background-color, #f4f6f8);
+}}
+</style>
+<div class="sec-corpus-table" role="region" aria-label="{escape(caption or 'Filing table', quote=True)}" tabindex="0">
+  <table>{caption_html}<thead>{head_html}</thead><tbody>{body_html}</tbody></table>
+</div>
+""".strip()
+
+
 def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
     """Render one full passage with its chunk ID, type and EDGAR filing link.
 
@@ -245,9 +429,16 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
 
         text = str(row.get("text") or "")
         if row.get("content_type") == "table":
-            # Tables are stored as aligned plain text. A code block preserves
-            # their rows and spacing and makes them visibly unlike prose.
-            st.code(text, language=None, wrap_lines=True)
+            # Financial tables are wider than the page. Keep their columns
+            # aligned in a real table and scroll sideways instead of wrapping
+            # pipe-delimited rows into an unreadable code block.
+            table_html = _corpus_table_html(text)
+            if table_html:
+                st.html(table_html)
+            else:
+                # Defensive fallback for a future table format the renderer
+                # does not recognise; never hide the stored source text.
+                st.code(text, language=None, wrap_lines=False)
         else:
             st.text(text)
 

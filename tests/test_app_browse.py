@@ -3,6 +3,7 @@
 from streamlit.testing.v1 import AppTest
 
 from src.app import state
+from src.app.components import _corpus_table_html
 from src.config import PROJECT_ROOT
 from src.pipeline.chunk import iter_chunks
 
@@ -80,7 +81,9 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     prose = passage("prose-chunk", text="Narrative text stays readable as prose.")
     table = passage(
         "table-chunk", content_type="table",
-        text="Year | 2024\nRevenue | $10", url="https://www.sec.gov/Archives/table")
+        text=("Consolidated statements\n\n"
+              "| Year | 2024 |\n| --- | --- |\n| Revenue | $10 |"),
+        url="https://www.sec.gov/Archives/table")
     table["table_caption"] = "Consolidated statements"
     app = browse(monkeypatch, [prose, table])
 
@@ -95,11 +98,49 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     assert [link.url for link in links] == [prose["url"], table["url"]]
     assert all(link.label == "Open filing on EDGAR" for link in links)
     assert [text.value for text in app.text] == [prose["text"]]
-    assert [code.value for code in app.code] == [table["text"]]
+    assert not app.code
+    rendered_tables = app.get("html")
+    assert len(rendered_tables) == 1
+    assert "<table>" in rendered_tables[0].value
+    assert "Consolidated statements" in rendered_tables[0].value
+    assert "Revenue" in rendered_tables[0].value
     assert [badge.value for badge in app.get("markdown")] == [
         ":blue-badge[:material/article: Prose passage]",
         ":orange-badge[:material/table_chart: Table passage]",
     ]
+
+
+def test_table_renderer_preserves_multiple_headers_and_escapes_filing_text():
+    html = _corpus_table_html(
+        "Operating expenses (part 1 of 2)\n\n"
+        "|  | 2025 | 2025 | Change |\n"
+        "| Category | Amount | Share | Percent |\n"
+        "| --- | --- | --- | --- |\n"
+        "| Research & development | $34,550 | 10 | <8% |"
+    )
+    assert "<caption>Operating expenses (part 1 of 2)</caption>" in html
+    assert html.count("<thead><tr>") == 1
+    assert html.count("<th>") == 8
+    assert "Research &amp; development" in html
+    assert "&lt;8%" in html
+    assert "overflow-x: auto" in html
+
+
+def test_table_renderer_combines_repeated_years_with_financial_value_fragments():
+    html = _corpus_table_html(
+        "Management's Discussion and Analysis\n\n"
+        "|  | 2025 | 2025 | 2025 | Change | Change | 2024 | 2024 | 2024 |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| Research and development | $ | 34,550 |  | 10 | % | $ | 31,370 |  |\n"
+        "| Percentage of total net sales | 8 |  | % |  |  | 8 |  | % |"
+    )
+    assert html.count("<th>2025</th>") == 1
+    assert html.count("<th>Change</th>") == 1
+    assert html.count("<th>2024</th>") == 1
+    assert "<td>$34,550</td>" in html
+    assert "<td>10%</td>" in html
+    assert "<td>$31,370</td>" in html
+    assert html.count("<td>8%</td>") == 2
 
 
 def test_pagination_makes_a_large_item_fully_reachable(monkeypatch):
@@ -281,6 +322,21 @@ def test_repeated_headers_are_numbered_without_chunk_ids(monkeypatch):
         "Chunk ID: 0000320193-25-000073_part_ii_item_8_026",
         "Chunk ID: 0000320193-25-000073_part_ii_item_8_027",
     }
+
+
+def test_panel_heading_does_not_repeat_the_selected_item(monkeypatch):
+    rows = [passage("first"), passage("second")]
+    heading = ("Item 7.\u00a0\u00a0\u00a0\u00a0Management's Discussion and Analysis of "
+               "Financial Condition and Results of Operations")
+    for row in rows:
+        row["heading"] = heading
+    app = browse(monkeypatch, rows)
+    assert [panel.label for panel in app.main.status] == [
+        "Management's Discussion and Analysis of Financial Condition and Results of "
+        "Operations (Part 1 of 2)",
+        "Management's Discussion and Analysis of Financial Condition and Results of "
+        "Operations (Part 2 of 2)",
+    ]
 
 
 def test_each_repeated_header_has_its_own_part_count(monkeypatch):
