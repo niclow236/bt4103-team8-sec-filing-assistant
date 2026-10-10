@@ -1927,8 +1927,11 @@ label line, which carries the statement title, where 61 of Apple's 64 FY2025
 Item 8 tables used to fall back to "Financial Statements". The full chunk ID is
 shown inside, beside a link to the source filing on EDGAR. Prose is marked with
 an article icon and rendered as text; table passages are marked with a table
-icon and rendered in a
-spacing-preserving block so the two cannot be mistaken for one another.
+icon and rendered as a horizontally scrollable grid. Repeated headers created
+by SEC column spans are collapsed, so currency signs, amounts and percentages
+remain together instead of appearing as separate columns; a span over several
+distinct figures keeps one column per figure. The exact stored text, as
+retrieval sees it, is in a "Stored text" panel under each table.
 
 ### Where things go in `src/app/`
 
