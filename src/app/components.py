@@ -189,7 +189,22 @@ def _passage_heading(row: Mapping[str, Any]) -> str:
                    or row.get("heading") or row.get("title"))
     else:
         heading = row.get("heading") or row.get("title")
-    return str(heading or "")
+    heading = str(heading or "")
+    # The selection heading immediately above the panels already states the
+    # Item. Some filings repeat it at the start of their first section heading
+    # (often separated by several non-breaking spaces), which produces labels
+    # such as "Item 7. Management's Discussion ...". Remove only a prefix that
+    # agrees with this passage's own metadata, and keep a heading that consists
+    # solely of the Item so the panel never becomes nameless.
+    item = str(row.get("item") or "").strip()
+    if item:
+        without_item = re.sub(
+            rf"^\s*Item\s+{re.escape(item)}(?![0-9A-Za-z])\s*[.:–—-]?\s*", "", heading,
+            count=1, flags=re.IGNORECASE,
+        )
+        if without_item:
+            heading = without_item
+    return heading
 
 
 _PART_SUFFIX = re.compile(r"\s+\(part\s+\d+\s+of\s+\d+\)\s*$", re.IGNORECASE)
@@ -220,6 +235,238 @@ def passage_labels(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     return labels
 
 
+_TABLE_SEPARATOR_CELL = re.compile(r":?-{3,}:?")
+
+
+def _table_cells(line: str) -> list[str]:
+    """Split one pipe-delimited table row without its outside delimiters."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+# Characters the SEC table extractor splits off a value into cells of their
+# own: a currency sign or opening bracket before the amount, and a percent sign,
+# closing bracket or comma after it, sometimes several at once such as ``%)``.
+_OPENING_FRAGMENT = "$£€(["
+_CLOSING_FRAGMENT = "%)],"
+
+
+def _is_fragment(cell: str, characters: str = _OPENING_FRAGMENT + _CLOSING_FRAGMENT) -> bool:
+    return bool(cell) and not cell.strip(characters)
+
+
+def _is_one_split_value(cells: Sequence[str]) -> bool:
+    """Whether a span's cells are one value split into sign, amount and spacer."""
+    return sum(1 for cell in cells if cell and not _is_fragment(cell)) <= 1
+
+
+def _joined_financial_cell(cells: Sequence[str]) -> str:
+    """Join pieces that the SEC table extractor split across a column span."""
+    value = ""
+    for token in (cell for cell in cells if cell):
+        if not value:
+            value = token
+        elif (_is_fragment(token, _CLOSING_FRAGMENT)
+              or _is_fragment(value[-1:], _OPENING_FRAGMENT)):
+            value += token
+        else:
+            value += f" {token}"
+    return value
+
+
+def _split_values(rows: list[list[str]], start: int, stop: int) -> list[tuple[int, int]]:
+    """Divide one repeated-header span into its separate value columns.
+
+    Each group is the widest run of columns in which every row holds at most
+    one value. A column holding only currency signs or opening brackets belongs
+    to the value after it, so it never ends a group.
+    """
+    groups: list[tuple[int, int]] = []
+    while start < stop:
+        end = start + 1
+        while end < stop and all(_is_one_split_value(row[start:end + 1]) for row in rows):
+            end += 1
+        while end - 1 > start and end < stop and all(
+                not row[end - 1] or _is_fragment(row[end - 1], _OPENING_FRAGMENT)
+                for row in rows):
+            end -= 1
+        groups.append((start, end))
+        start = end
+    return groups
+
+
+def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tuple[list[str],
+                                                                                  list[list[str]]]:
+    """Collapse adjacent copies of a header and join their fragmented values.
+
+    EDGAR uses a header such as ``2025`` with ``colspan=3`` above the currency
+    sign, amount and an empty spacer. The parser necessarily repeats that
+    header in its rectangular representation. Showing all three columns makes
+    the browser table technically faithful but visually misleading, so restore
+    the span as one useful value column.
+
+    A repeated header can also span several real columns, such as a year over
+    "As Reported", "Exchange Rate Effect" and "At Prior Year Rates". Such a
+    span becomes one column per value, each still joined with its own currency
+    sign and percent sign, so distinct figures are never joined into one cell.
+    """
+    groups: list[tuple[int, int]] = []
+    start = 0
+    while start < len(header):
+        stop = start + 1
+        if header[start]:
+            # Some filers repeat the header across the span and others leave
+            # the rest of it blank ("2021" over the "$", nothing over the
+            # amount). Both are one span. The label column is left alone.
+            while stop < len(header) and (header[stop] == header[start]
+                                          or (start and not header[stop])):
+                stop += 1
+        groups.extend(_split_values(rows, start, stop))
+        start = stop
+
+    if all(stop - start == 1 for start, stop in groups):
+        return header, rows
+    collapsed_header = [header[start] for start, _ in groups]
+    collapsed_rows = [
+        [_joined_financial_cell(row[start:stop]) for start, stop in groups]
+        for row in rows
+    ]
+    return collapsed_header, collapsed_rows
+
+
+# Streamlit's default page background and body text for each theme. The sticky
+# first column needs both: an opaque background so columns do not show through
+# it, and a matching text colour so it stays readable if Streamlit reports the
+# theme wrongly, as it can on a session's first load.
+_TABLE_THEMES = {False: ("#ffffff", "#31333f"), True: ("#0e1117", "#fafafa")}
+
+
+def _corpus_table_html(text: str, *, dark: bool = False) -> str:
+    """Render a stored pipe table as an accessible, horizontally scrolling grid.
+
+    The parser preserves multiple header rows. SEC tables often use one row for
+    years and another for subheadings before the Markdown separator, so treating
+    only the last one as a header makes wide financial tables harder to read.
+    Every value is escaped before it is put in the HTML. ``dark`` picks the
+    sticky first column's colours, which Streamlit exposes no CSS variable for.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first_row = next((index for index, line in enumerate(lines)
+                      if line.startswith("|")), None)
+    if first_row is None:
+        return ""
+
+    caption = " ".join(lines[:first_row])
+    rows = [_table_cells(line) for line in lines[first_row:] if line.startswith("|")]
+    separator = next((index for index, row in enumerate(rows)
+                      if row and all(_TABLE_SEPARATOR_CELL.fullmatch(cell) for cell in row)), None)
+    if separator is None or separator == 0:
+        return ""
+
+    header_rows = rows[:separator]
+    body_rows = rows[separator + 1:]
+    width = max(len(row) for row in (*header_rows, *body_rows))
+
+    # Every table in the current corpus has one rectangular header row. When
+    # a future format carries a true multi-row header, preserve it verbatim
+    # rather than guessing how its spans relate.
+    if len(header_rows) == 1:
+        header, body_rows = _collapse_repeated_columns(
+            header_rows[0] + [""] * (width - len(header_rows[0])),
+            [row + [""] * (width - len(row)) for row in body_rows],
+        )
+        header_rows = [header]
+        width = len(header)
+
+    def padded(row: list[str]) -> list[str]:
+        return row + [""] * (width - len(row))
+
+    def html_row(row: list[str], element: str) -> str:
+        return "<tr>" + "".join(
+            f"<{element}>{escape(cell)}</{element}>" for cell in padded(row)
+        ) + "</tr>"
+
+    base, ink = _TABLE_THEMES[dark]
+    caption_html = f"<caption>{escape(caption)}</caption>" if caption else ""
+    head_html = "".join(html_row(row, "th") for row in header_rows)
+    body_html = "".join(html_row(row, "td") for row in body_rows)
+    return f"""
+<style>
+.sec-corpus-table {{
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: .5rem;
+}}
+.sec-corpus-table table {{
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .9rem;
+  font-variant-numeric: tabular-nums;
+}}
+.sec-corpus-table caption {{
+  padding: .65rem .75rem;
+  text-align: left;
+  font-weight: 600;
+}}
+.sec-corpus-table th,
+.sec-corpus-table td {{
+  padding: .45rem .65rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-right: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+}}
+.sec-corpus-table thead th {{
+  max-width: 18rem;
+  white-space: normal;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-weight: 600;
+}}
+.sec-corpus-table th:first-child,
+.sec-corpus-table td:first-child {{
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  max-width: 24rem;
+  text-align: left;
+  white-space: normal;
+  /* A sticky cell must be opaque or the columns scroll visibly beneath it. */
+  background: var(--sec-table-base);
+  color: var(--sec-table-ink);
+}}
+.sec-corpus-table thead th:first-child {{
+  background: linear-gradient(color-mix(in srgb, currentColor 8%, transparent),
+                              color-mix(in srgb, currentColor 8%, transparent)),
+              var(--sec-table-base);
+}}
+.sec-corpus-table tbody tr:nth-child(even) td {{
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}}
+.sec-corpus-table tbody tr:nth-child(even) td:first-child {{
+  background: linear-gradient(color-mix(in srgb, currentColor 4%, transparent),
+                              color-mix(in srgb, currentColor 4%, transparent)),
+              var(--sec-table-base);
+}}
+</style>
+<div class="sec-corpus-table" style="--sec-table-base: {base}; --sec-table-ink: {ink}" role="region" aria-label="{escape(caption or 'Filing table', quote=True)}" tabindex="0">
+  <table>{caption_html}<thead>{head_html}</thead><tbody>{body_html}</tbody></table>
+</div>
+""".strip()
+
+
+def _dark_theme() -> bool:
+    """Whether the viewer's Streamlit theme is dark, defaulting to light."""
+    return getattr(st.context.theme, "type", None) == "dark"
+
+
 def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
     """Render one full passage with its chunk ID, type and EDGAR filing link.
 
@@ -245,9 +492,20 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
 
         text = str(row.get("text") or "")
         if row.get("content_type") == "table":
-            # Tables are stored as aligned plain text. A code block preserves
-            # their rows and spacing and makes them visibly unlike prose.
-            st.code(text, language=None, wrap_lines=True)
+            # Financial tables are wider than the page. Keep their columns
+            # aligned in a real table and scroll sideways instead of wrapping
+            # pipe-delimited rows into an unreadable code block.
+            table_html = _corpus_table_html(text, dark=_dark_theme())
+            if table_html:
+                st.html(table_html)
+                # Browse shows what retrieval sees, so the exact stored text
+                # stays one click away from the rendered table.
+                with st.expander("Stored text", icon=":material/code:"):
+                    st.code(text, language=None, wrap_lines=False)
+            else:
+                # Defensive fallback for a future table format the renderer
+                # does not recognise; never hide the stored source text.
+                st.code(text, language=None, wrap_lines=False)
         else:
             st.text(text)
 

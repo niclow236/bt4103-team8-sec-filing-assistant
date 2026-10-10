@@ -5,8 +5,9 @@ import json
 import pandas as pd
 import pytest
 
-from src.evaluation.benchmark import generate_xbrl_questions, load_questions
-from src.evaluation.records import BenchmarkValidationError, RunResult
+from src.evaluation.benchmark import DEFAULT_QUESTIONS_PATH, generate_xbrl_questions, load_questions
+from src.evaluation.records import UNANSWERABLE, BenchmarkValidationError, RunResult
+from src.rag.query import parse_question
 
 
 def _question(**overrides):
@@ -182,6 +183,31 @@ def test_loader_reports_line_numbers_with_windows_line_endings(tmp_path):
 
     with pytest.raises(BenchmarkValidationError, match=r"questions\.jsonl:2: duplicate question_id"):
         load_questions(path, chunk_ids={"AAPL-2024-1", "AAPL-2023-1"})
+
+
+def _committed_questions():
+    # Read directly, not through load_questions, which needs the processed
+    # corpus to resolve chunk IDs and CI has none.
+    with DEFAULT_QUESTIONS_PATH.open(encoding="utf-8") as stream:
+        return [json.loads(line) for line in stream if line.strip()]
+
+
+@pytest.mark.parametrize("row", _committed_questions(), ids=lambda row: row["question_id"])
+def test_committed_question_reads_as_its_metadata_says(row):
+    # question_type is the label the parser assigns, so a per-type score is a
+    # score for the route the engine took. The evaluator overrides the parsed
+    # ticker and year with the row's, so a question that does not name them
+    # itself would be scored on context a user never typed. The facts store is
+    # left out because CI has none; it changes no label in this file.
+    parsed = parse_question(row["question"], facts_file=None)
+
+    assert parsed.question_type == row["question_type"]
+    if row["question_type"] == UNANSWERABLE:
+        return
+    if row["ticker"] is not None:
+        assert row["ticker"] in parsed.tickers
+    if row["fiscal_year"] is not None:
+        assert row["fiscal_year"] in parsed.fiscal_years
 
 
 def test_empty_run_result_keeps_retriever_name():
