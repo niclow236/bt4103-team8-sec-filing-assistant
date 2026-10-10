@@ -23,8 +23,9 @@ retrospectively chosen cutoffs:
 - If these gates pass, perform a paired answer-quality comparison before
   adopting C5. Otherwise retain C4 and document the result.
 
-The decision cutoff is fixed at @16 in the policy. A run or rescore at another
-cutoff records metrics with `advance_to_answer_evaluation: null`, even if those
+The decision is fixed at @16 over a configured pool of 50 candidates in the
+policy. A run or rescore at another cutoff or a reduced candidate depth records
+metrics with `advance_to_answer_evaluation: null`, even if those
 metrics would otherwise pass. Missing sources, including `llm_assisted`, block
 advancement. The latency gate excludes empty candidate pools; their number and
 the number of timed questions are reported explicitly.
@@ -95,12 +96,18 @@ the exact candidate pool.
 Outputs stream to disk. Graceful interruptions preserve completed pairs. To
 resume, repeat the identical run command with `--resume`; changed inputs,
 source files, corpus, policy or configuration are refused. A forcibly killed
-process can leave a truncated gzip stream, which is refused rather than silently
-dropping evidence. Use a new run ID if that happens.
+process can leave a gzip stream without its end marker. Resume recovers every
+complete newline-terminated pair, verifies its exact benchmark prefix and
+provenance, and atomically repairs the stream before appending from the first
+unfinished question. A partial final row is measured again. Malformed complete
+rows and corrupt streams are refused; `rescore` always reads strictly. Recovery
+does not rewrite a healthy pairs file or mutate a run whose checks fail.
 
 An interruption before the first pair may leave only a manifest; resume treats
 the absent pairs file as an empty prefix. Resume also compares the original
 BM25 and dense index manifests, including build identity, before loading models.
+After warm-up it also requires the loaded dense encoder revision to match the
+original runtime when that revision was recorded, before recording new pairs.
 Each segment can supply a new workload note without replacing the original
 manifest. A process-safe `run.lock` prevents concurrent writers to one run ID
 and releases its OS lock on exit, including a killed process.

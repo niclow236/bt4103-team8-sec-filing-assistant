@@ -33,6 +33,7 @@ from .run import _query
 METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
 POLICY = {
     "decision_top_k": 16,
+    "decision_candidate_k": 50,
     "primary_sources": ["handwritten", "xbrl"],
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
@@ -129,7 +130,9 @@ def paired_metric(rows: Sequence[dict], metric: str, k: int, policy: dict = POLI
             "ties": sum(abs(d) <= 1e-12 for d in diffs), "ci95": ci, "clusters": len(values)}
 
 
-def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
+def summarize(
+    rows: Sequence[dict], k: int, policy: dict = POLICY, *, candidate_k: int = CANDIDATE_K,
+) -> dict:
     groups: dict[str, dict[str, list]] = {
         "by_source": defaultdict(list), "by_type": defaultdict(list),
         "by_source_type": defaultdict(list), "by_gold_content": defaultdict(list),
@@ -150,7 +153,7 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
     def group_summary(subset: Sequence[dict]) -> dict:
         return {"questions": len(subset), **{m: paired_metric(subset, m, k, policy) for m in METRICS}}
 
-    report = {"questions": len(rows), "top_k": k, "policy": policy,
+    report = {"questions": len(rows), "top_k": k, "candidate_k": candidate_k, "policy": policy,
               "overall": group_summary(rows),
               **{name: {key: group_summary(subset) for key, subset in sorted(group.items())}
                  for name, group in groups.items()}}
@@ -238,16 +241,40 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
     # Legacy reference manifests declared @16 in the protocol before this
     # field existed. A future app default must not reinterpret their gates.
     declared_k = policy.get("decision_top_k", 16)
+    declared_candidates = policy.get("decision_candidate_k", 50)
+    exploratory = []
     if k != declared_k:
-        report["decision"] = {"advance_to_answer_evaluation": None,
-                              "reasons": [f"sensitivity rescore; decided at k={declared_k}"],
-                              "default": "C4"}
+        exploratory.append(f"sensitivity rescore; decided at k={declared_k}")
+    if candidate_k != declared_candidates:
+        exploratory.append(f"exploratory pool of {candidate_k}; decided over {declared_candidates} candidates")
+    if exploratory:
+        report["decision"] = {"advance_to_answer_evaluation": None, "reasons": exploratory, "default": "C4"}
     return report
 
 
-def read_pairs(path: Path) -> list[dict]:
-    with gzip.open(path, "rt", encoding="utf-8") as stream:
-        return [json.loads(line) for line in stream if line.strip()]
+def read_pairs(path: Path, *, recover: bool = False) -> list[dict]:
+    """Read strictly, or recover complete newline-terminated rows after a kill."""
+    rows = []
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as stream:
+            for line in stream:
+                if recover and not line.endswith("\n"):
+                    break
+                if line.strip():
+                    rows.append(json.loads(line))
+    except EOFError:
+        if not recover:
+            raise
+    return rows
+
+
+def _repair_pairs(path: Path, rows: Sequence[dict]) -> None:
+    # Atomic replacement keeps the cut stream intact if recovery is interrupted.
+    whole = path.with_name(path.name + ".tmp")
+    with gzip.open(whole, "wt", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+    whole.replace(path)
 
 
 def _index_manifests(hybrid: Retriever) -> dict:
@@ -300,23 +327,32 @@ def _run_pairs_locked(
     manifest = json.loads(json.dumps(manifest))
     pairs_path = output_dir / "pairs.jsonl.gz"
     rows = []
+    original_runtime = {}
+    repair_needed = False
     indexes = _index_manifests(hybrid)
     if resume:
         original = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
         if _comparable_manifest(original) != _comparable_manifest(manifest):
             raise ValueError("resume requires identical source, inputs, corpus, settings and policy")
-        rows = read_pairs(pairs_path) if pairs_path.exists() else []
+        if pairs_path.exists():
+            try:
+                rows = read_pairs(pairs_path)
+            except EOFError:
+                rows = read_pairs(pairs_path, recover=True)
+                repair_needed = True
         if [r["question"] for r in rows] != [q.to_dict() for q in questions[:len(rows)]]:
             raise ValueError("stored questions are not an exact prefix of the requested benchmark")
         runtime_path = output_dir / "runtime.json"
         if runtime_path.exists():
-            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
-            if any(runtime.get(key) != value for key, value in indexes.items()):
+            original_runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            if any(original_runtime.get(key) != value for key, value in indexes.items()):
                 raise ValueError("resume requires identical dense and BM25 index manifests")
         elif rows:
             raise ValueError("cannot verify resumed indexes without the original runtime.json")
         if len(rows) == len(questions):
-            report = summarize(rows, top_k)
+            if repair_needed:
+                _repair_pairs(pairs_path, rows)
+            report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
             _dump(output_dir / "summary.json", report)
             return report
     else:
@@ -331,6 +367,11 @@ def _run_pairs_locked(
     pool = hybrid.search(query, k=reranker.config.candidate_k)
     reranker.rerank(query, pool)
     dense_info = getattr(getattr(hybrid, "dense", None), "runtime_info", {})
+    recorded_revision = original_runtime.get("dense_revision")
+    if resume and recorded_revision is not None and dense_info.get("revision") != recorded_revision:
+        raise ValueError("resume requires the original dense encoder revision")
+    if repair_needed:
+        _repair_pairs(pairs_path, rows)
     runtime = {
         "cross_encoder_load_ms": model_load_ms, "warmup_ms": (perf_counter() - started) * 1000,
         "resumed_after_questions": len(rows),
@@ -339,10 +380,10 @@ def _run_pairs_locked(
         "dense_device": dense_info.get("device"), "dense_revision": dense_info.get("revision"),
         "workload_note": provenance.get("workload_note"),
     }
-    number = 0
-    while (output_dir / f"runtime-{number:04d}.json").exists():
-        number += 1
-    _dump(output_dir / f"runtime-{number:04d}.json", runtime)
+    segment_number = 0
+    while (output_dir / f"runtime-{segment_number:04d}.json").exists():
+        segment_number += 1
+    _dump(output_dir / f"runtime-{segment_number:04d}.json", runtime)
     if not (output_dir / "runtime.json").exists():
         _dump(output_dir / "runtime.json", runtime)
     with gzip.open(pairs_path, "at" if resume else "wt", encoding="utf-8") as stream:
@@ -359,7 +400,7 @@ def _run_pairs_locked(
             gold = [indexed[cid] for cid in question.supporting_chunk_ids]
             row = {"question": question.to_dict(), "query": asdict(query),
                    "filings": sorted({p["accession_no"] for p in gold}),
-                   "gold_filings": sorted({(p["ticker"], p["fiscal_year"]) for p in gold}, key=str),
+                   "gold_filings": _gold_filings(gold),
                    "gold_content": "+".join(sorted({p["content_type"] for p in gold})) or "none",
                    "C4": _rank_record(question, pool[:top_k], retrieve_ms, "C4"),
                    "C5": _rank_record(question, ranked.passages,
@@ -372,9 +413,13 @@ def _run_pairs_locked(
             stream.flush()
             if i % 25 == 0 or i == len(questions):
                 print(f"paired C4/C5: {i}/{len(questions)}", flush=True)
-    report = summarize(rows, top_k)
+    report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
     _dump(output_dir / "summary.json", report)
     return report
+
+
+def _gold_filings(gold: Sequence[dict]) -> list[tuple[str, int | None]]:
+    return sorted({(p["ticker"], p["fiscal_year"]) for p in gold}, key=str)
 
 
 def enrich_gold_filings(rows: Sequence[dict], chunks: Sequence[dict], expected_digest: str | None) -> dict:
@@ -388,7 +433,7 @@ def enrich_gold_filings(rows: Sequence[dict], chunks: Sequence[dict], expected_d
         if "gold_filings" in row:
             continue
         gold = [indexed[cid] for cid in row["question"]["supporting_chunk_ids"]]
-        row["gold_filings"] = sorted({(p["ticker"], p["fiscal_year"]) for p in gold}, key=str)
+        row["gold_filings"] = _gold_filings(gold)
         updated += 1
     return {"corpus_records_sha256": actual, "derived_rows": updated,
             "method": "supporting chunk IDs joined to the verified frozen corpus; original pairs unchanged"}
@@ -432,7 +477,7 @@ def main(argv: list[str] | None = None) -> None:
                 rows, list(iter_chunks(processed_dir=args.processed_dir)),
                 manifest["provenance"].get("corpus", {}).get("records_sha256"),
             )
-        report = summarize(rows, k, manifest["policy"])
+        report = summarize(rows, k, manifest["policy"], candidate_k=manifest["reranker"]["candidate_k"])
         if enrichment is not None:
             report["gold_diagnostics_provenance"] = enrichment
         _dump(args.run_dir / f"rescored-k{k}.json", report)

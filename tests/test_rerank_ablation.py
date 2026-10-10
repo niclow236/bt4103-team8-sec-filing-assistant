@@ -63,7 +63,9 @@ def test_source_type_and_truncation_breakdowns():
     assert report["truncation"]["rate"] == 1 / 3
     assert report["top_k_diagnostics"]["C5"]["tables"] == 4
     assert report["top_k_diagnostics"]["C5"]["outside_gold_years"] == 0
-    assert not report["decision"]["advance_to_answer_evaluation"]  # only one filing per source
+    decision = summarize(rows, 2, GATE_POLICY)["decision"]
+    assert decision["advance_to_answer_evaluation"] is False
+    assert "handwritten: nDCG gain/uncertainty criterion not met" in decision["reasons"]
 
 
 def test_predeclared_decision_requires_all_gates():
@@ -159,6 +161,7 @@ def test_each_gate_blocks_on_its_own():
 def test_gold_filing_diagnostics_count_other_years():
     rows = passing_rows()
     rows[0]["rerank"]["candidates"][0]["fiscal_year"] = 2023  # chunk "a", ranked by both
+    rows[0]["query"]["fiscal_years"] = [2023, 2024]
     diagnostics = summarize(rows, 2)["top_k_diagnostics"]
     assert diagnostics["C4"]["outside_gold_years"] == diagnostics["C5"]["outside_gold_years"] == 1
     assert diagnostics["C4"]["outside_gold_tickers"] == 0
@@ -329,7 +332,8 @@ def test_concurrent_resume_is_refused_and_does_not_append(tmp_path):
 
 def test_rescore_at_declared_cutoff_can_advance_but_sensitivity_cannot(tmp_path):
     rows = passing_rows()
-    manifest = {"top_k": 16, "policy": POLICY, "provenance": {"questions": len(rows)}}
+    manifest = {"top_k": 16, "policy": POLICY, "provenance": {"questions": len(rows)},
+                "reranker": {"candidate_k": CANDIDATE_K}}
     (tmp_path / "config.json").write_text(json.dumps(manifest), encoding="utf-8")
     with gzip.open(tmp_path / "pairs.jsonl.gz", "wt", encoding="utf-8") as stream:
         stream.writelines(json.dumps(r) + "\n" for r in rows)
@@ -362,3 +366,173 @@ def test_backfill_requires_exact_corpus_and_keeps_recorded_rankings(tmp_path, mo
     with pytest.raises(ValueError, match="exact frozen corpus"):
         main(["rescore", str(out), "--processed-dir", str(tmp_path)])
     assert (out / "pairs.jsonl.gz").read_bytes() == original
+
+
+@pytest.mark.parametrize("candidate_k", [16, 32])
+def test_reduced_candidate_pool_carries_no_decision(tmp_path, candidate_k):
+    rows = passing_rows()
+    assert summarize(rows, 16)["decision"]["advance_to_answer_evaluation"] is True
+    decision = summarize(rows, 16, candidate_k=candidate_k)["decision"]
+    assert decision["advance_to_answer_evaluation"] is None
+    assert decision["reasons"] == [f"exploratory pool of {candidate_k}; decided over 50 candidates"]
+    manifest = {"top_k": 16, "policy": POLICY, "provenance": {"questions": len(rows)},
+                "reranker": {"candidate_k": candidate_k}}
+    (tmp_path / "config.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with gzip.open(tmp_path / "pairs.jsonl.gz", "wt", encoding="utf-8") as stream:
+        stream.writelines(json.dumps(r) + "\n" for r in rows)
+    main(["rescore", str(tmp_path)])
+    stored = json.loads((tmp_path / "rescored-k16.json").read_text())
+    assert stored["candidate_k"] == candidate_k
+    assert stored["decision"] == decision
+
+
+def test_legacy_pool_does_not_follow_a_retuned_app_default(monkeypatch):
+    legacy = {key:value for key,value in POLICY.items() if key != "decision_candidate_k"}
+    monkeypatch.setattr("src.evaluation.rerank_ablation.CANDIDATE_K", 8)
+    assert summarize(passing_rows(), 16, legacy, candidate_k=8)["decision"]["advance_to_answer_evaluation"] is None
+    assert summarize(passing_rows(), 16, legacy, candidate_k=50)["decision"]["advance_to_answer_evaluation"] is True
+
+
+def test_gold_company_scope_is_distinct_from_query_scope():
+    r = row(question())
+    r["query"]["tickers"] = ["AAA", "BBB"]
+    r["rerank"]["candidates"][0]["ticker"] = "BBB"
+    for d in summarize([r], 2)["top_k_diagnostics"].values():
+        assert d["outside_gold_tickers"] == d["outside_gold_filings"] == 1
+        assert d["outside_query_tickers"] == 0
+
+
+def test_resume_requires_the_run_directory_and_its_runtime_record(tmp_path):
+    qs, pool, chunks, reranker, out = completed_run(tmp_path)
+    missing = tmp_path / "missing"
+    with pytest.raises(ValueError, match="existing run directory"):
+        run_pairs(qs, Inner(pool), reranker, output_dir=missing, provenance={"questions": 2},
+                  chunks=chunks, top_k=2, resume=True)
+    assert not missing.exists()
+    (out / "runtime.json").unlink()
+    with pytest.raises(ValueError, match="original runtime.json"):
+        run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
+                  chunks=chunks, top_k=2, resume=True)
+
+
+def test_present_but_unmeasurable_assisted_source_blocks_advancement():
+    rows = passing_rows()[:4] + [row(question("u", "llm_assisted", gold=(), kind="unanswerable"), filings=())]
+    decision = summarize(rows, 2, GATE_POLICY)["decision"]
+    assert decision["advance_to_answer_evaluation"] is False
+    assert decision["reasons"] == ["llm_assisted: nDCG regression criterion not met"]
+
+
+def test_resume_refuses_changed_or_unknown_dense_encoder_revision(tmp_path):
+    from types import SimpleNamespace
+
+    qs, pool, chunks, reranker, initial = completed_run(tmp_path)
+    out = tmp_path / "revision"
+    inner = Inner(pool)
+    inner.dense = SimpleNamespace(manifest=None, runtime_info={"device": "test", "revision": "original"})
+    run_pairs(qs, inner, reranker, output_dir=out, provenance={"questions": 2}, chunks=chunks, top_k=2)
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    with gzip.open(out / "pairs.jsonl.gz", "wt", encoding="utf-8") as stream:
+        stream.write(json.dumps(pairs[0]) + "\n")
+    original = (out / "pairs.jsonl.gz").read_bytes()
+    for revision in ("changed", None):
+        inner.dense.runtime_info["revision"] = revision
+        with pytest.raises(ValueError, match="original dense encoder revision"):
+            run_pairs(qs, inner, reranker, output_dir=out, provenance={"questions": 2},
+                      chunks=chunks, top_k=2, resume=True)
+        assert (out / "pairs.jsonl.gz").read_bytes() == original
+        assert len(list(out.glob("runtime-*.json"))) == 1
+    inner.dense.runtime_info["revision"] = "original"
+    run_pairs(qs, inner, reranker, output_dir=out, provenance={"questions": 2},
+              chunks=chunks, top_k=2, resume=True)
+    assert len(read_pairs(out / "pairs.jsonl.gz")) == 2
+
+
+def test_fresh_and_completed_resume_propagate_exploratory_pool_depth(tmp_path):
+    qs = [question(source + str(i), source) for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+    pool = [passage("b"), passage("a", content_type="table")]
+    chunks = [{"chunk_id": p.chunk_id, "accession_no": "f", "content_type": p.content_type,
+               "ticker": p.ticker, "fiscal_year": p.fiscal_year} for p in pool]
+    reranker = CrossEncoderReranker(RerankConfig(candidate_k=16), model=Model([1, 2]))
+    out = tmp_path / "small-pool"
+    for resume in (False, True):
+        report = run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": len(qs)},
+                           chunks=chunks, top_k=16, resume=resume)
+        assert report["candidate_k"] == 16
+        assert report["decision"]["advance_to_answer_evaluation"] is None
+        assert report["decision"]["reasons"] == ["exploratory pool of 16; decided over 50 candidates"]
+
+
+@pytest.mark.parametrize("partial", ["", '{"question":', json.dumps({"unfinished": True})])
+def test_resume_after_a_kill_keeps_finished_rows_and_remeasures_partial(tmp_path, partial):
+    qs, pool, chunks, reranker, out = completed_run(tmp_path)
+    first = read_pairs(out / "pairs.jsonl.gz")[0]
+    stream = gzip.open(out / "cut", "wt", encoding="utf-8")
+    try:
+        stream.write(json.dumps(first) + "\n" + partial)
+        stream.flush()
+        (out / "pairs.jsonl.gz").write_bytes((out / "cut").read_bytes())
+    finally:
+        stream.close()
+    with pytest.raises(EOFError):
+        read_pairs(out / "pairs.jsonl.gz")
+    assert read_pairs(out / "pairs.jsonl.gz", recover=True) == [first]
+    with pytest.raises(EOFError):
+        main(["rescore", str(out)])
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
+              chunks=chunks, top_k=2, resume=True)
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    assert [r["question"] for r in pairs] == [q.to_dict() for q in qs]
+    assert pairs[0] == first
+    assert json.loads((out / "runtime-0001.json").read_text())["resumed_after_questions"] == 1
+
+
+def test_recovery_does_not_hide_malformed_complete_rows_or_corruption(tmp_path):
+    path = tmp_path / "pairs.gz"
+    with gzip.open(path, "wt") as stream:
+        stream.write('{"broken":\n')
+    with pytest.raises(json.JSONDecodeError):
+        read_pairs(path, recover=True)
+    path.write_bytes(b"not a gzip stream")
+    with pytest.raises(gzip.BadGzipFile):
+        read_pairs(path, recover=True)
+
+
+def test_atomic_recovery_failure_preserves_the_original(tmp_path, monkeypatch):
+    from src.evaluation.rerank_ablation import _repair_pairs
+    path = tmp_path / "pairs.gz"
+    path.write_bytes(b"original interrupted stream")
+    original = path.read_bytes()
+    def interrupted(*args):
+        raise OSError("interrupted replacement")
+    monkeypatch.setattr(type(path), "replace", interrupted)
+    with pytest.raises(OSError, match="interrupted replacement"):
+        _repair_pairs(path, [row(question())])
+    assert path.read_bytes() == original
+
+
+def test_completed_resume_does_not_rewrite_healthy_pairs(tmp_path):
+    qs, pool, chunks, reranker, out = completed_run(tmp_path)
+    path = out / "pairs.jsonl.gz"
+    original = path.read_bytes()
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
+              chunks=chunks, top_k=2, resume=True)
+    assert path.read_bytes() == original
+
+
+def test_recovery_refuses_a_changed_prefix_without_rewriting_it(tmp_path):
+    qs, pool, chunks, reranker, out = completed_run(tmp_path)
+    first = read_pairs(out / "pairs.jsonl.gz")[0]
+    first["question"]["question"] = "changed"
+    stream = gzip.open(out / "cut", "wt")
+    try:
+        stream.write(json.dumps(first) + "\n")
+        stream.flush()
+        path = out / "pairs.jsonl.gz"
+        path.write_bytes((out / "cut").read_bytes())
+    finally:
+        stream.close()
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="exact prefix"):
+        run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
+                  chunks=chunks, top_k=2, resume=True)
+    assert path.read_bytes() == original
