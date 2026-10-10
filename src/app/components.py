@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from html import escape
 import re
@@ -474,40 +474,46 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
     whole selection, so that panels listed together can be told apart. Without
     one, a passage is labelled on its own and may read like its neighbours.
     """
-    kind, colour, icon = _passage_kind(row)
-    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    _, _, icon = _passage_kind(row)
     passage_title = label or passage_labels([row])[0]
     # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
     passage_title = passage_title.replace("$", r"\$")
 
     with st.expander(passage_title, icon=icon):
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.badge(kind, color=colour, icon=icon)
-            st.caption(f"Chunk ID: {chunk_id}")
-        url = str(row.get("url") or "")
-        if _safe_url(url):
-            st.link_button("Open filing on EDGAR", url, icon=":material/open_in_new:")
-        else:
-            st.caption("Filing link unavailable")
+        _passage_body(row)
 
-        text = str(row.get("text") or "")
-        if row.get("content_type") == "table":
-            # Financial tables are wider than the page. Keep their columns
-            # aligned in a real table and scroll sideways instead of wrapping
-            # pipe-delimited rows into an unreadable code block.
-            table_html = _corpus_table_html(text, dark=_dark_theme())
-            if table_html:
-                st.html(table_html)
-                # Browse shows what retrieval sees, so the exact stored text
-                # stays one click away from the rendered table.
-                with st.expander("Stored text", icon=":material/code:"):
-                    st.code(text, language=None, wrap_lines=False)
-            else:
-                # Defensive fallback for a future table format the renderer
-                # does not recognise; never hide the stored source text.
+
+def _passage_body(row: Mapping[str, Any]) -> None:
+    """The shared stored text/table and safe filing link for Browse and Ask."""
+    kind, colour, icon = _passage_kind(row)
+    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.badge(kind, color=colour, icon=icon)
+        st.caption(f"Chunk ID: {chunk_id}")
+    url = str(row.get("url") or "")
+    if _safe_url(url):
+        st.link_button("Open filing on EDGAR", url, icon=":material/open_in_new:")
+    else:
+        st.caption("Filing link unavailable")
+
+    text = str(row.get("text") or "")
+    if row.get("content_type") == "table":
+        # Financial tables are wider than the page. Keep their columns
+        # aligned in a real table and scroll sideways instead of wrapping
+        # pipe-delimited rows into an unreadable code block.
+        table_html = _corpus_table_html(text, dark=_dark_theme())
+        if table_html:
+            st.html(table_html)
+            # Show what retrieval sees: the exact stored text stays one
+            # click away from the rendered table.
+            with st.expander("Stored text", icon=":material/code:"):
                 st.code(text, language=None, wrap_lines=False)
         else:
-            st.text(text)
+            # Defensive fallback for an unrecognised future table format;
+            # never hide the stored source text.
+            st.code(text, language=None, wrap_lines=False)
+    else:
+        st.text(text)
 
 
 def corpus_passage_page(passages: Sequence[Mapping[str, Any]], selection: CorpusSelection,
@@ -985,6 +991,23 @@ def _checking_step(answer: Answer) -> str:
               for status in ("supported", "mismatch", "unverified")]
     found = ", ".join(f"{count} {status}" for status, count in counts if count)
     return f"Checked: {found}" if found else "Checked: nothing to check"
+
+
+def retrieved_evidence(passages: Sequence[RetrievedPassage]) -> None:
+    """Show the evidence as soon as it is admitted, before generation (#42).
+
+    Nothing is drawn for no passages: the answer's own notice says why, and
+    a refused question was never searched.
+    """
+    if not passages:
+        return
+    st.subheader("Retrieved evidence", anchor=False)
+    for number, passage in enumerate(passages, 1):
+        year = passage.fiscal_year if passage.fiscal_year is not None else "unknown"
+        label = (f"[{number}] {passage.ticker} · FY{year} · "
+                 f"Item {passage.item or 'unknown'} · score {passage.score:.4f}")
+        with st.expander(label):
+            _passage_body(asdict(passage))
 
 
 def retrieval_trace(answer: Answer, parsed: ParsedQuestion, config: StackConfig, *,

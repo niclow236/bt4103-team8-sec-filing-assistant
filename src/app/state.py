@@ -33,13 +33,15 @@ from src.rag.generate import ProviderUnavailable, check_provider, config_from_en
 from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.rag.records import Answer
-    from src.retrieval.records import Query
+    from src.retrieval.records import Query, RetrievedPassage
     from src.stack import Stack
 
 # What a caller passes with a question that does not change its answer:
-# ``parsed`` is read from the question, and ``on_token`` only shows the
-# answer arriving.
+# ``parsed`` is read from the question; the callbacks only show evidence
+# and the answer arriving.
 NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 
 # How many answers one configuration keeps. Each holds the passages it was
@@ -294,13 +296,16 @@ class Remembered:
         self._being_answered: dict[tuple[Any, ...], Event] = {}
         self._lock = Lock()
 
-    def answer(self, question: str, **overrides: Any) -> Answer:
+    def answer(self, question: str, *,
+               on_retrieved: Callable[[tuple[RetrievedPassage, ...]], None] | None = None,
+               **overrides: Any) -> Answer:
         """The answer to ``question``, asked of the stack only the first time.
 
         ``overrides`` go to ``Stack.answer`` with that first request. A
         remembered answer comes back at once, and so does one another session
         was already being given, so nothing is streamed to ``on_token`` for
-        either.
+        either. The caller's ``on_retrieved`` is still notified of cached
+        evidence, outside the lock, without repeating the search.
         """
         asked_with = tuple(sorted(
             (name, value) for name, value in overrides.items()
@@ -308,19 +313,25 @@ class Remembered:
         ))
         key = (question, asked_with)
         while True:
+            remembered = None
             with self._lock:
                 if key in self._answers:
                     self._answers.move_to_end(key)
-                    return self._answers[key]
-                done = self._being_answered.get(key)
-                if done is None:
-                    done = self._being_answered[key] = Event()
-                    break
+                    remembered = self._answers[key]
+                else:
+                    done = self._being_answered.get(key)
+                    if done is None:
+                        done = self._being_answered[key] = Event()
+                        break
+            if remembered is not None:
+                if on_retrieved is not None:
+                    on_retrieved(remembered.passages)
+                return remembered
             # Another session is asking this now. Wait for it, then look again:
             # its answer is there, or it failed and this one asks in its turn.
             done.wait()
         try:
-            answer = self.stack.answer(question, **overrides)
+            answer = self.stack.answer(question, on_retrieved=on_retrieved, **overrides)
             if _finished(answer):
                 with self._lock:
                     self._answers[key] = answer
