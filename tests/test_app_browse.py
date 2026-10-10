@@ -2,7 +2,7 @@
 
 from streamlit.testing.v1 import AppTest
 
-from src.app import state
+from src.app import components, state
 from src.app.components import _corpus_table_html
 from src.config import PROJECT_ROOT
 from src.pipeline.chunk import iter_chunks
@@ -146,17 +146,44 @@ def test_table_renderer_combines_repeated_years_with_financial_value_fragments()
 
 
 def test_table_renderer_keeps_distinct_columns_under_a_repeated_header():
-    # Amazon FY2021 10-K, Item 7: one year spans three different measures.
+    # Amazon FY2021 10-K, Item 7 (0001018724-22-000005_part_ii_item_7_t007_01),
+    # as stored: one year spans three measures, each split from its "$", and
+    # the second row puts a figure in the first row's "$" column.
+    year = "Year Ended December 31, 2020"
     html = _corpus_table_html(
-        "Net sales\n\n"
-        "|  | Year Ended December 31, 2020 | Year Ended December 31, 2020 "
-        "| Year Ended December 31, 2020 |\n"
-        "| --- | --- | --- | --- |\n"
-        "|  | As Reported | Exchange Rate Effect | At Prior Year Rates |\n"
-        "| Net sales | $386,064 | $(1,438) | $384,626 |"
+        "Management's Discussion and Analysis (MD&A) (part 2 of 3)\n\n"
+        f"|  | {year} | {year} | {year} | {year} | {year} | {year} |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| Net sales | $ | 386,064 | $ | -1,438 | $ | 384,626 |\n"
+        "| Operating expenses |  | 363,165 | -989 |  |  | 362,176 |"
     )
-    assert html.count("<th>Year Ended December 31, 2020</th>") == 3
-    assert "<td>$386,064</td><td>$(1,438)</td><td>$384,626</td>" in html
+    assert html.count(f"<th>{year}</th>") == 3
+    assert "<td>$386,064</td><td>$-1,438</td><td>$384,626</td>" in html
+    assert "<td>363,165</td><td>-989</td><td>362,176</td>" in html
+
+
+def test_table_renderer_joins_a_percent_split_with_its_closing_bracket():
+    # Intuit FY2021 10-K, Item 7: "(2%)" is stored as "-2" and "%)".
+    html = _corpus_table_html(
+        "(Dollars in millions)\n\n"
+        "|  | 2020-2019 % Change | 2020-2019 % Change |\n"
+        "| --- | --- | --- |\n"
+        "| QuickBooks Online Accounting | 38 | % |\n"
+        "| Desktop Services and Supplies | -2 | %) |"
+    )
+    assert html.count("<th>2020-2019 % Change</th>") == 1
+    assert "<td>38%</td>" in html
+    assert "<td>-2%)</td>" in html
+
+
+def test_sticky_column_colours_follow_the_viewers_theme(monkeypatch):
+    table = passage("themed", content_type="table",
+                    text="Label\n\n| Year | 2024 |\n| --- | --- |\n| Revenue | $10 |")
+    assert "--sec-table-base: #ffffff; --sec-table-ink: #31333f" in browse(
+        monkeypatch, [table]).get("html")[0].value
+    monkeypatch.setattr(components, "_dark_theme", lambda: True)
+    assert "--sec-table-base: #0e1117; --sec-table-ink: #fafafa" in browse(
+        monkeypatch, [table]).get("html")[0].value
 
 
 def test_unrecognised_table_falls_back_to_the_stored_text(monkeypatch):
@@ -364,13 +391,16 @@ def test_panel_heading_does_not_repeat_the_selected_item(monkeypatch):
 
 def test_item_prefix_is_removed_without_a_space_and_never_from_a_longer_item(monkeypatch):
     rows = [passage("glued", item="1"), passage("longer", item="1"),
-            passage("bare", item="1")]
+            passage("bare", item="1"), passage("colon", item="1"),
+            passage("dash", item="1")]
     rows[0]["heading"] = "Item\u00a01.Business"
     rows[1]["heading"] = "Item 1A. Risk Factors"
     rows[2]["heading"] = "Item 1."
+    rows[3]["heading"] = "Item 1: Overview"
+    rows[4]["heading"] = "ITEM 1 - BUSINESS"
     app = browse(monkeypatch, rows)
     assert [panel.label for panel in app.main.status] == [
-        "Business", "Item 1A. Risk Factors", "Item 1."]
+        "Business", "Item 1A. Risk Factors", "Item 1.", "Overview", "BUSINESS"]
 
 
 def test_each_repeated_header_has_its_own_part_count(monkeypatch):

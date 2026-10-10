@@ -199,7 +199,7 @@ def _passage_heading(row: Mapping[str, Any]) -> str:
     item = str(row.get("item") or "").strip()
     if item:
         without_item = re.sub(
-            rf"^\s*Item\s+{re.escape(item)}(?![0-9A-Za-z])\.?\s*", "", heading,
+            rf"^\s*Item\s+{re.escape(item)}(?![0-9A-Za-z])\s*[.:–—-]?\s*", "", heading,
             count=1, flags=re.IGNORECASE,
         )
         if without_item:
@@ -248,12 +248,20 @@ def _table_cells(line: str) -> list[str]:
     return [cell.strip() for cell in stripped.split("|")]
 
 
-_VALUE_FRAGMENTS = {"$", "£", "€", "%", "(", ")", "[", "]", ","}
+# Characters the SEC table extractor splits off a value into cells of their
+# own: a currency sign or opening bracket before the amount, and a percent sign,
+# closing bracket or comma after it, sometimes several at once such as ``%)``.
+_OPENING_FRAGMENT = "$£€(["
+_CLOSING_FRAGMENT = "%)],"
+
+
+def _is_fragment(cell: str, characters: str = _OPENING_FRAGMENT + _CLOSING_FRAGMENT) -> bool:
+    return bool(cell) and not cell.strip(characters)
 
 
 def _is_one_split_value(cells: Sequence[str]) -> bool:
     """Whether a span's cells are one value split into sign, amount and spacer."""
-    return sum(1 for cell in cells if cell and cell not in _VALUE_FRAGMENTS) <= 1
+    return sum(1 for cell in cells if cell and not _is_fragment(cell)) <= 1
 
 
 def _joined_financial_cell(cells: Sequence[str]) -> str:
@@ -262,11 +270,33 @@ def _joined_financial_cell(cells: Sequence[str]) -> str:
     for token in (cell for cell in cells if cell):
         if not value:
             value = token
-        elif token in {"%", ")", "]", ","} or value[-1:] in {"$", "£", "€", "(", "["}:
+        elif (_is_fragment(token, _CLOSING_FRAGMENT)
+              or _is_fragment(value[-1:], _OPENING_FRAGMENT)):
             value += token
         else:
             value += f" {token}"
     return value
+
+
+def _split_values(rows: list[list[str]], start: int, stop: int) -> list[tuple[int, int]]:
+    """Divide one repeated-header span into its separate value columns.
+
+    Each group is the widest run of columns in which every row holds at most
+    one value. A column holding only currency signs or opening brackets belongs
+    to the value after it, so it never ends a group.
+    """
+    groups: list[tuple[int, int]] = []
+    while start < stop:
+        end = start + 1
+        while end < stop and all(_is_one_split_value(row[start:end + 1]) for row in rows):
+            end += 1
+        while end - 1 > start and end < stop and all(
+                not row[end - 1] or _is_fragment(row[end - 1], _OPENING_FRAGMENT)
+                for row in rows):
+            end -= 1
+        groups.append((start, end))
+        start = end
+    return groups
 
 
 def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tuple[list[str],
@@ -280,9 +310,9 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
     the span as one useful value column.
 
     A repeated header can also span several real columns, such as a year over
-    "As Reported", "Exchange Rate Effect" and "At Prior Year Rates". A span is
-    collapsed only when no row holds more than one value inside it, so distinct
-    figures are never joined into one cell.
+    "As Reported", "Exchange Rate Effect" and "At Prior Year Rates". Such a
+    span becomes one column per value, each still joined with its own currency
+    sign and percent sign, so distinct figures are never joined into one cell.
     """
     groups: list[tuple[int, int]] = []
     start = 0
@@ -291,10 +321,7 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
         if header[start]:
             while stop < len(header) and header[stop] == header[start]:
                 stop += 1
-        if all(_is_one_split_value(row[start:stop]) for row in rows):
-            groups.append((start, stop))
-        else:
-            groups.extend((column, column + 1) for column in range(start, stop))
+        groups.extend(_split_values(rows, start, stop))
         start = stop
 
     if all(stop - start == 1 for start, stop in groups):
@@ -307,15 +334,21 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
     return collapsed_header, collapsed_rows
 
 
-def _corpus_table_html(text: str, *, base: str = "#ffffff") -> str:
+# Streamlit's default page background and body text for each theme. The sticky
+# first column needs both: an opaque background so columns do not show through
+# it, and a matching text colour so it stays readable if Streamlit reports the
+# theme wrongly, as it can on a session's first load.
+_TABLE_THEMES = {False: ("#ffffff", "#31333f"), True: ("#0e1117", "#fafafa")}
+
+
+def _corpus_table_html(text: str, *, dark: bool = False) -> str:
     """Render a stored pipe table as an accessible, horizontally scrolling grid.
 
     The parser preserves multiple header rows. SEC tables often use one row for
     years and another for subheadings before the Markdown separator, so treating
     only the last one as a header makes wide financial tables harder to read.
-    Every value is escaped before it is put in the HTML. ``base`` is the
-    page's background colour, which the sticky first column needs to be
-    opaque; Streamlit exposes no CSS variable for it.
+    Every value is escaped before it is put in the HTML. ``dark`` picks the
+    sticky first column's colours, which Streamlit exposes no CSS variable for.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     first_row = next((index for index, line in enumerate(lines)
@@ -353,6 +386,7 @@ def _corpus_table_html(text: str, *, base: str = "#ffffff") -> str:
             f"<{element}>{escape(cell)}</{element}>" for cell in padded(row)
         ) + "</tr>"
 
+    base, ink = _TABLE_THEMES[dark]
     caption_html = f"<caption>{escape(caption)}</caption>" if caption else ""
     head_html = "".join(html_row(row, "th") for row in header_rows)
     body_html = "".join(html_row(row, "td") for row in body_rows)
@@ -402,6 +436,7 @@ def _corpus_table_html(text: str, *, base: str = "#ffffff") -> str:
   white-space: normal;
   /* A sticky cell must be opaque or the columns scroll visibly beneath it. */
   background: var(--sec-table-base);
+  color: var(--sec-table-ink);
 }}
 .sec-corpus-table thead th:first-child {{
   background: linear-gradient(color-mix(in srgb, currentColor 8%, transparent),
@@ -417,10 +452,15 @@ def _corpus_table_html(text: str, *, base: str = "#ffffff") -> str:
               var(--sec-table-base);
 }}
 </style>
-<div class="sec-corpus-table" style="--sec-table-base: {base}" role="region" aria-label="{escape(caption or 'Filing table', quote=True)}" tabindex="0">
+<div class="sec-corpus-table" style="--sec-table-base: {base}; --sec-table-ink: {ink}" role="region" aria-label="{escape(caption or 'Filing table', quote=True)}" tabindex="0">
   <table>{caption_html}<thead>{head_html}</thead><tbody>{body_html}</tbody></table>
 </div>
 """.strip()
+
+
+def _dark_theme() -> bool:
+    """Whether the viewer's Streamlit theme is dark, defaulting to light."""
+    return getattr(st.context.theme, "type", None) == "dark"
 
 
 def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
@@ -451,8 +491,7 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
             # Financial tables are wider than the page. Keep their columns
             # aligned in a real table and scroll sideways instead of wrapping
             # pipe-delimited rows into an unreadable code block.
-            dark = getattr(st.context.theme, "type", None) == "dark"
-            table_html = _corpus_table_html(text, base="#0e1117" if dark else "#ffffff")
+            table_html = _corpus_table_html(text, dark=_dark_theme())
             if table_html:
                 st.html(table_html)
                 # Browse shows what retrieval sees, so the exact stored text
