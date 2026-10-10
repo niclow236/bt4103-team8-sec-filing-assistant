@@ -165,7 +165,58 @@ the same company or generated from the same template.
 
 ## Result and relationship to #44
 
-Final measurements will be recorded here after the complete frozen run. A
-negative result is a valid outcome of #154. #44 remains open and still names
-C0–C6; the team must agree how its final matrix represents the experimental
-C5 result and defines C6. This experiment does not silently rewrite that issue.
+**Retain C4.** The complete reference experiment covers 12,728 paired questions and fails the predeclared retrieval gates. No answer-quality comparison or app adoption is triggered by this result.
+
+| Source | All / relevance-scored | Recall@16 C4 → C5 | nDCG@16 C4 → C5 | MRR@16 C4 → C5 | nDCG delta [paired 95% CI] | nDCG wins / losses / ties |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| Handwritten | 124 / 123 | 0.8360 → 0.8496 | 0.6193 → 0.5294 | 0.5686 → 0.4466 | -0.0898 [-0.1600, -0.0312] | 26 / 64 / 33 |
+| LLM-assisted | 25 / 22 | 0.7273 → 0.6136 | 0.4914 → 0.4314 | 0.4565 → 0.4018 | -0.0600 [-0.2075, 0.0891] | 7 / 9 / 6 |
+| Mechanical (`xbrl`) | 12579 / 12579 | 0.6517 → 0.6654 | 0.4719 → 0.4165 | 0.4762 → 0.3839 | -0.0554 [-0.0670, -0.0439] | 3409 / 5801 / 3369 |
+
+The four unanswerable team questions contribute no fabricated relevance scores. Labelled hard-negative accuracy, each metric denominator, all source/type and evidence/truncation slices, and filing-cluster counts are included in the [complete summary](evaluation/c5-reference-20261010-summary.json).
+
+Failed criteria (computed from unrounded measurements):
+
+- handwritten: nDCG gain/uncertainty criterion not met
+- handwritten: mrr regression criterion not met
+- xbrl: nDCG gain/uncertainty criterion not met
+- xbrl: mrr regression criterion not met
+- llm_assisted: nDCG regression criterion not met
+- factual: nDCG regression criterion not met
+- numeric: nDCG regression criterion not met
+- handwritten:factual: nDCG regression criterion not met
+- handwritten:numeric: nDCG regression criterion not met
+- xbrl:numeric: nDCG regression criterion not met
+
+| Top-16 diagnostic | C4 | C5 |
+| --- | ---: | ---: |
+| Table passages | 164538 | 121247 |
+| Outside gold companies | 0 | 0 |
+| Outside gold years | 35 | 34 |
+| Outside gold company/year pairs | 35 | 34 |
+| Gold-scope eligible passages | 203584 | 203584 |
+| Known-year eligible passages | 203584 | 203584 |
+| Query company-filter violations | 0 | 0 |
+| Query year-filter violations | 0 | 0 |
+
+Of 636,350 scored candidate pairs, 1 exceeded the 512-token paired input limit. 0 questions had a truncated supporting passage in the pool; that slice's paired metrics are in the summary. Questions without gold in the pool are reported separately because their missing passages have no measured input length.
+
+Steady-state added reranking time: median **417.1 ms**, p95 **531.8 ms**, over 12,727 nonempty pools; 1 empty pool is excluded. Median shared C4 retrieval is 719.7 ms; median C4 retrieval plus C5 reranking is 1131.9 ms. These are retrieval-stage measurements, not generation or full answer latency.
+
+The Apple M1 / 16 GiB laptop used MPS for both encoders. Cached cross-encoder loading took 5.85 s initially and 5.39 s on resume; separate warm-ups took 2.48 s and 2.90 s. Those times are excluded from steady-state quantiles. Normal desktop apps and short CPU review/test work shared the machine; no second GPU model job ran. This is recorded laptop timing, not isolated hardware throughput, and is not directly comparable to the old competing-run latency.
+
+The measurement ran on frozen source `e74872d`; review fixes were developed in an isolated checkout and diagnostics were rescored on `941c931`. Native `rescore --processed-dir` derived gold-filing diagnostics only after verifying the full corpus digest. The original relevance metrics and intervals were checked for exact equality with the native reference summary; stored pairs, rankings and timings were not edited.
+
+A chat interruption ended the first process after 1,831 complete pairs and left its gzip footer missing. All 1,831 valid rows were recovered, checked against the exact frozen benchmark prefix and preserved; no question rows were discarded. Native resume completed the remaining rows on the identical source/configuration/indexes with its own excluded warm-up. Recovery hashes and both runtime segments are retained in the [measurement manifest](evaluation/c5-reference-20261010-manifest.json).
+
+The manifest also records all input/source/corpus fingerprints, pinned model revision, dependency versions, index build identities, artifact hashes and the 75-filing inventory. The 28,289-passage corpus and large per-question artifacts remain local under `data/` and `results/`; the small report artifacts are committed for review. Exact reference reruns require source `e74872d` and the frozen inputs/indexes identified there. The current CLI supports guarded future runs and model-free rescoring.
+
+This result applies to this fixed MiniLM configuration and corpus. Generated labels are a retrieval proxy; filing clustering does not remove all company/template dependence, and gold scope is not exhaustive relevance. No conclusion about answer correctness, other checkpoints or larger chunk budgets follows from these retrieval metrics.
+
+For #44, the proposed C5 row is **experimental MiniLM reranking of C4, evaluated and rejected for default adoption**, with these paired results retained as the negative ablation. Teammate approval of this PR is requested as agreement on that representation. #44 remains open; its C6 definition and complete final matrix are separate work.
+
+## Verification after review
+
+Review source `941c931` passes all **2,028 local tests** and CI on Python 3.10 and 3.12. Ten isolated broken-guard variants were detected by the regression tests. Model-free rescore verified all 12,728 unique frozen question records and reproduced every original relevance aggregate and confidence interval exactly.
+
+A real-model smoke on seven team/mechanical questions scored 350 candidates using cached BGE and the pinned cross-encoder on MPS. Its C4/C5 rankings and relevance metrics matched the original reference smoke, with a maximum raw-logit difference of zero. A second real CLI process was forcibly killed after two complete pairs. Native resume preserved both rows verbatim, started from question 3, and completed all seven with the same rankings/relevance metrics as the uninterrupted run. Latencies were newly measured and are not asserted to be identical. Source, runtime and smoke artifact hashes are in the [verification record](evaluation/c5-reference-20261010-verification.json).
