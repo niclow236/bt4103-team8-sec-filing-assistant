@@ -22,8 +22,9 @@ permissions:
 jobs:
   pytest:
     name: pytest, Python ${{ matrix.python-version }}
-    # Pinned because the matrix includes Python 3.10; verify setup-python has
-    # an Ubuntu 26 build for it before moving this runner forward.
+    # Pinned because the matrix includes Python 3.10; check that the
+    # actions/python-versions manifest has a 3.10 build for Ubuntu 26.04
+    # before moving this runner forward.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
