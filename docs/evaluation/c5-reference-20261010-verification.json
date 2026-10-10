@@ -1,0 +1,80 @@
+{
+  "local_suite": {
+    "passed": 2028,
+    "seconds": 74.5,
+    "source_commit": "941c9316499e9226e053b07084cafad255abef7a"
+  },
+  "guard_mutations_detected": 10,
+  "real_model_verification": {
+    "questions": 7,
+    "scored_candidate_pairs": 350,
+    "source_commit": "941c9316499e9226e053b07084cafad255abef7a",
+    "rankings_and_metrics_identical_to_reference": true,
+    "max_raw_logit_difference": 0.0,
+    "forced_kill_completed_pairs_preserved": 2,
+    "resume_completed_questions": 7,
+    "resumed_rankings_and_metrics_identical_to_uninterrupted": true,
+    "runtime": {
+      "cross_encoder_load_ms": 5284.863124979893,
+      "warmup_ms": 3506.7872499930672,
+      "resumed_after_questions": 0,
+      "dense_manifest": {
+        "index_type": "dense",
+        "path": "data/index/chroma",
+        "corpus_fingerprint": "865f2e8d72f0d58b8e0aac54c6be809291e137e4e4b4d59f21462cbba1c6016d",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "built_at": "2026-10-04T13:48:32+00:00",
+        "model": "BAAI/bge-base-en-v1.5",
+        "dimensions": 768,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": 512
+      },
+      "bm25_manifest": {
+        "index_type": "bm25",
+        "path": "data/index/bm25.pkl",
+        "corpus_fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "built_at": "2026-10-04T12:33:02.090051+00:00",
+        "model": "",
+        "dimensions": null,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": null
+      },
+      "cross_encoder_device": "mps:0",
+      "dense_device": "mps:0",
+      "dense_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+      "workload_note": "Post-review smoke; full reference worker completed; no other model jobs"
+    }
+  },
+  "review_code_ci": {
+    "python310": "https://github.com/niclow236/bt4103-team8-sec-filing-assistant/actions/runs/38065984318/job/114253608222",
+    "python312": "https://github.com/niclow236/bt4103-team8-sec-filing-assistant/actions/runs/38065984318/job/114253607959",
+    "conclusion": "success"
+  },
+  "full_reference_checks": {
+    "questions": 12728,
+    "unique_questions": 12728,
+    "frozen_question_digest_matches": true,
+    "source_and_input_file_hashes_match": true,
+    "rescore_relevance_aggregates_and_intervals_identical": true
+  },
+  "smoke_artifacts_sha256": {
+    "issue-154-reviewed-smoke-20261010/config.json": "76acebf4c77c334def07fd65b5488f90185d4dacc3b1e5e07609a1e0fddb1335",
+    "issue-154-reviewed-smoke-20261010/pairs.jsonl.gz": "07b5694fc17286b7863bed49a2efad85b9972ee765eb20076067feca4ae65aaa",
+    "issue-154-reviewed-smoke-20261010/runtime-0000.json": "03d9bf2e02ab2c30cc20d1fca0bbad7a332571875620221b4b92bdc0d2d36bb4",
+    "issue-154-reviewed-smoke-20261010/runtime.json": "03d9bf2e02ab2c30cc20d1fca0bbad7a332571875620221b4b92bdc0d2d36bb4",
+    "issue-154-reviewed-smoke-20261010/summary.json": "43929eac3bf11c37fc6a6317dec062395d494c1a074a78c282a8f278b2c0df91",
+    "issue-154-reviewed-kill-smoke-20261010/config.json": "76acebf4c77c334def07fd65b5488f90185d4dacc3b1e5e07609a1e0fddb1335",
+    "issue-154-reviewed-kill-smoke-20261010/pairs.jsonl.gz": "b36e10d7a5dc618e029e017b14cecd21e2eb3736bce2890629a9e651a5e1859b",
+    "issue-154-reviewed-kill-smoke-20261010/runtime-0000.json": "dd767b962ed08ce2342716700eac1124d118eda9c32a9cf699f8a34f9cf05cde",
+    "issue-154-reviewed-kill-smoke-20261010/runtime-0001.json": "3017251e409f8aa0cc8fe0e0b49d89fdfb244b99c099dddac8392b2af0f3f30f",
+    "issue-154-reviewed-kill-smoke-20261010/runtime.json": "dd767b962ed08ce2342716700eac1124d118eda9c32a9cf699f8a34f9cf05cde",
+    "issue-154-reviewed-kill-smoke-20261010/summary.json": "f89a99c9dff74c6cd51e779532897c3320150a2553c98a6ff6052d0c1c383763"
+  }
+}

@@ -188,6 +188,19 @@ class DenseRetriever:
             return self.collection.count() > 0
         return bool(self.collection.get(where=where, limit=1, include=[])["ids"])
 
+    @property
+    def runtime_info(self) -> dict[str, str | None]:
+        """Loaded encoder device/revision without triggering a model load.
+
+        Keep knowledge of SentenceTransformer's model structure here instead
+        of making evaluation runners inspect the retriever's private cache.
+        """
+        if self._model is None:
+            return {"device": None, "revision": None}
+        config = getattr(getattr(self._model[0], "auto_model", None), "config", None)
+        return {"device": str(self._model.device),
+                "revision": getattr(config, "_commit_hash", None)}
+
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         """The passages closest to the query, best first, inside its filters.
 

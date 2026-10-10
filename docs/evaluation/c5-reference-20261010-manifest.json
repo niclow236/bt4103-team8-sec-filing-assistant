@@ -1,0 +1,824 @@
+{
+  "experiment": {
+    "provenance": {
+      "source_commit": "e74872d0398bce41643dec0c781dfba57fbeefdd",
+      "source_files_sha256": {
+        "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "src/app/__init__.py": "5b6e1ae9068a295d803ed50441a6c177f71f53ea855a97af4ca76dce3666e5e4",
+        "src/app/answers.py": "52a45436ca60625a890d8a887430d29868535d6cba08be7d39e086dea5b76f8e",
+        "src/app/app_pages/ask.py": "5fbf8160d95f43e4f96b9e5c019b719b02969c98fbcf05b06e6583fb4d8fbf92",
+        "src/app/app_pages/browse.py": "df9a22b12856a585a02bdfaf5a287d1839d4229e8e46c5602da17d7ad6d7850a",
+        "src/app/components.py": "ee40b0e139729411605a1c4e3d0f56b58ae7644111d5191ad010d8df5d81d733",
+        "src/app/main.py": "0b8d559815dd119bf60b0738d9418dd154383b54a47502f038615b4e76529517",
+        "src/app/state.py": "e6679858b3388c73ac25c3548b5dfd9921473deccabae0487bb94bc9694bab7e",
+        "src/config.py": "5d55b8a71442140d804c1727ce73a15d9e53d4aa40e2651a727deb8e6ec0d755",
+        "src/evaluation/__init__.py": "9833479d30ebf16379eb8d48a3e4f653febdeebb2b585a8d12b9bbd889f2cf40",
+        "src/evaluation/__main__.py": "f2d597c20fabcc353558a57a209fed42e316523c0481c5a47020a0b2b0784492",
+        "src/evaluation/benchmark.py": "2b3473b7d281736c745e38e2b7883a89d54067ee68aac2d03df0ec635a4b0c21",
+        "src/evaluation/chunk_sweep.py": "3bfc20bd72587ca6bded43ea11503dd81fea886c9c709b387b7e46cdc772c2b6",
+        "src/evaluation/cli.py": "e4cc1a6fb330a44cfcb540133124f9bdf6571c5b3b97db09dc9cf13d7fc314b4",
+        "src/evaluation/harness.py": "31de793c55bb49c371137e2af3afdae4316e006a5eb4952e63829a802c0fad30",
+        "src/evaluation/metrics.py": "75e9a4cbb4beab8a3a808a918f34d1fa71019fbdf9b07f65f9d716482aa570d4",
+        "src/evaluation/model_ablation.py": "9f5095b758f83dbf00fdbcc89e1a46356ae8f6c6d743e1ada9cb7cd0c208b197",
+        "src/evaluation/provenance.py": "371a34e56d4d1b565eef3f289c653f420b0f1f1f45e52e2a27b2c9c9f1d259ad",
+        "src/evaluation/quality.py": "942ecdbc3e31c5c3e0746872b632c3af6b8e4326f537bcd49f3b54dfab92c9c0",
+        "src/evaluation/records.py": "6c119ca3d6a0b8ba8a4d6cafe13018b399cbc83cd2d178c5079c26742142abb8",
+        "src/evaluation/rerank_ablation.py": "52cbed2a8945f94e460403cd8af6a71dac78bf029a29e282fb1763334d5eabe1",
+        "src/evaluation/results.py": "facba8e3b23fc70aae3aeab69df0f3bbed81169498b3e6240dca2da5222b3e24",
+        "src/evaluation/run.py": "c3e5cff4a4adbfffc003322c76129ef38d792a0e91e8fa0ee2473f710e7b72c8",
+        "src/pipeline/__init__.py": "ac4c7dee478cda54e11d88f5ee2fecc22bf5a8d45abcd529b88671e4e994c564",
+        "src/pipeline/__main__.py": "0770f5598ecdb9b6d259e9553707309920ec0def32f5a1b9b5c78e973e94eab8",
+        "src/pipeline/chunk.py": "69e6fb26fed074ee27064ea978d693bc6f7306b03e767a54522620dc4499b7e9",
+        "src/pipeline/cli.py": "72cbbd32394037d48bddae3a231a29c243d96fc37a3b7006d3c6d7981c4929e7",
+        "src/pipeline/constants.py": "91964519de864642e54b6ba3d8becc4def5da95c03d4dbfc097001fd6fa852f6",
+        "src/pipeline/download.py": "a2adc7f3a37af4f92e080acc0593f67d6a1b49fb84560cae406ff00ce54b69fe",
+        "src/pipeline/parse.py": "23c54ef816f0e1d0f3423710fc2fafc18e722c410896a7337526d1db6af65a10",
+        "src/pipeline/passages.py": "350f70e29eae1e43c6d111985afa8ed48352a4eb36781fe5688140463572ef7e",
+        "src/pipeline/records.py": "960ed4ec2bc2bdd6ca79c66717f6cd25abadc21eb4746b3a247095c8b50e1db2",
+        "src/pipeline/verify.py": "d7e9c1f1a1f8a83b7781bab05e1e47172312feddcab61bfc2089f62c19ae637c",
+        "src/rag/__init__.py": "c26b91aedecba203e7e57c71159fea327d269651b2f3fbc201d113365fd9d1a7",
+        "src/rag/answer.py": "23a46e7598661a2f5c1d68100f25eef50448daf7ae26ae1aeccf5dc63ce1a061",
+        "src/rag/citations.py": "73441a5f3df1bc54d911ae0367c4b20dbdbb7fc101e1b2d594d29435c55f5e13",
+        "src/rag/constants.py": "ba05c7b59bfaf97abb35a1bded3fb52a2e922f26b072f0eab75a73a3e09962d4",
+        "src/rag/decompose.py": "062b086156bf139f86d3055393edfe38b6c3ce4368842f1334b9dc48bd8e80e7",
+        "src/rag/generate.py": "a219b87e36a60e65a0283f546d6e3f77bb4013e63511b2f880ff466408d0fb63",
+        "src/rag/numeric.py": "db21513bd1fd98db32ed7559999194cfca9c6d19f260e6ab7bd51c82c4dc2efb",
+        "src/rag/prompt.py": "038721536028eecfaa236c30dfc7d9c742e0f3a14f07586e49a8e5f374c43815",
+        "src/rag/query.py": "f04752ab43c46132a46536eae4cf3714020a056c6e4d0d9ade9a45575e3c0487",
+        "src/rag/records.py": "ffd55ae6ef066116e0d0b1aa7daecd39c9f5f79cf0691eddfbf9a3783050b2a4",
+        "src/rag/verify.py": "76405790fb682003d5e76d395a25aecf149d1d90528d79bbcba4ef52eacf9348",
+        "src/retrieval/__init__.py": "723f1ff2a59dd9287e570ad52be7e8ad1a13ac2fa551a2b10e3045a61288efdb",
+        "src/retrieval/__main__.py": "94c1a491fe254401f678d0a8893ea2731203211542dd9aa782b71f073771a0f0",
+        "src/retrieval/base.py": "72ad53630d6d9e1646ca114377e7c4c2818cfc9ba1f03a7b0ef97a1a00444b45",
+        "src/retrieval/bm25.py": "a1e1db0a929e5eba6268c2c8311681932a5db90b4fca35c603501018a88636e2",
+        "src/retrieval/cli.py": "36ca386fee8bc3648ae15db79d732977be2a9f9e11f18558a8bed240d82aba5d",
+        "src/retrieval/constants.py": "a0c1fc57f67a620934ec887a68ee5b3088587b836bc4c9be7f2bc0fd660dd279",
+        "src/retrieval/dense.py": "53c9f65c8335ab5ef3d67d3d7c042e44cfea12540018a831d5f9ac982f29697f",
+        "src/retrieval/embed.py": "68a09a7553ea2d194ddcb99d4dcf6b4de992189f9b47ce1ea83d1367d812ea76",
+        "src/retrieval/embedding_config.py": "2bab8d84b8baba3c6cae8a22e924d442b4325076b75873a318059d3bd71f08b5",
+        "src/retrieval/facts.py": "998b603c26d9ec3cdb4b34acbce6feb957f36c60d628713763885959484e891a",
+        "src/retrieval/hybrid.py": "1c620e45fda598105d35ce9a57771fb5224127538ba04dc49e2b317d8a71bcce",
+        "src/retrieval/records.py": "7d68a9830a9f6410b81503954f227dfc6b2045dacc9f25ddfa639b2847bbcefd",
+        "src/retrieval/rerank.py": "3a3764793777ae2479d0337704d1fafc3f87635dc98bbb8849041a02e011ece3",
+        "src/stack.py": "6ddb9336e22fbcec263f7684e08209404e9dfc4124a3e9cfa66965e1d0fdc740",
+        "src/utils.py": "958ed9c55afde05dea3ae0af5e05a242f2ea2b4ad5286caa56e7905eab84ddb8"
+      },
+      "inputs": [
+        {
+          "path": "benchmark/questions.jsonl",
+          "sha256": "f2ec7dffd442809998e45ba2cddee11a10968ed8f64935c35a968dc4ae4d1264"
+        },
+        {
+          "path": "benchmark/generated.jsonl",
+          "sha256": "63b23a5d81c7e7d0b46f8127b575566c61e23bfebe19c2dc55083efba1541a93"
+        }
+      ],
+      "questions": 12728,
+      "by_source": {
+        "handwritten": 124,
+        "llm_assisted": 25,
+        "xbrl": 12579
+      },
+      "question_records_sha256": "c114d4b9e54afb8e343039e1ed60c56bbbd24c06061f61be353002b554efb1c6",
+      "corpus": {
+        "processed_dir": "data/processed",
+        "fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+        "records_sha256": "aa85811812ecef6ad95f08fc19419f35f5e9875406119fa71ba949338570501c",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "chunk_settings": [
+          [
+            1800,
+            300
+          ]
+        ]
+      },
+      "retrieval_settings": {
+        "EMBED_MODEL": "BAAI/bge-base-en-v1.5",
+        "EMBED_DIMENSIONS": 768,
+        "EMBED_MAX_TOKENS": 512,
+        "EMBED_NORMALIZE": true,
+        "QUERY_PREFIX": "Represent this sentence for searching relevant passages: ",
+        "PASSAGE_PREFIX": "",
+        "CONTEXT_HEADER": "{company} ({ticker}) FY{fiscal_year} {form}, Item {item}: {title}\n\n",
+        "DISTANCE_METRIC": "cosine",
+        "BM25_K1": 1.5,
+        "BM25_B": 0.75,
+        "CANDIDATE_K": 50,
+        "RRF_K": 60,
+        "FUSION_WEIGHTS": {
+          "bm25": 1.0,
+          "dense": 1.0
+        },
+        "FIGURE_FUSION_WEIGHTS": {
+          "bm25": 1.0,
+          "dense": 1.0
+        },
+        "MIN_BM25_SCORE": null,
+        "MIN_DENSE_SCORE": null,
+        "MIN_FUSED_SCORE": null,
+        "TABLE_BOOST": 1.2
+      },
+      "environment": {
+        "python": "3.13.7",
+        "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "packages": {
+          "torch": "2.14.0",
+          "sentence-transformers": "6.0.1",
+          "transformers": "5.17.0",
+          "tokenizers": "0.23.2",
+          "chromadb": "1.5.9",
+          "rank-bm25": "0.2.2",
+          "numpy": "2.5.3"
+        }
+      },
+      "workload_note": "Mac laptop, MPS for both encoders, no other model or evaluation jobs; normal desktop applications open; models warmed before timing"
+    },
+    "reranker": {
+      "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+      "candidate_k": 50,
+      "max_length": 512,
+      "batch_size": 32,
+      "device": "mps",
+      "input": "(Query.text, RetrievedPassage.text); no added header or prompt",
+      "scores": "raw logits; sign-aware Query.table_boost; no score floor",
+      "ties": "chunk_id ascending",
+      "truncation": "tokenizer longest_first, including query and special tokens"
+    },
+    "top_k": 16,
+    "policy": {
+      "primary_sources": [
+        "handwritten",
+        "xbrl"
+      ],
+      "min_ndcg_gain": 0.02,
+      "max_recall_mrr_regression": 0.01,
+      "max_llm_assisted_ndcg_regression": 0.02,
+      "max_type_ndcg_regression": 0.02,
+      "min_type_questions": 10,
+      "max_hard_negative_regression": 0.01,
+      "max_rerank_median_ms": 500,
+      "max_rerank_p95_ms": 1000,
+      "uncertainty": "95% percentile paired bootstrap of connected filing clusters",
+      "bootstrap_samples": 2000,
+      "seed": 154
+    },
+    "query_policy": "C4 evaluation.run._query"
+  },
+  "hardware": {
+    "processor": "Apple M1",
+    "memory_gib": 16,
+    "devices": "MPS for both encoders"
+  },
+  "measurement_manifest_sha256": "06b990d6d08d0028b0a8340d5688db512ff105242818acaa81cdd4f1483ce749",
+  "shareable_manifest_note": "Only the local processed_dir path is normalized; the original manifest SHA-256 is retained.",
+  "diagnostic_source_commit": "941c9316499e9226e053b07084cafad255abef7a",
+  "artifacts_sha256": {
+    "summary.json": "eea6c9b5b339c984a74f8b6355d83bddc8ab5cf65dc4ac4718269731c7a6b18a",
+    "runtime.json": "65f207af68331eae3c1e3a252fe54217c895fd3e7bc0dab117d34f87ba06211f",
+    "config.json": "06b990d6d08d0028b0a8340d5688db512ff105242818acaa81cdd4f1483ce749",
+    "resume-runtime.json": "dbbbb064d360afd76e7a0d8abffabf68304b4a48931f58953e3698bf1d2f38bd",
+    "review-workload-observation.json": "f04654c0e2716a2cfbe432a32be34021c3c9234a87f50f37503a46d2030e5493",
+    "rescored-k16.json": "622a016b19a1698b9f0f2c662f8841f9aa559336467828a57b9fad6bd4b1d2eb",
+    "interruption-recovery.json": "4f096592a043b9880e8711f704e24ca3a303fe8d7122e145739b7e246ae975f8",
+    "pairs.jsonl.gz": "43c8befec5ed2841a72bd4d7398831692001b78776cdea1b38d5ed2b64ab7978"
+  },
+  "runtime_segments": [
+    {
+      "cross_encoder_load_ms": 5854.371333000017,
+      "warmup_ms": 2482.618750014808,
+      "resumed_after_questions": 0,
+      "dense_manifest": {
+        "index_type": "dense",
+        "path": "data/index/chroma",
+        "corpus_fingerprint": "865f2e8d72f0d58b8e0aac54c6be809291e137e4e4b4d59f21462cbba1c6016d",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "built_at": "2026-10-04T13:48:32+00:00",
+        "model": "BAAI/bge-base-en-v1.5",
+        "dimensions": 768,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": 512
+      },
+      "bm25_manifest": {
+        "index_type": "bm25",
+        "path": "data/index/bm25.pkl",
+        "corpus_fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "built_at": "2026-10-04T12:33:02.090051+00:00",
+        "model": "",
+        "dimensions": null,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": null
+      },
+      "cross_encoder_device": "mps:0",
+      "dense_device": "mps:0",
+      "dense_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
+    },
+    {
+      "cross_encoder_load_ms": 5389.901124988683,
+      "warmup_ms": 2901.235249999445,
+      "resumed_after_questions": 1831,
+      "dense_manifest": {
+        "index_type": "dense",
+        "path": "data/index/chroma",
+        "corpus_fingerprint": "865f2e8d72f0d58b8e0aac54c6be809291e137e4e4b4d59f21462cbba1c6016d",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "built_at": "2026-10-04T13:48:32+00:00",
+        "model": "BAAI/bge-base-en-v1.5",
+        "dimensions": 768,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": 512
+      },
+      "bm25_manifest": {
+        "index_type": "bm25",
+        "path": "data/index/bm25.pkl",
+        "corpus_fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+        "n_passages": 28289,
+        "n_filings": 75,
+        "built_at": "2026-10-04T12:33:02.090051+00:00",
+        "model": "",
+        "dimensions": null,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": null
+      },
+      "cross_encoder_device": "mps:0",
+      "dense_device": "mps:0",
+      "dense_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
+    }
+  ],
+  "recovery": {
+    "reason": "chat interruption terminated the original benchmark process; gzip trailer missing",
+    "preserved_complete_pairs": 1831,
+    "discarded_partial_line_bytes": 0,
+    "original_sha256": "643bd55b99055abb11e603a2f91208f06889705c164e710871e09c164a298b11",
+    "repaired_sha256": "d14262b485c9a79c9df6338b5c27b8948be90c0f607ae0a3c5ade064d830f610",
+    "original_backup": "pairs-interrupted-original.jsonl.gz",
+    "benchmark_prefix_validated": true
+  },
+  "workload_observation": {
+    "observed_at_utc": "2026-10-10T13:58:14.472257+00:00",
+    "workload": "Short CPU-only regression, mutation and full unit-test runs from an isolated checkout shared the laptop while the reference benchmark was running. No second GPU model/evaluation job was launched. Normal desktop applications remained open.",
+    "full_suite_tests": 2012,
+    "full_suite_seconds": 107.32,
+    "timing_limitation": "Recorded interactive laptop timing with this overlap; not an isolated hardware throughput measurement. Original manifest and runtime notes remain unchanged.",
+    "full_suite_runs": [
+      {
+        "tests": 2012,
+        "seconds": 107.32
+      },
+      {
+        "tests": 2013,
+        "seconds": 69.22
+      },
+      {
+        "tests": 2021,
+        "seconds": 60.2
+      },
+      {
+        "tests": 2028,
+        "seconds": 74.5
+      }
+    ],
+    "mutation_check_variants_detected": 10
+  },
+  "filings": [
+    {
+      "accession_no": "0000320193-21-000105",
+      "ticker": "AAPL",
+      "company": "Apple Inc.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019321000105/aapl-20210925.htm"
+    },
+    {
+      "accession_no": "0000320193-22-000108",
+      "ticker": "AAPL",
+      "company": "Apple Inc.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019322000108/aapl-20220924.htm"
+    },
+    {
+      "accession_no": "0000320193-23-000106",
+      "ticker": "AAPL",
+      "company": "Apple Inc.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm"
+    },
+    {
+      "accession_no": "0000320193-24-000123",
+      "ticker": "AAPL",
+      "company": "Apple Inc.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000123/aapl-20240928.htm"
+    },
+    {
+      "accession_no": "0000320193-25-000079",
+      "ticker": "AAPL",
+      "company": "Apple Inc.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm"
+    },
+    {
+      "accession_no": "0000796343-22-000032",
+      "ticker": "ADBE",
+      "company": "ADOBE INC.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/796343/000079634322000032/adbe-20211203.htm"
+    },
+    {
+      "accession_no": "0000796343-23-000007",
+      "ticker": "ADBE",
+      "company": "ADOBE INC.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/796343/000079634323000007/adbe-20221202.htm"
+    },
+    {
+      "accession_no": "0000796343-24-000006",
+      "ticker": "ADBE",
+      "company": "ADOBE INC.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/796343/000079634324000006/adbe-20231201.htm"
+    },
+    {
+      "accession_no": "0000796343-25-000004",
+      "ticker": "ADBE",
+      "company": "ADOBE INC.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/796343/000079634325000004/adbe-20241129.htm"
+    },
+    {
+      "accession_no": "0000796343-26-000003",
+      "ticker": "ADBE",
+      "company": "ADOBE INC.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/796343/000079634326000003/adbe-20251128.htm"
+    },
+    {
+      "accession_no": "0001018724-22-000005",
+      "ticker": "AMZN",
+      "company": "AMAZON COM INC",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872422000005/amzn-20211231.htm"
+    },
+    {
+      "accession_no": "0001018724-23-000004",
+      "ticker": "AMZN",
+      "company": "AMAZON COM INC",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872423000004/amzn-20221231.htm"
+    },
+    {
+      "accession_no": "0001018724-24-000008",
+      "ticker": "AMZN",
+      "company": "AMAZON COM INC",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872424000008/amzn-20231231.htm"
+    },
+    {
+      "accession_no": "0001018724-25-000004",
+      "ticker": "AMZN",
+      "company": "AMAZON COM INC",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872425000004/amzn-20241231.htm"
+    },
+    {
+      "accession_no": "0001018724-26-000004",
+      "ticker": "AMZN",
+      "company": "AMAZON COM INC",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/amzn-20251231.htm"
+    },
+    {
+      "accession_no": "0001730168-21-000153",
+      "ticker": "AVGO",
+      "company": "Broadcom Inc.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1730168/000173016821000153/avgo-20211031.htm"
+    },
+    {
+      "accession_no": "0001730168-22-000118",
+      "ticker": "AVGO",
+      "company": "Broadcom Inc.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1730168/000173016822000118/avgo-20221030.htm"
+    },
+    {
+      "accession_no": "0001730168-23-000096",
+      "ticker": "AVGO",
+      "company": "Broadcom Inc.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1730168/000173016823000096/avgo-20231029.htm"
+    },
+    {
+      "accession_no": "0001730168-24-000139",
+      "ticker": "AVGO",
+      "company": "Broadcom Inc.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1730168/000173016824000139/avgo-20241103.htm"
+    },
+    {
+      "accession_no": "0001730168-25-000121",
+      "ticker": "AVGO",
+      "company": "Broadcom Inc.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1730168/000173016825000121/avgo-20251102.htm"
+    },
+    {
+      "accession_no": "0001108524-22-000008",
+      "ticker": "CRM",
+      "company": "Salesforce, Inc.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1108524/000110852422000008/crm-20210131.htm"
+    },
+    {
+      "accession_no": "0001108524-22-000013",
+      "ticker": "CRM",
+      "company": "Salesforce, Inc.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1108524/000110852422000013/crm-20220131.htm"
+    },
+    {
+      "accession_no": "0001108524-23-000011",
+      "ticker": "CRM",
+      "company": "Salesforce, Inc.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1108524/000110852423000011/crm-20230131.htm"
+    },
+    {
+      "accession_no": "0001108524-24-000005",
+      "ticker": "CRM",
+      "company": "Salesforce, Inc.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1108524/000110852424000005/crm-20240131.htm"
+    },
+    {
+      "accession_no": "0001108524-25-000006",
+      "ticker": "CRM",
+      "company": "Salesforce, Inc.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1108524/000110852425000006/crm-20250131.htm"
+    },
+    {
+      "accession_no": "0000858877-21-000013",
+      "ticker": "CSCO",
+      "company": "CISCO SYSTEMS, INC.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/858877/000085887721000013/csco-20210731.htm"
+    },
+    {
+      "accession_no": "0000858877-22-000013",
+      "ticker": "CSCO",
+      "company": "CISCO SYSTEMS, INC.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/858877/000085887722000013/csco-20220730.htm"
+    },
+    {
+      "accession_no": "0000858877-23-000023",
+      "ticker": "CSCO",
+      "company": "CISCO SYSTEMS, INC.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/858877/000085887723000023/csco-20230729.htm"
+    },
+    {
+      "accession_no": "0000858877-24-000017",
+      "ticker": "CSCO",
+      "company": "CISCO SYSTEMS, INC.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/858877/000085887724000017/csco-20240727.htm"
+    },
+    {
+      "accession_no": "0000858877-25-000111",
+      "ticker": "CSCO",
+      "company": "CISCO SYSTEMS, INC.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/858877/000085887725000111/csco-20250726.htm"
+    },
+    {
+      "accession_no": "0001652044-22-000019",
+      "ticker": "GOOGL",
+      "company": "Alphabet Inc.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204422000019/goog-20211231.htm"
+    },
+    {
+      "accession_no": "0001652044-23-000016",
+      "ticker": "GOOGL",
+      "company": "Alphabet Inc.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204423000016/goog-20221231.htm"
+    },
+    {
+      "accession_no": "0001652044-24-000022",
+      "ticker": "GOOGL",
+      "company": "Alphabet Inc.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204424000022/goog-20231231.htm"
+    },
+    {
+      "accession_no": "0001652044-25-000014",
+      "ticker": "GOOGL",
+      "company": "Alphabet Inc.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204425000014/goog-20241231.htm"
+    },
+    {
+      "accession_no": "0001652044-26-000018",
+      "ticker": "GOOGL",
+      "company": "Alphabet Inc.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000018/goog-20251231.htm"
+    },
+    {
+      "accession_no": "0000896878-21-000233",
+      "ticker": "INTU",
+      "company": "INTUIT INC.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/896878/000089687821000233/intu-20210731.htm"
+    },
+    {
+      "accession_no": "0000896878-22-000028",
+      "ticker": "INTU",
+      "company": "INTUIT INC.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/896878/000089687822000028/intu-20220731.htm"
+    },
+    {
+      "accession_no": "0000896878-23-000034",
+      "ticker": "INTU",
+      "company": "INTUIT INC.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/896878/000089687823000034/intu-20230731.htm"
+    },
+    {
+      "accession_no": "0000896878-24-000039",
+      "ticker": "INTU",
+      "company": "INTUIT INC.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/896878/000089687824000039/intu-20240731.htm"
+    },
+    {
+      "accession_no": "0000896878-25-000035",
+      "ticker": "INTU",
+      "company": "INTUIT INC.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/896878/000089687825000035/intu-20250731.htm"
+    },
+    {
+      "accession_no": "0001326801-22-000018",
+      "ticker": "META",
+      "company": "Meta Platforms, Inc.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1326801/000132680122000018/fb-20211231.htm"
+    },
+    {
+      "accession_no": "0001326801-23-000013",
+      "ticker": "META",
+      "company": "Meta Platforms, Inc.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1326801/000132680123000013/meta-20221231.htm"
+    },
+    {
+      "accession_no": "0001326801-24-000012",
+      "ticker": "META",
+      "company": "Meta Platforms, Inc.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1326801/000132680124000012/meta-20231231.htm"
+    },
+    {
+      "accession_no": "0001326801-25-000017",
+      "ticker": "META",
+      "company": "Meta Platforms, Inc.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1326801/000132680125000017/meta-20241231.htm"
+    },
+    {
+      "accession_no": "0001628280-26-003942",
+      "ticker": "META",
+      "company": "Meta Platforms, Inc.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1326801/000162828026003942/meta-20251231.htm"
+    },
+    {
+      "accession_no": "0001564590-21-039151",
+      "ticker": "MSFT",
+      "company": "MICROSOFT CORP",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000156459021039151/msft-10k_20210630.htm"
+    },
+    {
+      "accession_no": "0001564590-22-026876",
+      "ticker": "MSFT",
+      "company": "MICROSOFT CORP",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000156459022026876/msft-10k_20220630.htm"
+    },
+    {
+      "accession_no": "0000950170-23-035122",
+      "ticker": "MSFT",
+      "company": "MICROSOFT CORP",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017023035122/msft-20230630.htm"
+    },
+    {
+      "accession_no": "0000950170-24-087843",
+      "ticker": "MSFT",
+      "company": "MICROSOFT CORP",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017024087843/msft-20240630.htm"
+    },
+    {
+      "accession_no": "0000950170-25-100235",
+      "ticker": "MSFT",
+      "company": "MICROSOFT CORP",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017025100235/msft-20250630.htm"
+    },
+    {
+      "accession_no": "0000723125-21-000065",
+      "ticker": "MU",
+      "company": "MICRON TECHNOLOGY INC",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/723125/000072312521000065/mu-20210902.htm"
+    },
+    {
+      "accession_no": "0000723125-22-000048",
+      "ticker": "MU",
+      "company": "MICRON TECHNOLOGY INC",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/723125/000072312522000048/mu-20220901.htm"
+    },
+    {
+      "accession_no": "0000723125-23-000054",
+      "ticker": "MU",
+      "company": "MICRON TECHNOLOGY INC",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/723125/000072312523000054/mu-20230831.htm"
+    },
+    {
+      "accession_no": "0000723125-24-000027",
+      "ticker": "MU",
+      "company": "MICRON TECHNOLOGY INC",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/723125/000072312524000027/mu-20240829.htm"
+    },
+    {
+      "accession_no": "0000723125-25-000028",
+      "ticker": "MU",
+      "company": "MICRON TECHNOLOGY INC",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/723125/000072312525000028/mu-20250828.htm"
+    },
+    {
+      "accession_no": "0001373715-22-000024",
+      "ticker": "NOW",
+      "company": "ServiceNow, Inc.",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1373715/000137371522000024/now-20211231.htm"
+    },
+    {
+      "accession_no": "0001373715-23-000035",
+      "ticker": "NOW",
+      "company": "ServiceNow, Inc.",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1373715/000137371523000035/now-20221231.htm"
+    },
+    {
+      "accession_no": "0001373715-24-000030",
+      "ticker": "NOW",
+      "company": "ServiceNow, Inc.",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1373715/000137371524000030/now-20231231.htm"
+    },
+    {
+      "accession_no": "0001373715-25-000010",
+      "ticker": "NOW",
+      "company": "ServiceNow, Inc.",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1373715/000137371525000010/now-20241231.htm"
+    },
+    {
+      "accession_no": "0001373715-26-000007",
+      "ticker": "NOW",
+      "company": "ServiceNow, Inc.",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1373715/000137371526000007/now-20251231.htm"
+    },
+    {
+      "accession_no": "0001564590-21-033616",
+      "ticker": "ORCL",
+      "company": "ORACLE CORP",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000156459021033616/orcl-10k_20210531.htm"
+    },
+    {
+      "accession_no": "0001564590-22-023675",
+      "ticker": "ORCL",
+      "company": "ORACLE CORP",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000156459022023675/orcl-10k_20220531.htm"
+    },
+    {
+      "accession_no": "0000950170-23-028914",
+      "ticker": "ORCL",
+      "company": "ORACLE CORP",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000095017023028914/orcl-20230531.htm"
+    },
+    {
+      "accession_no": "0000950170-24-075605",
+      "ticker": "ORCL",
+      "company": "ORACLE CORP",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000095017024075605/orcl-20240531.htm"
+    },
+    {
+      "accession_no": "0000950170-25-087926",
+      "ticker": "ORCL",
+      "company": "ORACLE CORP",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000095017025087926/orcl-20250531.htm"
+    },
+    {
+      "accession_no": "0001327567-21-000029",
+      "ticker": "PANW",
+      "company": "Palo Alto Networks Inc",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/1327567/000132756721000029/panw-20210731.htm"
+    },
+    {
+      "accession_no": "0001327567-22-000028",
+      "ticker": "PANW",
+      "company": "Palo Alto Networks Inc",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/1327567/000132756722000028/panw-20220731.htm"
+    },
+    {
+      "accession_no": "0001327567-23-000024",
+      "ticker": "PANW",
+      "company": "Palo Alto Networks Inc",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/1327567/000132756723000024/panw-20230731.htm"
+    },
+    {
+      "accession_no": "0001327567-24-000029",
+      "ticker": "PANW",
+      "company": "Palo Alto Networks Inc",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/1327567/000132756724000029/panw-20240731.htm"
+    },
+    {
+      "accession_no": "0001327567-25-000027",
+      "ticker": "PANW",
+      "company": "Palo Alto Networks Inc",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/1327567/000132756725000027/panw-20250731.htm"
+    },
+    {
+      "accession_no": "0000097476-22-000009",
+      "ticker": "TXN",
+      "company": "TEXAS INSTRUMENTS INC",
+      "fiscal_year": 2021,
+      "url": "https://www.sec.gov/Archives/edgar/data/97476/000009747622000009/txn-20211231.htm"
+    },
+    {
+      "accession_no": "0000097476-23-000007",
+      "ticker": "TXN",
+      "company": "TEXAS INSTRUMENTS INC",
+      "fiscal_year": 2022,
+      "url": "https://www.sec.gov/Archives/edgar/data/97476/000009747623000007/txn-20221231.htm"
+    },
+    {
+      "accession_no": "0000097476-24-000007",
+      "ticker": "TXN",
+      "company": "TEXAS INSTRUMENTS INC",
+      "fiscal_year": 2023,
+      "url": "https://www.sec.gov/Archives/edgar/data/97476/000009747624000007/txn-20231231.htm"
+    },
+    {
+      "accession_no": "0000097476-25-000007",
+      "ticker": "TXN",
+      "company": "TEXAS INSTRUMENTS INC",
+      "fiscal_year": 2024,
+      "url": "https://www.sec.gov/Archives/edgar/data/97476/000009747625000007/txn-20241231.htm"
+    },
+    {
+      "accession_no": "0000097476-26-000059",
+      "ticker": "TXN",
+      "company": "TEXAS INSTRUMENTS INC",
+      "fiscal_year": 2025,
+      "url": "https://www.sec.gov/Archives/edgar/data/97476/000009747626000059/txn-20251231.htm"
+    }
+  ]
+}
