@@ -319,7 +319,11 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
     while start < len(header):
         stop = start + 1
         if header[start]:
-            while stop < len(header) and header[stop] == header[start]:
+            # Some filers repeat the header across the span and others leave
+            # the rest of it blank ("2021" over the "$", nothing over the
+            # amount). Both are one span. The label column is left alone.
+            while stop < len(header) and (header[stop] == header[start]
+                                          or (start and not header[stop])):
                 stop += 1
         groups.extend(_split_values(rows, start, stop))
         start = stop
