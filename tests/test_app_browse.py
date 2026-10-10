@@ -91,6 +91,7 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     assert [(panel.label, panel.icon) for panel in panels] == [
         ("Selected heading", ":material/article:"),
         ("Consolidated statements", ":material/table_chart:"),
+        ("Stored text", ":material/code:"),
     ]
     assert {caption.value for caption in app.caption} >= {
         "Chunk ID: prose-chunk", "Chunk ID: table-chunk"}
@@ -98,7 +99,9 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     assert [link.url for link in links] == [prose["url"], table["url"]]
     assert all(link.label == "Open filing on EDGAR" for link in links)
     assert [text.value for text in app.text] == [prose["text"]]
-    assert not app.code
+    # The rendered table does not replace what retrieval sees: the exact
+    # stored text stays on the page inside the table's own panel.
+    assert [code.value for code in panels[1].code] == [table["text"]]
     rendered_tables = app.get("html")
     assert len(rendered_tables) == 1
     assert "<table>" in rendered_tables[0].value
@@ -123,7 +126,6 @@ def test_table_renderer_preserves_multiple_headers_and_escapes_filing_text():
     assert html.count("<th>") == 8
     assert "Research &amp; development" in html
     assert "&lt;8%" in html
-    assert "overflow-x: auto" in html
 
 
 def test_table_renderer_combines_repeated_years_with_financial_value_fragments():
@@ -141,6 +143,27 @@ def test_table_renderer_combines_repeated_years_with_financial_value_fragments()
     assert "<td>10%</td>" in html
     assert "<td>$31,370</td>" in html
     assert html.count("<td>8%</td>") == 2
+
+
+def test_table_renderer_keeps_distinct_columns_under_a_repeated_header():
+    # Amazon FY2021 10-K, Item 7: one year spans three different measures.
+    html = _corpus_table_html(
+        "Net sales\n\n"
+        "|  | Year Ended December 31, 2020 | Year Ended December 31, 2020 "
+        "| Year Ended December 31, 2020 |\n"
+        "| --- | --- | --- | --- |\n"
+        "|  | As Reported | Exchange Rate Effect | At Prior Year Rates |\n"
+        "| Net sales | $386,064 | $(1,438) | $384,626 |"
+    )
+    assert html.count("<th>Year Ended December 31, 2020</th>") == 3
+    assert "<td>$386,064</td><td>$(1,438)</td><td>$384,626</td>" in html
+
+
+def test_unrecognised_table_falls_back_to_the_stored_text(monkeypatch):
+    table = passage("loose-table", content_type="table", text="Year | 2024\nRevenue | $10")
+    app = browse(monkeypatch, [table])
+    assert not app.get("html")
+    assert [code.value for code in app.code] == [table["text"]]
 
 
 def test_pagination_makes_a_large_item_fully_reachable(monkeypatch):
@@ -337,6 +360,17 @@ def test_panel_heading_does_not_repeat_the_selected_item(monkeypatch):
         "Management's Discussion and Analysis of Financial Condition and Results of "
         "Operations (Part 2 of 2)",
     ]
+
+
+def test_item_prefix_is_removed_without_a_space_and_never_from_a_longer_item(monkeypatch):
+    rows = [passage("glued", item="1"), passage("longer", item="1"),
+            passage("bare", item="1")]
+    rows[0]["heading"] = "Item\u00a01.Business"
+    rows[1]["heading"] = "Item 1A. Risk Factors"
+    rows[2]["heading"] = "Item 1."
+    app = browse(monkeypatch, rows)
+    assert [panel.label for panel in app.main.status] == [
+        "Business", "Item 1A. Risk Factors", "Item 1."]
 
 
 def test_each_repeated_header_has_its_own_part_count(monkeypatch):

@@ -199,7 +199,7 @@ def _passage_heading(row: Mapping[str, Any]) -> str:
     item = str(row.get("item") or "").strip()
     if item:
         without_item = re.sub(
-            rf"^\s*Item\s+{re.escape(item)}\.?\s+", "", heading,
+            rf"^\s*Item\s+{re.escape(item)}(?![0-9A-Za-z])\.?\s*", "", heading,
             count=1, flags=re.IGNORECASE,
         )
         if without_item:
@@ -248,6 +248,14 @@ def _table_cells(line: str) -> list[str]:
     return [cell.strip() for cell in stripped.split("|")]
 
 
+_VALUE_FRAGMENTS = {"$", "£", "€", "%", "(", ")", "[", "]", ","}
+
+
+def _is_one_split_value(cells: Sequence[str]) -> bool:
+    """Whether a span's cells are one value split into sign, amount and spacer."""
+    return sum(1 for cell in cells if cell and cell not in _VALUE_FRAGMENTS) <= 1
+
+
 def _joined_financial_cell(cells: Sequence[str]) -> str:
     """Join pieces that the SEC table extractor split across a column span."""
     value = ""
@@ -270,6 +278,11 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
     header in its rectangular representation. Showing all three columns makes
     the browser table technically faithful but visually misleading, so restore
     the span as one useful value column.
+
+    A repeated header can also span several real columns, such as a year over
+    "As Reported", "Exchange Rate Effect" and "At Prior Year Rates". A span is
+    collapsed only when no row holds more than one value inside it, so distinct
+    figures are never joined into one cell.
     """
     groups: list[tuple[int, int]] = []
     start = 0
@@ -278,7 +291,10 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
         if header[start]:
             while stop < len(header) and header[stop] == header[start]:
                 stop += 1
-        groups.append((start, stop))
+        if all(_is_one_split_value(row[start:stop]) for row in rows):
+            groups.append((start, stop))
+        else:
+            groups.extend((column, column + 1) for column in range(start, stop))
         start = stop
 
     if all(stop - start == 1 for start, stop in groups):
@@ -291,13 +307,15 @@ def _collapse_repeated_columns(header: list[str], rows: list[list[str]]) -> tupl
     return collapsed_header, collapsed_rows
 
 
-def _corpus_table_html(text: str) -> str:
+def _corpus_table_html(text: str, *, base: str = "#ffffff") -> str:
     """Render a stored pipe table as an accessible, horizontally scrolling grid.
 
     The parser preserves multiple header rows. SEC tables often use one row for
     years and another for subheadings before the Markdown separator, so treating
     only the last one as a header makes wide financial tables harder to read.
-    Every value is escaped before it is put in the HTML.
+    Every value is escaped before it is put in the HTML. ``base`` is the
+    page's background colour, which the sticky first column needs to be
+    opaque; Streamlit exposes no CSS variable for it.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     first_row = next((index for index, line in enumerate(lines)
@@ -369,12 +387,9 @@ def _corpus_table_html(text: str) -> str:
   white-space: nowrap;
 }}
 .sec-corpus-table thead th {{
-  position: sticky;
-  top: 0;
-  z-index: 2;
   max-width: 18rem;
   white-space: normal;
-  background: var(--secondary-background-color, #f4f6f8);
+  background: color-mix(in srgb, currentColor 8%, transparent);
   font-weight: 600;
 }}
 .sec-corpus-table th:first-child,
@@ -385,20 +400,24 @@ def _corpus_table_html(text: str) -> str:
   max-width: 24rem;
   text-align: left;
   white-space: normal;
-  background: var(--background-color, white);
+  /* A sticky cell must be opaque or the columns scroll visibly beneath it. */
+  background: var(--sec-table-base);
 }}
 .sec-corpus-table thead th:first-child {{
-  z-index: 3;
-  background: var(--secondary-background-color, #f4f6f8);
+  background: linear-gradient(color-mix(in srgb, currentColor 8%, transparent),
+                              color-mix(in srgb, currentColor 8%, transparent)),
+              var(--sec-table-base);
 }}
 .sec-corpus-table tbody tr:nth-child(even) td {{
   background: color-mix(in srgb, currentColor 4%, transparent);
 }}
 .sec-corpus-table tbody tr:nth-child(even) td:first-child {{
-  background: var(--secondary-background-color, #f4f6f8);
+  background: linear-gradient(color-mix(in srgb, currentColor 4%, transparent),
+                              color-mix(in srgb, currentColor 4%, transparent)),
+              var(--sec-table-base);
 }}
 </style>
-<div class="sec-corpus-table" role="region" aria-label="{escape(caption or 'Filing table', quote=True)}" tabindex="0">
+<div class="sec-corpus-table" style="--sec-table-base: {base}" role="region" aria-label="{escape(caption or 'Filing table', quote=True)}" tabindex="0">
   <table>{caption_html}<thead>{head_html}</thead><tbody>{body_html}</tbody></table>
 </div>
 """.strip()
@@ -432,9 +451,14 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
             # Financial tables are wider than the page. Keep their columns
             # aligned in a real table and scroll sideways instead of wrapping
             # pipe-delimited rows into an unreadable code block.
-            table_html = _corpus_table_html(text)
+            dark = getattr(st.context.theme, "type", None) == "dark"
+            table_html = _corpus_table_html(text, base="#0e1117" if dark else "#ffffff")
             if table_html:
                 st.html(table_html)
+                # Browse shows what retrieval sees, so the exact stored text
+                # stays one click away from the rendered table.
+                with st.expander("Stored text", icon=":material/code:"):
+                    st.code(text, language=None, wrap_lines=False)
             else:
                 # Defensive fallback for a future table format the renderer
                 # does not recognise; never hide the stored source text.
