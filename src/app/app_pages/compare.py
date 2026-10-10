@@ -1,0 +1,95 @@
+"""One question through two registered configurations, side by side (#39)."""
+
+import streamlit as st
+
+from src.app import state
+from src.app.components import (
+    answer_card, answer_summary, comparison_evidence, comparison_overlap, configuration_picker,
+    filter_sidebar, provider_message, provider_picker, resolved_filters,
+)
+from src.rag.generate import ProviderUnavailable
+from src.rag.query import parse_question
+from src.rag.verify import verify_answer
+from src.stack import SELECTABLE, STACKS
+
+
+st.title("Compare configurations")
+st.caption("Ask one question using two configurations with the same answer model. "
+           "Shared passages appear on both sides; unique passages are labelled Only left or Only right.")
+with st.container(horizontal=True, vertical_alignment="bottom"):
+    question = st.text_input("Question", key="compare:question",
+                             placeholder="What risks does Apple describe in FY2024?").strip()
+    asked = st.button("Compare", type="primary", icon=":material/compare_arrows:")
+
+parsed = parse_question(question) if question else None
+query = filter_sidebar(question, parsed=parsed, key="compare:filters")
+available = state.answer_models()
+provider = provider_picker(available, key="compare:provider")
+runs = dict(state.measured())
+left_id = configuration_picker(runs, key="compare:left", label="Left configuration",
+                               default=SELECTABLE[0])
+right_id = configuration_picker(runs, key="compare:right", label="Right configuration")
+requests = (state.Request.of(query, left_id, provider), state.Request.of(query, right_id, provider))
+configs = (STACKS[left_id], STACKS[right_id])
+# Compute each effective scope and heading once for both the settings and results.
+queries = tuple(config.scoped(query) for config in configs)
+scoped = tuple(parsed.scoped_to(selected) if parsed is not None else None for selected in queries)
+headings = tuple(f"{config.id} — {config.name}" for config in configs)
+
+if left_id == right_id:
+    st.info("Choose two different configurations to compare their behavior.")
+elif asked and not question:
+    st.caption("Type a question first.")
+
+if question:
+    for column, config, selected, reading, heading in zip(st.columns(2), configs, queries, scoped, headings):
+        with column:
+            st.subheader(heading, anchor=False)
+            resolved_filters(selected, reading)
+            if not config.metadata_filter:
+                st.caption("This configuration searches all filings; company/year filters are not applied.")
+
+if asked and question and left_id != right_id:
+    results = []
+    for config, reading in zip(configs, scoped):
+        completed, error = None, None
+        with state.Stopwatch() as watch:
+            try:
+                with st.spinner(f"Running {config.id}…"):
+                    completed = state.load_stack(config.id, provider).answer(
+                        question, query=query, parsed=parsed)
+                    completed = verify_answer(completed, parsed=reading)
+            except ProviderUnavailable as failure:
+                completed = None
+                error = provider_message(failure, provider, available)
+            # A broken encoder, mixed index or malformed BM25 pickle must
+            # not take down the other side. Streamlit control-flow exceptions
+            # inherit BaseException and are deliberately not caught here.
+            except (OSError, ValueError, RuntimeError, KeyError) as failure:
+                completed = None
+                error = str(failure)
+        results.append(state.ComparisonSide(completed, watch.seconds, error))
+    state.keep_comparison(requests, tuple(results))
+
+shown = state.kept_comparison(requests) if question and left_id != right_id else None
+if shown is not None:
+    left, right = (result.answer for result in shown)
+    if left is not None and right is not None:
+        shared, only_left, only_right = comparison_overlap(left, right)
+        st.caption(f"{shared} shared passages · {only_left} only left · {only_right} only right")
+    st.caption("Timings include loading, answering and verification for each side. "
+               "Configurations run in order and can share warmed indexes or cached answers.")
+    for column, config, heading, result, other, side in zip(
+        st.columns(2), configs, headings, shown, (right, left), ("left", "right")
+    ):
+        with column:
+            st.subheader(heading, anchor=False)
+            if result.error is not None:
+                st.error(result.error)
+                st.caption(f"Request stopped after {result.seconds:.2f}s")
+            else:
+                answer_summary(result.answer, config, result.seconds)
+                answer_card(result.answer, key=f"compare:{side}:answer", show_question=False)
+                comparison_evidence(result.answer, other, side=side)
+elif question and left_id != right_id:
+    st.info("Select Compare to run both configurations for the current question and settings.")

@@ -1831,6 +1831,23 @@ differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 
+The Compare page runs one question through two configurations from the shared
+evaluation registry, using the same selected answer model. Each side shows its
+effective filters, cited answer, elapsed time and retrieved passages. Passage
+overlap is determined by chunk ID: Shared means both configurations retrieved
+the passage, while Only left and Only right mark differences. Full passage
+text is available below the tables. C0 is excluded because its fixed-size
+baseline cannot be built by the interactive stack.
+
+Both configurations run in order and use the existing stack cache. Timings
+include loading and verification and can benefit from warmed indexes or cached
+answers, so they are demo timings rather than a controlled speed benchmark.
+Changing either configuration, the question, filters or provider hides the
+saved pair; it shows again without a new run only once every setting is back
+to what it was compared with. If one side fails, the other still shows its
+answer, with passage overlap labelled Not compared (#39). Provider failures
+retain the same settings-repair advice as Ask, including on later reruns.
+
 The app's Ask page reads the processed filings and indexes on this machine,
 searches them, sends retrieved passages to the configured answer model,
 verifies the result, and shows citations to those filings. Its Browse page

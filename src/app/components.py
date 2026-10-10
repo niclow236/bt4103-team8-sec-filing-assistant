@@ -752,7 +752,8 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
 
-def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration") -> str:
+def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
+                         label: str = "Configuration", default: str = DEFAULT_STACK) -> str:
     """Pick one of the configurations ``src/stack.py`` can build, in the sidebar.
 
     In the registry's order, each labelled with the run that measured it
@@ -761,8 +762,8 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration")
     """
     with st.sidebar:
         config_id = st.selectbox(
-            "Configuration", SELECTABLE,
-            index=SELECTABLE.index(DEFAULT_STACK),
+            label, SELECTABLE,
+            index=SELECTABLE.index(default),
             format_func=lambda option: runs.get(option, f"{option} — {STACKS[option].name}"),
             help="Named in src/stack.py and built the same way the evaluation "
                  "command builds it. A row measured under results/ is labelled "
@@ -842,8 +843,8 @@ def _fix_in_app(provider: str, available: AnswerModels) -> str:
             f"then restart the app{instead}.")
 
 
-def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
-    """Say why the provider picked could not answer an Ask.
+def provider_message(error: ProviderUnavailable, provider: str, available: AnswerModels) -> str:
+    """Explain a provider failure with app-specific advice, as plain data.
 
     ``available`` is what :func:`provider_picker` was given. What the provider
     lacks, without the advice to restart a notebook or a command that the
@@ -856,7 +857,12 @@ def provider_error(error: ProviderUnavailable, provider: str, available: AnswerM
     shown = error.reason
     if error.reason != str(error) and provider not in available.unready:
         shown += f". {_fix_in_app(provider, available)}"
-    st.error(shown, icon=":material/error:")
+    return shown
+
+
+def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
+    """Draw the shared provider failure explanation on an answer page."""
+    st.error(provider_message(error, provider, available), icon=":material/error:")
 
 
 def _writer(answer: Answer) -> Literal["facts", "model"] | None:
@@ -922,6 +928,44 @@ def trace_rows(answer: Answer) -> list[dict[str, object]]:
         "Filing": passage.url if _safe_url(passage.url) else None,
         "Chunk": passage.chunk_id,
     } for number, passage in enumerate(answer.passages, 1)]
+
+
+def _passage_ids(answer: Answer | None) -> set[str]:
+    """Distinct chunk identities, regardless of rank, score or passage text."""
+    return {passage.chunk_id for passage in answer.passages} if answer is not None else set()
+
+
+def comparison_overlap(left: Answer, right: Answer) -> tuple[int, int, int]:
+    """Counts of shared, left-only and right-only passages by chunk identity."""
+    left_ids, right_ids = _passage_ids(left), _passage_ids(right)
+    return len(left_ids & right_ids), len(left_ids - right_ids), len(right_ids - left_ids)
+
+
+def comparison_rows(answer: Answer, other: Answer | None,
+                    side: Literal["left", "right"]) -> list[dict[str, object]]:
+    """Mark overlap by chunk identity, preserving each answer's citation order."""
+    other_ids = _passage_ids(other)
+    return [{"Presence": ("Not compared" if other is None else
+                           "Shared" if row["Chunk"] in other_ids else f"Only {side}"), **row}
+            for row in trace_rows(answer)]
+
+
+def comparison_evidence(answer: Answer, other: Answer | None, *,
+                        side: Literal["left", "right"]) -> None:
+    """Show one side's passages, marked Shared or Only ``side`` against ``other``."""
+    st.subheader("Retrieved passages", anchor=False)
+    rows = comparison_rows(answer, other, side)
+    if not rows:
+        st.caption("No passages were retrieved for this answer.")
+        return
+    st.dataframe(rows, width="stretch", hide_index=True,
+                 column_config={"Filing": st.column_config.LinkColumn(display_text="Open filing"),
+                                "Score": st.column_config.NumberColumn(format="%.4f"),
+                                "Fiscal year": st.column_config.NumberColumn(format="%d")})
+    for row in rows:
+        with st.expander(f"{row['Presence']} · {row['Source']} · {row['Company']} · "
+                         f"FY{row['Fiscal year']} · Item {row['Item']}"):
+            st.text(str(row["Passage"]))
 
 
 def _plural(count: int, noun: str) -> str:
@@ -1115,9 +1159,9 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
+    "comparison_evidence", "comparison_overlap", "comparison_rows",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
-    "CorpusSelection", "filter_sidebar", "passage_labels", "provider_picker",
+    "CorpusSelection", "filter_sidebar", "passage_labels", "provider_error", "provider_message",
+    "provider_picker",
     "resolved_filters", "retrieval_trace", "select_corpus_passages", "trace_rows",
-    "CorpusSelection", "filter_sidebar", "provider_error", "provider_picker", "resolved_filters",
-    "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]
