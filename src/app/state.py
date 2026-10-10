@@ -145,7 +145,6 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
                     *RESULT_METRICS, "abstention_rate", "median_latency_ms", "llm_questions")},
                 "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
                                       if rows else summary.get("by_benchmark") or {}),
-                "question_rows": rows,
             })
         if configurations:
             runs.append({"run_id": str(manifest.get("run_id") or run_dir.name),

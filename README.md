@@ -142,7 +142,8 @@ bt4103-team8-sec-filing-assistant/
 │       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
 │       ├── app_pages/       #   one script per page
 │       │   ├── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
-│       │   └── browse.py    #     Browse: company/year/Item passage explorer
+│       │   ├── browse.py    #     Browse: company/year/Item passage explorer
+│       │   └── results.py   #     Results: saved benchmark metrics and ablation tables
 │       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
 │       ├── components.py    #   what pages draw: answers, filters, trace, corpus passages
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
@@ -156,7 +157,7 @@ bt4103-team8-sec-filing-assistant/
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
-│   ├── questions.jsonl      #   hand-written questions (none written yet)
+│   ├── questions.jsonl      #   team benchmark: handwritten and llm_assisted questions
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 ├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
@@ -1831,6 +1832,18 @@ differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 
+The Results page reads saved evaluation summaries and per-question files from
+`results/<run-id>/` (`questions.jsonl` or model-ablation `report.json`). It does
+not rerun retrieval, evaluation or model generation. Scores are computed from
+each benchmark's own saved rows: XBRL source, mechanical difficulty or an
+`xbrl-` question ID puts a row in Mechanical XBRL; all other rows belong to the
+Team benchmark, including handwritten and `llm_assisted` questions. Historical
+saved group summaries are used only when per-question rows are unavailable.
+If neither is available, a warning explains why whole-run scores cannot be
+split and are hidden. Reload saved results discovers new or updated runs.
+The cache keeps aggregate scores rather than full question rows, and the chart
+shows retrieval metrics as separate bars rather than adding their scores.
+
 The app's Ask page reads the processed filings and indexes on this machine,
 searches them, sends retrieved passages to the configured answer model,
 verifies the result, and shows citations to those filings. Its Browse page
@@ -1927,8 +1940,8 @@ what the first one does:
 |---|---|
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
-| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
+| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack`, `measured` and `result_runs` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, Results' `render_results` and `result_chart_rows`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in

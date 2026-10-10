@@ -52,14 +52,18 @@ _ITEM_MENTION = re.compile(
 )
 
 
+_RESULT_METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
+                         "hard_negative_accuracy": "Hard Negative Accuracy"}
+
+
 def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
     rows = []
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
         rows.append({"Configuration": item["config_id"], "Name": item["name"],
                      "Questions": saved.get("questions", item["questions"]),
-                     **{metric.replace("_", " ").title(): saved.get(metric)
-                        for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy")}})
+                     **{label: saved.get(metric)
+                        for metric, label in _RESULT_METRIC_LABELS.items()}})
     return pd.DataFrame(rows).dropna(axis=1, how="all")
 
 
@@ -88,7 +92,7 @@ def _render_results_benchmark(title: str, configurations: list[dict[str, Any]],
     if chart_rows:
         chart = pd.DataFrame(chart_rows).pivot(index="Configuration", columns="Metric",
                                                 values="Value")
-        st.bar_chart(chart)
+        st.bar_chart(chart, stack=False)
 
 
 def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
@@ -96,11 +100,11 @@ def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> l
     rows = []
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
-        for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy"):
+        for metric, label in _RESULT_METRIC_LABELS.items():
             value = saved.get(metric)
             if value is not None:
                 rows.append({"Configuration": item["config_id"],
-                             "Metric": metric.replace("_", " ").title(),
+                             "Metric": label,
                              "Value": float(value)})
     return rows
 
@@ -117,15 +121,23 @@ def render_results(runs: list[dict[str, Any]]) -> None:
         return
     run_id = st.selectbox("Run", [run["run_id"] for run in runs])
     selected = next(run for run in runs if run["run_id"] == run_id)
+    unsplit = [item["config_id"] for item in selected["configurations"]
+               if not item["benchmark_metrics"]]
+    if unsplit:
+        st.warning(
+            f"{len(unsplit)} of this run's {len(selected['configurations'])} configurations "
+            "have a summary but no usable per-question results on this machine "
+            f"(results/{run_id}/<configuration>/questions.jsonl or report.json), so their "
+            "scores cannot be split by benchmark and are not shown: " + ", ".join(unsplit))
     retrieval = [item for item in selected["configurations"]
                  if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
-                            for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy"))
+                            for metric in _RESULT_METRIC_LABELS)
                         for kind in ("handwritten", "mechanical"))]
     manual = [item for item in retrieval if "handwritten" in item["benchmark_metrics"]]
     mechanical = [item for item in retrieval if "mechanical" in item["benchmark_metrics"]]
-    tab_manual, tab_mechanical = st.tabs(["Hand-written benchmark", "Mechanical XBRL benchmark"])
+    tab_manual, tab_mechanical = st.tabs(["Team benchmark", "Mechanical XBRL benchmark"])
     with tab_manual:
-        _render_results_benchmark("Hand-written benchmark", manual, "handwritten")
+        _render_results_benchmark("Team benchmark", manual, "handwritten")
         table = _results_model_table(selected["configurations"], "handwritten")
         if not table.empty:
             st.subheader("Answer-model ablation")
