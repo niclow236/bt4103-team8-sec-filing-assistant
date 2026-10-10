@@ -176,6 +176,21 @@ def test_table_renderer_joins_a_percent_split_with_its_closing_bracket():
     assert "<td>-2%)</td>" in html
 
 
+def test_table_renderer_joins_a_value_split_under_a_blank_header():
+    # Apple FY2021 10-K, Item 8 (0000320193-21-000105_part_ii_item_8_t002_00):
+    # the year sits over the "$" and the amount is under a blank header.
+    html = _corpus_table_html(
+        "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME\n\n"
+        "| Years ended | September 25, 2021 |  | September 26, 2020 |  |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| Net income | $ | 94,680 | $ | 57,411 |\n"
+        "| Other comprehensive income |  | 569 |  | 42 |"
+    )
+    assert html.count("<th>") == 3
+    assert "<td>$94,680</td><td>$57,411</td>" in html
+    assert "<td>569</td><td>42</td>" in html
+
+
 def test_sticky_column_colours_follow_the_viewers_theme(monkeypatch):
     table = passage("themed", content_type="table",
                     text="Label\n\n| Year | 2024 |\n| --- | --- |\n| Revenue | $10 |")
