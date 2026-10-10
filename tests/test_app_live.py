@@ -292,8 +292,11 @@ def _badges(ui):
 
 def _summary(ui):
     """The badges of the row above an answer. AppTest lists a badge as markdown."""
-    return [text.value for text in ui.main.markdown if text.value.startswith(":")
-            and "Searching" not in text.value]
+    # Scope to the answer slot: evidence now has its own passage-type badges.
+    for child in ui.main.children.values():
+        if any(heading.value == "Answer" for heading in getattr(child, "subheader", ())):
+            return [text.value for text in child.markdown if text.value.startswith(":")]
+    return []
 
 
 def test_ask_page_shows_the_filters_a_question_resolved_to_before_it_is_asked(monkeypatch):

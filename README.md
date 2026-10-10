@@ -1834,7 +1834,7 @@ differently, so the tables above stand as they are.
 The app's Ask page reads the processed filings and indexes on this machine,
 searches them, sends retrieved passages to the configured answer model,
 verifies the result, and shows citations to those filings. Its Browse page
-reads the processed passages directly, without an index or model:
+reads the processed passages directly, without an index or model.
 
 On Ask, the resolved company and year filters appear before the search.
 Retrieved evidence appears as soon as it is ready, while answer text streams
@@ -1843,6 +1843,13 @@ model fails, the draft is removed and the retrieved evidence stays visible.
 Repeated questions show cached evidence and answers without repeating the
 search. Time to evidence depends on index loading, retrieval and reranking;
 the page does not promise a fixed one-second search (#42).
+
+The answer slot names the current stage (searching, then writing). Refused or
+empty searches draw no evidence panel; the answer explains why it abstained.
+Evidence panels start collapsed and reuse Browse's table and safe-link
+rendering. Provider and index errors stay above the evidence.
+
+Start it with:
 
 ```bash
 streamlit run src/app/main.py

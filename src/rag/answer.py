@@ -31,6 +31,17 @@ REFUSALS: dict[UnanswerableBecause, AbstentionReason] = {
 }
 
 
+def _delivered(answer: Answer,
+               on_retrieved: Callable[[tuple[RetrievedPassage, ...]], None] | None,
+               on_token: Callable[[str], None] | None) -> Answer:
+    """Deliver a model-free answer to callbacks: evidence first, then text."""
+    if on_retrieved is not None:
+        on_retrieved(answer.passages)
+    if on_token is not None:
+        on_token(answer.text)
+    return answer
+
+
 def answer_question(
     question: str,
     retriever: Retriever,
@@ -136,11 +147,7 @@ def answer_question(
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(), passages=(),
                         abstained=True, config=config, latency_ms=0.0,
                         abstention_reason=refusal)
-        if on_retrieved is not None:
-            on_retrieved(())
-        if on_token is not None:
-            on_token(answer.text)
-        return answer
+        return _delivered(answer, on_retrieved, on_token)
 
     # The Query's filters rather than the parse's, so a caller that narrowed the
     # search by hand gets the figure for the company and year it asked about.
@@ -152,11 +159,7 @@ def answer_question(
             facts_file=facts_file, min_score=min_score,
         )
         if looked_up is not None:
-            if on_retrieved is not None:
-                on_retrieved(looked_up.passages)
-            if on_token is not None:
-                on_token(looked_up.text)
-            return looked_up
+            return _delivered(looked_up, on_retrieved, on_token)
 
     decomposition = search_decomposed(query, retriever) if use_decomposition else None
     found = list(decomposition.passages) if decomposition is not None else retriever.search(query)
@@ -182,11 +185,7 @@ def answer_question(
         answer = Answer(question=question, text=ABSTAIN_PHRASE, citations=(),
                         passages=(), abstained=True, config=config, latency_ms=0.0,
                         abstention_reason=reason, sub_questions=sub_questions)
-        if on_retrieved is not None:
-            on_retrieved(())
-        if on_token is not None:
-            on_token(answer.text)
-        return answer
+        return _delivered(answer, on_retrieved, on_token)
 
     prompt = build_prompt(question, passages)
     if on_retrieved is not None:

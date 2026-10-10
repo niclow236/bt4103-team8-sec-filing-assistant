@@ -5,6 +5,8 @@ what is asked and in what order the page is drawn; it loads through
 ``src.app.state`` and draws with ``src.app.components``.
 """
 
+from collections.abc import Sequence
+
 import streamlit as st
 
 from src.app import state
@@ -22,6 +24,7 @@ from src.app.components import (
 from src.rag.generate import ProviderUnavailable
 from src.rag.query import parse_question
 from src.rag.verify import verify_answer
+from src.retrieval.records import RetrievedPassage
 from src.stack import STACKS
 
 PAGE = "ask"
@@ -61,7 +64,8 @@ if question:
 elif asked:
     st.caption("Type a question first.")
 
-answer_space, evidence_space = st.empty(), st.empty()
+answer_space, error_space, evidence_space = st.empty(), st.empty(), st.empty()
+# Mutable flag so the callback can mark evidence as handled on this rerun.
 evidence_shown = []
 
 if asked and question:
@@ -70,29 +74,33 @@ if asked and question:
     with answer_space.container():
         st.subheader("Answer", anchor=False)
         draft = st.empty()
+    draft.caption("Searching filings…")
     written = []
 
-    def show_evidence(passages) -> None:
+    def show_evidence(passages: Sequence[RetrievedPassage]) -> None:
         with evidence_space.container():
             retrieved_evidence(passages)
         evidence_shown.append(True)
+        if not written:
+            draft.caption("Writing the answer…")
 
     def show(token: str) -> None:
         written.append(token)
         draft.text("".join(written))
 
     try:
-        with st.spinner("Searching filings and generating an answer…"), state.Stopwatch() as watch:
+        with state.Stopwatch() as watch:
             answer = state.load_stack(config_id, provider).answer(
                 question, query=query, parsed=parsed, on_token=show,
                 on_retrieved=show_evidence)
             answer = verify_answer(answer, parsed=scoped)
     except ProviderUnavailable as error:
-        provider_error(error, provider, available)
+        with error_space.container():
+            provider_error(error, provider, available)
     except (OSError, ValueError) as error:
         # OSError for an index that is not there, and for a .env saved in an
         # encoding that cannot be read, which the sidebar has already named.
-        st.error(str(error), icon=":material/error:")
+        error_space.error(str(error), icon=":material/error:")
     else:
         state.keep(PAGE, request, answer, watch.seconds)
     # Also where the provider failed part way, so that half an answer is

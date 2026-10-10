@@ -33,14 +33,16 @@ from src.rag.generate import ProviderUnavailable, check_provider, config_from_en
 from src.stack import build_stack, measured_runs
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.rag.records import Answer
-    from src.retrieval.records import Query
+    from src.retrieval.records import Query, RetrievedPassage
     from src.stack import Stack
 
 # What a caller passes with a question that does not change its answer:
 # ``parsed`` is read from the question; the callbacks only show evidence
 # and the answer arriving.
-NOT_PART_OF_THE_ANSWER = ("parsed", "on_token", "on_retrieved")
+NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 
 # How many answers one configuration keeps. Each holds the passages it was
 # written from, sixteen of them, so the memory of a process left running
@@ -294,7 +296,9 @@ class Remembered:
         self._being_answered: dict[tuple[Any, ...], Event] = {}
         self._lock = Lock()
 
-    def answer(self, question: str, **overrides: Any) -> Answer:
+    def answer(self, question: str, *,
+               on_retrieved: Callable[[tuple[RetrievedPassage, ...]], None] | None = None,
+               **overrides: Any) -> Answer:
         """The answer to ``question``, asked of the stack only the first time.
 
         ``overrides`` go to ``Stack.answer`` with that first request. A
@@ -320,14 +324,14 @@ class Remembered:
                         done = self._being_answered[key] = Event()
                         break
             if remembered is not None:
-                if overrides.get("on_retrieved") is not None:
-                    overrides["on_retrieved"](remembered.passages)
+                if on_retrieved is not None:
+                    on_retrieved(remembered.passages)
                 return remembered
             # Another session is asking this now. Wait for it, then look again:
             # its answer is there, or it failed and this one asks in its turn.
             done.wait()
         try:
-            answer = self.stack.answer(question, **overrides)
+            answer = self.stack.answer(question, on_retrieved=on_retrieved, **overrides)
             if _finished(answer):
                 with self._lock:
                     self._answers[key] = answer

@@ -95,6 +95,9 @@ def test_live_page_has_filters_and_evidence_while_answer_is_unfinished(monkeypat
     assert "Example passage" in ui.expander[0].text[0].value
     assert [text.value for text in ui.text] == (
         ["First words"] if streamed else []) + [sample_answer(QUESTION).passages[0].text]
+    captions = [caption.value for caption in ui.caption]
+    assert ("Writing the answer…" in captions) is not streamed
+    assert "Searching filings…" not in captions
 
 
 def test_provider_error_retains_evidence_but_removes_unfinished_answer(monkeypatch):
@@ -124,3 +127,82 @@ def test_completed_answer_keeps_one_evidence_panel_and_replaces_draft(monkeypatc
     assert [heading.value for heading in ui.subheader].count("Retrieved evidence") == 1
     assert len(ui.get("html")) == 1
     assert all(text.value != "Unfinished answer" for text in ui.text)
+
+
+def _in_order(node):
+    """The page's elements top to bottom, as (type, value) pairs."""
+    for child in getattr(node, "children", {}).values():
+        yield child.type, getattr(child, "value", None)
+        yield from _in_order(child)
+
+
+@pytest.mark.parametrize("error_kind", ["provider", "file", "value"])
+def test_errors_are_drawn_above_the_evidence(monkeypatch, error_kind):
+    from src.rag.generate import ProviderUnavailable
+
+    error = {"provider": ProviderUnavailable, "file": OSError, "value": ValueError}[error_kind]
+
+    def answer(question, *, on_retrieved, **kwargs):
+        on_retrieved(sample_answer(question).passages)
+        raise error("Unavailable for this test")
+
+    ui = _ask(monkeypatch, answer)
+    assert not ui.exception
+    order = [kind for kind, _ in _in_order(ui.main)]
+    assert order.index("error") < order.index("expander")
+    assert "Unavailable for this test" in ui.error[0].value
+
+
+def test_a_refused_question_draws_no_evidence_panel(monkeypatch):
+    from src.rag.constants import ABSTAIN_PHRASE
+
+    def refused(question, *, on_retrieved, **kwargs):
+        on_retrieved(())
+        return replace(sample_answer(question), text=ABSTAIN_PHRASE, abstained=True,
+                       abstention_reason="beyond_the_filings", sentences=(), citations=(),
+                       passages=(), verification=None)
+
+    ui = _ask(monkeypatch, refused, question="Should I buy Apple stock?")
+    assert not ui.exception
+    assert "gives no advice" in ui.warning[0].value
+    assert "Retrieved evidence" not in [heading.value for heading in ui.subheader]
+    assert "No supporting passages were retrieved." not in [c.value for c in ui.caption]
+
+
+def test_search_status_is_visible_before_evidence_arrives(monkeypatch):
+    import streamlit as st
+
+    def answer(question, **kwargs):
+        st.stop()
+
+    ui = _ask(monkeypatch, answer)
+    assert not ui.exception
+    assert "Searching filings…" in [caption.value for caption in ui.caption]
+    assert "Retrieved evidence" not in [heading.value for heading in ui.subheader]
+
+
+@pytest.mark.parametrize("url", ["https://www.sec.gov/edgar/search/", "javascript:alert(1)", ""])
+def test_evidence_reuses_the_corpus_panel_for_tables_and_safe_links(monkeypatch, url):
+    import streamlit as st
+
+    table = "Revenue\n\n| Year | Revenue |\n| --- | --- |\n| 2024 | $5 billion |"
+
+    def answer(question, *, on_retrieved, **kwargs):
+        passage = replace(sample_answer(question).passages[0], fiscal_year=None, item=None,
+                          content_type="table", text=table, url=url)
+        on_retrieved((passage,))
+        st.stop()
+
+    ui = _ask(monkeypatch, answer)
+    assert not ui.exception
+    assert "FYunknown" in ui.expander[0].label and "Item unknown" in ui.expander[0].label
+    assert not ui.expander[0].proto.expanded
+    assert any("Table passage" in badge.value for badge in ui.get("markdown"))
+    assert "<table" in ui.get("html")[0].value
+    assert ui.code[0].value == table
+    links = ui.get("link_button")
+    if url.startswith("https://"):
+        assert len(links) == 1 and links[0].label == "Open filing on EDGAR"
+    else:
+        assert not links
+        assert "Filing link unavailable" in [caption.value for caption in ui.caption]
