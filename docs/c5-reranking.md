@@ -23,6 +23,12 @@ retrospectively chosen cutoffs:
 - If these gates pass, perform a paired answer-quality comparison before
   adopting C5. Otherwise retain C4 and document the result.
 
+The decision cutoff is fixed at @16 in the policy. A run or rescore at another
+cutoff records metrics with `advance_to_answer_evaluation: null`, even if those
+metrics would otherwise pass. Missing sources, including `llm_assisted`, block
+advancement. The latency gate excludes empty candidate pools; their number and
+the number of timed questions are reported explicitly.
+
 The team benchmark is the accepted 149-question version merged from #152,
 containing 124 handwritten and 25 LLM-assisted questions. The mechanical set is
 the complete locally generated XBRL benchmark. Its labels use figure substring
@@ -48,6 +54,10 @@ C5 adds the measured reranking time, rather than pretending these are two
 independent end-to-end answer runs. Generation, prompt tokens, and judging are
 not measured by this retrieval-only command.
 
+`--candidate-k` may reduce the pool for an exploratory run, but cannot exceed
+the shipped fusion depth of 50. A deeper request would change the BM25/dense
+rankings fused for the C4 row and would require a separately named baseline.
+
 ## Commands and artifacts
 
 With dependencies, the processed corpus, current verified BM25/dense indexes,
@@ -72,6 +82,9 @@ the exact candidate pool.
 - `config.json`: predeclared policy, settings, source-file hashes, commit,
   dependency/platform versions and input/corpus fingerprints;
 - `runtime.json`: model load, warm-up, device and index manifests;
+- `runtime-NNNN.json`: an immutable record for each new or resumed segment,
+  including its starting question count and current workload note. Existing
+  `runtime.json` and legacy `resume-runtime.json` are preserved;
 - `pairs.jsonl.gz`: each full benchmark question and parsed query, both ranked
   ID/score lists and metrics, and all candidate logits, token lengths, metadata
   and source provenance;
@@ -85,6 +98,13 @@ source files, corpus, policy or configuration are refused. A forcibly killed
 process can leave a truncated gzip stream, which is refused rather than silently
 dropping evidence. Use a new run ID if that happens.
 
+An interruption before the first pair may leave only a manifest; resume treats
+the absent pairs file as an empty prefix. Resume also compares the original
+BM25 and dense index manifests, including build identity, before loading models.
+Each segment can supply a new workload note without replacing the original
+manifest. A process-safe `run.lock` prevents concurrent writers to one run ID
+and releases its OS lock on exit, including a killed process.
+
 To recompute metrics and the decision without models or corpus files:
 
 ```bash
@@ -95,12 +115,37 @@ An optional `--top-k` can rescore a smaller cutoff, up to the stored final k.
 It is a sensitivity check, not a replacement for the declared @16 decision.
 Incomplete runs cannot be presented as a final rescored benchmark.
 
+Older pairs lack `gold_filings`, so their gold-scope diagnostics are `null`,
+never invented zeros. To derive those fields from supporting chunk IDs without
+modifying the original pairs, supply the corpus when rescoring:
+
+```bash
+python -m src.evaluation.rerank_ablation rescore results/c5-reference-YYYYMMDD \
+  --processed-dir data/processed
+```
+
+This requires the full corpus records SHA-256 to match the frozen manifest;
+changed text or metadata is refused. The output records the derivation digest
+and row count. It retains the stored rankings, scores and timing measurements.
+
 Recall, nDCG and MRR exclude questions without supporting IDs, with each metric's
 denominator reported. Hard-negative accuracy includes only questions with
 labelled hard negatives; unanswerable questions therefore receive that metric,
 not fabricated zero relevance scores. Unlabelled negatives cannot measure
-abstention or answer safety. Wrong-company/year diagnostics count violations
-of the explicit query filters, not violations inferred from gold answer text.
+abstention or answer safety. Wrong-company/year diagnostics count top-k
+passages from a company or fiscal year outside the gold passages' filings; the
+query filters already exclude anything outside the question's own scope.
+The report retains query-scope counts as integrity checks and adds a joint
+company/year count so valid companies and years cannot hide an invalid pairing.
+Gold-scope denominators exclude unlabelled questions; unknown gold years cannot
+establish a wrong-year count. These are evidence-scope proxies because gold
+labels may omit other relevant passages; they do not measure answer correctness.
+
+`by_gold_truncation` separates questions with any truncated supporting passage
+in the candidate pool, those with untruncated gold in the pool, those with no
+gold in the pool, and unlabelled questions. A missing gold candidate has no
+recorded token length and is not asserted to be untruncated. Each slice reports
+paired metrics, uncertainty and denominators.
 
 Uncertainty uses 2,000 paired bootstrap draws with seed 154. Questions sharing
 a supporting filing form a cluster; multi-filing questions connect those
@@ -108,6 +153,8 @@ filings before resampling. Each draw samples clusters with replacement and
 computes the question-weighted mean difference. Fewer than two clusters gives
 no interval and cannot pass the positive-uncertainty gate. This can yield wide
 intervals when a source covers few independent filings; report that limitation.
+Filing clustering does not remove every dependence between questions about
+the same company or generated from the same template.
 
 ## Result and relationship to #44
 

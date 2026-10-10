@@ -26,9 +26,11 @@ class RerankConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
-        if not self.model.strip() or not self.revision.strip():
-            raise ValueError("model and revision must be explicit non-empty strings")
-        if self.device is not None and not self.device.strip():
+        for name in ("model", "revision"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("model and revision must be explicit non-empty strings")
+        if self.device is not None and (not isinstance(self.device, str) or not self.device.strip()):
             raise ValueError("device must be non-empty or None")
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +92,8 @@ class CrossEncoderReranker:
             return RerankResult([], {"latency_ms": 0.0, "candidates": [], "truncated": 0})
 
         model = self.load()
+        from torch.nn import Identity
+
         started = perf_counter()
         # Count the exact paired input, without truncating the diagnostics.
         encoded = model.tokenizer(
@@ -101,6 +105,7 @@ class CrossEncoderReranker:
         scores = [float(n) for n in model.predict(
             [(query.text, p.text) for p in candidates],
             batch_size=self.config.batch_size, show_progress_bar=False,
+            activation_fn=Identity(),
         )]
         if len(scores) != len(candidates) or len(lengths) != len(candidates):
             raise ValueError("cross-encoder returned a different number of scores or token lengths")

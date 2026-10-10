@@ -25,10 +25,20 @@ def sha256(path: Path) -> str:
 
 
 def _git(*args: str) -> str | None:
-    result = subprocess.run(
-        ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def corpus_records_sha256(chunks: Sequence[dict]) -> str:
+    """Fingerprint text and metadata, including the gold evidence's scope."""
+    return hashlib.sha256(json.dumps(
+        sorted(chunks, key=lambda row: row["chunk_id"]), sort_keys=True,
+    ).encode()).hexdigest()
 
 
 def record_provenance(
@@ -51,7 +61,7 @@ def record_provenance(
     }
     packages = {}
     for package in ("torch", "sentence-transformers", "transformers", "tokenizers",
-                    "chromadb", "rank-bm25", "numpy"):
+                    "chromadb", "rank-bm25", "numpy", "filelock"):
         try:
             packages[package] = version(package)
         except PackageNotFoundError:
@@ -71,10 +81,7 @@ def record_provenance(
         "corpus": {
             "processed_dir": str(processed_dir),
             "fingerprint": corpus_fingerprint(chunks),
-            "records_sha256": hashlib.sha256(
-                json.dumps(sorted(chunks, key=lambda row: row["chunk_id"]),
-                           sort_keys=True).encode()
-            ).hexdigest(),
+            "records_sha256": corpus_records_sha256(chunks),
             "n_passages": len(chunks),
             "n_filings": len({chunk["accession_no"] for chunk in chunks}),
             "chunk_settings": sorted({

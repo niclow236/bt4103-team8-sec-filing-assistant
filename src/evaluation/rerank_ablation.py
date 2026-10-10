@@ -6,7 +6,7 @@ import argparse
 import gzip
 import hashlib
 import json
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 from statistics import mean, median
@@ -14,23 +14,25 @@ from time import perf_counter
 from typing import Any, Sequence
 
 import numpy as np
+from filelock import FileLock, Timeout
 
 from src.config import PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
 from src.retrieval.base import Retriever
-from src.retrieval.constants import FINAL_K
+from src.retrieval.constants import CANDIDATE_K, FINAL_K
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from src.stack import RESULTS_ROOT, build_retriever
 
 from .benchmark import load_questions
 from .metrics import score_question
-from .provenance import record_provenance
+from .provenance import corpus_records_sha256, record_provenance
 from .records import BenchmarkQuestion, RunResult
 from .results import _safe_run_id
 from .run import _query
 
 METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
 POLICY = {
+    "decision_top_k": FINAL_K,
     "primary_sources": ["handwritten", "xbrl"],
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
@@ -47,7 +49,7 @@ POLICY = {
 
 
 def _dump(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
+    path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
 
 
 def _rank_record(question: BenchmarkQuestion, passages: list, latency: float, config: str) -> dict:
@@ -131,12 +133,19 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
     groups: dict[str, dict[str, list]] = {
         "by_source": defaultdict(list), "by_type": defaultdict(list),
         "by_source_type": defaultdict(list), "by_gold_content": defaultdict(list),
+        "by_gold_truncation": defaultdict(list),
     }
     for row in rows:
         groups["by_source"][row["question"]["source"]].append(row)
         groups["by_type"][row["question"]["question_type"]].append(row)
         groups["by_source_type"][row["question"]["source"] + ":" + row["question"]["question_type"]].append(row)
         groups["by_gold_content"][row["gold_content"]].append(row)
+        gold_ids = set(row["question"]["supporting_chunk_ids"])
+        gold_in_pool = [p for p in row["rerank"]["candidates"] if p["chunk_id"] in gold_ids]
+        truncated_gold = ("unlabelled" if not gold_ids else "no_gold_in_pool" if not gold_in_pool
+                          else "gold_in_pool_truncated" if any(p["truncated"] for p in gold_in_pool)
+                          else "gold_in_pool_untruncated")
+        groups["by_gold_truncation"][truncated_gold].append(row)
 
     def group_summary(subset: Sequence[dict]) -> dict:
         return {"questions": len(subset), **{m: paired_metric(subset, m, k, policy) for m in METRICS}}
@@ -145,8 +154,9 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
               "overall": group_summary(rows),
               **{name: {key: group_summary(subset) for key, subset in sorted(group.items())}
                  for name, group in groups.items()}}
-    times = [r["rerank"]["latency_ms"] for r in rows]
+    times = [r["rerank"]["latency_ms"] for r in rows if r["rerank"]["candidates"]]
     report["latency_ms"] = {
+        "rerank_questions": len(times), "empty_pool_questions": len(rows) - len(times),
         "rerank_median": median(times) if times else None,
         "rerank_p95": float(np.quantile(times, .95)) if times else None,
         "C4_median": median(r["C4"]["latency_ms"] for r in rows) if rows else None,
@@ -157,20 +167,42 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
     report["truncation"] = {"candidates": total, "truncated": truncated,
                             "rate": truncated / total if total else None}
     report["top_k_diagnostics"] = {}
+    # Runs recorded before gold filings were stored cannot report these.
+    recorded = all("gold_filings" in row for row in rows)
     for config in ("C4", "C5"):
-        tables = truncs = wrong_company = wrong_year = 0
+        tables = truncs = wrong_company = wrong_year = wrong_filing = 0
+        outside_query_tickers = outside_query_years = eligible_gold_passages = known_year_passages = 0
         for row in rows:
             candidates = {p["chunk_id"]: p for p in row["rerank"]["candidates"]}
+            # The query filters already exclude other companies and years, so
+            # compare against the companies and years the gold evidence is from.
+            tickers = {ticker for ticker, _ in row.get("gold_filings", ())}
+            years = {year for _, year in row.get("gold_filings", ()) if year is not None}
+            filings = {tuple(filing) for filing in row.get("gold_filings", ())}
+            known_years = bool(filings) and all(year is not None for _, year in filings)
             query = row["query"]
             for cid in row[config]["retrieved_chunk_ids"][:k]:
                 p = candidates[cid]
                 tables += p["content_type"] == "table"
                 truncs += p["truncated"]
-                wrong_company += bool(query["tickers"]) and p["ticker"] not in query["tickers"]
-                wrong_year += bool(query["fiscal_years"]) and p["fiscal_year"] not in query["fiscal_years"]
+                wrong_company += bool(tickers) and p["ticker"] not in tickers
+                wrong_year += known_years and p["fiscal_year"] not in years
+                wrong_filing += bool(filings) and not any(
+                    p["ticker"] == ticker and (year is None or p["fiscal_year"] == year)
+                    for ticker, year in filings)
+                eligible_gold_passages += bool(filings)
+                known_year_passages += known_years
+                outside_query_tickers += bool(query["tickers"]) and p["ticker"] not in query["tickers"]
+                outside_query_years += bool(query["fiscal_years"]) and p["fiscal_year"] not in query["fiscal_years"]
         report["top_k_diagnostics"][config] = {
             "tables": tables, "truncated": truncs,
-            "outside_query_tickers": wrong_company, "outside_query_years": wrong_year,
+            "outside_gold_tickers": wrong_company if recorded else None,
+            "outside_gold_years": wrong_year if recorded else None,
+            "outside_gold_filings": wrong_filing if recorded else None,
+            "gold_scope_passages": eligible_gold_passages if recorded else None,
+            "gold_year_scope_passages": known_year_passages if recorded else None,
+            "outside_query_tickers": outside_query_tickers,
+            "outside_query_years": outside_query_years,
         }
     reasons = []
     for source in policy["primary_sources"]:
@@ -184,8 +216,11 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
         for metric in ("recall", "mrr"):
             if group[metric]["delta"] is None or group[metric]["delta"] < -policy["max_recall_mrr_regression"]:
                 reasons.append(f"{source}: {metric} regression criterion not met")
-    assisted = report["by_source"].get("llm_assisted", {}).get("ndcg", {})
-    if assisted.get("delta") is not None and assisted["delta"] < -policy["max_llm_assisted_ndcg_regression"]:
+    assisted = report["by_source"].get("llm_assisted")
+    if assisted is None:
+        reasons.append("missing source llm_assisted")
+    elif (assisted["ndcg"]["delta"] is None
+          or assisted["ndcg"]["delta"] < -policy["max_llm_assisted_ndcg_regression"]):
         reasons.append("llm_assisted: nDCG regression criterion not met")
     for kind, group in (report["by_type"] | report["by_source_type"]).items():
         n = group["ndcg"]
@@ -200,12 +235,33 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
             reasons.append(f"reranking {statistic} latency criterion not met")
     report["decision"] = {"advance_to_answer_evaluation": not reasons, "reasons": reasons,
                           "default": "C4", "adoption": "requires paired answer evaluation and team review"}
+    declared_k = policy.get("decision_top_k", FINAL_K)
+    if k != declared_k:
+        report["decision"] = {"advance_to_answer_evaluation": None,
+                              "reasons": [f"sensitivity rescore; decided at k={declared_k}"],
+                              "default": "C4"}
     return report
 
 
 def read_pairs(path: Path) -> list[dict]:
     with gzip.open(path, "rt", encoding="utf-8") as stream:
         return [json.loads(line) for line in stream if line.strip()]
+
+
+def _index_manifests(hybrid: Retriever) -> dict:
+    result = {}
+    for name in ("dense", "bm25"):
+        manifest = getattr(getattr(hybrid, name, None), "manifest", None)
+        result[name + "_manifest"] = asdict(manifest) if manifest is not None else None
+    return result
+
+
+def _comparable_manifest(manifest: dict) -> dict:
+    result = json.loads(json.dumps(manifest))
+    # Workload is a segment observation, not a retrieval setting. Preserve the
+    # original note in config and record the new one in runtime history.
+    result["provenance"].pop("workload_note", None)
+    return result
 
 
 def run_pairs(
@@ -217,19 +273,51 @@ def run_pairs(
         raise ValueError("questions must be nonempty with unique IDs")
     if not 0 < top_k <= reranker.config.candidate_k:
         raise ValueError("top_k must be positive and no larger than candidate_k")
+    if reranker.config.candidate_k > CANDIDATE_K:
+        # Hybrid fuses at max(CANDIDATE_K, k), so a deeper pool would reorder
+        # the C4 row away from the ranking the app ships.
+        raise ValueError(f"candidate_k must not exceed the shipped C4 depth {CANDIDATE_K}")
+    if not resume:
+        output_dir.mkdir(parents=True, exist_ok=False)
+    elif not output_dir.is_dir():
+        raise ValueError("resume requires an existing run directory")
+    try:
+        with FileLock(output_dir / "run.lock", timeout=0):
+            return _run_pairs_locked(questions, hybrid, reranker, output_dir=output_dir,
+                                     provenance=provenance, chunks=chunks, top_k=top_k, resume=resume)
+    except Timeout as exc:
+        raise ValueError("run directory is already locked by another evaluation") from exc
+
+
+def _run_pairs_locked(
+    questions: Sequence[BenchmarkQuestion], hybrid: Retriever, reranker: CrossEncoderReranker,
+    *, output_dir: Path, provenance: dict, chunks: Sequence[dict], top_k: int, resume: bool,
+) -> dict:
     manifest = {"provenance": provenance, "reranker": reranker.config.to_dict(),
                 "top_k": top_k, "policy": POLICY, "query_policy": "C4 evaluation.run._query"}
     manifest = json.loads(json.dumps(manifest))
     pairs_path = output_dir / "pairs.jsonl.gz"
     rows = []
+    indexes = _index_manifests(hybrid)
     if resume:
-        if json.loads((output_dir / "config.json").read_text()) != manifest:
+        original = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+        if _comparable_manifest(original) != _comparable_manifest(manifest):
             raise ValueError("resume requires identical source, inputs, corpus, settings and policy")
-        rows = read_pairs(pairs_path)
+        rows = read_pairs(pairs_path) if pairs_path.exists() else []
         if [r["question"] for r in rows] != [q.to_dict() for q in questions[:len(rows)]]:
             raise ValueError("stored questions are not an exact prefix of the requested benchmark")
+        runtime_path = output_dir / "runtime.json"
+        if runtime_path.exists():
+            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            if any(runtime.get(key) != value for key, value in indexes.items()):
+                raise ValueError("resume requires identical dense and BM25 index manifests")
+        elif rows:
+            raise ValueError("cannot verify resumed indexes without the original runtime.json")
+        if len(rows) == len(questions):
+            report = summarize(rows, top_k)
+            _dump(output_dir / "summary.json", report)
+            return report
     else:
-        output_dir.mkdir(parents=True, exist_ok=False)
         _dump(output_dir / "config.json", manifest)
     indexed = {p["chunk_id"]: p for p in chunks}
     started = perf_counter()
@@ -240,20 +328,21 @@ def run_pairs(
     started = perf_counter()
     pool = hybrid.search(query, k=reranker.config.candidate_k)
     reranker.rerank(query, pool)
-    dense_model = getattr(getattr(hybrid, "dense", None), "_model", None)
-    dense_revision = None
-    if dense_model is not None:
-        dense_revision = getattr(getattr(dense_model[0], "auto_model", None), "config", None)
-        dense_revision = getattr(dense_revision, "_commit_hash", None)
-    _dump(output_dir / ("resume-runtime.json" if resume else "runtime.json"), {
+    dense_info = getattr(getattr(hybrid, "dense", None), "runtime_info", {})
+    runtime = {
         "cross_encoder_load_ms": model_load_ms, "warmup_ms": (perf_counter() - started) * 1000,
         "resumed_after_questions": len(rows),
-        "dense_manifest": asdict(hybrid.dense.manifest) if hasattr(hybrid, "dense") else None,
-        "bm25_manifest": asdict(hybrid.bm25.manifest) if hasattr(hybrid, "bm25") else None,
+        **indexes,
         "cross_encoder_device": str(getattr(reranker.load(), "device", reranker.config.device)),
-        "dense_device": str(getattr(dense_model, "device", None)),
-        "dense_revision": dense_revision,
-    })
+        "dense_device": dense_info.get("device"), "dense_revision": dense_info.get("revision"),
+        "workload_note": provenance.get("workload_note"),
+    }
+    number = 0
+    while (output_dir / f"runtime-{number:04d}.json").exists():
+        number += 1
+    _dump(output_dir / f"runtime-{number:04d}.json", runtime)
+    if not (output_dir / "runtime.json").exists():
+        _dump(output_dir / "runtime.json", runtime)
     with gzip.open(pairs_path, "at" if resume else "wt", encoding="utf-8") as stream:
         for i, question in enumerate(questions[len(rows):], start=len(rows) + 1):
             query = _query(question, top_k=top_k, metadata_filter=True)
@@ -268,6 +357,7 @@ def run_pairs(
             gold = [indexed[cid] for cid in question.supporting_chunk_ids]
             row = {"question": question.to_dict(), "query": asdict(query),
                    "filings": sorted({p["accession_no"] for p in gold}),
+                   "gold_filings": sorted({(p["ticker"], p["fiscal_year"]) for p in gold}, key=str),
                    "gold_content": "+".join(sorted({p["content_type"] for p in gold})) or "none",
                    "C4": _rank_record(question, pool[:top_k], retrieve_ms, "C4"),
                    "C5": _rank_record(question, ranked.passages,
@@ -283,6 +373,23 @@ def run_pairs(
     report = summarize(rows, top_k)
     _dump(output_dir / "summary.json", report)
     return report
+
+
+def enrich_gold_filings(rows: Sequence[dict], chunks: Sequence[dict], expected_digest: str | None) -> dict:
+    """Derive missing diagnostic metadata without changing recorded results."""
+    actual = corpus_records_sha256(chunks)
+    if expected_digest is None or actual != expected_digest:
+        raise ValueError("gold diagnostics require the exact frozen corpus records digest")
+    indexed = {p["chunk_id"]: p for p in chunks}
+    updated = 0
+    for row in rows:
+        if "gold_filings" in row:
+            continue
+        gold = [indexed[cid] for cid in row["question"]["supporting_chunk_ids"]]
+        row["gold_filings"] = sorted({(p["ticker"], p["fiscal_year"]) for p in gold}, key=str)
+        updated += 1
+    return {"corpus_records_sha256": actual, "derived_rows": updated,
+            "method": "supporting chunk IDs joined to the verified frozen corpus; original pairs unchanged"}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -302,9 +409,11 @@ def main(argv: list[str] | None = None) -> None:
     score = actions.add_parser("rescore")
     score.add_argument("run_dir", type=Path)
     score.add_argument("--top-k", type=int)
+    score.add_argument("--processed-dir", type=Path,
+                       help="derive missing gold-filing diagnostics from the exact frozen corpus")
     args = parser.parse_args(argv)
     if args.action == "rescore":
-        manifest = json.loads((args.run_dir / "config.json").read_text())
+        manifest = json.loads((args.run_dir / "config.json").read_text(encoding="utf-8"))
         k = manifest["top_k"] if args.top_k is None else args.top_k
         if not 0 < k <= manifest["top_k"]:
             parser.error("rescoring k must be positive and no greater than stored final k")
@@ -315,13 +424,24 @@ def main(argv: list[str] | None = None) -> None:
         expected = manifest["provenance"].get("question_records_sha256")
         if expected is not None and digest != expected:
             parser.error("stored questions do not match the frozen benchmark digest")
-        _dump(args.run_dir / f"rescored-k{k}.json", summarize(rows, k, manifest["policy"]))
+        enrichment = None
+        if args.processed_dir is not None:
+            enrichment = enrich_gold_filings(
+                rows, list(iter_chunks(processed_dir=args.processed_dir)),
+                manifest["provenance"].get("corpus", {}).get("records_sha256"),
+            )
+        report = summarize(rows, k, manifest["policy"])
+        if enrichment is not None:
+            report["gold_diagnostics_provenance"] = enrichment
+        _dump(args.run_dir / f"rescored-k{k}.json", report)
         return
     config = RerankConfig(candidate_k=args.candidate_k, batch_size=args.batch_size, device=args.device)
     if not args.workload_note.strip():
         parser.error("workload-note must describe the timing conditions")
     if not 0 < args.top_k <= config.candidate_k:
         parser.error("top-k must be positive and no greater than candidate-k")
+    if config.candidate_k > CANDIDATE_K:
+        parser.error(f"candidate-k must not exceed the shipped C4 depth {CANDIDATE_K}")
     output = args.results_root / _safe_run_id(args.run_id)
     if output.exists() and not args.resume:
         parser.error("run directory exists; use a new ID or --resume")

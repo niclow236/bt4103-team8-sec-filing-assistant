@@ -3,46 +3,11 @@ from dataclasses import replace
 import pytest
 
 from src.retrieval.base import Retriever
-from src.retrieval.records import Query, RetrievedPassage
+from src.retrieval.records import Query
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig, RerankRetriever
 
 
-def passage(cid, score=1, content_type="prose", ticker="AAA", year=2024):
-    return RetrievedPassage(cid, "Evidence " + cid, score, 1, "hybrid", ticker,
-                            "Alpha Corp", year, "8", "Statements", "https://example.test",
-                            content_type, ("bm25", "dense"))
-
-
-class Model:
-    device = "test"
-
-    def __init__(self, scores, lengths=None):
-        self.scores = scores
-        self.lengths = lengths
-        self.calls = []
-
-    def tokenizer(self, queries, texts, **kwargs):
-        self.calls.append(("tokens", queries, texts, kwargs))
-        return {"length": self.lengths or [25] * len(texts)}
-
-    def predict(self, pairs, **kwargs):
-        self.calls.append(("predict", pairs, kwargs))
-        return self.scores
-
-
-class Inner:
-    name = "hybrid"
-
-    def __init__(self, passages):
-        self.passages = passages
-        self.calls = []
-
-    def search(self, query, k=None):
-        self.calls.append((query, k))
-        return self.passages[:k]
-
-    def has_candidates(self, query):
-        return bool(self.passages)
+from conftest import RerankInner as Inner, RerankModel as Model, rerank_passage as passage
 
 
 def test_ties_raw_negative_table_boost_and_provenance():
@@ -87,7 +52,8 @@ def test_filter_violation_fails_before_model_scoring(change):
 
 
 @pytest.mark.parametrize("field,value", [("candidate_k", 0), ("max_length", -1),
-    ("batch_size", True), ("batch_size", 1.5), ("model", ""), ("revision", " "), ("device", "")])
+    ("batch_size", True), ("batch_size", 1.5), ("model", ""), ("revision", " "), ("device", ""),
+    ("model", None), ("revision", 42), ("device", False)])
 def test_invalid_config(field, value):
     with pytest.raises(ValueError):
         RerankConfig(**{field: value})
@@ -137,3 +103,11 @@ def test_load_is_pinned_and_cached(monkeypatch):
     assert calls[0][1]["revision"] == r.config.revision
     assert calls[0][1]["trust_remote_code"] is False
     assert calls[0][1]["activation_fn"](-3) == -3
+
+
+def test_injected_encoder_is_forced_to_return_raw_logits():
+    model = Model([-3])
+    r = CrossEncoderReranker(model=model)
+    result = r.rerank(Query("q", top_k=1), [passage("a")])
+    assert model.calls[1][2]["activation_fn"](-3) == -3
+    assert result.passages[0].score == -3

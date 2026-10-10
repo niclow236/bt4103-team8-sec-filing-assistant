@@ -2,6 +2,21 @@
 
 from src.evaluation.provenance import record_provenance
 from src.evaluation.records import BenchmarkQuestion
+from src.retrieval import constants
+import subprocess
+
+import pytest
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("git"), subprocess.SubprocessError("git")])
+def test_git_unavailable_records_unknown_commit(monkeypatch, error):
+    from src.evaluation.provenance import _git
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    assert _git("rev-parse", "HEAD") is None
 
 
 def test_provenance_tracks_benchmark_text_and_corpus_metadata(monkeypatch, tmp_path):
@@ -21,7 +36,7 @@ def test_provenance_tracks_benchmark_text_and_corpus_metadata(monkeypatch, tmp_p
     assert first["source_commit"] == "commit"
     assert first["by_source"] == {"handwritten": 1}
     assert first["corpus"]["n_passages"] == first["corpus"]["n_filings"] == 1
-    assert first["retrieval_settings"]["BM25_K1"] == 1.5
+    assert first["retrieval_settings"]["BM25_K1"] == constants.BM25_K1
     assert first["environment"]["packages"]["sentence-transformers"]
     path.write_text("changed input")
     chunk["ticker"] = "MSFT"

@@ -220,3 +220,20 @@ def test_verify_false_loads_an_index_the_corpus_has_moved_past(corpus, chroma, f
     edit_filing(edited, lambda data: data["chunks"][0].update({"text": "Rewritten."}))
     loaded = DenseRetriever.load(chroma_dir=chroma, processed_dir=corpus, verify=False)
     assert loaded.search(Query("anything", top_k=3))
+
+
+def test_runtime_info_does_not_load_and_reports_the_loaded_revision(monkeypatch):
+    from types import SimpleNamespace
+
+    retriever = DenseRetriever(collection=None)
+    monkeypatch.setattr(retriever, "_load", lambda: pytest.fail("diagnostics must not load a model"))
+    assert retriever.runtime_info == {"device": None, "revision": None}
+
+    class LoadedModel:
+        device = "cpu"
+
+        def __getitem__(self, index):
+            return SimpleNamespace(auto_model=SimpleNamespace(config=SimpleNamespace(_commit_hash="pinned")))
+
+    retriever._model = LoadedModel()
+    assert retriever.runtime_info == {"device": "cpu", "revision": "pinned"}
