@@ -19,10 +19,13 @@ no page holds a cache of its own:
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
+from pathlib import Path
+from statistics import mean, median
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import streamlit as st
@@ -30,7 +33,7 @@ import streamlit as st
 from src.pipeline.chunk import iter_chunks
 from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
 from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
-from src.stack import build_stack, measured_runs
+from src.stack import RESULTS_ROOT, build_stack, measured_runs
 
 if TYPE_CHECKING:
     from src.rag.records import Answer
@@ -47,6 +50,106 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # would otherwise grow with every new question. Past this many the answer
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
+
+RESULT_METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+
+
+def benchmark_kind(row: dict[str, Any]) -> str:
+    """Classify a saved row once, consistently for every Results view."""
+    source = str(row.get("source", "")).lower()
+    difficulty = str(row.get("difficulty", "")).lower()
+    if difficulty == "mechanical" or source == "xbrl":
+        return "mechanical"
+    if str(row.get("question_id", "")).lower().startswith("xbrl-"):
+        return "mechanical"
+    return "handwritten"
+
+
+def _read_result_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        if path.name == "report.json":
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            rows = loaded.get("results", []) if isinstance(loaded, dict) else []
+            return [row for row in rows if isinstance(row, dict)]
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+        return rows
+    except (OSError, ValueError):
+        return []
+
+
+def _saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = None) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(benchmark_kind(row), []).append(row)
+    output: dict[str, dict[str, Any]] = {}
+    for kind, items in grouped.items():
+        values: dict[str, Any] = {"questions": len(items)}
+        for metric in RESULT_METRICS:
+            measured = [row[metric] for row in items if row.get(metric) is not None]
+            values[metric] = mean(measured) if measured else None
+        answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
+        if answers:
+            latencies = [answer["latency_ms"] for answer in answers
+                         if answer.get("latency_ms") is not None]
+            values.update({
+                "abstention_rate": mean(answer.get("abstained", False) for answer in answers),
+                "median_latency_ms": median(latencies) if latencies else None,
+                "llm_questions": sum(provider is not None and row.get("route") == provider for row in items),
+            })
+        output[kind] = values
+    return output
+
+
+@st.cache_data(show_spinner=False)
+def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
+    """Read saved evaluation runs, including older files, without rerunning them."""
+    if not results_root.is_dir():
+        return []
+    runs: list[dict[str, Any]] = []
+    for run_dir in sorted((path for path in results_root.iterdir() if path.is_dir()),
+                          key=lambda path: path.stat().st_mtime, reverse=True):
+        try:
+            manifest = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        configurations = []
+        for summary in manifest.get("configurations", ()):
+            if not isinstance(summary, dict):
+                continue
+            config = summary.get("config") or {}
+            if not isinstance(config, dict):
+                continue
+            config_id = str(config.get("id") or "")
+            if not config_id:
+                continue
+            rows = _read_result_rows(run_dir / config_id / "questions.jsonl")
+            if not rows:
+                rows = _read_result_rows(run_dir / config_id / "report.json")
+            configurations.append({
+                "run_id": str(manifest.get("run_id") or run_dir.name),
+                "config_id": config_id,
+                "name": str(config.get("name") or config_id),
+                "questions": int(summary.get("questions") or len(rows)),
+                "metrics": {key: summary.get(key) for key in (
+                    *RESULT_METRICS, "abstention_rate", "median_latency_ms", "llm_questions")},
+                "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
+                                      if rows else summary.get("by_benchmark") or {}),
+            })
+        if configurations:
+            runs.append({"run_id": str(manifest.get("run_id") or run_dir.name),
+                         "configurations": configurations})
+    return runs
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)

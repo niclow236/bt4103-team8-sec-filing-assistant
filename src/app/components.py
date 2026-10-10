@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
 import streamlit as st
+import pandas as pd
 
 from src.config import read_tickers
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
@@ -49,6 +50,104 @@ _ITEM_MENTION = re.compile(
     r"\bitems?\s+((?:\d{1,2}[a-z]?)(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)\d{1,2}[a-z]?\b)*)",
     re.IGNORECASE,
 )
+
+
+_RESULT_METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
+                         "hard_negative_accuracy": "Hard Negative Accuracy"}
+
+
+def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
+    rows = []
+    for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        rows.append({"Configuration": item["config_id"], "Name": item["name"],
+                     "Questions": saved.get("questions", item["questions"]),
+                     **{label: saved.get(metric)
+                        for metric, label in _RESULT_METRIC_LABELS.items()}})
+    return pd.DataFrame(rows).dropna(axis=1, how="all")
+
+
+def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
+    rows = []
+    for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        if saved.get("abstention_rate") is None:
+            continue
+        rows.append({"Configuration": item["config_id"], "Name": item["name"],
+                     "Questions": saved.get("questions"),
+                     "Abstention rate": saved.get("abstention_rate"),
+                     "Median latency (ms)": saved.get("median_latency_ms"),
+                     "LLM questions": saved.get("llm_questions")})
+    return pd.DataFrame(rows).dropna(axis=1, how="all")
+
+
+def _render_results_benchmark(title: str, configurations: list[dict[str, Any]],
+                              benchmark: str) -> None:
+    st.subheader(title)
+    if not configurations:
+        st.info("No saved results for this benchmark.")
+        return
+    st.dataframe(_results_table(configurations, benchmark), width="stretch", hide_index=True)
+    chart_rows = result_chart_rows(configurations, benchmark)
+    if chart_rows:
+        chart = pd.DataFrame(chart_rows).pivot(index="Configuration", columns="Metric",
+                                                values="Value")
+        st.bar_chart(chart, stack=False)
+
+
+def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
+    """Return only the four retrieval metrics; counts are not scores."""
+    rows = []
+    for item in configurations:
+        saved = item["benchmark_metrics"].get(benchmark, {})
+        for metric, label in _RESULT_METRIC_LABELS.items():
+            value = saved.get(metric)
+            if value is not None:
+                rows.append({"Configuration": item["config_id"],
+                             "Metric": label,
+                             "Value": float(value)})
+    return rows
+
+
+def render_results(runs: list[dict[str, Any]]) -> None:
+    """Draw the saved Results page; loading and caching remain in state.py."""
+    st.header("Results")
+    st.caption("Saved benchmark results are read from results/<run-id>/; no evaluation is rerun.")
+    if st.button("Reload saved results"):
+        st.cache_data.clear()
+        st.rerun()
+    if not runs:
+        st.info("No completed benchmark runs were found under results/.")
+        return
+    run_id = st.selectbox("Run", [run["run_id"] for run in runs])
+    selected = next(run for run in runs if run["run_id"] == run_id)
+    unsplit = [item["config_id"] for item in selected["configurations"]
+               if not item["benchmark_metrics"]]
+    if unsplit:
+        st.warning(
+            f"{len(unsplit)} of this run's {len(selected['configurations'])} configurations "
+            "have a summary but no usable per-question results on this machine "
+            f"(results/{run_id}/<configuration>/questions.jsonl or report.json), so their "
+            "scores cannot be split by benchmark and are not shown: " + ", ".join(unsplit))
+    retrieval = [item for item in selected["configurations"]
+                 if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
+                            for metric in _RESULT_METRIC_LABELS)
+                        for kind in ("handwritten", "mechanical"))]
+    manual = [item for item in retrieval if "handwritten" in item["benchmark_metrics"]]
+    mechanical = [item for item in retrieval if "mechanical" in item["benchmark_metrics"]]
+    tab_manual, tab_mechanical = st.tabs(["Team benchmark", "Mechanical XBRL benchmark"])
+    with tab_manual:
+        _render_results_benchmark("Team benchmark", manual, "handwritten")
+        table = _results_model_table(selected["configurations"], "handwritten")
+        if not table.empty:
+            st.subheader("Answer-model ablation")
+            st.dataframe(table, width="stretch", hide_index=True)
+    with tab_mechanical:
+        _render_results_benchmark("Mechanical XBRL benchmark", mechanical, "mechanical")
+        table = _results_model_table(selected["configurations"], "mechanical")
+        if not table.empty:
+            st.subheader("Answer-model ablation")
+            st.dataframe(table, width="stretch", hide_index=True)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:

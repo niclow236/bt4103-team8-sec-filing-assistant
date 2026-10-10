@@ -109,6 +109,8 @@ def run_configuration(
             {
                 "question_id": question.question_id,
                 "question_type": question.question_type,
+                "difficulty": question.difficulty,
+                "source": question.source,
                 "retriever": retriever.name,
                 "config": configuration,
                 "retrieved_chunk_ids": list(result.retrieved_chunk_ids),

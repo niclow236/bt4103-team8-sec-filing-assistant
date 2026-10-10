@@ -214,7 +214,12 @@ def test_stopped_and_interrupted_generation_preserves_partial_rows(monkeypatch, 
             run_generation_ablation([_question()], _stack, run_id=error_type.__name__, results_root=tmp_path)
         run_dir = tmp_path / error_type.__name__
         report = json.loads((run_dir / "G2" / "report.json").read_text())
-        assert report["results"] == [{"question_id": "q001"}]
+        assert report["results"] == [{
+            "question_id": "q001",
+            "question_type": "numeric",
+            "difficulty": "easy",
+            "source": "handwritten",
+        }]
         assert report["stopped"]["question_id"] == "q002"
         summary = json.loads((run_dir / "summary.json").read_text())
         assert summary["top_k"] == _stack(GENERATION_EXPERIMENTS[0]).config.top_k
