@@ -32,7 +32,7 @@ from .run import _query
 
 METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
 POLICY = {
-    "decision_top_k": FINAL_K,
+    "decision_top_k": 16,
     "primary_sources": ["handwritten", "xbrl"],
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
@@ -235,7 +235,9 @@ def summarize(rows: Sequence[dict], k: int, policy: dict = POLICY) -> dict:
             reasons.append(f"reranking {statistic} latency criterion not met")
     report["decision"] = {"advance_to_answer_evaluation": not reasons, "reasons": reasons,
                           "default": "C4", "adoption": "requires paired answer evaluation and team review"}
-    declared_k = policy.get("decision_top_k", FINAL_K)
+    # Legacy reference manifests declared @16 in the protocol before this
+    # field existed. A future app default must not reinterpret their gates.
+    declared_k = policy.get("decision_top_k", 16)
     if k != declared_k:
         report["decision"] = {"advance_to_answer_evaluation": None,
                               "reasons": [f"sensitivity rescore; decided at k={declared_k}"],

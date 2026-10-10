@@ -229,6 +229,13 @@ def test_smaller_cutoff_cannot_pass_the_declared_final_gate():
     assert decision["reasons"] == [f"sensitivity rescore; decided at k={POLICY['decision_top_k']}"]
 
 
+def test_legacy_cutoff_does_not_follow_a_retuned_app_default(monkeypatch):
+    legacy_policy = {key:value for key,value in POLICY.items() if key != "decision_top_k"}
+    monkeypatch.setattr("src.evaluation.rerank_ablation.FINAL_K", 1)
+    assert summarize(passing_rows(), 1, legacy_policy)["decision"]["advance_to_answer_evaluation"] is None
+    assert summarize(passing_rows(), 16, legacy_policy)["decision"]["advance_to_answer_evaluation"] is True
+
+
 def test_empty_pools_do_not_dilute_reranking_latency():
     rows = passing_rows()
     for r in rows:
