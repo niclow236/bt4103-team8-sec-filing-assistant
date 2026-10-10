@@ -1843,8 +1843,10 @@ Both configurations run in order and use the existing stack cache. Timings
 include loading and verification and can benefit from warmed indexes or cached
 answers, so they are demo timings rather than a controlled speed benchmark.
 Changing either configuration, the question, filters or provider hides the
-saved pair until Compare is selected again. If one side fails, the other still
-shows its answer, with passage overlap labelled Not compared (#39).
+saved pair; it shows again without a new run only once every setting is back
+to what it was compared with. If one side fails, the other still shows its
+answer, with passage overlap labelled Not compared (#39). Provider failures
+retain the same settings-repair advice as Ask, including on later reruns.
 
 The app's Ask page reads the processed filings and indexes on this machine,
 searches them, sends retrieved passages to the configured answer model,

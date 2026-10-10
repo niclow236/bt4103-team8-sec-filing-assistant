@@ -258,15 +258,23 @@ class ComparisonSide(NamedTuple):
     error: str | None = None
 
 
+class KeptComparison(NamedTuple):
+    """The saved pair: both requests and the side each answered."""
+
+    requests: tuple[Request, Request]
+    sides: tuple[ComparisonSide, ComparisonSide]
+
+
 def keep_comparison(requests: tuple[Request, Request],
                     sides: tuple[ComparisonSide, ComparisonSide]) -> None:
-    st.session_state["compare:kept"] = (requests, sides)
+    """Hold both sides for this browser session as what Compare is showing."""
+    st.session_state[_key("compare")] = KeptComparison(requests, sides)
 
 
 def kept_comparison(requests: tuple[Request, Request]) -> tuple[ComparisonSide, ComparisonSide] | None:
     """Keep both sides together; changing either request hides the whole pair."""
-    held = st.session_state.get("compare:kept")
-    return held[1] if held is not None and held[0] == requests else None
+    held = st.session_state.get(_key("compare"))
+    return held.sides if held is not None and held.requests == requests else None
 
 
 class Remembered:

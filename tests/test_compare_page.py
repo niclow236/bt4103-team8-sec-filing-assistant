@@ -18,12 +18,12 @@ PAGE = PROJECT_ROOT / "src/app/app_pages/compare.py"
 QUESTION = "What risks does Apple describe in FY2024?"
 
 
-def _page(monkeypatch, failure=None, empty=False):
+def _page(monkeypatch, failure=None, empty=False, failure_side="C1"):
     built = _standing_in(monkeypatch)
 
     def answer(self, question, **kwargs):
         self.asked.append((question, kwargs))
-        if self.config.id == "C1" and failure is not None:
+        if self.config.id == failure_side and failure is not None:
             raise failure
         result = sample_answer(question)
         shared = result.passages[0]
@@ -80,6 +80,9 @@ def test_compare_uses_registry_and_shows_answers_evidence_and_separate_timings(m
     ui.run()
     assert len(ui.get("html")) == 2
     assert all(len(stack.asked) == 1 for stack in built.values())
+    held = ui.session_state["compare:kept"]
+    assert [request.config_id for request in held.requests] == ["C1", "C4"]
+    assert all(side.answer is not None for side in held.sides)
 
 
 @pytest.mark.parametrize("setting", ["question", "configuration", "filters", "provider"])
@@ -97,18 +100,52 @@ def test_changing_either_request_hides_both_old_answers(monkeypatch, setting):
         ui.sidebar.button_group[0].set_value("mistral").run()
     assert not ui.exception
     assert not ui.get("html")
+    assert any("Select Compare" in info.value for info in ui.info)
+    assert all(len(stack.asked) == 1 for stack in built.values())
+    # A saved pair is valid again when every setting matches its original request.
+    if setting == "question":
+        ui.text_input[0].set_value(QUESTION).run()
+    elif setting == "configuration":
+        ui.sidebar.selectbox(key="compare:right").set_value("C4").run()
+    elif setting == "filters":
+        ui.sidebar.multiselect[1].set_value([2024]).run()
+    else:
+        ui.sidebar.button_group[0].set_value("ollama").run()
+    assert not ui.exception
+    assert len(ui.get("html")) == 2
     assert all(len(stack.asked) == 1 for stack in built.values())
 
 
-@pytest.mark.parametrize("failure", [ProviderUnavailable("Model unavailable"), OSError("Missing index")])
-def test_one_failure_does_not_hide_other_configuration(monkeypatch, failure):
-    ui, built = _page(monkeypatch, failure=failure)
+@pytest.mark.parametrize("failure", [
+    ProviderUnavailable("Model unavailable"), OSError("Missing index"), ValueError("Bad filter"),
+    RuntimeError("sentence-transformers is not installed."), KeyError("chunks"),
+])
+@pytest.mark.parametrize("failure_side,seconds", [("C1", "1.25"), ("C4", "2.50")])
+def test_one_failure_does_not_hide_other_configuration(monkeypatch, failure, failure_side, seconds):
+    ui, built = _page(monkeypatch, failure=failure, failure_side=failure_side)
     _submit(ui)
     assert not ui.exception
     assert str(failure) in ui.error[0].value
+    assert f"Request stopped after {seconds}s" in [caption.value for caption in ui.caption]
     assert len(ui.get("html")) == 1
     assert ui.dataframe[0].value["Presence"].tolist() == ["Not compared", "Not compared"]
     assert set(built) == {"C1", "C4"}
+
+
+def test_provider_rejection_keeps_app_specific_fix_advice(monkeypatch):
+    available = state.AnswerModels({"ollama": "test", "mistral": "test"}, "mistral", {})
+    monkeypatch.setattr(state, "answer_models", lambda: available)
+    failure = ProviderUnavailable("API refused key; restart notebook", reason="API refused key")
+    ui, _ = _page(monkeypatch, failure=failure)
+    _submit(ui)
+    assert not ui.exception
+    message = ui.error[0].value
+    assert message.startswith("API refused key")
+    assert "environment or `.env`" in message and "restart the app" in message
+    assert "pick Ollama" in message and "restart notebook" not in message
+    assert len(ui.get("html")) == 1
+    ui.run()
+    assert ui.error[0].value == message
 
 
 def test_blank_or_identical_configuration_does_not_ask_stacks(monkeypatch):
