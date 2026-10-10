@@ -841,6 +841,13 @@ rather than left unused. The script that measured it went with them, since it
 cannot run without the class, and is in the history as
 `notebooks/retrieval/rerank_comparison.py`.
 
+Issue #154 revisits that decision with an opt-in, paired C4/C5 experiment on
+the accepted team benchmark and the complete mechanical XBRL set. The
+[experiment protocol and commands](docs/c5-reranking.md) declare the quality
+and latency gates before measuring. C4 remains the default; the experimental
+reranker is not added to the app unless the measurements and an answer-quality
+check justify adoption.
+
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`)
 are applied before scoring, not after, in every method. BM25
 scores only the passages the filters admit, and the dense retriever passes them
