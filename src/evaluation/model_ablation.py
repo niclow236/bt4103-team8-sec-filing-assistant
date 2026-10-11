@@ -24,7 +24,7 @@ from .harness import RunInterrupted, RunStopped, evaluate
 from .metrics import score_question
 from .records import BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
-from .run import _query, _safe_run_id, _summary
+from .run import _query, _safe_run_id, _summary, question_fields
 
 
 @dataclass(frozen=True)
@@ -140,6 +140,7 @@ def run_embedding_ablation(
                     latency_ms=latency_ms, config=configuration,
                 )
                 result_rows.append({
+                    **question_fields(question),
                     **score_question(question, result, k=top_k), "config": configuration,
                     "retrieved_chunk_ids": list(result.retrieved_chunk_ids),
                     "retrieved_scores": list(result.retrieved_scores),
@@ -198,6 +199,11 @@ def run_generation_ablation(
             )
         except (RunStopped, RunInterrupted) as error:
             report, stopped = error.report, error
+        question_by_id = {question.question_id: question for question in questions}
+        for row in report.get("results", []):
+            question = question_by_id.get(row.get("question_id"))
+            if question is not None:
+                row.update(question_fields(question))
         summaries.append(_generation_summary(experiment, report))
         _write_report(run_dir, experiment.id, report)
         if stopped is not None:
