@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # second page added here makes it appear.
 PAGES = [
     st.Page("app_pages/ask.py", title="Ask", icon=":material/search:", default=True),
+    st.Page("app_pages/compare.py", title="Compare", icon=":material/compare_arrows:"),
     st.Page("app_pages/browse.py", title="Browse", icon=":material/menu_book:"),
 ]
 
