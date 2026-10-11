@@ -1844,10 +1844,42 @@ split and are hidden. Reload saved results discovers new or updated runs.
 The cache keeps aggregate scores rather than full question rows, and the chart
 shows retrieval metrics as separate bars rather than adding their scores.
 
+The Compare page runs one question through two configurations from the shared
+evaluation registry, using the same selected answer model. Each side shows its
+effective filters, cited answer, elapsed time and retrieved passages. Passage
+overlap is determined by chunk ID: Shared means both configurations retrieved
+the passage, while Only left and Only right mark differences. Full passage
+text is available below the tables. C0 is excluded because its fixed-size
+baseline cannot be built by the interactive stack.
+
+Both configurations run in order and use the existing stack cache. Timings
+include loading and verification and can benefit from warmed indexes or cached
+answers, so they are demo timings rather than a controlled speed benchmark.
+Changing either configuration, the question, filters or provider hides the
+saved pair; it shows again without a new run only once every setting is back
+to what it was compared with. If one side fails, the other still shows its
+answer, with passage overlap labelled Not compared (#39). Provider failures
+retain the same settings-repair advice as Ask, including on later reruns.
+
 The app's Ask page reads the processed filings and indexes on this machine,
 searches them, sends retrieved passages to the configured answer model,
 verifies the result, and shows citations to those filings. Its Browse page
-reads the processed passages directly, without an index or model:
+reads the processed passages directly, without an index or model.
+
+On Ask, the resolved company and year filters appear before the search.
+Retrieved evidence appears as soon as it is ready, while answer text streams
+into the space above it. The checked answer then replaces the draft. If the
+model fails, the draft is removed and the retrieved evidence stays visible.
+Repeated questions show cached evidence and answers without repeating the
+search. Time to evidence depends on index loading, retrieval and reranking;
+the page does not promise a fixed one-second search (#42).
+
+The answer slot names the current stage (searching, then writing). Refused or
+empty searches draw no evidence panel; the answer explains why it abstained.
+Evidence panels start collapsed and reuse Browse's table and safe-link
+rendering. Provider and index errors stay above the evidence.
+
+Start it with:
 
 ```bash
 streamlit run src/app/main.py

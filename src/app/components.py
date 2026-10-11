@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from html import escape
 import re
@@ -573,40 +573,46 @@ def corpus_passage(row: Mapping[str, Any], *, label: str = "") -> None:
     whole selection, so that panels listed together can be told apart. Without
     one, a passage is labelled on its own and may read like its neighbours.
     """
-    kind, colour, icon = _passage_kind(row)
-    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    _, _, icon = _passage_kind(row)
     passage_title = label or passage_labels([row])[0]
     # Streamlit reads a label as Markdown, where a pair of "$" opens inline math.
     passage_title = passage_title.replace("$", r"\$")
 
     with st.expander(passage_title, icon=icon):
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.badge(kind, color=colour, icon=icon)
-            st.caption(f"Chunk ID: {chunk_id}")
-        url = str(row.get("url") or "")
-        if _safe_url(url):
-            st.link_button("Open filing on EDGAR", url, icon=":material/open_in_new:")
-        else:
-            st.caption("Filing link unavailable")
+        _passage_body(row)
 
-        text = str(row.get("text") or "")
-        if row.get("content_type") == "table":
-            # Financial tables are wider than the page. Keep their columns
-            # aligned in a real table and scroll sideways instead of wrapping
-            # pipe-delimited rows into an unreadable code block.
-            table_html = _corpus_table_html(text, dark=_dark_theme())
-            if table_html:
-                st.html(table_html)
-                # Browse shows what retrieval sees, so the exact stored text
-                # stays one click away from the rendered table.
-                with st.expander("Stored text", icon=":material/code:"):
-                    st.code(text, language=None, wrap_lines=False)
-            else:
-                # Defensive fallback for a future table format the renderer
-                # does not recognise; never hide the stored source text.
+
+def _passage_body(row: Mapping[str, Any]) -> None:
+    """The shared stored text/table and safe filing link for Browse and Ask."""
+    kind, colour, icon = _passage_kind(row)
+    chunk_id = str(row.get("chunk_id") or "Chunk ID unavailable")
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.badge(kind, color=colour, icon=icon)
+        st.caption(f"Chunk ID: {chunk_id}")
+    url = str(row.get("url") or "")
+    if _safe_url(url):
+        st.link_button("Open filing on EDGAR", url, icon=":material/open_in_new:")
+    else:
+        st.caption("Filing link unavailable")
+
+    text = str(row.get("text") or "")
+    if row.get("content_type") == "table":
+        # Financial tables are wider than the page. Keep their columns
+        # aligned in a real table and scroll sideways instead of wrapping
+        # pipe-delimited rows into an unreadable code block.
+        table_html = _corpus_table_html(text, dark=_dark_theme())
+        if table_html:
+            st.html(table_html)
+            # Show what retrieval sees: the exact stored text stays one
+            # click away from the rendered table.
+            with st.expander("Stored text", icon=":material/code:"):
                 st.code(text, language=None, wrap_lines=False)
         else:
-            st.text(text)
+            # Defensive fallback for an unrecognised future table format;
+            # never hide the stored source text.
+            st.code(text, language=None, wrap_lines=False)
+    else:
+        st.text(text)
 
 
 def corpus_passage_page(passages: Sequence[Mapping[str, Any]], selection: CorpusSelection,
@@ -851,7 +857,8 @@ def resolved_filters(query: Query, parsed: ParsedQuestion | None = None) -> None
     st.markdown(":material/filter_alt: Searching " + " ".join(parts))
 
 
-def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration") -> str:
+def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
+                         label: str = "Configuration", default: str = DEFAULT_STACK) -> str:
     """Pick one of the configurations ``src/stack.py`` can build, in the sidebar.
 
     In the registry's order, each labelled with the run that measured it
@@ -860,8 +867,8 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration")
     """
     with st.sidebar:
         config_id = st.selectbox(
-            "Configuration", SELECTABLE,
-            index=SELECTABLE.index(DEFAULT_STACK),
+            label, SELECTABLE,
+            index=SELECTABLE.index(default),
             format_func=lambda option: runs.get(option, f"{option} — {STACKS[option].name}"),
             help="Named in src/stack.py and built the same way the evaluation "
                  "command builds it. A row measured under results/ is labelled "
@@ -941,8 +948,8 @@ def _fix_in_app(provider: str, available: AnswerModels) -> str:
             f"then restart the app{instead}.")
 
 
-def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
-    """Say why the provider picked could not answer an Ask.
+def provider_message(error: ProviderUnavailable, provider: str, available: AnswerModels) -> str:
+    """Explain a provider failure with app-specific advice, as plain data.
 
     ``available`` is what :func:`provider_picker` was given. What the provider
     lacks, without the advice to restart a notebook or a command that the
@@ -955,7 +962,12 @@ def provider_error(error: ProviderUnavailable, provider: str, available: AnswerM
     shown = error.reason
     if error.reason != str(error) and provider not in available.unready:
         shown += f". {_fix_in_app(provider, available)}"
-    st.error(shown, icon=":material/error:")
+    return shown
+
+
+def provider_error(error: ProviderUnavailable, provider: str, available: AnswerModels) -> None:
+    """Draw the shared provider failure explanation on an answer page."""
+    st.error(provider_message(error, provider, available), icon=":material/error:")
 
 
 def _writer(answer: Answer) -> Literal["facts", "model"] | None:
@@ -1023,6 +1035,44 @@ def trace_rows(answer: Answer) -> list[dict[str, object]]:
     } for number, passage in enumerate(answer.passages, 1)]
 
 
+def _passage_ids(answer: Answer | None) -> set[str]:
+    """Distinct chunk identities, regardless of rank, score or passage text."""
+    return {passage.chunk_id for passage in answer.passages} if answer is not None else set()
+
+
+def comparison_overlap(left: Answer, right: Answer) -> tuple[int, int, int]:
+    """Counts of shared, left-only and right-only passages by chunk identity."""
+    left_ids, right_ids = _passage_ids(left), _passage_ids(right)
+    return len(left_ids & right_ids), len(left_ids - right_ids), len(right_ids - left_ids)
+
+
+def comparison_rows(answer: Answer, other: Answer | None,
+                    side: Literal["left", "right"]) -> list[dict[str, object]]:
+    """Mark overlap by chunk identity, preserving each answer's citation order."""
+    other_ids = _passage_ids(other)
+    return [{"Presence": ("Not compared" if other is None else
+                           "Shared" if row["Chunk"] in other_ids else f"Only {side}"), **row}
+            for row in trace_rows(answer)]
+
+
+def comparison_evidence(answer: Answer, other: Answer | None, *,
+                        side: Literal["left", "right"]) -> None:
+    """Show one side's passages, marked Shared or Only ``side`` against ``other``."""
+    st.subheader("Retrieved passages", anchor=False)
+    rows = comparison_rows(answer, other, side)
+    if not rows:
+        st.caption("No passages were retrieved for this answer.")
+        return
+    st.dataframe(rows, width="stretch", hide_index=True,
+                 column_config={"Filing": st.column_config.LinkColumn(display_text="Open filing"),
+                                "Score": st.column_config.NumberColumn(format="%.4f"),
+                                "Fiscal year": st.column_config.NumberColumn(format="%d")})
+    for row in rows:
+        with st.expander(f"{row['Presence']} · {row['Source']} · {row['Company']} · "
+                         f"FY{row['Fiscal year']} · Item {row['Item']}"):
+            st.text(str(row["Passage"]))
+
+
 def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
@@ -1084,6 +1134,23 @@ def _checking_step(answer: Answer) -> str:
               for status in ("supported", "mismatch", "unverified")]
     found = ", ".join(f"{count} {status}" for status, count in counts if count)
     return f"Checked: {found}" if found else "Checked: nothing to check"
+
+
+def retrieved_evidence(passages: Sequence[RetrievedPassage]) -> None:
+    """Show the evidence as soon as it is admitted, before generation (#42).
+
+    Nothing is drawn for no passages: the answer's own notice says why, and
+    a refused question was never searched.
+    """
+    if not passages:
+        return
+    st.subheader("Retrieved evidence", anchor=False)
+    for number, passage in enumerate(passages, 1):
+        year = passage.fiscal_year if passage.fiscal_year is not None else "unknown"
+        label = (f"[{number}] {passage.ticker} · FY{year} · "
+                 f"Item {passage.item or 'unknown'} · score {passage.score:.4f}")
+        with st.expander(label):
+            _passage_body(asdict(passage))
 
 
 def retrieval_trace(answer: Answer, parsed: ParsedQuestion, config: StackConfig, *,
@@ -1214,9 +1281,9 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
+    "comparison_evidence", "comparison_overlap", "comparison_rows",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
-    "CorpusSelection", "filter_sidebar", "passage_labels", "provider_picker",
+    "CorpusSelection", "filter_sidebar", "passage_labels", "provider_error", "provider_message",
+    "provider_picker",
     "resolved_filters", "retrieval_trace", "select_corpus_passages", "trace_rows",
-    "CorpusSelection", "filter_sidebar", "provider_error", "provider_picker", "resolved_filters",
-    "retrieval_trace", "select_corpus_passages", "trace_rows",
 ]
