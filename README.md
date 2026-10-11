@@ -1840,7 +1840,11 @@ each benchmark's own saved rows: XBRL source, mechanical difficulty or an
 Team benchmark, including handwritten and `llm_assisted` questions. Historical
 saved group summaries are used only when per-question rows are unavailable.
 If neither is available, a warning explains why whole-run scores cannot be
-split and are hidden. Reload saved results discovers new or updated runs.
+split and are hidden. Stopped runs or runs with fewer readable question rows
+than their summaries claim are labelled incomplete; their scores are partial
+and are not comparable to a complete run. Reload saved results discovers new
+or updated runs, keeps the selected run when it still exists, and clears only
+the Results cache, not the caches used by other pages.
 The cache keeps aggregate scores rather than full question rows, and the chart
 shows retrieval metrics as separate bars rather than adding their scores.
 

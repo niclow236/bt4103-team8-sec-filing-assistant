@@ -54,6 +54,8 @@ _ITEM_MENTION = re.compile(
 
 _RESULT_METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
                          "hard_negative_accuracy": "Hard Negative Accuracy"}
+_RESULT_BENCHMARKS = (("Team benchmark", "handwritten"),
+                      ("Mechanical XBRL benchmark", "mechanical"))
 
 
 def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
@@ -81,18 +83,24 @@ def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -
     return pd.DataFrame(rows).dropna(axis=1, how="all")
 
 
-def _render_results_benchmark(title: str, configurations: list[dict[str, Any]],
+def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
+                              configurations: list[dict[str, Any]],
                               benchmark: str) -> None:
     st.subheader(title)
-    if not configurations:
+    model_table = _results_model_table(configurations, benchmark)
+    if not retrieval and model_table.empty:
         st.info("No saved results for this benchmark.")
         return
-    st.dataframe(_results_table(configurations, benchmark), width="stretch", hide_index=True)
-    chart_rows = result_chart_rows(configurations, benchmark)
+    if retrieval:
+        st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
+    chart_rows = result_chart_rows(retrieval, benchmark)
     if chart_rows:
         chart = pd.DataFrame(chart_rows).pivot(index="Configuration", columns="Metric",
                                                 values="Value")
         st.bar_chart(chart, stack=False)
+    if not model_table.empty:
+        st.subheader("Answer-model ablation")
+        st.dataframe(model_table, width="stretch", hide_index=True)
 
 
 def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
@@ -111,15 +119,11 @@ def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> l
 
 def render_results(runs: list[dict[str, Any]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py."""
-    st.header("Results")
-    st.caption("Saved benchmark results are read from results/<run-id>/; no evaluation is rerun.")
-    if st.button("Reload saved results"):
-        st.cache_data.clear()
-        st.rerun()
     if not runs:
         st.info("No completed benchmark runs were found under results/.")
         return
-    run_id = st.selectbox("Run", [run["run_id"] for run in runs])
+    run_id = _existing_choice("Run", [run["run_id"] for run in runs],
+                              key="results_run", format_func=str)
     selected = next(run for run in runs if run["run_id"] == run_id)
     unsplit = [item["config_id"] for item in selected["configurations"]
                if not item["benchmark_metrics"]]
@@ -129,25 +133,20 @@ def render_results(runs: list[dict[str, Any]]) -> None:
             "have a summary but no usable per-question results on this machine "
             f"(results/{run_id}/<configuration>/questions.jsonl or report.json), so their "
             "scores cannot be split by benchmark and are not shown: " + ", ".join(unsplit))
+    incomplete = [f"{item['config_id']} ({item['incomplete']})"
+                  for item in selected["configurations"] if item.get("incomplete")]
+    if incomplete:
+        st.warning("Incomplete results: " + ", ".join(incomplete)
+                   + ". These scores are partial and are not comparable to a complete run.")
     retrieval = [item for item in selected["configurations"]
                  if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
                             for metric in _RESULT_METRIC_LABELS)
-                        for kind in ("handwritten", "mechanical"))]
-    manual = [item for item in retrieval if "handwritten" in item["benchmark_metrics"]]
-    mechanical = [item for item in retrieval if "mechanical" in item["benchmark_metrics"]]
-    tab_manual, tab_mechanical = st.tabs(["Team benchmark", "Mechanical XBRL benchmark"])
-    with tab_manual:
-        _render_results_benchmark("Team benchmark", manual, "handwritten")
-        table = _results_model_table(selected["configurations"], "handwritten")
-        if not table.empty:
-            st.subheader("Answer-model ablation")
-            st.dataframe(table, width="stretch", hide_index=True)
-    with tab_mechanical:
-        _render_results_benchmark("Mechanical XBRL benchmark", mechanical, "mechanical")
-        table = _results_model_table(selected["configurations"], "mechanical")
-        if not table.empty:
-            st.subheader("Answer-model ablation")
-            st.dataframe(table, width="stretch", hide_index=True)
+                        for _, kind in _RESULT_BENCHMARKS)]
+    for tab, (title, kind) in zip(st.tabs([title for title, _ in _RESULT_BENCHMARKS]),
+                                _RESULT_BENCHMARKS):
+        with tab:
+            matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
+            _render_results_benchmark(title, matching, selected["configurations"], kind)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:

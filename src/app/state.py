@@ -111,6 +111,18 @@ def _saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = 
     return output
 
 
+def _incomplete(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
+    """Describe partial results without treating a summary-only run as truncated."""
+    stopped = summary.get("stopped")
+    if stopped:
+        where = stopped.get("question_id") if isinstance(stopped, dict) else None
+        return f"stopped at {where}" if where else "stopped part-way"
+    expected = summary.get("questions")
+    if rows and isinstance(expected, int) and len(rows) < expected:
+        return f"{len(rows)} of {expected} question rows could be read"
+    return None
+
+
 @st.cache_data(show_spinner=False)
 def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
     """Read saved evaluation runs, including older files, without rerunning them."""
@@ -133,23 +145,27 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
             if not isinstance(config, dict):
                 continue
             config_id = str(config.get("id") or "")
-            if not config_id:
+            # Saved IDs name one child directory, never a path or a Windows drive.
+            if not config_id or config_id in {".", ".."} or any(
+                    character in config_id for character in ("/", "\\", ":")):
                 continue
-            rows = _read_result_rows(run_dir / config_id / "questions.jsonl")
+            config_dir = run_dir / config_id
+            if config_dir.resolve().parent != run_dir.resolve():
+                continue
+            rows = _read_result_rows(config_dir / "questions.jsonl")
             if not rows:
-                rows = _read_result_rows(run_dir / config_id / "report.json")
+                rows = _read_result_rows(config_dir / "report.json")
             configurations.append({
-                "run_id": str(manifest.get("run_id") or run_dir.name),
+                "run_id": run_dir.name,
                 "config_id": config_id,
                 "name": str(config.get("name") or config_id),
                 "questions": int(summary.get("questions") or len(rows)),
-                "metrics": {key: summary.get(key) for key in (
-                    *RESULT_METRICS, "abstention_rate", "median_latency_ms", "llm_questions")},
+                "incomplete": _incomplete(summary, rows),
                 "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
                                       if rows else summary.get("by_benchmark") or {}),
             })
         if configurations:
-            runs.append({"run_id": str(manifest.get("run_id") or run_dir.name),
+            runs.append({"run_id": run_dir.name,
                          "configurations": configurations})
     return runs
 
