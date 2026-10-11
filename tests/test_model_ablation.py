@@ -97,6 +97,33 @@ def test_generation_matrix_compares_local_and_hosted_providers(monkeypatch, tmp_
     )["config"]["provider"] == "mistral"
 
 
+def test_embedding_and_generation_writers_preserve_benchmark_metadata(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from src.app.state import result_runs
+    import src.evaluation.model_ablation as module
+
+    questions = [_question(), replace(_question(), question_id="m001", source="xbrl",
+                                     difficulty="mechanical", supporting_chunk_ids=("missed",))]
+    monkeypatch.setattr(module, "evaluate", _fake_evaluate)
+    for runner, run_id in ((run_embedding_ablation, "embedding"),
+                           (run_generation_ablation, "generation")):
+        manifest = runner(questions, _stack, run_id=run_id, results_root=tmp_path)
+        for summary in manifest["configurations"]:
+            rows = json.loads((tmp_path / run_id / summary["config"]["id"]
+                               / "report.json").read_text())["results"]
+            assert [{key: row[key] for key in ("question_id", "question_type", "source", "difficulty")}
+                    for row in rows] == [
+                {"question_id": "q001", "question_type": "numeric", "source": "handwritten", "difficulty": "easy"},
+                {"question_id": "m001", "question_type": "numeric", "source": "xbrl", "difficulty": "mechanical"}]
+    result_runs.clear()
+    for run in result_runs(tmp_path):
+        for config in run["configurations"]:
+            groups = config["benchmark_metrics"]
+            assert groups["handwritten"]["questions"] == groups["mechanical"]["questions"] == 1
+            if run["run_id"] == "embedding":
+                assert (groups["handwritten"]["recall"], groups["mechanical"]["recall"]) == (1.0, 0.0)
+
+
 def test_generation_uses_c4_stack_settings(monkeypatch, tmp_path):
     import src.evaluation.model_ablation as module
 

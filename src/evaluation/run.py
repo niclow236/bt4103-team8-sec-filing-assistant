@@ -66,6 +66,12 @@ def _summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def question_fields(question: BenchmarkQuestion) -> dict[str, str]:
+    """Fields a saved row carries to identify its question and benchmark."""
+    return {"question_id": question.question_id, "question_type": question.question_type,
+            "difficulty": question.difficulty, "source": question.source}
+
+
 def run_configuration(
     questions: Sequence[BenchmarkQuestion],
     retriever: Retriever,
@@ -107,10 +113,7 @@ def run_configuration(
         metrics = score_question(scoring_question, result, k=top_k)
         rows.append(
             {
-                "question_id": question.question_id,
-                "question_type": question.question_type,
-                "difficulty": question.difficulty,
-                "source": question.source,
+                **question_fields(question),
                 "retriever": retriever.name,
                 "config": configuration,
                 "retrieved_chunk_ids": list(result.retrieved_chunk_ids),
