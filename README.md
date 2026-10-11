@@ -157,7 +157,7 @@ bt4103-team8-sec-filing-assistant/
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
-│   ├── questions.jsonl      #   team benchmark: handwritten and llm_assisted questions
+│   ├── questions.jsonl      #   team benchmark: the 149 handwritten and llm_assisted questions
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 ├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
@@ -2058,9 +2058,13 @@ python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_
 
 ## The benchmark
 
-Hand-written questions go in `benchmark/questions.jsonl`, one JSON object per
-line, and `benchmark/schema.md` lists the fields each one needs. The file does
-not exist yet; it is filled as each member writes their questions.
+The team's questions are in `benchmark/questions.jsonl`, one JSON object per
+line, and `benchmark/schema.md` lists the fields each one needs. It holds 149
+(#152): 124 with `source` `handwritten` and 25 `llm_assisted`. By type they
+are 87 `numeric`, 44 `factual`, 10 `temporal`, 4 `comparative` and 4
+`unanswerable`, and 26 carry hard negatives. Its chunk ids
+are those of the current chunker, so a change that renames chunks makes the
+loader refuse the file until they are remapped.
 
 ```python
 from src.evaluation import load_questions
@@ -2762,8 +2766,9 @@ What the runs do not say:
   about half a day of encoding on this laptop.
 - Every question is a figure looked up in a filing. Nothing here measures a
   question that needs an argument read across paragraphs, which is where a
-  larger passage would be expected to help, and `benchmark/questions.jsonl`
-  holds no such question yet.
+  larger passage would be expected to help. The sweep ran before
+  `benchmark/questions.jsonl` was committed, and its factual and temporal
+  questions have not been put through it.
 - These are retrieval rates. The app answers most figure questions from the
   facts store before it searches, so they are not how often the app gets such
   a question right.
