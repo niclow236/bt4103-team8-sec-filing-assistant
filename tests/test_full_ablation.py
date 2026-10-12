@@ -1,5 +1,6 @@
 """Controlled matrix transitions, recorded evidence, and completion guards."""
 import json
+import hashlib
 from dataclasses import asdict, replace
 from types import SimpleNamespace
 
@@ -205,7 +206,8 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     q=question();passages=[RetrievedPassage.from_chunk(chunk('a','AAPL'),1.0,1,'bm25')]
     rows={cid:matrix.ranking(q,Query(q.question),passages,cid,12.0) for cid in matrix.MATRIX}
     for row in rows.values():row['recall']=999.0
-    matrix.dump(tmp_path/'config.json',{'provenance':{'questions':1}})
+    digest=hashlib.sha256(json.dumps([q.to_dict()],sort_keys=True).encode()).hexdigest()
+    matrix.dump(tmp_path/'config.json',{'provenance':{'questions':1,'question_records_sha256':digest}})
     matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
     matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
     cost=query_cost('ollama',[],attempts=0,prices=None)
@@ -225,3 +227,11 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     assert json.loads((tmp_path/'rescored/answer-summary.json').read_text())['team_questions']==1
     (tmp_path/'C6/answers.jsonl').unlink()
     with pytest.raises(ValueError,match='incomplete C6'):matrix.rescore(SimpleNamespace(run_dir=tmp_path))
+
+
+def test_snapshot_cannot_change_together_with_its_recorded_rankings():
+    q=question();digest=hashlib.sha256(json.dumps([q.to_dict()],sort_keys=True).encode()).hexdigest()
+    config={'provenance':{'questions':1,'question_records_sha256':digest}}
+    matrix.validate_snapshot(config,[q])
+    with pytest.raises(ValueError,match='frozen manifest'):
+        matrix.validate_snapshot(config,[replace(q,question='An edited benchmark question')])

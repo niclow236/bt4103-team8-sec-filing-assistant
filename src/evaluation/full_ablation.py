@@ -9,6 +9,7 @@ their original workload, rather than being presented as contemporaneous trials.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from dataclasses import asdict, replace
@@ -92,6 +93,16 @@ def check_transactions(transactions, questions):
         for cid,row in t["rows"].items():
             if row["config"]["id"] != cid or row["question_id"] != t["question"]["question_id"]:
                 raise ValueError("matrix row identity differs")
+
+
+def validate_snapshot(config, questions):
+    """A benchmark snapshot must remain the one the manifest froze."""
+    provenance=config["provenance"]
+    digest=hashlib.sha256(json.dumps([q.to_dict() for q in questions],sort_keys=True).encode()).hexdigest()
+    if (len(questions)!=provenance["questions"]
+            or len({q.question_id for q in questions})!=len(questions)
+            or digest!=provenance["question_records_sha256"]):
+        raise ValueError("benchmark snapshot differs from the frozen manifest")
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -407,6 +418,7 @@ def answers(args):
     run_dir = args.run_dir
     original = json.loads((run_dir / "config.json").read_text())
     questions = [BenchmarkQuestion.from_mapping(r) for r in read_rows(run_dir / "benchmark.jsonl")]
+    validate_snapshot(original,questions)
     team = [q for q in questions if q.source != "xbrl"]
     transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
     check_transactions(transactions,questions)
@@ -489,6 +501,7 @@ def rescore(args):
     directory=args.run_dir
     config=json.loads((directory/"config.json").read_text())
     questions=[BenchmarkQuestion.from_mapping(q) for q in read_rows(directory/"benchmark.jsonl")]
+    validate_snapshot(config,questions)
     transactions=read_rows(directory/"pairs.jsonl")
     check_transactions(transactions,questions)
     if len(transactions)!=config["provenance"]["questions"]:
