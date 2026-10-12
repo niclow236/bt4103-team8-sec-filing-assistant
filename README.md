@@ -2303,6 +2303,13 @@ a user would see flagged, and
 how many hold a figure nothing confirmed. The facts store is read once for the
 run.
 
+### Complete C0–C6 experiment
+
+Issue #44 adds an evaluation-only [complete matrix](docs/full-ablation.md), with
+all retrieval questions and the complete team answer benchmark, frozen
+provenance, restartable per-question outputs and model-free rescoring. C5/C6
+remain experimental; the app default remains C4.
+
 ### Embedding and generation ablations
 
 Issue #46 compares three embedding configurations and both answer providers.

@@ -198,9 +198,17 @@ class FixedSizeBM25Retriever:
                     if first < end and last > start
                 }
                 template = chunks[0]
-                fixed_chunks.append({**template, "chunk_id": fixed_id, "text": window})
+                fixed_chunks.append({**template, "chunk_id": fixed_id, "text": window,
+                                     "item": "", "title": "Fixed-size filing window",
+                                     "content_type": "prose", "chunk_budget": budget,
+                                     "chunk_overlap": 0})
                 self._source_ids[fixed_id] = source_ids
         self._retriever = BM25Retriever(fixed_chunks)
+
+    @property
+    def baseline_chunks(self) -> tuple[dict[str, Any], ...]:
+        """The actual naive windows, for freezing the measured C0 corpus."""
+        return tuple(dict(chunk) for chunk in self._retriever.chunks)
 
     def search(self, query: Query, k: int | None = None):
         return [
