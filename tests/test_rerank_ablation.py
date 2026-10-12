@@ -519,6 +519,41 @@ def test_completed_resume_does_not_rewrite_healthy_pairs(tmp_path):
     assert path.read_bytes() == original
 
 
+def test_completed_resume_repairs_a_cut_stream_that_holds_every_row(tmp_path):
+    qs, pool, chunks, reranker, out = completed_run(tmp_path)
+    path = out / "pairs.jsonl.gz"
+    pairs = read_pairs(path)
+    # All rows were flushed, but a kill prevented the gzip footer being written.
+    stream = gzip.open(out / "cut", "wt", encoding="utf-8")
+    try:
+        stream.writelines(json.dumps(r) + "\n" for r in pairs)
+        stream.flush()
+        path.write_bytes((out / "cut").read_bytes())
+    finally:
+        stream.close()
+    with pytest.raises(EOFError):
+        read_pairs(path)
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
+              chunks=chunks, top_k=2, resume=True)
+    assert read_pairs(path) == pairs
+    # Completion must leave a stream strict rescore can actually consume.
+    main(["rescore", str(out)])
+    summary = json.loads((out / "summary.json").read_text())
+    assert json.loads((out / "rescored-k2.json").read_text()) == summary
+    assert len(list(out.glob("runtime-*.json"))) == 1
+
+
+@pytest.mark.parametrize("unfinished", ['{"unfinished":', json.dumps({"unfinished": True})])
+def test_recover_reader_drops_nonterminated_line_in_a_closed_gzip(tmp_path, unfinished):
+    # Unlike a cut gzip, a closed member returns its final non-newline line.
+    # This directly exercises the newline safety check, not the EOF handler.
+    first = row(question())
+    path = tmp_path / "pairs.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as stream:
+        stream.write(json.dumps(first) + "\n" + unfinished)
+    assert read_pairs(path, recover=True) == [first]
+
+
 def test_recovery_refuses_a_changed_prefix_without_rewriting_it(tmp_path):
     qs, pool, chunks, reranker, out = completed_run(tmp_path)
     first = read_pairs(out / "pairs.jsonl.gz")[0]

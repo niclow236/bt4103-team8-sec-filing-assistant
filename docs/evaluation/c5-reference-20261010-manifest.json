@@ -260,13 +260,14 @@
     }
   ],
   "recovery": {
-    "reason": "chat interruption terminated the original benchmark process; gzip trailer missing",
+    "reason": "The original benchmark process was terminated after 1,831 complete pairs; gzip trailer missing.",
     "preserved_complete_pairs": 1831,
     "discarded_partial_line_bytes": 0,
     "original_sha256": "643bd55b99055abb11e603a2f91208f06889705c164e710871e09c164a298b11",
     "repaired_sha256": "d14262b485c9a79c9df6338b5c27b8948be90c0f607ae0a3c5ade064d830f610",
     "original_backup": "pairs-interrupted-original.jsonl.gz",
-    "benchmark_prefix_validated": true
+    "benchmark_prefix_validated": true,
+    "repair_method": "One-off local Python recovery outside the frozen e74872d runner: read complete JSON rows, verify the exact benchmark prefix, preserve the original compressed backup and rewrite the recovered rows into a valid gzip stream before native --resume."
   },
   "workload_observation": {
     "observed_at_utc": "2026-10-10T13:58:14.472257+00:00",
@@ -820,5 +821,6 @@
       "fiscal_year": 2025,
       "url": "https://www.sec.gov/Archives/edgar/data/97476/000009747626000059/txn-20251231.htm"
     }
-  ]
+  ],
+  "recovery_annotation_note": "Reason wording and repair_method clarify the report. The original local interruption-recovery.json and all measured artifacts remain unchanged; their original hashes are retained in artifacts_sha256."
 }

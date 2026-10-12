@@ -44,7 +44,7 @@ and stored passage text, without extra headers or prompts. The maximum paired
 input is 512 tokens, including special tokens, with the tokenizer's
 `longest_first` truncation. Batch size is 32. Scores are raw logits; the query's
 table boost is reapplied with the existing sign-aware score transformation.
-Ties break by chunk ID. There is no invented cross-encoder score floor.
+Ties break by chunk ID. `torch.nn.Identity()` is explicit at model construction and each prediction call, including injected models, so these scores remain raw logits. There is no invented cross-encoder score floor.
 
 Both rows use the existing C4 evaluation query policy: parse the question and
 apply its benchmark ticker/year where specified. This uses the same filter,
@@ -207,16 +207,28 @@ The Apple M1 / 16 GiB laptop used MPS for both encoders. Cached cross-encoder lo
 
 The measurement ran on frozen source `e74872d`; review fixes were developed in an isolated checkout and diagnostics were rescored on `941c931`. Native `rescore --processed-dir` derived gold-filing diagnostics only after verifying the full corpus digest. The original relevance metrics and intervals were checked for exact equality with the native reference summary; stored pairs, rankings and timings were not edited.
 
-A chat interruption ended the first process after 1,831 complete pairs and left its gzip footer missing. All 1,831 valid rows were recovered, checked against the exact frozen benchmark prefix and preserved; no question rows were discarded. Native resume completed the remaining rows on the identical source/configuration/indexes with its own excluded warm-up. Recovery hashes and both runtime segments are retained in the [measurement manifest](evaluation/c5-reference-20261010-manifest.json).
+The first process was terminated after 1,831 complete pairs, leaving its gzip footer missing. A one-off local Python recovery step outside the frozen evaluation runner read the complete JSON rows, checked the exact frozen benchmark prefix, preserved the original compressed file as `pairs-interrupted-original.jsonl.gz`, and rewrote those rows into a valid gzip stream. All 1,831 valid rows were preserved; no question rows were discarded. The reference source `e74872d` has no native recovery path: its `--resume` consumed this externally repaired file and completed the remaining rows on the identical source/configuration/indexes with its own excluded warm-up. The current runner performs its own guarded atomic repair as covered by the review tests. Recovery hashes and both runtime segments are retained in the [measurement manifest](evaluation/c5-reference-20261010-manifest.json).
 
 The manifest also records all input/source/corpus fingerprints, pinned model revision, dependency versions, index build identities, artifact hashes and the 75-filing inventory. The 28,289-passage corpus and large per-question artifacts remain local under `data/` and `results/`; the small report artifacts are committed for review. Exact reference reruns require source `e74872d` and the frozen inputs/indexes identified there. The current CLI supports guarded future runs and model-free rescoring.
 
+Evidence type splits the result. The pooled gold-evidence slices across all sources are:
+
+| Gold evidence | Relevance-scored questions | nDCG@16 C4 → C5 | nDCG delta [paired 95% CI] | Wins / losses / ties |
+| --- | ---: | ---: | --- | ---: |
+| Prose | 878 | 0.1636 → 0.3483 | +0.1847 [+0.1601, +0.2109] | 408 / 43 / 427 |
+| Prose + table | 2523 | 0.3028 → 0.3743 | +0.0715 [+0.0611, +0.0826] | 1273 / 675 / 575 |
+| Table | 9323 | 0.5487 → 0.4358 | -0.1129 [-0.1290, -0.0976] | 1761 / 5156 / 2406 |
+
+C5 roughly doubles nDCG on prose evidence and improves the mixed prose/table slice. Table-evidence questions make up **73.3% of the 12,724 relevance-scored questions** and drive the overall regression; table passages in the top 16 fall from 164,538 to 121,247. The default-adoption decision remains retain C4 under the predeclared gates, but it does not mean reranking never helps. These are diagnostic slices, not a tested routing policy. Reranking only prose questions or scoring tables differently would require a separate experiment, including a routing rule that does not use gold evidence labels at query time.
+
 This result applies to this fixed MiniLM configuration and corpus. Generated labels are a retrieval proxy; filing clustering does not remove all company/template dependence, and gold scope is not exhaustive relevance. No conclusion about answer correctness, other checkpoints or larger chunk budgets follows from these retrieval metrics.
 
-For #44, the proposed C5 row is **experimental MiniLM reranking of C4, evaluated and rejected for default adoption**, with these paired results retained as the negative ablation. Teammate approval of this PR is requested as agreement on that representation. #44 remains open; its C6 definition and complete final matrix are separate work.
+For #44, the proposed C5 row is **experimental MiniLM reranking of C4, evaluated and rejected for default adoption**, with these paired results retained as the negative ablation and its prose gains/table regressions recorded explicitly. Teammate approval of this PR is requested as agreement on that representation. #44 remains open; its C6 definition and complete final matrix are separate work.
 
 ## Verification after review
 
 Review source `941c931` passes all **2,028 local tests** and CI on Python 3.10 and 3.12. Ten isolated broken-guard variants were detected by the regression tests. Model-free rescore verified all 12,728 unique frozen question records and reproduced every original relevance aggregate and confidence interval exactly.
 
 A real-model smoke on seven team/mechanical questions scored 350 candidates using cached BGE and the pinned cross-encoder on MPS. Its C4/C5 rankings and relevance metrics matched the original reference smoke, with a maximum raw-logit difference of zero. A second real CLI process was forcibly killed after two complete pairs. Native resume preserved both rows verbatim, started from question 3, and completed all seven with the same rankings/relevance metrics as the uninterrupted run. Latencies were newly measured and are not asserted to be identical. Source, runtime and smoke artifact hashes are in the [verification record](evaluation/c5-reference-20261010-verification.json).
+
+The subsequent review adds coverage for a process killed after its final row was flushed: completed resume must repair the stream so strict rescore succeeds. A separate closed-gzip fixture directly exercises the non-newline safety check; the forced-kill fixtures exercise gzip EOF handling. Both guard-removal mutations fail their targeted tests. The full local suite now passes **2,031 tests**.
