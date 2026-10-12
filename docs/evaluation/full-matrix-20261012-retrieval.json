@@ -1,0 +1,1018 @@
+{
+  "run_id": "full-matrix-20261012",
+  "top_k": 16,
+  "configurations": [
+    {
+      "config": {
+        "id": "C0",
+        "name": "naive BM25",
+        "retriever": "bm25-fixed-size",
+        "chunking": "fixed-size",
+        "metadata_filter": false,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": false,
+        "use_refusal": false,
+        "use_verification": false,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.02514015508749869,
+      "ndcg": 0.01269330784430346,
+      "mrr": 0.013286492577596004,
+      "hard_negative_accuracy": 0.9487179487179487,
+      "median_latency_ms": 44.104062515543774,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.1678861788617886,
+          "ndcg": 0.09672279582446527,
+          "mrr": 0.10881979357589114,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 39.00931250245776
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.17045454545454544,
+          "ndcg": 0.10520910625505336,
+          "mrr": 0.1167929292929293,
+          "hard_negative_accuracy": 0.9466666666666667,
+          "median_latency_ms": 59.585874987533316
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.023490208548639268,
+          "ndcg": 0.011709845360274808,
+          "mrr": 0.01217132144868849,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 44.14012501365505
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.0625,
+          "ndcg": 0.09759501249802542,
+          "mrr": 0.25,
+          "hard_negative_accuracy": 0.9375,
+          "median_latency_ms": 73.94179150287528
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.3371212121212121,
+          "ndcg": 0.2009285996049561,
+          "mrr": 0.21478035853035854,
+          "hard_negative_accuracy": 0.9270833333333334,
+          "median_latency_ms": 44.78556300455239
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.023795989262592767,
+          "ndcg": 0.011857948101887401,
+          "mrr": 0.012347693405249067,
+          "hard_negative_accuracy": 0.9375,
+          "median_latency_ms": 44.099687511334196
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.34,
+          "ndcg": 0.2085639919801212,
+          "mrr": 0.22111111111111112,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 45.69035398890264
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 45.63016649626661
+        }
+      }
+    },
+    {
+      "config": {
+        "id": "C1",
+        "name": "section-aware BM25",
+        "retriever": "bm25",
+        "chunking": "section-aware",
+        "metadata_filter": false,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": false,
+        "use_refusal": false,
+        "use_verification": false,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.06940951482762234,
+      "ndcg": 0.031715971033097215,
+      "mrr": 0.025275113260416624,
+      "hard_negative_accuracy": 0.9423076923076923,
+      "median_latency_ms": 68.09354148572311,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.31978319783197834,
+          "ndcg": 0.15550041216805202,
+          "mrr": 0.1160492623907258,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 60.574166986043565
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.20454545454545456,
+          "ndcg": 0.09871328747625965,
+          "mrr": 0.06949742177014905,
+          "hard_negative_accuracy": 0.94,
+          "median_latency_ms": 91.73708298476413
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.0667249648885709,
+          "ndcg": 0.030388407059701153,
+          "mrr": 0.024310162856549692,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 68.12008301494643
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.0,
+          "ndcg": 0.0,
+          "mrr": 0.0,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 84.19616649916861
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.4696969696969697,
+          "ndcg": 0.24377052520424689,
+          "mrr": 0.19801612528885257,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 65.71710451680701
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.06780620032633296,
+          "ndcg": 0.030830988753414248,
+          "mrr": 0.024555594895481207,
+          "hard_negative_accuracy": 0.9375,
+          "median_latency_ms": 68.09354148572311
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.36666666666666664,
+          "ndcg": 0.23228087653971816,
+          "mrr": 0.18666666666666668,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 65.39164598507341
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 271.13191700482275
+        }
+      }
+    },
+    {
+      "config": {
+        "id": "C2",
+        "name": "dense retrieval",
+        "retriever": "dense",
+        "chunking": "section-aware",
+        "metadata_filter": false,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": false,
+        "use_refusal": false,
+        "use_verification": false,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.3683459079953893,
+      "ndcg": 0.23188442492057276,
+      "mrr": 0.23491821104600105,
+      "hard_negative_accuracy": 0.8653846153846154,
+      "median_latency_ms": 125.80412501120009,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.4173441734417344,
+          "ndcg": 0.2642252886856102,
+          "mrr": 0.2342712617102861,
+          "hard_negative_accuracy": 0.5,
+          "median_latency_ms": 130.21314550132956
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.4090909090909091,
+          "ndcg": 0.2549850270549078,
+          "mrr": 0.21002886002886004,
+          "hard_negative_accuracy": 0.88,
+          "median_latency_ms": 129.3900409946218
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.36779553223626676,
+          "ndcg": 0.23152778770854837,
+          "mrr": 0.23496806719439678,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 125.77287497697398
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.25,
+          "ndcg": 0.11806734053698968,
+          "mrr": 0.10416666666666666,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 123.76375000167172
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.7348484848484849,
+          "ndcg": 0.45410748889196945,
+          "mrr": 0.392458362344726,
+          "hard_negative_accuracy": 0.75,
+          "median_latency_ms": 55.7712915178854
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.3672956471393231,
+          "ndcg": 0.23124083237490056,
+          "mrr": 0.23450888068367937,
+          "hard_negative_accuracy": 0.9375,
+          "median_latency_ms": 125.90812549751718
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.13333333333333333,
+          "ndcg": 0.11480409554829327,
+          "mrr": 0.1125,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 137.1663124882616
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 133.21427049231716
+        }
+      }
+    },
+    {
+      "config": {
+        "id": "C3",
+        "name": "hybrid retrieval",
+        "retriever": "hybrid",
+        "chunking": "section-aware",
+        "metadata_filter": false,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": false,
+        "use_refusal": false,
+        "use_verification": false,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.2934742743372105,
+      "ndcg": 0.1721838330646992,
+      "mrr": 0.16802938724013072,
+      "hard_negative_accuracy": 0.8846153846153846,
+      "median_latency_ms": 204.0529580117436,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.47560975609756095,
+          "ndcg": 0.2654527494160675,
+          "mrr": 0.21610216793143622,
+          "hard_negative_accuracy": 0.5,
+          "median_latency_ms": 198.23779199214187
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.45454545454545453,
+          "ndcg": 0.22984454287638265,
+          "mrr": 0.17042011019283745,
+          "hard_negative_accuracy": 0.9,
+          "median_latency_ms": 226.92370702861808
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.29141161194583565,
+          "ndcg": 0.17117098527655422,
+          "mrr": 0.16755514064421767,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 204.07858298858628
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.375,
+          "ndcg": 0.19055004710765894,
+          "mrr": 0.16666666666666666,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 208.0785205034772
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.6893939393939394,
+          "ndcg": 0.3981436708105976,
+          "mrr": 0.3338964381578018,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 122.94054198719095
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.29201536922995946,
+          "ndcg": 0.17135068149361068,
+          "mrr": 0.16744219274418232,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 204.16533296520356
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.36666666666666664,
+          "ndcg": 0.22588384130627362,
+          "mrr": 0.1825,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 199.2434999847319
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 0.875,
+          "median_latency_ms": 404.4668959977571
+        }
+      }
+    },
+    {
+      "config": {
+        "id": "C4",
+        "name": "hybrid retrieval with metadata filters",
+        "retriever": "hybrid",
+        "chunking": "section-aware",
+        "metadata_filter": true,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": false,
+        "use_refusal": false,
+        "use_verification": false,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.6536466519962276,
+      "ndcg": 0.4733949709134345,
+      "mrr": 0.47706327442947216,
+      "hard_negative_accuracy": 0.9615384615384616,
+      "median_latency_ms": 719.6769584843423,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.8360433604336044,
+          "ndcg": 0.6192900865887564,
+          "mrr": 0.5686473643790717,
+          "hard_negative_accuracy": 0.0,
+          "median_latency_ms": 450.35247901978437
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.7272727272727273,
+          "ndcg": 0.4914413692392324,
+          "mrr": 0.45645743145743145,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 409.959250013344
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.6517343721016509,
+          "ndcg": 0.47193681684783056,
+          "mrr": 0.4762037852396784,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 720.7889579876792
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.75,
+          "ndcg": 0.5191651833815294,
+          "mrr": 0.6011904761904762,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 885.7998744933866
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.9545454545454546,
+          "ndcg": 0.7557924867129094,
+          "mrr": 0.7112193362193362,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 314.8309170064749
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.6527317227222486,
+          "ndcg": 0.4725340026322939,
+          "mrr": 0.4763707432495921,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 720.3133959992556
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.45,
+          "ndcg": 0.3030402413012514,
+          "mrr": 0.2742857142857143,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 651.0948124923743
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 0.75,
+          "median_latency_ms": 189.88420799723826
+        }
+      }
+    },
+    {
+      "config": {
+        "id": "C5",
+        "name": "C4 + experimental MiniLM reranking",
+        "retriever": "hybrid",
+        "chunking": "section-aware",
+        "metadata_filter": true,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": false,
+        "use_refusal": false,
+        "use_verification": false,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.6671120192811485,
+      "ndcg": 0.417607094835833,
+      "mrr": 0.3844915198017603,
+      "hard_negative_accuracy": 0.9615384615384616,
+      "median_latency_ms": 1131.9256040005712,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.8495934959349594,
+          "ndcg": 0.5294476015314671,
+          "mrr": 0.4466271646149695,
+          "hard_negative_accuracy": 0.5,
+          "median_latency_ms": 858.1924375175731
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.6136363636363636,
+          "ndcg": 0.43144780878220157,
+          "mrr": 0.4017857142857143,
+          "hard_negative_accuracy": 0.98,
+          "median_latency_ms": 866.9035420170985
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.665421204653258,
+          "ndcg": 0.4164892891254917,
+          "mrr": 0.3838536983063575,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 1133.7777499866206
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.75,
+          "ndcg": 0.6451708940569352,
+          "mrr": 0.75,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 1330.6708125019213
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.7575757575757576,
+          "ndcg": 0.5610030814741426,
+          "mrr": 0.5183367768595041,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 764.0311460127123
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.6668640454760777,
+          "ndcg": 0.41699620720010777,
+          "mrr": 0.3838537700303451,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 1132.9412085033255
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.55,
+          "ndcg": 0.46938951334840695,
+          "mrr": 0.45714285714285713,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 1091.3050829840358
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 0.75,
+          "median_latency_ms": 622.4327699892456
+        }
+      }
+    },
+    {
+      "config": {
+        "id": "C6",
+        "name": "C5 + filing decomposition and verification",
+        "retriever": "hybrid",
+        "chunking": "section-aware",
+        "metadata_filter": true,
+        "top_k": 16,
+        "min_score": null,
+        "use_facts": false,
+        "use_decomposition": true,
+        "use_refusal": false,
+        "use_verification": true,
+        "candidate_k": 50
+      },
+      "questions": 12728,
+      "metric_denominators": {
+        "recall": 12724,
+        "ndcg": 12724,
+        "mrr": 12724,
+        "hard_negative_accuracy": 26
+      },
+      "recall": 0.6671120192811485,
+      "ndcg": 0.4175462484115613,
+      "mrr": 0.3843937120766341,
+      "hard_negative_accuracy": 0.9615384615384616,
+      "median_latency_ms": 1132.404249990941,
+      "by_source": {
+        "handwritten": {
+          "questions": 124,
+          "metric_denominators": {
+            "recall": 123,
+            "ndcg": 123,
+            "mrr": 123,
+            "hard_negative_accuracy": 1
+          },
+          "recall": 0.8495934959349594,
+          "ndcg": 0.5248189556621451,
+          "mrr": 0.4405296036393597,
+          "hard_negative_accuracy": 0.5,
+          "median_latency_ms": 865.540229016915
+        },
+        "llm_assisted": {
+          "questions": 25,
+          "metric_denominators": {
+            "recall": 22,
+            "ndcg": 22,
+            "mrr": 22,
+            "hard_negative_accuracy": 25
+          },
+          "recall": 0.6136363636363636,
+          "ndcg": 0.42213478785006825,
+          "mrr": 0.3793081918081918,
+          "hard_negative_accuracy": 0.98,
+          "median_latency_ms": 887.3945419909433
+        },
+        "xbrl": {
+          "questions": 12579,
+          "metric_denominators": {
+            "recall": 12579,
+            "ndcg": 12579,
+            "mrr": 12579,
+            "hard_negative_accuracy": 0
+          },
+          "recall": 0.665421204653258,
+          "ndcg": 0.4164892891254917,
+          "mrr": 0.3838536983063575,
+          "hard_negative_accuracy": null,
+          "median_latency_ms": 1133.7777499866206
+        }
+      },
+      "by_type": {
+        "comparative": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 4,
+            "ndcg": 4,
+            "mrr": 4,
+            "hard_negative_accuracy": 4
+          },
+          "recall": 0.75,
+          "ndcg": 0.5929235587523822,
+          "mrr": 0.625,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 2338.996563004912
+        },
+        "factual": {
+          "questions": 44,
+          "metric_denominators": {
+            "recall": 44,
+            "ndcg": 44,
+            "mrr": 44,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.7575757575757576,
+          "ndcg": 0.5610030814741426,
+          "mrr": 0.5183367768595041,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 764.0311460127123
+        },
+        "numeric": {
+          "questions": 12666,
+          "metric_denominators": {
+            "recall": 12666,
+            "ndcg": 12666,
+            "mrr": 12666,
+            "hard_negative_accuracy": 8
+          },
+          "recall": 0.6668640454760777,
+          "ndcg": 0.41699620720010777,
+          "mrr": 0.3838537700303451,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 1132.9412085033255
+        },
+        "temporal": {
+          "questions": 10,
+          "metric_denominators": {
+            "recall": 10,
+            "ndcg": 10,
+            "mrr": 10,
+            "hard_negative_accuracy": 2
+          },
+          "recall": 0.55,
+          "ndcg": 0.4128674572268741,
+          "mrr": 0.38269230769230766,
+          "hard_negative_accuracy": 1.0,
+          "median_latency_ms": 2622.5004579900997
+        },
+        "unanswerable": {
+          "questions": 4,
+          "metric_denominators": {
+            "recall": 0,
+            "ndcg": 0,
+            "mrr": 0,
+            "hard_negative_accuracy": 4
+          },
+          "recall": null,
+          "ndcg": null,
+          "mrr": null,
+          "hard_negative_accuracy": 0.75,
+          "median_latency_ms": 622.4327699892456
+        }
+      }
+    }
+  ],
+  "phase": "retrieval",
+  "complete": true,
+  "config_file": "config.json",
+  "evaluation_only": true
+}
