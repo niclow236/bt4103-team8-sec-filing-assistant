@@ -235,3 +235,12 @@ def test_snapshot_cannot_change_together_with_its_recorded_rankings():
     matrix.validate_snapshot(config,[q])
     with pytest.raises(ValueError,match='frozen manifest'):
         matrix.validate_snapshot(config,[replace(q,question='An edited benchmark question')])
+
+
+def test_experimental_matrix_does_not_label_the_default_app_stack_as_measured(tmp_path):
+    from src.stack import measured_runs
+    row={'config':{'id':'C4','name':'hybrid'},'questions':1,'ndcg':.5}
+    matrix.dump(tmp_path/'ordinary/summary.json',{'run_id':'ordinary','configurations':[row]})
+    matrix.dump(tmp_path/'experimental/summary.json',{'run_id':'experimental','configurations':[row],
+                                                    'evaluation_only':True})
+    assert [r.run_id for r in measured_runs(tmp_path)]==['ordinary']

@@ -398,6 +398,8 @@ def measured_runs(results_root: Path = RESULTS_ROOT) -> list[MeasuredRun]:
     """
     found: list[MeasuredRun] = []
     for summary in _summaries(results_root):
+        if summary.get("evaluation_only"):
+            continue  # Controlled experimental rows do not measure the app's stacks.
         run_id = str(summary.get("run_id") or "").strip()
         for row in summary.get("configurations") or ():
             config = row.get("config") or {}

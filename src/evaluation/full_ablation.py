@@ -266,9 +266,9 @@ def export_retrieval(run_dir: Path, transactions, expected: int, *, run_id=None,
     identifier=run_id or run_dir.name
     write_comparison(run_dir, run_id=identifier, top_k=cutoff, summaries=summaries,
                      extra_fields=("median_latency_ms",), phase="retrieval", complete=True,
-                     config_file=config_file)
+                     config_file=config_file, evaluation_only=True)
     write_comparison(run_dir / "by-source", run_id=identifier, top_k=cutoff,
-                     summaries=sources, extra_fields=("source",), complete=True)
+                     summaries=sources, extra_fields=("source",), complete=True, evaluation_only=True)
 
 
 def retrieval(args):
