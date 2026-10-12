@@ -224,6 +224,7 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     result=json.loads((tmp_path/'rescored/summary.json').read_text())
     assert result['top_k']==16 and result['configurations'][0]['recall']==.5
     assert result['configurations'][0]['ndcg']<1.0
+    assert not (tmp_path/'rescored/C0/questions.jsonl').exists()
     assert json.loads((tmp_path/'rescored/answer-summary.json').read_text())['team_questions']==1
     (tmp_path/'C6/answers.jsonl').unlink()
     with pytest.raises(ValueError,match='incomplete C6'):matrix.rescore(SimpleNamespace(run_dir=tmp_path))

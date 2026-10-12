@@ -245,7 +245,8 @@ def measure_question(question, fixed, hybrid, reranker, chunks, reference=None):
     return {"question": question.to_dict(), "rows": rows}
 
 
-def export_retrieval(run_dir: Path, transactions, expected: int, *, run_id=None, config_file="config.json"):
+def export_retrieval(run_dir: Path, transactions, expected: int, *, run_id=None, config_file="config.json",
+                     write_question_outputs=True):
     if len(transactions) != expected:
         raise ValueError("cannot summarize an incomplete retrieval matrix")
     summaries, sources = [], []
@@ -253,7 +254,8 @@ def export_retrieval(run_dir: Path, transactions, expected: int, *, run_id=None,
         rows = [t["rows"][cid] for t in transactions]
         directory = run_dir / cid
         directory.mkdir(exist_ok=True)
-        write_rows(directory / "questions.jsonl", rows)
+        if write_question_outputs:
+            write_rows(directory / "questions.jsonl", rows)
         groups = {source: summarize([r for r in rows if r["source"] == source])
                   for source in sorted({r["source"] for r in rows})}
         summary = {"config": rows[0]["config"], **summarize(rows), "by_source": groups,
@@ -515,7 +517,8 @@ def rescore(args):
             metrics=score_question(scored,result,k=row["config"]["top_k"])
             row.update({m:metrics[m] for m in METRICS})
     target=directory/"rescored";target.mkdir(exist_ok=True)
-    export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json")
+    export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
+                     write_question_outputs=False)
     team=[q for q in questions if q.source!='xbrl']
     summaries={}
     for cid in MATRIX:
