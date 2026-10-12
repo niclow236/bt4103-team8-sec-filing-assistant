@@ -2551,9 +2551,9 @@ hand:
 - A build first copies the vectors another index already holds for the same
   text, matched on the digest each vector stores. The 1,800 build is the
   corpus the app indexed, so it encodes only the passages the app's index
-  does not hold as they now read. On the FY2025 filings the other three
-  builds copied 6%, 18% and 31% of their passages, the ones that read the
-  same at every size. Nothing is copied into a build whose vectors were
+  does not hold as they now read. When the FY2025 filings were first built,
+  on 7 October, the other three builds copied 6%, 18% and 31% of their
+  passages, the ones that read the same at every size. Nothing is copied into a build whose vectors were
   encoded another way, by another model or reading fewer tokens of a passage:
   the run stops before it changes that index and says to delete
   `data/sweep/<budget>/chroma`, after which the same command encodes it afresh.
@@ -2571,41 +2571,34 @@ hand:
 
 #### Measured
 
-Two runs, both on 7 October 2026 at commit `e90b2d0`, on a Windows 11 laptop
+Two runs, both on 8 October 2026 at commit `8888a9c`, on a Windows 11 laptop
 with an Intel i5-1135G7 (4 cores), 16 GB of memory and no GPU: Python 3.10.11,
 PyTorch 2.14.0 on the CPU, sentence-transformers 6.0.1 and Chroma 1.5.9. They
-read the downloaded filings, not the synthetic ones the tests cut. The figures
-and fingerprints below are those of `e90b2d0`.
+read the downloaded filings, not the synthetic ones the tests cut.
 
-The chunker has changed since, so the same commands now cut a slightly larger
-corpus and record other fingerprints. #136 keeps a flattened block while any
-digit of a figure in it is uncovered: 24 more passages of 28,289 at 1,800
-characters, and 28, 13 and 5 more at the other sizes. The benchmark generates
-12 more questions from them, so the fixed seed draws a slightly different
-1,490, of which 1,441 are the ones the first run asked. That run made again on
-8 October with #136 merged in:
-
-| BM25, all 75 filings | 1,200 | 1,800 | 2,400 | 4,000 |
-|---|---:|---:|---:|---:|
-| Supporting passage in the top 10, at `e90b2d0` | 63.4% | 68.9% | 70.1% | 71.9% |
-| with #136 | 63.3% | 68.5% | 69.5% | 71.8% |
-| In the same prompt, at `e90b2d0` | 73.6% | 74.2% | 72.1% | 66.9% |
-| with #136 | 73.1% | 73.8% | 71.6% | 66.6% |
-
-No size moves by more than 0.6 of a point and the order of the sizes is the
-same at both cutoffs. The second run was not made again, since its dense
-indexes are hours of encoding, so the tables below remain the measurement.
+They replace the runs of 7 October at `e90b2d0` that this section first
+reported (#147). Those were cut before #136, which keeps a flattened block
+while any digit of a figure in it is uncovered: 24 more passages of 28,289 at
+1,800 characters over the whole corpus, and 28, 13 and 5 more at the other
+sizes. The benchmark generates 12 more questions from them, so the fixed seed
+draws slightly different questions: 1,441 of the first run's 1,490 are asked
+again, and 1,375 of the second's 1,413. No rate over all of a run's questions
+is more than 0.6 of a point from the one it replaces, and nothing read from
+the tables changed. The earlier summaries are in the history, under
+`results/chunk-sweep-bm25-20261007` and `results/chunk-sweep-fy2025-20261007`.
 
 ```bash
-python -m src.evaluation.chunk_sweep --run-id chunk-sweep-bm25-20261007 --retrievers bm25
-python -m src.evaluation.chunk_sweep --run-id chunk-sweep-fy2025-20261007 \
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-bm25-20261008 --retrievers bm25
+python -m src.evaluation.chunk_sweep --run-id chunk-sweep-fy2025-20261008 \
   --fiscal-years 2025 --per-filing 100
 ```
 
 The first is BM25 over all 75 filings. The second is BM25, dense and hybrid
 over the 15 filings that report on fiscal 2025, because encoding the three
-sizes the app has not indexed is half a day on this CPU over the whole corpus
-and was about two and a half hours over those filings.
+sizes the app has not indexed is half a day on this CPU over the whole corpus.
+Over those filings it was about two and a half hours on 7 October. This run
+carried on from the vectors stored then, and encoded only the passages that
+no longer read the same.
 
 `summary.csv` and `summary.json` of both runs are committed under `results/`,
 as #45 asks, and each row in them carries the fingerprint of the build it was
@@ -2620,35 +2613,35 @@ have. A question names 1.9 supporting passages on average at every size.
 
 |  | 1,200 | 1,800 | 2,400 | 4,000 |
 |---|---:|---:|---:|---:|
-| Passages in the build | 44,688 | 28,289 | 20,983 | 13,922 |
-| Median passage, characters | 697 | 1,180 | 1,665 | 2,462 |
-| Recall@10 | 0.506 | 0.556 | 0.567 | 0.585 |
-| nDCG@10 | 0.367 | 0.410 | 0.425 | 0.440 |
-| MRR@10 | 0.371 | 0.418 | 0.434 | 0.448 |
-| Supporting passage in the top 10 | 63.4% | 68.9% | 70.1% | 71.9% |
-| Found only at this size / only at 1,800 | 25 / 107 |  | 65 / 47 | 91 / 46 |
-| Characters in the top 10, mean | 7,382 | 11,361 | 15,504 | 26,835 |
+| Passages in the build | 44,716 | 28,313 | 20,996 | 13,927 |
+| Median passage, characters | 698 | 1,180 | 1,666 | 2,467 |
+| Recall@10 | 0.507 | 0.555 | 0.565 | 0.586 |
+| nDCG@10 | 0.368 | 0.410 | 0.424 | 0.440 |
+| MRR@10 | 0.372 | 0.419 | 0.431 | 0.449 |
+| Supporting passage in the top 10 | 63.3% | 68.5% | 69.5% | 71.8% |
+| Found only at this size / only at 1,800 | 25 / 103 |  | 64 / 49 | 90 / 41 |
+| Characters in the top 10, mean | 7,388 | 11,356 | 15,499 | 26,863 |
 | Passages that fill the app's prompt | 24 | 16 | 12 | 7 |
-| Supporting passage in the app's prompt | 73.6% | 74.2% | 72.1% | 66.9% |
-| Found only at this size / only at 1,800 | 49 / 58 |  | 35 / 65 | 32 / 140 |
-| Characters in that prompt, mean | 18,194 | 18,520 | 18,720 | 18,462 |
-| Median search, ms | 213 | 126 | 96 | 65 |
+| Supporting passage in the app's prompt | 73.1% | 73.8% | 71.6% | 66.6% |
+| Found only at this size / only at 1,800 | 48 / 59 |  | 33 / 66 | 32 / 139 |
+| Characters in that prompt, mean | 18,201 | 18,521 | 18,735 | 18,470 |
+| Median search, ms | 159 | 97 | 72 | 54 |
 
 Passage for passage, a larger passage ranks better. The top 10 holds a
-supporting passage for 63.4% of the questions at 1,200 characters and 71.9% at
+supporting passage for 63.3% of the questions at 1,200 characters and 71.8% at
 4,000, and Recall, nDCG and MRR rise at every step. The step from 1,200 to
-1,800 is 107 questions found only at 1,800 against 25 found only at 1,200.
-The step from 1,800 to 2,400 is 65 against 47, which an exact sign test on
-those 112 questions puts at p = 0.11, so this run does not tell those two
-apart. 4,000 is ahead of 1,800 by 91 against 46.
+1,800 is 103 questions found only at 1,800 against 25 found only at 1,200.
+The step from 1,800 to 2,400 is 64 against 49, which an exact sign test on
+those 113 questions puts at p = 0.19, so this run does not tell those two
+apart. 4,000 is ahead of 1,800 by 90 against 41.
 
-That top 10 is not the same amount of text: 7,382 characters at 1,200 and
-26,835 at 4,000. Given the room in the prompt the app sends, which BM25's
+That top 10 is not the same amount of text: 7,388 characters at 1,200 and
+26,863 at 4,000. Given the room in the prompt the app sends, which BM25's
 passages filled to about 18,500 characters at every size, the order turns
-over. 1,200 and 1,800 are level (49 against 58, p = 0.44), 2,400 is behind
-1,800 (35 against 65, p = 0.004), and 4,000 is well behind (32 against 140):
-seven passages of 4,000 characters hold the answer for 66.9% of the questions,
-where sixteen of 1,800 hold it for 74.2%. The sign test treats the questions
+over. 1,200 and 1,800 are level (48 against 59, p = 0.33), 2,400 is behind
+1,800 (33 against 66, p = 0.001), and 4,000 is well behind (32 against 139):
+seven passages of 4,000 characters hold the answer for 66.6% of the questions,
+where sixteen of 1,800 hold it for 73.8%. The sign test treats the questions
 as independent, which twenty drawn from one filing are not quite, so read a p
 near 0.05 as undecided.
 
@@ -2658,9 +2651,9 @@ passage in the app's prompt:
 
 | Supported by | Questions | 1,200 | 1,800 | 2,400 | 4,000 |
 |---|---:|---:|---:|---:|---:|
-| Tables only | 1,078 | 76.2% | 77.4% | 74.9% | 69.0% |
-| Tables and prose | 298 | 74.5% | 73.8% | 72.5% | 67.8% |
-| Prose only | 114 | 46.5% | 44.7% | 45.6% | 44.7% |
+| Tables only | 1,063 | 76.3% | 77.0% | 74.8% | 68.6% |
+| Tables and prose | 307 | 72.6% | 73.6% | 70.4% | 67.8% |
+| Prose only | 120 | 45.8% | 45.8% | 46.7% | 46.7% |
 
 A figure only prose states is found for under half the questions at every
 size, and no size moves it.
@@ -2670,78 +2663,77 @@ from each filing, and the 13 that Palo Alto Networks' has.
 
 |  | 1,200 | 1,800 | 2,400 | 4,000 |
 |---|---:|---:|---:|---:|
-| Passages in the build | 8,926 | 5,631 | 4,170 | 2,783 |
-| Cut short by the encoder at 512 tokens | 0 | 0 | 106 (2.5%) | 1,470 (52.8%) |
+| Passages in the build | 8,931 | 5,639 | 4,173 | 2,785 |
+| Cut short by the encoder at 512 tokens | 0 | 0 | 109 (2.6%) | 1,471 (52.8%) |
 | **BM25** |  |  |  |  |
-| Recall@10 | 0.501 | 0.554 | 0.573 | 0.583 |
-| nDCG@10 | 0.364 | 0.405 | 0.420 | 0.431 |
-| MRR@10 | 0.367 | 0.411 | 0.425 | 0.436 |
-| Supporting passage in the top 10 | 63.3% | 69.0% | 71.3% | 71.9% |
-| Found only at this size / only at 1,800 | 26 / 107 |  | 67 / 34 | 89 / 48 |
-| Characters in the top 10, mean | 7,404 | 11,347 | 15,591 | 26,641 |
-| Supporting passage in the app's prompt | 74.5% | 74.3% | 73.4% | 66.2% |
-| Found only at this size / only at 1,800 | 55 / 52 |  | 45 / 58 | 43 / 157 |
-| Characters in that prompt, mean | 18,378 | 18,520 | 18,928 | 18,343 |
+| Recall@10 | 0.498 | 0.550 | 0.567 | 0.581 |
+| nDCG@10 | 0.363 | 0.406 | 0.417 | 0.430 |
+| MRR@10 | 0.368 | 0.413 | 0.422 | 0.434 |
+| Supporting passage in the top 10 | 63.1% | 68.5% | 71.0% | 71.8% |
+| Found only at this size / only at 1,800 | 27 / 104 |  | 69 / 34 | 93 / 46 |
+| Characters in the top 10, mean | 7,400 | 11,312 | 15,555 | 26,540 |
+| Supporting passage in the app's prompt | 74.3% | 74.2% | 73.0% | 66.3% |
+| Found only at this size / only at 1,800 | 54 / 53 |  | 44 / 61 | 47 / 159 |
+| Characters in that prompt, mean | 18,357 | 18,476 | 18,888 | 18,292 |
 | **Dense** |  |  |  |  |
-| Recall@10 | 0.464 | 0.510 | 0.522 | 0.514 |
-| nDCG@10 | 0.327 | 0.367 | 0.377 | 0.372 |
-| MRR@10 | 0.338 | 0.380 | 0.390 | 0.385 |
-| Supporting passage in the top 10 | 61.0% | 66.0% | 66.7% | 66.3% |
-| Found only at this size / only at 1,800 | 63 / 134 |  | 77 / 67 | 85 / 81 |
-| Characters in the top 10, mean | 4,099 | 5,328 | 6,237 | 7,370 |
-| Supporting passage in the app's prompt | 72.6% | 72.0% | 69.4% | 60.6% |
-| Found only at this size / only at 1,800 | 76 / 67 |  | 43 / 80 | 27 / 188 |
-| Characters in that prompt, mean | 9,909 | 8,576 | 7,502 | 5,106 |
+| Recall@10 | 0.464 | 0.508 | 0.519 | 0.514 |
+| nDCG@10 | 0.325 | 0.366 | 0.373 | 0.371 |
+| MRR@10 | 0.335 | 0.379 | 0.386 | 0.384 |
+| Supporting passage in the top 10 | 61.1% | 66.0% | 66.7% | 66.5% |
+| Found only at this size / only at 1,800 | 65 / 135 |  | 77 / 68 | 88 / 81 |
+| Characters in the top 10, mean | 4,086 | 5,307 | 6,213 | 7,307 |
+| Supporting passage in the app's prompt | 72.5% | 72.1% | 69.1% | 60.7% |
+| Found only at this size / only at 1,800 | 77 / 71 |  | 42 / 84 | 28 / 190 |
+| Characters in that prompt, mean | 9,887 | 8,550 | 7,467 | 5,055 |
 | **Hybrid** |  |  |  |  |
-| Recall@10 | 0.557 | 0.613 | 0.640 | 0.656 |
-| nDCG@10 | 0.422 | 0.470 | 0.495 | 0.509 |
-| MRR@10 | 0.441 | 0.487 | 0.511 | 0.523 |
-| Supporting passage in the top 10 | 70.1% | 76.1% | 78.3% | 79.8% |
-| Found only at this size / only at 1,800 | 28 / 112 |  | 65 / 33 | 87 / 34 |
-| Characters in the top 10, mean | 4,761 | 6,593 | 8,228 | 11,220 |
-| Supporting passage in the app's prompt | 79.5% | 80.2% | 80.3% | 75.4% |
-| Found only at this size / only at 1,800 | 48 / 57 |  | 47 / 46 | 44 / 112 |
-| Characters in that prompt, mean | 13,654 | 11,786 | 10,268 | 7,232 |
+| Recall@10 | 0.554 | 0.610 | 0.633 | 0.654 |
+| nDCG@10 | 0.420 | 0.469 | 0.489 | 0.507 |
+| MRR@10 | 0.439 | 0.488 | 0.507 | 0.523 |
+| Supporting passage in the top 10 | 69.9% | 75.9% | 77.9% | 80.0% |
+| Found only at this size / only at 1,800 | 30 / 116 |  | 63 / 35 | 94 / 37 |
+| Characters in the top 10, mean | 4,754 | 6,560 | 8,195 | 11,154 |
+| Supporting passage in the app's prompt | 79.3% | 80.2% | 80.0% | 75.4% |
+| Found only at this size / only at 1,800 | 48 / 60 |  | 44 / 47 | 46 / 114 |
+| Characters in that prompt, mean | 13,633 | 11,752 | 10,228 | 7,183 |
 
 BM25 does on these filings what it did on the whole corpus.
 
-Dense search gains from 1,200 to 1,800: in the top 10, 134 questions are
-found only at 1,800 against 63 only at 1,200. It gains nothing after that.
-2,400 and 4,000 are level with 1,800 in the top 10 (77 against 67, and
-85 against 81) and behind it in the prompt. At 4,000 characters the encoder
-reads only the first 512 tokens of 1,470 of the 2,783 passages. At 2,400 it is
-106 passages, and at 1,800 and under none.
+Dense search gains from 1,200 to 1,800: in the top 10, 135 questions are
+found only at 1,800 against 65 only at 1,200. It gains nothing after that.
+2,400 and 4,000 are level with 1,800 in the top 10 (77 against 68, and
+88 against 81) and behind it in the prompt. At 4,000 characters the encoder
+reads only the first 512 tokens of 1,471 of the 2,785 passages. At 2,400 it is
+109 passages, and at 1,800 and under none.
 
 Hybrid, which is what the app searches with, follows BM25 in the top 10:
 each larger size finds more. In the app's prompt 1,200, 1,800 and 2,400 are
-level (79.5%, 80.2% and 80.3%; 48 against 57, and 47 against 46), and 4,000
-is behind (44 against 112).
+level (79.3%, 80.2% and 80.0%; 48 against 60, and 44 against 47), and 4,000
+is behind (46 against 114).
 
 The prompt cutoff is a number of passages: as many of a size as are sure to
 fit. BM25's passages fill it to about 18,500 characters at every size. Dense
 and hybrid return table passages, which are shorter than the budget, so the
-same cutoff held 13,654 characters at 1,200 and 7,232 at 4,000 for hybrid,
-and 9,909 and 5,106 for dense. There the larger sizes are compared on less
-text. `python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007`
+same cutoff held 13,633 characters at 1,200 and 7,183 at 4,000 for hybrid,
+and 9,887 and 5,055 for dense. There the larger sizes are compared on less
+text. `python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261008`
 scores the same rankings again at an equal amount of text, from the run's
 per-question files. Each row of those files holds the passages that support
 its question and the length of every passage it ranked, so a run is scored
 against what it was measured against whatever a later run has since written
-under `data/sweep/`. The two runs here were written before a row held either.
-For them the script reads both from the builds under `data/sweep/`, and first
-checks the builds are the ones the run measured: each corpus by its
-fingerprint, and each benchmark by working out again, for every row, whether
-its question was found at both cutoffs and its Recall. The second run passes
-both checks, and the table below is what the script prints for it. The first
-is refused, as it should be: the second run cut `data/sweep/` again over
-fifteen filings. The share of questions with a supporting passage in the first
-4,000 characters of a ranking:
+under `data/sweep/`. Both runs here hold them, and the table below is what the
+script prints for the second. A run written before a row held either, as
+those of 7 October were, is scored from the builds under `data/sweep/`, and
+the script first checks the builds are the ones the run measured: each corpus
+by its fingerprint, and each benchmark by working out again, for every row,
+whether its question was found at both cutoffs and its Recall. A run whose
+builds have been cut again since is refused. The share of questions with a
+supporting passage in the first 4,000 characters of a ranking:
 
 |  | 1,200 | 1,800 | 2,400 | 4,000 |
 |---|---:|---:|---:|---:|
-| BM25 | 53.7% | 50.5% | 47.5% | 37.2% |
-| Dense | 59.9% | 61.1% | 59.2% | 55.8% |
-| Hybrid | 67.7% | 70.2% | 69.3% | 66.4% |
+| BM25 | 53.7% | 51.2% | 47.0% | 37.3% |
+| Dense | 59.9% | 60.8% | 59.1% | 55.8% |
+| Hybrid | 67.5% | 70.1% | 69.2% | 66.2% |
 
 On equal text BM25 does better the smaller the passage, dense is within two
 points from 1,200 to 2,400, and hybrid is highest at 1,800 and 2,400. 4,000 is
@@ -2782,14 +2774,14 @@ in the committed files hold the full values:
 
 | Run | Size | Corpus fingerprint | Dense fingerprint |
 |---|---|---|---|
-| `chunk-sweep-bm25-20261007` | 1,200 | `cc078db610be43ed` | not encoded |
-|  | 1,800 | `69ad5c438a07c458` | not encoded |
-|  | 2,400 | `9fadd3070b6047d8` | not encoded |
-|  | 4,000 | `1973cc6054514a43` | not encoded |
-| `chunk-sweep-fy2025-20261007` | 1,200 | `782e4df8bb6c7d33` | `e1ce0b140879ee73` |
-|  | 1,800 | `25d1726858402526` | `08598b98129db929` |
-|  | 2,400 | `cce6b0ff4d867dea` | `100c6b7816d74abb` |
-|  | 4,000 | `021c66f42e377435` | `1404022af27f455e` |
+| `chunk-sweep-bm25-20261008` | 1,200 | `412f79877d4b23bd` | not encoded |
+|  | 1,800 | `4b65586acdb987c1` | not encoded |
+|  | 2,400 | `6acf02d196b39853` | not encoded |
+|  | 4,000 | `4c863d17adb9f8aa` | not encoded |
+| `chunk-sweep-fy2025-20261008` | 1,200 | `ecb467950b75f9f2` | `c340274524b5d4ce` |
+|  | 1,800 | `17d2d2bdcf4c5be4` | `b68e83bbb8a605f5` |
+|  | 2,400 | `ce8687164293cb5b` | `08c33deb2a923831` |
+|  | 4,000 | `24e433bbbb9a92af` | `399dfe28896c25fe` |
 
 ## Team and course
 

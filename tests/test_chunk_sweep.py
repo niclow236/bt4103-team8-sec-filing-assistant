@@ -1518,7 +1518,7 @@ def test_the_equal_text_command_prints_both_tables_and_saves_its_rows(
 
 
 @pytest.mark.parametrize("arguments, said", [
-    ([], "chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007"),
+    ([], "chunk_sweep_equal_text.py chunk-sweep-fy2025-20261008"),
     (["three-sizes", "many"], "must be a whole number"),
     (["three-sizes", "4000.5"], "must be a whole number"),
     (["three-sizes", "0"], "must be 1 or more"),
