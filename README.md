@@ -2060,7 +2060,7 @@ python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_
 
 The team's questions are in `benchmark/questions.jsonl`, one JSON object per
 line, and `benchmark/schema.md` lists the fields each one needs. It holds 150
-(#152, then `nicholas-21`): 124 with `source` `handwritten` and 26
+(#152, then `nicholas-21`): 125 with `source` `handwritten` and 25
 `llm_assisted`. By type they are 88 `numeric`, 44 `factual`, 10 `temporal`,
 4 `comparative` and 4 `unanswerable`, and 27 carry hard negatives. Its chunk ids
 are those of the current chunker, so a change that renames chunks makes the
