@@ -157,7 +157,7 @@ bt4103-team8-sec-filing-assistant/
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
-│   ├── questions.jsonl      #   team benchmark: the 149 handwritten and llm_assisted questions
+│   ├── questions.jsonl      #   team benchmark: the 150 handwritten and llm_assisted questions
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 ├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
@@ -2059,10 +2059,10 @@ python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_
 ## The benchmark
 
 The team's questions are in `benchmark/questions.jsonl`, one JSON object per
-line, and `benchmark/schema.md` lists the fields each one needs. It holds 149
-(#152): 124 with `source` `handwritten` and 25 `llm_assisted`. By type they
-are 87 `numeric`, 44 `factual`, 10 `temporal`, 4 `comparative` and 4
-`unanswerable`, and 26 carry hard negatives. Its chunk ids
+line, and `benchmark/schema.md` lists the fields each one needs. It holds 150
+(#152, then `nicholas-21`): 125 with `source` `handwritten` and 25
+`llm_assisted`. By type they are 88 `numeric`, 44 `factual`, 10 `temporal`,
+4 `comparative` and 4 `unanswerable`, and 27 carry hard negatives. Its chunk ids
 are those of the current chunker, so a change that renames chunks makes the
 loader refuse the file until they are remapped.
 
