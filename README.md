@@ -157,7 +157,7 @@ bt4103-team8-sec-filing-assistant/
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
-│   ├── questions.jsonl      #   team benchmark: the 150 handwritten and llm_assisted questions
+│   ├── questions.jsonl      #   team benchmark: the team's 150 questions
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 ├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
@@ -1837,7 +1837,7 @@ The Results page reads saved evaluation summaries and per-question files from
 not rerun retrieval, evaluation or model generation. Scores are computed from
 each benchmark's own saved rows: XBRL source, mechanical difficulty or an
 `xbrl-` question ID puts a row in Mechanical XBRL; all other rows belong to the
-Team benchmark, including handwritten and `llm_assisted` questions. Historical
+Team benchmark, whatever `source` they carry, or none. Historical
 saved group summaries are used only when per-question rows are unavailable.
 If neither is available, a warning explains why whole-run scores cannot be
 split and are hidden. Stopped runs or runs with fewer readable question rows
@@ -2060,11 +2060,10 @@ python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_
 
 The team's questions are in `benchmark/questions.jsonl`, one JSON object per
 line, and `benchmark/schema.md` lists the fields each one needs. It holds 150
-(#152, then `nicholas-21`): 125 with `source` `handwritten` and 25
-`llm_assisted`. By type they are 88 `numeric`, 44 `factual`, 10 `temporal`,
-4 `comparative` and 4 `unanswerable`, and 27 carry hard negatives. Its chunk ids
-are those of the current chunker, so a change that renames chunks makes the
-loader refuse the file until they are remapped.
+(#152, then `nicholas-21`). By type they are 88 `numeric`, 44 `factual`, 10
+`temporal`, 4 `comparative` and 4 `unanswerable`, and 27 carry hard negatives.
+Its chunk ids are those of the current chunker, so a change that renames chunks
+makes the loader refuse the file until they are remapped.
 
 ```python
 from src.evaluation import load_questions

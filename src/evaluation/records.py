@@ -44,6 +44,8 @@ class BenchmarkQuestion:
     results can be broken down by the type the engine read a question as.
     An unanswerable question carries no supporting chunks; chunks that look
     relevant but do not answer it belong in ``hard_negative_chunk_ids``.
+    ``source`` is optional: the generated set marks its questions ``xbrl``,
+    and the team's questions carry none.
     """
 
     question_id: str
@@ -55,7 +57,7 @@ class BenchmarkQuestion:
     fiscal_year: int | None
     question_type: str
     difficulty: str
-    source: str
+    source: str | None = None
 
     REQUIRED_FIELDS = frozenset(
         {
@@ -68,14 +70,14 @@ class BenchmarkQuestion:
             "fiscal_year",
             "question_type",
             "difficulty",
-            "source",
         }
     )
+    OPTIONAL_FIELDS = frozenset({"source"})
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> BenchmarkQuestion:
         """Validate and convert one decoded JSON object."""
-        unknown = set(data) - cls.REQUIRED_FIELDS
+        unknown = set(data) - cls.REQUIRED_FIELDS - cls.OPTIONAL_FIELDS
         missing = cls.REQUIRED_FIELDS - set(data)
         if missing:
             raise BenchmarkValidationError(
@@ -128,15 +130,18 @@ class BenchmarkQuestion:
             fiscal_year=fiscal_year,
             question_type=question_type,
             difficulty=_required_text(data["difficulty"], "difficulty"),
-            source=_required_text(data["source"], "source"),
+            source=_required_text(data["source"], "source") if "source" in data else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON-compatible representation used by the benchmark."""
-        return asdict(self) | {
+        data = asdict(self) | {
             "supporting_chunk_ids": list(self.supporting_chunk_ids),
             "hard_negative_chunk_ids": list(self.hard_negative_chunk_ids),
         }
+        if self.source is None:
+            del data["source"]
+        return data
 
 
 @dataclass(frozen=True)
