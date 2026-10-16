@@ -268,3 +268,12 @@ def test_experimental_matrix_does_not_label_the_default_app_stack_as_measured(tm
     matrix.dump(tmp_path/'experimental/summary.json',{'run_id':'experimental','configurations':[row],
                                                     'evaluation_only':True})
     assert [r.run_id for r in measured_runs(tmp_path)]==['ordinary']
+
+
+def test_resume_accepts_the_manifest_it_froze_even_with_tuple_settings(tmp_path):
+    # Provenance records chunk settings as tuples; the frozen JSON holds lists.
+    config={'provenance':{'corpus':{'chunk_settings':[(1800,300)]}},'reference':None}
+    matrix.dump(tmp_path/'config.json',config)
+    assert matrix.frozen_manifest_matches(tmp_path,config)
+    changed={'provenance':{'corpus':{'chunk_settings':[(1800,200)]}},'reference':None}
+    assert not matrix.frozen_manifest_matches(tmp_path,changed)

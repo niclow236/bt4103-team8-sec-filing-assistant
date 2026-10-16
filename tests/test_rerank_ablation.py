@@ -224,6 +224,18 @@ def test_rescore_accepts_untagged_team_questions_against_their_recorded_digest(t
     assert json.loads((tmp_path / "rescored-k2.json").read_text())["by_benchmark"]["team"]["questions"] == 1
 
 
+def test_rescore_refuses_a_malformed_stored_question_as_a_changed_benchmark(tmp_path, capsys):
+    digest = question_records_sha256([question("h"), question("m", "xbrl")])
+    out = completed_run(tmp_path, {"questions": 2, "question_records_sha256": digest})[-1]
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    pairs[0]["question"]["note"] = "added after the run"
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(p) + "\n" for p in pairs)
+    with pytest.raises(SystemExit):
+        main(["rescore", str(out)])
+    assert "do not match the frozen benchmark" in capsys.readouterr().err
+
+
 def test_resume_after_interruption_before_the_first_pair(tmp_path):
     qs, pool, chunks, reranker, out = completed_run(tmp_path)
     (out / "pairs.jsonl.gz").unlink()

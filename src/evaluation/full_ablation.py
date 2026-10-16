@@ -103,6 +103,12 @@ def validate_snapshot(config, questions):
         raise ValueError("benchmark snapshot differs from the frozen manifest")
 
 
+def frozen_manifest_matches(run_dir: Path, config: dict) -> bool:
+    """Compare in JSON form: provenance holds tuples that the frozen file stores as lists."""
+    frozen = json.loads((run_dir / "config.json").read_text())
+    return frozen == json.loads(json.dumps(config))
+
+
 def summarize(rows: list[dict]) -> dict:
     result = {"questions": len(rows), "metric_denominators": {}}
     for metric in METRICS:
@@ -287,7 +293,7 @@ def retrieval(args):
               "answer_scope":"Complete non-mechanical team benchmark; no facts shortcut or refusal shortcut."}
     run_dir = args.results_root / _safe_run_id(args.run_id)
     if args.resume:
-        if not run_dir.is_dir() or json.loads((run_dir / "config.json").read_text()) != config:
+        if not run_dir.is_dir() or not frozen_manifest_matches(run_dir, config):
             raise ValueError("resume requires the identical frozen manifest and run directory")
     else:
         run_dir.mkdir(parents=True, exist_ok=False)
