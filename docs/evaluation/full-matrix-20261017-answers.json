@@ -1,0 +1,639 @@
+{
+  "complete": true,
+  "team_questions": 150,
+  "configurations": {
+    "C0": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.7343939393939394,
+          "scored": 66,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.3152,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.4666666666666667,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.4045815295815296,
+          "scored": 66,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.15228310502283104,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 1.2510902620851994,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 1666.1143280410517,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.07671079287926356,
+            "queries": 150
+          },
+          "other": {
+            "mean": 2.494268116230766,
+            "queries": 150
+          },
+          "total": {
+            "mean": 1669.9363972122471,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150,
+          "mean": null
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 1692.7861513321598,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.011693931495149931,
+              "queries": 150
+            },
+            "total": {
+              "mean": 1692.797845263655,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 84,
+            "unknown_queries": 66,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "not_run": 66
+      },
+      "verification_enabled": false
+    },
+    "C1": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.79,
+          "scored": 73,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.35786666666666667,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.5133333333333333,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.4727332028701891,
+          "scored": 73,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.2614155251141552,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 0.7478300202637911,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 1574.6944350283593,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.01519440362850825,
+            "queries": 150
+          },
+          "other": {
+            "mean": 1.8854769505560398,
+            "queries": 150
+          },
+          "total": {
+            "mean": 1577.3429364028077,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150,
+          "mean": null
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 1718.9833908372868,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.005905528863271077,
+              "queries": 150
+            },
+            "total": {
+              "mean": 1718.9892963661503,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 77,
+            "unknown_queries": 73,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "not_run": 73
+      },
+      "verification_enabled": false
+    },
+    "C2": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.8417355371900826,
+          "scored": 121,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.5925333333333334,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.8333333333333334,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.279142070051161,
+          "scored": 121,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.3858447488584475,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 0.48847944165269536,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 1835.6824310931067,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.007294447471698125,
+            "queries": 150
+          },
+          "other": {
+            "mean": 1.8816035675505798,
+            "queries": 150
+          },
+          "total": {
+            "mean": 1838.0598085497816,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150,
+          "mean": null
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 2836.968674128875,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.006918655708432198,
+              "queries": 150
+            },
+            "total": {
+              "mean": 2836.9755927845836,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 29,
+            "unknown_queries": 121,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "not_run": 121
+      },
+      "verification_enabled": false
+    },
+    "C3": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.8507627118644068,
+          "scored": 118,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.5968666666666667,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.8133333333333334,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.36804882970137204,
+          "scored": 118,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.4452054794520548,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 0.5259771582980951,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 1802.124818585192,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.007067543144027392,
+            "queries": 150
+          },
+          "other": {
+            "mean": 1.7688347678631544,
+            "queries": 150
+          },
+          "total": {
+            "mean": 1804.4266980544974,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150,
+          "mean": null
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 3074.0227567094066,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 466.79265689415234,
+              "queries": 150
+            },
+            "total": {
+              "mean": 3540.815413603559,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 32,
+            "unknown_queries": 118,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "not_run": 118
+      },
+      "verification_enabled": false
+    },
+    "C4": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.9157241379310345,
+          "scored": 145,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.8182,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.9933333333333333,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.4384775377878826,
+          "scored": 145,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.7945205479452054,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 0.4314241713533799,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 2215.5532622740916,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.007295546432336171,
+            "queries": 150
+          },
+          "other": {
+            "mean": 1.7745907790958881,
+            "queries": 150
+          },
+          "total": {
+            "mean": 2217.766572770973,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": 0.0,
+          "known_queries": 1,
+          "unknown_queries": 149,
+          "mean": 0.0
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 3472.558526387438,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.0076678115874528885,
+              "queries": 150
+            },
+            "total": {
+              "mean": 3472.5661941990256,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 5,
+            "unknown_queries": 145,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "not_run": 145
+      },
+      "verification_enabled": false
+    },
+    "C5": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.9142361111111111,
+          "scored": 144,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.7782,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.9866666666666667,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.43253141534391537,
+          "scored": 144,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.776255707762557,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 0.46190802939236164,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 2149.389818341782,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.007263959075013797,
+            "queries": 150
+          },
+          "other": {
+            "mean": 1.7446636439611514,
+            "queries": 150
+          },
+          "total": {
+            "mean": 2151.6036539742104,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": 0.0,
+          "known_queries": 1,
+          "unknown_queries": 149,
+          "mean": 0.0
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 3952.4084019567817,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 66.75659054579835,
+              "queries": 150
+            },
+            "total": {
+              "mean": 4019.16499250258,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 6,
+            "unknown_queries": 144,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "not_run": 144
+      },
+      "verification_enabled": false
+    },
+    "C6": {
+      "questions": 150,
+      "quality": {
+        "faithfulness": {
+          "mean": 0.901875,
+          "scored": 144,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.7618666666666667,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.9866666666666667,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.4289411976911977,
+          "scored": 144,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.7865296803652968,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "resources": {
+        "latency_ms": {
+          "retrieve": {
+            "mean": 0.47988420973221463,
+            "queries": 150
+          },
+          "rerank": {
+            "mean": 0.0,
+            "queries": 150
+          },
+          "generate": {
+            "mean": 2501.235870573049,
+            "queries": 150
+          },
+          "retry_wait": {
+            "mean": 0.007581918810804685,
+            "queries": 150
+          },
+          "other": {
+            "mean": 18.913151876380045,
+            "queries": 150
+          },
+          "total": {
+            "mean": 2520.6364885779717,
+            "queries": 150
+          }
+        },
+        "api_cost_usd": {
+          "known_total": 0.0,
+          "known_queries": 1,
+          "unknown_queries": 149,
+          "mean": 0.0
+        },
+        "judge_overhead": {
+          "latency_ms": {
+            "generate": {
+              "mean": 4056.1114688124508,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.006448955585559209,
+              "queries": 150
+            },
+            "total": {
+              "mean": 4056.1179177680365,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 6,
+            "unknown_queries": 144,
+            "mean": 0.0
+          }
+        }
+      },
+      "checks": {
+        "mismatch": 22,
+        "supported": 40,
+        "unchecked": 28,
+        "unverified": 54
+      },
+      "verification_enabled": true
+    }
+  }
+}

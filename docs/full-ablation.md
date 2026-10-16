@@ -1,8 +1,10 @@
 # Complete C0–C6 matrix (#44)
 
-The experiment measures all 12,728 questions for retrieval: 124 handwritten,
-25 LLM-assisted and 12,579 mechanical XBRL questions. Answer generation,
-semantic judging and verification cover the complete 149-question team set.
+The experiment measures all 2,034 questions for retrieval: the 150 team
+questions and 1,884 mechanical XBRL questions. Answer generation, semantic
+judging and verification cover the complete 150-question team set. The team's
+questions carry no `source` tag (#162), so results report one team slice
+beside the mechanical set.
 Mechanical labels come from the facts store, so their separate retrieval
 results do not claim independent answer quality. The app continues to use C4;
 these evaluation rows do not adopt the experimental reranker.
@@ -26,7 +28,7 @@ at the same time. This controlled evaluation scope is implemented by
 
 C1/C2 keep the first 16 of their shared top-50 component searches. C3 fuses
 those exact component results, with its timing calculated from their measured
-times plus fusion overhead. C4/C5 can reuse the complete #154 reference only
+times plus fusion overhead. C4/C5 can reuse a complete C5 reference run only
 after checking the exact question sequence and parsed queries, corpus digest,
 retrieval settings, library versions, index builds and loaded encoder revision.
 The original source/config/pair hashes and runtime are recorded. Their timings
@@ -53,16 +55,20 @@ C0 evidence labels. C0 answer citations use that same projected namespace.
 ## Run and reproduce
 
 ```bash
+python -m src.evaluation.rerank_ablation run \
+  benchmark/questions.jsonl benchmark/generated.jsonl \
+  --run-id c5-reference-20261017 --top-k 16 --candidate-k 50 \
+  --batch-size 32 --device mps --workload-note "..."
+
 HF_HUB_OFFLINE=1 python -u -m src.evaluation.full_ablation retrieval \
   benchmark/questions.jsonl benchmark/generated.jsonl \
-  --reference results/c5-reference-20261010 \
-  --run-id full-matrix-20261012 --device mps \
-  --workload-note "Normal desktop apps; matrix retrieval and hosted answer evaluation"
+  --reference results/c5-reference-20261017 \
+  --run-id full-matrix-20261017 --device mps --workload-note "..."
 
-python -u -m src.evaluation.full_ablation answers results/full-matrix-20261012 \
+python -u -m src.evaluation.full_ablation answers results/full-matrix-20261017 \
   --provider mistral --model ministral-8b-2512
 
-python -m src.evaluation.full_ablation rescore results/full-matrix-20261012
+python -m src.evaluation.full_ablation rescore results/full-matrix-20261017
 ```
 
 Omit `--reference` to measure C4/C5 again. Use `--device cpu` without MPS and
@@ -80,8 +86,8 @@ continues. Completed outputs are flushed after each question.
 `results/<run-id>/` contains the manifest, benchmark snapshot, actual C0 corpus,
 transactional per-question matrix and runtime segments. Each `C0/`…`C6/` holds
 `questions.jsonl`, retrieval summaries, `answers.jsonl` and answer summaries.
-Root and `by-source/` tables separate handwritten, LLM-assisted and XBRL results,
-with metric denominators. Model-free `rescore` writes under `rescored/` and
+Root and `by-benchmark/` tables separate the team and XBRL results, with metric
+denominators. Model-free `rescore` writes under `rescored/` and
 recomputes retrieval from the recorded rankings/gold IDs at the recorded cutoff,
 plus answer aggregates from saved judge/citation outputs. It refuses incomplete
 retrieval or team answers. It does not ask a new judge to invent past scores.
@@ -98,60 +104,106 @@ lookup times in an end-to-end latency claim.
 
 ## Complete measured result
 
-The run covers **12,728 retrieval questions in every row** and **149 team answers in every row** (1,043 answer outputs, including abstentions). Mechanical answer quality is not inferred. All output counts, question identities, frozen fingerprints and model-free rescore equality were verified.
+The run `full-matrix-20261017` covers **2,034 retrieval questions in every row**
+and **150 team answers in every row** (1,050 answer outputs, including
+abstentions), on 28,313 passages from 75 filings. Mechanical answer quality is
+not inferred. Output counts, question identities, frozen fingerprints and
+model-free rescore equality were verified.
 
-| Source | Row | Relevance-scored | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
+It replaces `full-matrix-20261012` (#158), which pinned the earlier
+149-question file, split the team's questions into handwritten and
+LLM-assisted, and was measured on a different local corpus (28,289 passages)
+and XBRL set. Its resume refuses a changed input file, so this run was measured
+from scratch (#161); the figures below replace its tables rather than amend
+them.
+
+| Benchmark | Row | Relevance-scored | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| Handwritten | C0 | 123 | 0.1679 | 0.0967 | 0.1088 | 1.0000 (1) |
-| Handwritten | C1 | 123 | 0.3198 | 0.1555 | 0.1160 | 1.0000 (1) |
-| Handwritten | C2 | 123 | 0.4173 | 0.2642 | 0.2343 | 0.5000 (1) |
-| Handwritten | C3 | 123 | 0.4756 | 0.2655 | 0.2161 | 0.5000 (1) |
-| Handwritten | C4 | 123 | 0.8360 | 0.6193 | 0.5686 | 0.0000 (1) |
-| Handwritten | C5 | 123 | 0.8496 | 0.5294 | 0.4466 | 0.5000 (1) |
-| Handwritten | C6 | 123 | 0.8496 | 0.5248 | 0.4405 | 0.5000 (1) |
-| LLM-assisted | C0 | 22 | 0.1705 | 0.1052 | 0.1168 | 0.9467 (25) |
-| LLM-assisted | C1 | 22 | 0.2045 | 0.0987 | 0.0695 | 0.9400 (25) |
-| LLM-assisted | C2 | 22 | 0.4091 | 0.2550 | 0.2100 | 0.8800 (25) |
-| LLM-assisted | C3 | 22 | 0.4545 | 0.2298 | 0.1704 | 0.9000 (25) |
-| LLM-assisted | C4 | 22 | 0.7273 | 0.4914 | 0.4565 | 1.0000 (25) |
-| LLM-assisted | C5 | 22 | 0.6136 | 0.4314 | 0.4018 | 0.9800 (25) |
-| LLM-assisted | C6 | 22 | 0.6136 | 0.4221 | 0.3793 | 0.9800 (25) |
-| Mechanical XBRL | C0 | 12579 | 0.0235 | 0.0117 | 0.0122 | — (0) |
-| Mechanical XBRL | C1 | 12579 | 0.0667 | 0.0304 | 0.0243 | — (0) |
-| Mechanical XBRL | C2 | 12579 | 0.3678 | 0.2315 | 0.2350 | — (0) |
-| Mechanical XBRL | C3 | 12579 | 0.2914 | 0.1712 | 0.1676 | — (0) |
-| Mechanical XBRL | C4 | 12579 | 0.6517 | 0.4719 | 0.4762 | — (0) |
-| Mechanical XBRL | C5 | 12579 | 0.6654 | 0.4165 | 0.3839 | — (0) |
-| Mechanical XBRL | C6 | 12579 | 0.6654 | 0.4165 | 0.3839 | — (0) |
+| Team | C0 | 146 | 0.1723 | 0.1004 | 0.1111 | 0.9383 (27) |
+| Team | C1 | 146 | 0.3025 | 0.1474 | 0.1105 | 0.9074 (27) |
+| Team | C2 | 146 | 0.4132 | 0.2610 | 0.2289 | 0.8704 (27) |
+| Team | C3 | 146 | 0.4692 | 0.2612 | 0.2113 | 0.8889 (27) |
+| Team | C4 | 146 | 0.8185 | 0.5978 | 0.5484 | 0.9630 (27) |
+| Team | C5 | 146 | 0.8094 | 0.5195 | 0.4478 | 0.9630 (27) |
+| Team | C6 | 146 | 0.8128 | 0.5160 | 0.4411 | 0.9630 (27) |
+| Mechanical XBRL | C0 | 1884 | 0.0124 | 0.0064 | 0.0072 | — (0) |
+| Mechanical XBRL | C1 | 1884 | 0.0838 | 0.0335 | 0.0237 | — (0) |
+| Mechanical XBRL | C2 | 1884 | 0.4628 | 0.2681 | 0.2455 | — (0) |
+| Mechanical XBRL | C3 | 1884 | 0.3442 | 0.1926 | 0.1783 | — (0) |
+| Mechanical XBRL | C4 | 1884 | 0.7627 | 0.5504 | 0.5340 | — (0) |
+| Mechanical XBRL | C5 | 1884 | 0.8217 | 0.5426 | 0.4879 | — (0) |
+| Mechanical XBRL | C6 | 1884 | 0.8217 | 0.5426 | 0.4879 | — (0) |
 
-C0 uses projected fixed-window relevance labels; compare its proxies with that different namespace in mind. C1–C6 share the original section-aware gold IDs.
+C0 uses projected fixed-window relevance labels; compare its proxies with that
+different namespace in mind. One C0 window overlapped both gold and a hard
+negative and was scored as gold. C1–C6 share the original section-aware gold
+IDs. The four unanswerable team questions have no relevance scores.
 
 | Row | Team outputs | Correctness (scored/total) | Faithfulness (scored/total) | Answerability | Citation precision (n) | Citation recall (n) | Verification counts |
 | --- | ---: | --- | --- | ---: | ---: | ---: | --- |
-| C0 | 149 | 0.3185 (149/149) | 0.7230 (66/149) | 0.4698 | 0.4303 (66) | 0.1493 (145) | {"not_run": 66} |
-| C1 | 149 | 0.3592 (149/149) | 0.7935 (72/149) | 0.5101 | 0.4664 (72) | 0.2678 (145) | {"not_run": 72} |
-| C2 | 149 | 0.6107 (149/149) | 0.8625 (118/149) | 0.8188 | 0.3008 (118) | 0.3989 (145) | {"not_run": 118} |
-| C3 | 149 | 0.5915 (149/149) | 0.8440 (118/149) | 0.8188 | 0.3656 (118) | 0.4483 (145) | {"not_run": 118} |
-| C4 | 149 | 0.8019 (149/149) | 0.9149 (144/149) | 0.9933 | 0.4247 (144) | 0.7851 (145) | {"not_run": 144} |
-| C5 | 149 | 0.7797 (149/149) | 0.8933 (143/149) | 0.9866 | 0.4314 (143) | 0.7828 (145) | {"not_run": 143} |
-| C6 | 149 | 0.7779 (149/149) | 0.9035 (143/149) | 0.9866 | 0.4239 (143) | 0.7897 (145) | {"mismatch": 39, "supported": 43, "unchecked": 28, "unverified": 33} |
+| C0 | 150 | 0.3152 (150/150) | 0.7344 (66/150) | 0.4667 | 0.4046 (66) | 0.1523 (146) | {"not_run": 66} |
+| C1 | 150 | 0.3579 (150/150) | 0.7900 (73/150) | 0.5133 | 0.4727 (73) | 0.2614 (146) | {"not_run": 73} |
+| C2 | 150 | 0.5925 (150/150) | 0.8417 (121/150) | 0.8333 | 0.2791 (121) | 0.3858 (146) | {"not_run": 121} |
+| C3 | 150 | 0.5969 (150/150) | 0.8508 (118/150) | 0.8133 | 0.3680 (118) | 0.4452 (146) | {"not_run": 118} |
+| C4 | 150 | 0.8182 (150/150) | 0.9157 (145/150) | 0.9933 | 0.4385 (145) | 0.7945 (146) | {"not_run": 145} |
+| C5 | 150 | 0.7782 (150/150) | 0.9142 (144/150) | 0.9867 | 0.4325 (144) | 0.7763 (146) | {"not_run": 144} |
+| C6 | 150 | 0.7619 (150/150) | 0.9019 (144/150) | 0.9867 | 0.4289 (144) | 0.7865 (146) | {"mismatch": 22, "supported": 40, "unchecked": 28, "unverified": 54} |
 
-Correctness and faithfulness are recorded model judgements; their denominators expose unscored cases and abstentions. Faithfulness and citation precision have different answered/scored subsets, so compare their coverage before interpreting their means. Citation rates are resolved chunk-ID proxies; n is the number of scored outputs out of 149. Verification counts annotate claims and do not establish independent answer correctness. Separate source-level answer means, token/call usage, timings and known/unknown cost counts are in the [answer summary](evaluation/full-matrix-20261012-answers.json).
+Correctness and faithfulness are recorded model judgements; their denominators
+expose unscored cases and abstentions. Faithfulness and citation precision have
+different answered/scored subsets, so compare their coverage before
+interpreting their means. Citation rates are resolved chunk-ID proxies; n is the
+number of scored outputs out of 150. Verification counts annotate claims and do
+not establish independent answer correctness. Token/call usage, timings and
+known/unknown cost counts are in the
+[answer summary](evaluation/full-matrix-20261017-answers.json).
 
-Decomposition activates on **10 team questions**; all 12,579 mechanical questions retain exactly the C5 ranks and scores. C6 therefore tests balanced retrieval on that small subset and verification annotations across all 149 team outputs. Verification does not rewrite responses; differences between independently generated C5/C6 answers cannot be attributed to verification itself. Hosted generation/judging variation also limits causal interpretation of small answer-quality differences.
+Decomposition activates on **10 team questions**; all 1,884 mechanical
+questions keep exactly the C5 ranks and scores. C6 therefore tests balanced
+retrieval on that small subset and verification annotations across all 150 team
+outputs. Verification does not rewrite responses; differences between
+independently generated C5/C6 answers cannot be attributed to verification
+itself. Hosted generation/judging variation also limits causal interpretation
+of small answer-quality differences.
 
-The [retrieval summary](evaluation/full-matrix-20261012-retrieval.json) includes metric denominators and source/type breakdowns. The [manifest](evaluation/full-matrix-20261012-manifest.json) records source/input/corpus/index/model identities and artifact hashes. Large per-question and corpus files remain local in `results/full-matrix-20261012/` and `data/`.
+The [retrieval summary](evaluation/full-matrix-20261017-retrieval.json) includes
+each row's metric denominators and benchmark/type breakdowns. The
+[manifest](evaluation/full-matrix-20261017-manifest.json) records
+source/input/corpus/index/model identities, hardware, runtime segments and
+artifact hashes. Large per-question and corpus files remain local in
+`results/full-matrix-20261017/` and `data/`.
 
-Measurements ran on frozen source `10dff2e`; guarded model-free rescoring ran from the report checkout. C4/C5 rankings and original timings were imported from the independently validated #154 reference on `e74872d`. Current query/corpus/config/index/revision checks passed. C0–C3 and decomposed C6 searches were newly measured; C6 single-filing ranks are exactly C5. The laptop also ran hosted answer bookkeeping and short CPU regression checks, so these are recorded laptop timings rather than isolated throughput. Replay lookup latency is not actual retrieval latency.
+Retrieval ran in one segment on source `13ca6f5`, on an Apple M2 / 8 GiB
+laptop with MPS; loading and warm-up (7.1 s) are excluded. C4/C5 rankings and
+their timings were imported from the [C5 reference](c5-reranking.md)
+`c5-reference-20261017`, measured earlier on the same source, corpus, indexes
+and loaded encoder revision; the import checks passed. C0–C3 and decomposed C6
+searches were newly measured, and C6 single-filing ranks are exactly C5. The
+answer phase ran on source `9f29f9f`, which only fixes the benchmark snapshot
+check that refused untagged team questions; no retrieval, generation or scoring
+code differs. Desktop apps, a Claude Code session and the hosted answer phase
+shared the laptop, so these are recorded laptop timings rather than isolated
+throughput. Replay lookup latency is not actual retrieval latency.
 
-The C5 default-adoption result remains the #154 decision: retain C4, with positive prose evidence and negative table evidence explicitly preserved. C6 verification is an annotation stage, not an answer correction algorithm. Review the full source-specific results before attributing changes to a technique or selecting a new default.
+Three Mistral judge calls (two questions) stopped part-way and recovered under
+the normal retry policy; every output was judged or scored as an abstention.
 
-## Interpretation and validation
+The C5 default-adoption result is the [C5 reference](c5-reranking.md)'s
+decision: retain C4, with positive prose evidence and negative table evidence
+explicitly preserved. C6 verification is an annotation stage, not an answer
+correction algorithm. Review the full benchmark-specific results before
+attributing changes to a technique or selecting a new default.
 
-Metadata filtering (C3→C4 under constant query policy) gives the largest observed retrieval improvement. Dense scoring improves over sparse scoring on this benchmark, while the fixed hybrid weighting is not uniformly better than dense alone. C4 has the highest nDCG on each source and the highest mean judged correctness on the team set: **0.8019**, versus **0.7797** for C5 and **0.7779** for C6. These are single-run model judgements, not statistically established human accuracy differences. C5/C6 do not justify changing the default under the recorded protocol.
+## Interpretation
 
-All **2,112 local tests pass** (58.17 s after the summary-only rescore fix). CI on Python 3.10/3.12 passes for the implementation and integrity/presentation guards; the final report commit is also checked. Real cached-model smoke covered all seven retrieval rows and a decomposition case; Mistral generation/judging ran successfully before the full team study. A retryable Mistral judge failure in C6 recovered under the normal retry policy. Correctness is scored on all 149 outputs in every row.
-
-The measurement source remains `10dff2e`. Later guards and summary-only rescoring were developed separately; they do not alter the saved rankings, responses or scores. Final summaries are marked `evaluation_only` so the controlled query policy cannot label default app stacks as measured. This presentation annotation preserves backed-up original summary hashes and measured configuration equality. A failed initial rescore ran out of disk space while copying per-question files; only its incomplete duplicates were removed, and the final rescore writes aggregates without duplicating the measurements.
-
-Exact reference reproduction uses source `10dff2e` plus the frozen inputs/indexes and #154 reference identified in the manifest. Current-code `rescore` reproduces the archived aggregate numbers without models. Native per-question files remain under `results/full-matrix-20261012/C0/` through `C6/`. #155 remains a dependency until merged; teammate approval is requested before merging this PR to close #44.
+Metadata filtering (C3→C4 under constant query policy) gives the largest
+observed retrieval improvement: team nDCG@16 0.2612 → 0.5978 and XBRL
+0.1926 → 0.5504. Dense scoring improves over sparse scoring on both benchmarks,
+while the fixed hybrid weighting is not uniformly better than dense alone: it
+matches dense on the team set and trails it on XBRL. C4 has the highest nDCG on
+each benchmark and the highest mean judged correctness on the team set:
+**0.8182**, versus **0.7782** for C5 and **0.7619** for C6. C5 raises XBRL
+recall (0.7627 → 0.8217) but lowers nDCG and MRR on both benchmarks. These are
+single-run model judgements, not statistically established human accuracy
+differences. C5/C6 do not justify changing the default under the recorded
+protocol.
