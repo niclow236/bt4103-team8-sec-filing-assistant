@@ -1,7 +1,7 @@
 # Benchmark question schema
 
 `benchmark/questions.jsonl` contains one JSON object per line. Blank lines are
-ignored. Every object must contain exactly these fields:
+ignored. Every object must contain these fields, and may contain `source`:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ ignored. Every object must contain exactly these fields:
 | `fiscal_year` | integer or `null` | Fiscal year reported by the filing. `null` when the question does not name exactly one year, as in a change across years |
 | `question_type` | one of `factual`, `comparative`, `temporal`, `numeric`, `unanswerable` | The labels `src/rag/query.py` assigns, defined in `src/rag/constants.py`, so results can be broken down by the type the engine read a question as |
 | `difficulty` | non-empty string | Dataset difficulty label |
-| `source` | non-empty string | For example `handwritten` or `xbrl` |
+| `source` | non-empty string, optional | `xbrl` on the generated set's questions. The team's questions leave it out |
 
 An `unanswerable` question is one the corpus cannot answer: it asks about a
 company or year outside the corpus, or for something a 10-K does not contain.
