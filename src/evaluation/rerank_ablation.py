@@ -26,7 +26,7 @@ from src.stack import RESULTS_ROOT, build_retriever
 from .benchmark import load_questions
 from .metrics import score_question
 from .provenance import corpus_records_sha256, record_provenance
-from .records import BenchmarkQuestion, RunResult
+from .records import BenchmarkQuestion, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
 
@@ -34,10 +34,9 @@ METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
 POLICY = {
     "decision_top_k": 16,
     "decision_candidate_k": 50,
-    "primary_sources": ["handwritten", "xbrl"],
+    "primary_benchmarks": ["team", "xbrl"],
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
-    "max_llm_assisted_ndcg_regression": 0.02,
     "max_type_ndcg_regression": 0.02,
     "min_type_questions": 10,
     "max_hard_negative_regression": 0.01,
@@ -134,14 +133,15 @@ def summarize(
     rows: Sequence[dict], k: int, policy: dict = POLICY, *, candidate_k: int = CANDIDATE_K,
 ) -> dict:
     groups: dict[str, dict[str, list]] = {
-        "by_source": defaultdict(list), "by_type": defaultdict(list),
-        "by_source_type": defaultdict(list), "by_gold_content": defaultdict(list),
+        "by_benchmark": defaultdict(list), "by_type": defaultdict(list),
+        "by_benchmark_type": defaultdict(list), "by_gold_content": defaultdict(list),
         "by_gold_truncation": defaultdict(list),
     }
     for row in rows:
-        groups["by_source"][row["question"]["source"]].append(row)
+        benchmark = benchmark_of(row["question"].get("source"))
+        groups["by_benchmark"][benchmark].append(row)
         groups["by_type"][row["question"]["question_type"]].append(row)
-        groups["by_source_type"][row["question"]["source"] + ":" + row["question"]["question_type"]].append(row)
+        groups["by_benchmark_type"][benchmark + ":" + row["question"]["question_type"]].append(row)
         groups["by_gold_content"][row["gold_content"]].append(row)
         gold_ids = set(row["question"]["supporting_chunk_ids"])
         gold_in_pool = [p for p in row["rerank"]["candidates"] if p["chunk_id"] in gold_ids]
@@ -208,24 +208,18 @@ def summarize(
             "outside_query_years": outside_query_years,
         }
     reasons = []
-    for source in policy["primary_sources"]:
-        group = report["by_source"].get(source)
+    for benchmark in policy["primary_benchmarks"]:
+        group = report["by_benchmark"].get(benchmark)
         if group is None:
-            reasons.append(f"missing primary source {source}")
+            reasons.append(f"missing benchmark {benchmark}")
             continue
         n = group["ndcg"]
         if n["delta"] is None or n["delta"] < policy["min_ndcg_gain"] or n["ci95"] is None or n["ci95"][0] <= 0:
-            reasons.append(f"{source}: nDCG gain/uncertainty criterion not met")
+            reasons.append(f"{benchmark}: nDCG gain/uncertainty criterion not met")
         for metric in ("recall", "mrr"):
             if group[metric]["delta"] is None or group[metric]["delta"] < -policy["max_recall_mrr_regression"]:
-                reasons.append(f"{source}: {metric} regression criterion not met")
-    assisted = report["by_source"].get("llm_assisted")
-    if assisted is None:
-        reasons.append("missing source llm_assisted")
-    elif (assisted["ndcg"]["delta"] is None
-          or assisted["ndcg"]["delta"] < -policy["max_llm_assisted_ndcg_regression"]):
-        reasons.append("llm_assisted: nDCG regression criterion not met")
-    for kind, group in (report["by_type"] | report["by_source_type"]).items():
+                reasons.append(f"{benchmark}: {metric} regression criterion not met")
+    for kind, group in (report["by_type"] | report["by_benchmark_type"]).items():
         n = group["ndcg"]
         if n["questions"] >= policy["min_type_questions"] and n["delta"] < -policy["max_type_ndcg_regression"]:
             reasons.append(f"{kind}: nDCG regression criterion not met")

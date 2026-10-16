@@ -33,6 +33,11 @@ def _string_tuple(value: Any, field_name: str, *, allow_empty: bool = True) -> t
     return tuple(value)
 
 
+def benchmark_of(source: str | None) -> str:
+    """Name the benchmark a question belongs to: the generated ``xbrl`` set or the team's."""
+    return "xbrl" if source == "xbrl" else "team"
+
+
 @dataclass(frozen=True)
 class BenchmarkQuestion:
     """One ground-truth question used to evaluate retrieval.
@@ -58,6 +63,10 @@ class BenchmarkQuestion:
     question_type: str
     difficulty: str
     source: str | None = None
+
+    @property
+    def benchmark(self) -> str:
+        return benchmark_of(self.source)
 
     REQUIRED_FIELDS = frozenset(
         {

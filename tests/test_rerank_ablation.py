@@ -17,7 +17,7 @@ from conftest import RerankInner as Inner, RerankModel as Model, rerank_passage 
 GATE_POLICY = POLICY | {"decision_top_k": 2}
 
 
-def question(qid="q", source="handwritten", gold=("a",), kind="numeric"):
+def question(qid="q", source=None, gold=("a",), kind="numeric"):
     return BenchmarkQuestion(qid, "What was revenue for AAA in FY2024?", "1 USD",
                              gold, ("c",), "AAA", 2024, kind, "medium", source)
 
@@ -53,24 +53,30 @@ def test_multifiling_connections_cluster_related_questions():
     assert paired_metric(rows, "ndcg", 2)["clusters"] == 2
 
 
-def test_source_type_and_truncation_breakdowns():
-    rows = [row(question("h", "handwritten")), row(question("m", "xbrl")),
-            row(question("l", "llm_assisted")), row(question("u", gold=(), kind="unanswerable"))]
+def test_benchmark_type_and_truncation_breakdowns():
+    rows = [row(question("h")), row(question("m", "xbrl")),
+            row(question("l")), row(question("u", gold=(), kind="unanswerable"))]
     report = summarize(rows, 2)
-    assert report["by_source"]["handwritten"]["questions"] == 2
-    assert report["by_source"]["handwritten"]["mrr"]["questions"] == 1
+    assert report["by_benchmark"]["team"]["questions"] == 3
+    assert report["by_benchmark"]["team"]["mrr"]["questions"] == 2
     assert report["by_type"]["unanswerable"]["ndcg"]["C4"] is None
     assert report["truncation"]["rate"] == 1 / 3
     assert report["top_k_diagnostics"]["C5"]["tables"] == 4
     assert report["top_k_diagnostics"]["C5"]["outside_gold_years"] == 0
     decision = summarize(rows, 2, GATE_POLICY)["decision"]
     assert decision["advance_to_answer_evaluation"] is False
-    assert "handwritten: nDCG gain/uncertainty criterion not met" in decision["reasons"]
+    assert "team: nDCG gain/uncertainty criterion not met" in decision["reasons"]
+
+
+def test_untagged_team_questions_form_one_slice_beside_the_xbrl_set():
+    rows = [row(question("t1", None)), row(question("t2", None)), row(question("m", "xbrl"))]
+    report = summarize(rows, 2)
+    assert {name: group["questions"] for name, group in report["by_benchmark"].items()} == {"team": 2, "xbrl": 1}
+    assert report["by_benchmark_type"]["team:numeric"]["questions"] == 2
 
 
 def test_predeclared_decision_requires_all_gates():
-    rows = [row(question(source + str(i), source), filings=(str(i),))
-            for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+    rows = passing_rows()
     assert summarize(rows, 2, GATE_POLICY)["decision"]["advance_to_answer_evaluation"]
     negative = deepcopy(rows)
     negative[0]["C5"] = negative[0]["C4"]
@@ -129,30 +135,31 @@ def test_cli_invalid_k_and_run_id_do_not_load_models(tmp_path):
         main(["run", "missing.jsonl", "--run-id", "../bad", "--workload-note", "test"])
 
 
-def passing_rows():
-    return [row(question(source + str(i), source), filings=(source + str(i),))
-            for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+def passing_rows(per_benchmark=2):
+    return [row(question(f"{name}{i}", source), filings=(f"{name}{i}",))
+            for name, source in (("team", None), ("xbrl", "xbrl")) for i in range(per_benchmark)]
 
 
 def test_each_gate_blocks_on_its_own():
     assert summarize(passing_rows(), 2, GATE_POLICY)["decision"]["reasons"] == []
 
     regressed = passing_rows()
-    for r in regressed[4:]:  # the llm_assisted rows
+    for r in regressed[2:]:  # the xbrl rows
         r["C4"], r["C5"] = r["C5"], r["C4"]
     assert summarize(regressed, 2, GATE_POLICY)["decision"]["reasons"] == [
-        "llm_assisted: nDCG regression criterion not met"]
+        "xbrl: nDCG gain/uncertainty criterion not met", "xbrl: mrr regression criterion not met"]
 
-    assert summarize(passing_rows()[:4], 2, GATE_POLICY)["decision"]["reasons"] == ["missing source llm_assisted"]
+    assert summarize(passing_rows()[:2], 2, GATE_POLICY)["decision"]["reasons"] == ["missing benchmark xbrl"]
 
-    typed = passing_rows() + [
-        row(question(f"t{i}", "other", kind="temporal"), a=("a", "b"), b=("b", "a"), filings=(f"t{i}",))
+    # Enough improving team questions that the benchmark itself still passes.
+    typed = passing_rows(30) + [
+        row(question(f"t{i}", kind="temporal"), a=("a", "b"), b=("b", "a"), filings=(f"t{i}",))
         for i in range(POLICY["min_type_questions"])]
     assert summarize(typed, 2, GATE_POLICY)["decision"]["reasons"] == [
-        "temporal: nDCG regression criterion not met", "other:temporal: nDCG regression criterion not met"]
+        "temporal: nDCG regression criterion not met", "team:temporal: nDCG regression criterion not met"]
 
     negatives = passing_rows() + [
-        row(question(f"u{i}", "other", gold=(), kind="unanswerable"), a=("a", "b"), b=("c", "b"),
+        row(question(f"u{i}", gold=(), kind="unanswerable"), a=("a", "b"), b=("c", "b"),
             filings=()) for i in range(2)]
     assert summarize(negatives, 2, GATE_POLICY)["decision"]["reasons"] == [
         "hard-negative accuracy regression criterion not met"]
@@ -248,7 +255,7 @@ def test_empty_pools_do_not_dilute_reranking_latency():
     report = summarize(rows + [deepcopy(empty) for _ in range(100)], 2, GATE_POLICY)
     assert report["latency_ms"]["rerank_median"] == 600
     assert report["latency_ms"]["rerank_p95"] == 600
-    assert report["latency_ms"]["rerank_questions"] == 6
+    assert report["latency_ms"]["rerank_questions"] == 4
     assert report["latency_ms"]["empty_pool_questions"] == 100
     assert "reranking median latency criterion not met" in report["decision"]["reasons"]
 
@@ -415,11 +422,13 @@ def test_resume_requires_the_run_directory_and_its_runtime_record(tmp_path):
                   chunks=chunks, top_k=2, resume=True)
 
 
-def test_present_but_unmeasurable_assisted_source_blocks_advancement():
-    rows = passing_rows()[:4] + [row(question("u", "llm_assisted", gold=(), kind="unanswerable"), filings=())]
+def test_present_but_unmeasurable_team_benchmark_blocks_advancement():
+    rows = passing_rows()[2:] + [row(question("u", gold=(), kind="unanswerable"), filings=())]
     decision = summarize(rows, 2, GATE_POLICY)["decision"]
     assert decision["advance_to_answer_evaluation"] is False
-    assert decision["reasons"] == ["llm_assisted: nDCG regression criterion not met"]
+    assert decision["reasons"] == ["team: nDCG gain/uncertainty criterion not met",
+                                   "team: recall regression criterion not met",
+                                   "team: mrr regression criterion not met"]
 
 
 def test_resume_refuses_changed_or_unknown_dense_encoder_revision(tmp_path):
@@ -448,7 +457,7 @@ def test_resume_refuses_changed_or_unknown_dense_encoder_revision(tmp_path):
 
 
 def test_fresh_and_completed_resume_propagate_exploratory_pool_depth(tmp_path):
-    qs = [question(source + str(i), source) for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+    qs = [question(f"{name}{i}", source) for name, source in (("team", None), ("xbrl", "xbrl")) for i in range(2)]
     pool = [passage("b"), passage("a", content_type="table")]
     chunks = [{"chunk_id": p.chunk_id, "accession_no": "f", "content_type": p.content_type,
                "ticker": p.ticker, "fiscal_year": p.fiscal_year} for p in pool]

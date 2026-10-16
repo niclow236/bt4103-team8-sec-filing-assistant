@@ -30,7 +30,7 @@ from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 from .benchmark import load_questions
 from .metrics import score_question
 from .provenance import corpus_records_sha256, record_provenance, sha256
-from .records import BenchmarkQuestion, RunResult
+from .records import BenchmarkQuestion, RunResult, benchmark_of
 from .rerank_ablation import _index_manifests, read_pairs
 from .results import _safe_run_id, write_comparison
 from .run import FixedSizeBM25Retriever, _query, question_fields
@@ -249,28 +249,28 @@ def export_retrieval(run_dir: Path, transactions, expected: int, *, run_id=None,
                      write_question_outputs=True):
     if len(transactions) != expected:
         raise ValueError("cannot summarize an incomplete retrieval matrix")
-    summaries, sources = [], []
+    summaries, benchmarks = [], []
     for cid in MATRIX:
         rows = [t["rows"][cid] for t in transactions]
         directory = run_dir / cid
         directory.mkdir(exist_ok=True)
         if write_question_outputs:
             write_rows(directory / "questions.jsonl", rows)
-        groups = {source: summarize([r for r in rows if r["source"] == source])
-                  for source in sorted({r["source"] for r in rows})}
-        summary = {"config": rows[0]["config"], **summarize(rows), "by_source": groups,
+        groups = {name: summarize([r for r in rows if benchmark_of(r["source"]) == name])
+                  for name in sorted({benchmark_of(r["source"]) for r in rows})}
+        summary = {"config": rows[0]["config"], **summarize(rows), "by_benchmark": groups,
                    "by_type": {kind: summarize([r for r in rows if r["question_type"] == kind])
                                for kind in sorted({r["question_type"] for r in rows})}}
         dump(directory / "summary.json", summary)
         summaries.append(summary)
-        sources += [{"config": summary["config"], "source": source, **g} for source,g in groups.items()]
+        benchmarks += [{"config": summary["config"], "benchmark": name, **g} for name,g in groups.items()]
     cutoff=summaries[0]["config"]["top_k"]
     identifier=run_id or run_dir.name
     write_comparison(run_dir, run_id=identifier, top_k=cutoff, summaries=summaries,
                      extra_fields=("median_latency_ms",), phase="retrieval", complete=True,
                      config_file=config_file, evaluation_only=True)
-    write_comparison(run_dir / "by-source", run_id=identifier, top_k=cutoff,
-                     summaries=sources, extra_fields=("source",), complete=True, evaluation_only=True)
+    write_comparison(run_dir / "by-benchmark", run_id=identifier, top_k=cutoff,
+                     summaries=benchmarks, extra_fields=("benchmark",), complete=True, evaluation_only=True)
 
 
 def retrieval(args):
@@ -421,7 +421,7 @@ def answers(args):
     original = json.loads((run_dir / "config.json").read_text())
     questions = [BenchmarkQuestion.from_mapping(r) for r in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(original,questions)
-    team = [q for q in questions if q.source != "xbrl"]
+    team = [q for q in questions if q.benchmark == "team"]
     transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
     check_transactions(transactions,questions)
     selected = {t["question"]["question_id"]:t for t in transactions}
@@ -488,8 +488,6 @@ def answers(args):
             dump(directory/"answer-summary.json",{"questions":len(stored),"quality":quality_summary(stored),
                   "resources":resource_summary(stored),
                   "checks":_checks(stored),
-                  "by_source":{source:quality_summary([r for r in stored if r["source"]==source])
-                               for source in sorted({q.source for q in team})},
                   "verification_enabled":cid=="C6"})
         dump(run_dir/"answer-summary.json",{"complete":True,"team_questions":len(team),
              "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text()) for cid in MATRIX}})
@@ -519,7 +517,7 @@ def rescore(args):
     target=directory/"rescored";target.mkdir(exist_ok=True)
     export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
                      write_question_outputs=False)
-    team=[q for q in questions if q.source!='xbrl']
+    team=[q for q in questions if q.benchmark=='team']
     summaries={}
     for cid in MATRIX:
         rows=read_rows(directory/cid/'answers.jsonl')
@@ -527,8 +525,6 @@ def rescore(args):
             raise ValueError(f"cannot rescore incomplete {cid} team answers")
         summaries[cid]={'questions':len(rows),'quality':quality_summary(rows),
                         'resources':resource_summary(rows),'checks':_checks(rows),
-                        'by_source':{s:quality_summary([r for r in rows if r['source']==s])
-                                     for s in sorted({q.source for q in team})},
                         'verification_enabled':cid=='C6'}
     dump(target/'answer-summary.json',{'complete':True,'team_questions':len(team),'configurations':summaries})
 

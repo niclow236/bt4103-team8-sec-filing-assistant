@@ -13,7 +13,7 @@ from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from conftest import RerankModel
 
 
-def question(identifier="q", source="handwritten"):
+def question(identifier="q", source=None):
     return BenchmarkQuestion(identifier, "Compare Apple and Microsoft's revenue in FY2024",
                              "Apple and Microsoft revenue", ("a", "b"), (), None, 2024,
                              "comparative", "hard", source)
@@ -96,7 +96,7 @@ def test_transaction_reader_recovers_only_the_unfinished_tail(tmp_path):
     with pytest.raises(json.JSONDecodeError):matrix.read_rows(path,recover=True)
 
 
-def test_summary_exposes_denominators_and_sources(tmp_path):
+def test_summary_exposes_denominators(tmp_path):
     q=question(); rows={}
     for cid in matrix.MATRIX:
         rows[cid]=matrix.ranking(q,Query(q.question),[],cid,10.0)
@@ -105,9 +105,21 @@ def test_summary_exposes_denominators_and_sources(tmp_path):
     assert report['complete'] and len(report['configurations'])==7
     assert report['configurations'][0]['metric_denominators']['recall']==1
     assert report['configurations'][0]['metric_denominators']['hard_negative_accuracy']==0
-    assert json.loads((tmp_path/'by-source/summary.json').read_text())['configurations'][0]['source']=='handwritten'
     with pytest.raises(ValueError,match='incomplete'):
         matrix.export_retrieval(tmp_path,[],1)
+
+
+def test_retrieval_reports_one_team_slice_beside_the_xbrl_set(tmp_path):
+    transactions=[]
+    for q in (question('t1',None),question('t2',None),question('x','xbrl')):
+        transactions.append({'question':q.to_dict(),
+                             'rows':{cid:matrix.ranking(q,Query(q.question),[],cid,10.0) for cid in matrix.MATRIX}})
+    matrix.export_retrieval(tmp_path,transactions,3)
+    c0=json.loads((tmp_path/'C0/summary.json').read_text())
+    assert {name:group['questions'] for name,group in c0['by_benchmark'].items()}=={'team':2,'xbrl':1}
+    split=json.loads((tmp_path/'by-benchmark/summary.json').read_text())['configurations']
+    assert sorted((r['config']['id'],r['benchmark']) for r in split if r['config']['id']=='C4')==[
+        ('C4','team'),('C4','xbrl')]
 
 
 def test_reference_rejects_mismatched_corpus_before_reading_pairs(tmp_path):
@@ -225,7 +237,10 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     assert result['top_k']==16 and result['configurations'][0]['recall']==.5
     assert result['configurations'][0]['ndcg']<1.0
     assert not (tmp_path/'rescored/C0/questions.jsonl').exists()
-    assert json.loads((tmp_path/'rescored/answer-summary.json').read_text())['team_questions']==1
+    answers=json.loads((tmp_path/'rescored/answer-summary.json').read_text())
+    assert answers['team_questions']==1
+    # Every answer is a team question, so a split by source has nothing to separate.
+    assert all('by_source' not in summary for summary in answers['configurations'].values())
     (tmp_path/'C6/answers.jsonl').unlink()
     with pytest.raises(ValueError,match='incomplete C6'):matrix.rescore(SimpleNamespace(run_dir=tmp_path))
 

@@ -74,7 +74,7 @@ def record_provenance(
         },
         "inputs": [{"path": str(path), "sha256": sha256(path)} for path in inputs],
         "questions": len(questions),
-        "by_source": dict(sorted(Counter(q.source for q in questions).items())),
+        "by_benchmark": dict(sorted(Counter(q.benchmark for q in questions).items())),
         "question_records_sha256": hashlib.sha256(
             json.dumps([asdict(q) for q in questions], sort_keys=True).encode()
         ).hexdigest(),
