@@ -10,12 +10,13 @@ retrieval benefit, an answer-quality check, and teammate review.
 These are practical gates for this experiment, not universal thresholds or
 retrospectively chosen cutoffs:
 
-- On each of `handwritten` and mechanical `xbrl`, mean nDCG@16 must improve by
-  at least **0.02**, with the lower bound of the paired 95% interval above zero.
-  Recall@16 and MRR@16 must not regress by more than **0.01** on either source.
-- `llm_assisted` nDCG must not regress by more than **0.02**. A question-type
-  slice (overall or within a source) with at least 10 answerable questions must not lose more than **0.02**
-  nDCG. Mean hard-negative accuracy must not lose more than **0.01**.
+- On each of the team benchmark and the mechanical `xbrl` set, mean nDCG@16
+  must improve by at least **0.02**, with the lower bound of the paired 95%
+  interval above zero. Recall@16 and MRR@16 must not regress by more than
+  **0.01** on either benchmark.
+- A question-type slice (overall or within a benchmark) with at least 10
+  answerable questions must not lose more than **0.02** nDCG. Mean
+  hard-negative accuracy must not lose more than **0.01**.
 - Added steady-state reranking time, including input-length diagnostics and
   ranking, must have a median at most **500 ms** and p95 at most **1,000 ms**.
   This allows a modest extra stage in an interactive query; cold model load and
@@ -26,15 +27,18 @@ retrospectively chosen cutoffs:
 The decision is fixed at @16 over a configured pool of 50 candidates in the
 policy. A run or rescore at another cutoff or a reduced candidate depth records
 metrics with `advance_to_answer_evaluation: null`, even if those
-metrics would otherwise pass. Missing sources, including `llm_assisted`, block
-advancement. The latency gate excludes empty candidate pools; their number and
-the number of timed questions are reported explicitly.
+metrics would otherwise pass. A missing benchmark blocks advancement. The
+latency gate excludes empty candidate pools; their number and the number of
+timed questions are reported explicitly.
 
-The team benchmark is the accepted 149-question version merged from #152,
-containing 124 handwritten and 25 LLM-assisted questions. The mechanical set is
-the complete locally generated XBRL benchmark. Its labels use figure substring
-matching and are a retrieval proxy, not exhaustively adjudicated evidence.
-No model tuning or checkpoint selection uses final benchmark outcomes.
+The team benchmark is the 150-question `benchmark/questions.jsonl`. Its
+questions carry no `source` tag (#162), so they are reported as one `team`
+slice; every question tagged `source: xbrl` forms the mechanical slice. The
+#154 policy also gated a separate LLM-assisted slice; that split no longer
+exists in the benchmark, so its gate was removed with it (#161). The
+mechanical set is the locally generated XBRL benchmark. Its labels use figure
+substring matching and are a retrieval proxy, not exhaustively adjudicated
+evidence. No model tuning or checkpoint selection uses final benchmark outcomes.
 
 ## Fixed experiment settings
 
@@ -89,7 +93,7 @@ the exact candidate pool.
 - `pairs.jsonl.gz`: each full benchmark question and parsed query, both ranked
   ID/score lists and metrics, and all candidate logits, token lengths, metadata
   and source provenance;
-- `summary.json`: paired metrics, source/type/evidence-kind breakdowns, wins,
+- `summary.json`: paired metrics, benchmark/type/evidence-kind breakdowns, wins,
   losses, ties, cluster counts, uncertainty, truncation and timing diagnostics,
   plus the decision and any failed criteria.
 
@@ -159,76 +163,109 @@ a supporting filing form a cluster; multi-filing questions connect those
 filings before resampling. Each draw samples clusters with replacement and
 computes the question-weighted mean difference. Fewer than two clusters gives
 no interval and cannot pass the positive-uncertainty gate. This can yield wide
-intervals when a source covers few independent filings; report that limitation.
+intervals when a benchmark covers few independent filings; report that limitation.
 Filing clustering does not remove every dependence between questions about
 the same company or generated from the same template.
 
 ## Result and relationship to #44
 
-**Retain C4.** The complete reference experiment covers 12,728 paired questions and fails the predeclared retrieval gates. No answer-quality comparison or app adoption is triggered by this result.
+**Retain C4.** The reference run `c5-reference-20261017` covers 2,034 paired
+questions (the 150 team questions and 1,884 mechanical XBRL questions) on
+28,313 passages from 75 filings, and fails the predeclared retrieval gates. No
+answer-quality comparison or app adoption is triggered by this result.
 
-| Source | All / relevance-scored | Recall@16 C4 → C5 | nDCG@16 C4 → C5 | MRR@16 C4 → C5 | nDCG delta [paired 95% CI] | nDCG wins / losses / ties |
+It replaces the #154 reference `c5-reference-20261010`, which pinned the
+earlier 149-question file and split the team's questions by source. That run
+can't be resumed or extended: this machine's corpus (28,313 passages, not
+28,289) and generated XBRL set differ from it, and the runners refuse to mix
+input hashes. Both studies were therefore measured again from scratch (#161).
+
+| Benchmark | All / relevance-scored | Recall@16 C4 → C5 | nDCG@16 C4 → C5 | MRR@16 C4 → C5 | nDCG delta [paired 95% CI] | nDCG wins / losses / ties |
 | --- | ---: | ---: | ---: | ---: | --- | ---: |
-| Handwritten | 124 / 123 | 0.8360 → 0.8496 | 0.6193 → 0.5294 | 0.5686 → 0.4466 | -0.0898 [-0.1600, -0.0312] | 26 / 64 / 33 |
-| LLM-assisted | 25 / 22 | 0.7273 → 0.6136 | 0.4914 → 0.4314 | 0.4565 → 0.4018 | -0.0600 [-0.2075, 0.0891] | 7 / 9 / 6 |
-| Mechanical (`xbrl`) | 12579 / 12579 | 0.6517 → 0.6654 | 0.4719 → 0.4165 | 0.4762 → 0.3839 | -0.0554 [-0.0670, -0.0439] | 3409 / 5801 / 3369 |
+| Team | 150 / 146 | 0.8185 → 0.8094 | 0.5978 → 0.5195 | 0.5484 → 0.4478 | -0.0783 [-0.1407, -0.0202] | 35 / 73 / 38 |
+| Mechanical (`xbrl`) | 1884 / 1884 | 0.7627 → 0.8217 | 0.5504 → 0.5426 | 0.5340 → 0.4879 | -0.0078 [-0.0336, +0.0142] | 622 / 783 / 479 |
 
-The four unanswerable team questions contribute no fabricated relevance scores. Labelled hard-negative accuracy, each metric denominator, all source/type and evidence/truncation slices, and filing-cluster counts are included in the [complete summary](evaluation/c5-reference-20261010-summary.json).
+The four unanswerable team questions contribute no fabricated relevance
+scores. Labelled hard-negative accuracy is unchanged at 0.9630 over 27
+questions (one win, one loss). Each metric denominator, all benchmark/type and
+evidence/truncation slices, and filing-cluster counts are in the
+[complete summary](evaluation/c5-reference-20261017-summary.json).
 
 Failed criteria (computed from unrounded measurements):
 
-- handwritten: nDCG gain/uncertainty criterion not met
-- handwritten: mrr regression criterion not met
+- team: nDCG gain/uncertainty criterion not met
+- team: mrr regression criterion not met
 - xbrl: nDCG gain/uncertainty criterion not met
 - xbrl: mrr regression criterion not met
-- llm_assisted: nDCG regression criterion not met
 - factual: nDCG regression criterion not met
-- numeric: nDCG regression criterion not met
-- handwritten:factual: nDCG regression criterion not met
-- handwritten:numeric: nDCG regression criterion not met
-- xbrl:numeric: nDCG regression criterion not met
+- team:factual: nDCG regression criterion not met
+- team:numeric: nDCG regression criterion not met
+
+| Question type (team unless noted) | Relevance-scored | nDCG@16 C4 → C5 | Wins / losses / ties |
+| --- | ---: | ---: | ---: |
+| Factual | 44 | 0.7580 → 0.5609 | 5 / 25 / 14 |
+| Numeric | 88 | 0.5547 → 0.5030 | 25 / 45 / 18 |
+| Temporal | 10 | 0.3030 → 0.4698 | 3 / 1 / 6 |
+| Comparative | 4 | 0.5192 → 0.5511 | 2 / 2 / 0 |
+| Numeric (`xbrl`) | 1884 | 0.5504 → 0.5426 | 622 / 783 / 479 |
 
 | Top-16 diagnostic | C4 | C5 |
 | --- | ---: | ---: |
-| Table passages | 164538 | 121247 |
+| Table passages | 26373 | 20219 |
 | Outside gold companies | 0 | 0 |
 | Outside gold years | 35 | 34 |
 | Outside gold company/year pairs | 35 | 34 |
-| Gold-scope eligible passages | 203584 | 203584 |
-| Known-year eligible passages | 203584 | 203584 |
+| Gold-scope eligible passages | 32480 | 32480 |
+| Known-year eligible passages | 32480 | 32480 |
 | Query company-filter violations | 0 | 0 |
 | Query year-filter violations | 0 | 0 |
 
-Of 636,350 scored candidate pairs, 1 exceeded the 512-token paired input limit. 0 questions had a truncated supporting passage in the pool; that slice's paired metrics are in the summary. Questions without gold in the pool are reported separately because their missing passages have no measured input length.
+None of the 101,650 scored candidate pairs exceeded the 512-token paired input
+limit. 1,885 questions had untruncated gold in the pool, 145 had no gold in the
+pool, and 4 are unlabelled.
 
-Steady-state added reranking time: median **417.1 ms**, p95 **531.8 ms**, over 12,727 nonempty pools; 1 empty pool is excluded. Median shared C4 retrieval is 719.7 ms; median C4 retrieval plus C5 reranking is 1131.9 ms. These are retrieval-stage measurements, not generation or full answer latency.
+Steady-state added reranking time: median **279.5 ms**, p95 **442.8 ms**, over
+2,033 nonempty pools; 1 empty pool is excluded. Median shared C4 retrieval is
+553.9 ms; median C4 retrieval plus C5 reranking is 830.5 ms. The latency gates
+pass; the quality gates do not. These are retrieval-stage measurements, not
+generation or full answer latency.
 
-The Apple M1 / 16 GiB laptop used MPS for both encoders. Cached cross-encoder loading took 5.85 s initially and 5.39 s on resume; separate warm-ups took 2.48 s and 2.90 s. Those times are excluded from steady-state quantiles. Normal desktop apps and short CPU review/test work shared the machine; no second GPU model job ran. This is recorded laptop timing, not isolated hardware throughput, and is not directly comparable to the old competing-run latency.
+The Apple M2 / 8 GiB laptop used MPS for both encoders. Cached cross-encoder
+loading took 9.65 s and warm-up 7.72 s, both excluded from steady-state
+quantiles. Normal desktop apps and a Claude Code session shared the machine; no
+other model job ran. This is recorded laptop timing, not isolated hardware
+throughput, and isn't directly comparable to the #154 run's M1 timings.
 
-The measurement ran on frozen source `e74872d`; review fixes were developed in an isolated checkout and diagnostics were rescored on `941c931`. Native `rescore --processed-dir` derived gold-filing diagnostics only after verifying the full corpus digest. The original relevance metrics and intervals were checked for exact equality with the native reference summary; stored pairs, rankings and timings were not edited.
+The run is one uninterrupted segment on source `13ca6f5`. The
+[measurement manifest](evaluation/c5-reference-20261017-manifest.json) records
+all input/source/corpus fingerprints, the pinned model revision, dependency
+versions, index build identities, hardware and artifact hashes. The corpus and
+per-question pairs remain local under `data/` and `results/`.
 
-The first process was terminated after 1,831 complete pairs, leaving its gzip footer missing. A one-off local Python recovery step outside the frozen evaluation runner read the complete JSON rows, checked the exact frozen benchmark prefix, preserved the original compressed file as `pairs-interrupted-original.jsonl.gz`, and rewrote those rows into a valid gzip stream. All 1,831 valid rows were preserved; no question rows were discarded. The reference source `e74872d` has no native recovery path: its `--resume` consumed this externally repaired file and completed the remaining rows on the identical source/configuration/indexes with its own excluded warm-up. The current runner performs its own guarded atomic repair as covered by the review tests. Recovery hashes and both runtime segments are retained in the [measurement manifest](evaluation/c5-reference-20261010-manifest.json).
-
-The manifest also records all input/source/corpus fingerprints, pinned model revision, dependency versions, index build identities, artifact hashes and the 75-filing inventory. The 28,289-passage corpus and large per-question artifacts remain local under `data/` and `results/`; the small report artifacts are committed for review. Exact reference reruns require source `e74872d` and the frozen inputs/indexes identified there. The current CLI supports guarded future runs and model-free rescoring.
-
-Evidence type splits the result. The pooled gold-evidence slices across all sources are:
+Evidence type splits the result, as it did in #154. The pooled gold-evidence
+slices across both benchmarks are:
 
 | Gold evidence | Relevance-scored questions | nDCG@16 C4 → C5 | nDCG delta [paired 95% CI] | Wins / losses / ties |
 | --- | ---: | ---: | --- | ---: |
-| Prose | 878 | 0.1636 → 0.3483 | +0.1847 [+0.1601, +0.2109] | 408 / 43 / 427 |
-| Prose + table | 2523 | 0.3028 → 0.3743 | +0.0715 [+0.0611, +0.0826] | 1273 / 675 / 575 |
-| Table | 9323 | 0.5487 → 0.4358 | -0.1129 [-0.1290, -0.0976] | 1761 / 5156 / 2406 |
+| Prose | 113 | 0.4415 → 0.5566 | +0.1150 [+0.0317, +0.1843] | 49 / 27 / 37 |
+| Prose + table | 206 | 0.3976 → 0.5100 | +0.1124 [+0.0891, +0.1415] | 125 / 53 / 28 |
+| Table | 1711 | 0.5800 → 0.5436 | -0.0364 [-0.0627, -0.0152] | 483 / 776 / 452 |
 
-C5 roughly doubles nDCG on prose evidence and improves the mixed prose/table slice. Table-evidence questions make up **73.3% of the 12,724 relevance-scored questions** and drive the overall regression; table passages in the top 16 fall from 164,538 to 121,247. The default-adoption decision remains retain C4 under the predeclared gates, but it does not mean reranking never helps. These are diagnostic slices, not a tested routing policy. Reranking only prose questions or scoring tables differently would require a separate experiment, including a routing rule that does not use gold evidence labels at query time.
+C5 improves prose and mixed prose/table evidence. Table-evidence questions make
+up **84.3% of the 2,030 relevance-scored questions** and drive the overall
+regression; table passages in the top 16 fall from 26,373 to 20,219. The
+default-adoption decision remains retain C4 under the predeclared gates, but it
+does not mean reranking never helps. These are diagnostic slices, not a tested
+routing policy. Reranking only prose questions or scoring tables differently
+would require a separate experiment, including a routing rule that does not use
+gold evidence labels at query time.
 
-This result applies to this fixed MiniLM configuration and corpus. Generated labels are a retrieval proxy; filing clustering does not remove all company/template dependence, and gold scope is not exhaustive relevance. No conclusion about answer correctness, other checkpoints or larger chunk budgets follows from these retrieval metrics.
+This result applies to this fixed MiniLM configuration and corpus. Generated
+labels are a retrieval proxy; filing clustering does not remove all
+company/template dependence, and gold scope is not exhaustive relevance. No
+conclusion about answer correctness, other checkpoints or larger chunk budgets
+follows from these retrieval metrics.
 
-For #44, the proposed C5 row is **experimental MiniLM reranking of C4, evaluated and rejected for default adoption**, with these paired results retained as the negative ablation and its prose gains/table regressions recorded explicitly. Teammate approval of this PR is requested as agreement on that representation. #44 remains open; its C6 definition and complete final matrix are separate work.
-
-## Verification after review
-
-Review source `941c931` passes all **2,028 local tests** and CI on Python 3.10 and 3.12. Ten isolated broken-guard variants were detected by the regression tests. Model-free rescore verified all 12,728 unique frozen question records and reproduced every original relevance aggregate and confidence interval exactly.
-
-A real-model smoke on seven team/mechanical questions scored 350 candidates using cached BGE and the pinned cross-encoder on MPS. Its C4/C5 rankings and relevance metrics matched the original reference smoke, with a maximum raw-logit difference of zero. A second real CLI process was forcibly killed after two complete pairs. Native resume preserved both rows verbatim, started from question 3, and completed all seven with the same rankings/relevance metrics as the uninterrupted run. Latencies were newly measured and are not asserted to be identical. Source, runtime and smoke artifact hashes are in the [verification record](evaluation/c5-reference-20261010-verification.json).
-
-The subsequent review adds coverage for a process killed after its final row was flushed: completed resume must repair the stream so strict rescore succeeds. A separate closed-gzip fixture directly exercises the non-newline safety check; the forced-kill fixtures exercise gzip EOF handling. Both guard-removal mutations fail their targeted tests. The full local suite now passes **2,031 tests**.
+For #44, the C5 row is **experimental MiniLM reranking of C4, evaluated and
+rejected for default adoption**, with these paired results retained as the
+negative ablation and its prose gains/table regressions recorded explicitly.
