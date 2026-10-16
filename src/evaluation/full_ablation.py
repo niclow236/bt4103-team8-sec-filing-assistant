@@ -29,7 +29,7 @@ from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 from .benchmark import load_questions
 from .metrics import score_question
 from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
-from .records import BenchmarkQuestion, RunResult, benchmark_of
+from .records import TEAM, BenchmarkQuestion, RunResult, benchmark_of
 from .rerank_ablation import _index_manifests, read_pairs
 from .results import _safe_run_id, write_comparison
 from .run import FixedSizeBM25Retriever, _query, question_fields
@@ -362,6 +362,18 @@ class ReplayRetriever:
         return None
 
 
+def team_questions(questions):
+    return [q for q in questions if q.benchmark == TEAM]
+
+
+def answer_summary(rows, cid):
+    from .harness import _checks
+    from .quality import quality_summary, resource_summary
+
+    return {"questions":len(rows),"quality":quality_summary(rows),"resources":resource_summary(rows),
+            "checks":_checks(rows),"verification_enabled":cid=="C6"}
+
+
 def saved_answer(data):
     """Restore the validated records for a completed answer awaiting its judge."""
     from src.rag.records import (Answer,Citation,SentenceCitations,GenerationConfig,
@@ -417,15 +429,15 @@ def finish_pending_judge(path, question, judge):
 
 
 def answers(args):
-    from src.evaluation.harness import evaluate, _checks, RunStopped, RunInterrupted
-    from src.evaluation.quality import LLMJudge, quality_summary, resource_summary
+    from src.evaluation.harness import evaluate, RunStopped, RunInterrupted
+    from src.evaluation.quality import LLMJudge
     from src.rag.generate import config_from_env, checked_model
 
     run_dir = args.run_dir
     original = json.loads((run_dir / "config.json").read_text())
     questions = [BenchmarkQuestion.from_mapping(r) for r in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(original,questions)
-    team = [q for q in questions if q.benchmark == "team"]
+    team = team_questions(questions)
     transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
     check_transactions(transactions,questions)
     selected = {t["question"]["question_id"]:t for t in transactions}
@@ -489,19 +501,13 @@ def answers(args):
                     stored.append(row)
                     if pending.exists():pending.unlink()
                     print(f"{cid} answers: {len(stored)}/{len(team)}",flush=True)
-            dump(directory/"answer-summary.json",{"questions":len(stored),"quality":quality_summary(stored),
-                  "resources":resource_summary(stored),
-                  "checks":_checks(stored),
-                  "verification_enabled":cid=="C6"})
+            dump(directory/"answer-summary.json",answer_summary(stored,cid))
         dump(run_dir/"answer-summary.json",{"complete":True,"team_questions":len(team),
              "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text()) for cid in MATRIX}})
 
 
 def rescore(args):
     """Recompute recorded retrieval and answer aggregates without any model."""
-    from .quality import quality_summary,resource_summary
-    from .harness import _checks
-
     directory=args.run_dir
     config=json.loads((directory/"config.json").read_text())
     questions=[BenchmarkQuestion.from_mapping(q) for q in read_rows(directory/"benchmark.jsonl")]
@@ -521,15 +527,13 @@ def rescore(args):
     target=directory/"rescored";target.mkdir(exist_ok=True)
     export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
                      write_question_outputs=False)
-    team=[q for q in questions if q.benchmark=='team']
+    team=team_questions(questions)
     summaries={}
     for cid in MATRIX:
         rows=read_rows(directory/cid/'answers.jsonl')
         if [r['question_id'] for r in rows]!=[q.question_id for q in team]:
             raise ValueError(f"cannot rescore incomplete {cid} team answers")
-        summaries[cid]={'questions':len(rows),'quality':quality_summary(rows),
-                        'resources':resource_summary(rows),'checks':_checks(rows),
-                        'verification_enabled':cid=='C6'}
+        summaries[cid]=answer_summary(rows,cid)
     dump(target/'answer-summary.json',{'complete':True,'team_questions':len(team),'configurations':summaries})
 
 

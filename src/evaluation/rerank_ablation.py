@@ -25,7 +25,7 @@ from src.stack import RESULTS_ROOT, build_retriever
 from .benchmark import load_questions
 from .metrics import score_question
 from .provenance import corpus_records_sha256, question_records_sha256, record_provenance
-from .records import BenchmarkQuestion, BenchmarkValidationError, RunResult, benchmark_of
+from .records import TEAM, XBRL, BenchmarkQuestion, BenchmarkValidationError, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
 
@@ -33,7 +33,7 @@ METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
 POLICY = {
     "decision_top_k": 16,
     "decision_candidate_k": 50,
-    "primary_benchmarks": ["team", "xbrl"],
+    "primary_benchmarks": [TEAM, XBRL],
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
     "max_type_ndcg_regression": 0.02,

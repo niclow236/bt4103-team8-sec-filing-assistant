@@ -33,9 +33,12 @@ def _string_tuple(value: Any, field_name: str, *, allow_empty: bool = True) -> t
     return tuple(value)
 
 
+TEAM, XBRL = "team", "xbrl"
+
+
 def benchmark_of(source: str | None) -> str:
     """Name the benchmark a question belongs to: the generated ``xbrl`` set or the team's."""
-    return "xbrl" if source == "xbrl" else "team"
+    return XBRL if source == XBRL else TEAM
 
 
 @dataclass(frozen=True)
