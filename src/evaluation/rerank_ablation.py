@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import json
 from collections import defaultdict
 from dataclasses import asdict
@@ -25,7 +24,7 @@ from src.stack import RESULTS_ROOT, build_retriever
 
 from .benchmark import load_questions
 from .metrics import score_question
-from .provenance import corpus_records_sha256, record_provenance
+from .provenance import corpus_records_sha256, question_records_sha256, record_provenance
 from .records import BenchmarkQuestion, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
@@ -461,7 +460,7 @@ def main(argv: list[str] | None = None) -> None:
         rows = read_pairs(args.run_dir / "pairs.jsonl.gz")
         if len(rows) != manifest["provenance"]["questions"]:
             parser.error("run is incomplete; resume it before final rescoring")
-        digest = hashlib.sha256(json.dumps([r["question"] for r in rows], sort_keys=True).encode()).hexdigest()
+        digest = question_records_sha256([BenchmarkQuestion.from_mapping(r["question"]) for r in rows])
         expected = manifest["provenance"].get("question_records_sha256")
         if expected is not None and digest != expected:
             parser.error("stored questions do not match the frozen benchmark digest")

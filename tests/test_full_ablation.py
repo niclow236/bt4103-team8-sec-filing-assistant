@@ -1,12 +1,12 @@
 """Controlled matrix transitions, recorded evidence, and completion guards."""
 import json
-import hashlib
 from dataclasses import asdict, replace
 from types import SimpleNamespace
 
 import pytest
 
 from src.evaluation import full_ablation as matrix
+from src.evaluation.provenance import question_records_sha256
 from src.evaluation.records import BenchmarkQuestion
 from src.retrieval.records import Query, RetrievedPassage
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
@@ -218,7 +218,7 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     q=question();passages=[RetrievedPassage.from_chunk(chunk('a','AAPL'),1.0,1,'bm25')]
     rows={cid:matrix.ranking(q,Query(q.question),passages,cid,12.0) for cid in matrix.MATRIX}
     for row in rows.values():row['recall']=999.0
-    digest=hashlib.sha256(json.dumps([q.to_dict()],sort_keys=True).encode()).hexdigest()
+    digest=question_records_sha256([q])
     matrix.dump(tmp_path/'config.json',{'provenance':{'questions':1,'question_records_sha256':digest}})
     matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
     matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
@@ -246,11 +246,19 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
 
 
 def test_snapshot_cannot_change_together_with_its_recorded_rankings():
-    q=question();digest=hashlib.sha256(json.dumps([q.to_dict()],sort_keys=True).encode()).hexdigest()
+    q=question();digest=question_records_sha256([q])
     config={'provenance':{'questions':1,'question_records_sha256':digest}}
     matrix.validate_snapshot(config,[q])
     with pytest.raises(ValueError,match='frozen manifest'):
         matrix.validate_snapshot(config,[replace(q,question='An edited benchmark question')])
+
+
+def test_snapshot_of_untagged_team_questions_matches_its_recorded_provenance(monkeypatch,tmp_path):
+    from src.evaluation.provenance import record_provenance
+    monkeypatch.setattr('src.evaluation.provenance.iter_chunks',lambda **kwargs:[])
+    questions=[question('t'),question('x','xbrl')]
+    config={'provenance':record_provenance([],questions,tmp_path)}
+    matrix.validate_snapshot(config,questions)
 
 
 def test_experimental_matrix_does_not_label_the_default_app_stack_as_measured(tmp_path):

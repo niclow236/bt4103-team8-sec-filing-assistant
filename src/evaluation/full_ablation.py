@@ -9,7 +9,6 @@ their original workload, rather than being presented as contemporaneous trials.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from collections import Counter
 from dataclasses import asdict, replace
@@ -29,7 +28,7 @@ from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 
 from .benchmark import load_questions
 from .metrics import score_question
-from .provenance import corpus_records_sha256, record_provenance, sha256
+from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
 from .records import BenchmarkQuestion, RunResult, benchmark_of
 from .rerank_ablation import _index_manifests, read_pairs
 from .results import _safe_run_id, write_comparison
@@ -98,10 +97,9 @@ def check_transactions(transactions, questions):
 def validate_snapshot(config, questions):
     """A benchmark snapshot must remain the one the manifest froze."""
     provenance=config["provenance"]
-    digest=hashlib.sha256(json.dumps([q.to_dict() for q in questions],sort_keys=True).encode()).hexdigest()
     if (len(questions)!=provenance["questions"]
             or len({q.question_id for q in questions})!=len(questions)
-            or digest!=provenance["question_records_sha256"]):
+            or question_records_sha256(questions)!=provenance["question_records_sha256"]):
         raise ValueError("benchmark snapshot differs from the frozen manifest")
 
 

@@ -1,10 +1,10 @@
 import gzip
-import hashlib
 import json
 from copy import deepcopy
 
 import pytest
 
+from src.evaluation.provenance import question_records_sha256
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.rerank_ablation import (
     POLICY, _clusters, main, paired_metric, read_pairs, run_pairs, summarize,
@@ -199,8 +199,7 @@ def test_rescore_at_another_k_carries_no_decision(tmp_path):
 
 
 def test_rescore_refuses_questions_that_differ_from_the_frozen_digest(tmp_path):
-    digest = hashlib.sha256(json.dumps(
-        [question("h").to_dict(), question("m", "xbrl").to_dict()], sort_keys=True).encode()).hexdigest()
+    digest = question_records_sha256([question("h"), question("m", "xbrl")])
     out = completed_run(tmp_path, {"questions": 2, "question_records_sha256": digest})[-1]
     main(["rescore", str(out)])
     pairs = read_pairs(out / "pairs.jsonl.gz")
@@ -209,6 +208,20 @@ def test_rescore_refuses_questions_that_differ_from_the_frozen_digest(tmp_path):
         stream.writelines(json.dumps(p) + "\n" for p in pairs)
     with pytest.raises(SystemExit):
         main(["rescore", str(out)])
+
+
+def test_rescore_accepts_untagged_team_questions_against_their_recorded_digest(tmp_path, monkeypatch):
+    from src.evaluation.provenance import record_provenance
+    monkeypatch.setattr("src.evaluation.provenance.iter_chunks", lambda **kwargs: [])
+    qs = [question("team"), question("xbrl", "xbrl")]
+    rows = [row(q, filings=(q.question_id,)) for q in qs]
+    manifest = {"top_k": 2, "policy": GATE_POLICY, "reranker": {"candidate_k": 50},
+                "provenance": record_provenance([], qs, tmp_path)}
+    (tmp_path / "config.json").write_text(json.dumps(manifest))
+    with gzip.open(tmp_path / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(r) + "\n" for r in rows)
+    main(["rescore", str(tmp_path)])
+    assert json.loads((tmp_path / "rescored-k2.json").read_text())["by_benchmark"]["team"]["questions"] == 1
 
 
 def test_resume_after_interruption_before_the_first_pair(tmp_path):

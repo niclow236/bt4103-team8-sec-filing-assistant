@@ -60,3 +60,14 @@ def test_provenance_counts_untagged_team_questions_beside_the_xbrl_set(monkeypat
                                 "supporting_chunk_ids": (), "hard_negative_chunk_ids": ()})
     recorded = record_provenance([], [team, team, xbrl], tmp_path)
     assert recorded["by_benchmark"] == {"team": 2, "xbrl": 1}
+
+
+def test_question_digest_keeps_the_form_recorded_runs_were_frozen_with():
+    from src.evaluation.provenance import question_records_sha256
+    team = BenchmarkQuestion(
+        question_id="q", question="Revenue?", expected_answer="$100",
+        supporting_chunk_ids=("chunk",), hard_negative_chunk_ids=(), ticker="AAPL", fiscal_year=2024,
+        question_type="numeric", difficulty="easy",
+    )
+    # Recorded manifests hold this digest; changing the hashed form orphans them.
+    assert question_records_sha256([team]) == "d8bdd1dd29762137914335744c3dd68915716d9adb058f40f8b7706e01ac0ca4"

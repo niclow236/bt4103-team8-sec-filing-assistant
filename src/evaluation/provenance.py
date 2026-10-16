@@ -41,6 +41,13 @@ def corpus_records_sha256(chunks: Sequence[dict]) -> str:
     ).encode()).hexdigest()
 
 
+def question_records_sha256(questions: Sequence[BenchmarkQuestion]) -> str:
+    """Fingerprint the benchmark questions, in order, as a run records them."""
+    return hashlib.sha256(
+        json.dumps([asdict(q) for q in questions], sort_keys=True).encode()
+    ).hexdigest()
+
+
 def record_provenance(
     inputs: Sequence[Path], questions: Sequence[BenchmarkQuestion], processed_dir: Path,
 ) -> dict[str, Any]:
@@ -75,9 +82,7 @@ def record_provenance(
         "inputs": [{"path": str(path), "sha256": sha256(path)} for path in inputs],
         "questions": len(questions),
         "by_benchmark": dict(sorted(Counter(q.benchmark for q in questions).items())),
-        "question_records_sha256": hashlib.sha256(
-            json.dumps([asdict(q) for q in questions], sort_keys=True).encode()
-        ).hexdigest(),
+        "question_records_sha256": question_records_sha256(questions),
         "corpus": {
             "processed_dir": str(processed_dir),
             "fingerprint": corpus_fingerprint(chunks),
