@@ -274,6 +274,6 @@ def test_resume_accepts_the_manifest_it_froze_even_with_tuple_settings(tmp_path)
     # Provenance records chunk settings as tuples; the frozen JSON holds lists.
     config={'provenance':{'corpus':{'chunk_settings':[(1800,300)]}},'reference':None}
     matrix.dump(tmp_path/'config.json',config)
-    assert matrix.frozen_manifest_matches(tmp_path,config)
+    assert matrix.frozen_manifest_matches(tmp_path/'config.json',config)
     changed={'provenance':{'corpus':{'chunk_settings':[(1800,200)]}},'reference':None}
-    assert not matrix.frozen_manifest_matches(tmp_path,changed)
+    assert not matrix.frozen_manifest_matches(tmp_path/'config.json',changed)
