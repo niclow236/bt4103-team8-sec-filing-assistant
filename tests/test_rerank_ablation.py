@@ -236,6 +236,33 @@ def test_rescore_refuses_a_malformed_stored_question_as_a_changed_benchmark(tmp_
     assert "do not match the frozen benchmark" in capsys.readouterr().err
 
 
+def test_rescore_refuses_a_run_recorded_under_the_source_split_policy(tmp_path, capsys):
+    out = completed_run(tmp_path)[-1]
+    manifest = json.loads((out / "config.json").read_text())
+    policy = {k: v for k, v in manifest["policy"].items() if k != "primary_benchmarks"}
+    manifest["policy"] = policy | {"primary_sources": ["handwritten", "xbrl"],
+                                   "max_llm_assisted_ndcg_regression": 0.02}
+    (out / "config.json").write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit):
+        main(["rescore", str(out)])
+    assert "predates" in capsys.readouterr().err
+    assert not (out / "rescored-k2.json").exists()
+
+
+@pytest.mark.parametrize("lose", [lambda r: r.update(question=None), lambda r: r.pop("question")],
+                         ids=["null", "missing"])
+def test_rescore_refuses_a_row_without_its_question_as_a_changed_benchmark(tmp_path, capsys, lose):
+    digest = question_records_sha256([question("h"), question("m", "xbrl")])
+    out = completed_run(tmp_path, {"questions": 2, "question_records_sha256": digest})[-1]
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    lose(pairs[0])
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(p) + "\n" for p in pairs)
+    with pytest.raises(SystemExit):
+        main(["rescore", str(out)])
+    assert "do not match the frozen benchmark" in capsys.readouterr().err
+
+
 def test_resume_after_interruption_before_the_first_pair(tmp_path):
     qs, pool, chunks, reranker, out = completed_run(tmp_path)
     (out / "pairs.jsonl.gz").unlink()

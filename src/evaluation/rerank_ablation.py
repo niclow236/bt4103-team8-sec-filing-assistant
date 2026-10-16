@@ -457,13 +457,16 @@ def main(argv: list[str] | None = None) -> None:
         k = manifest["top_k"] if args.top_k is None else args.top_k
         if not 0 < k <= manifest["top_k"]:
             parser.error("rescoring k must be positive and no greater than stored final k")
+        if "primary_benchmarks" not in manifest["policy"]:
+            parser.error("run predates the team/xbrl benchmark policy (#161); "
+                         "rescore it on its recorded source commit")
         rows = read_pairs(args.run_dir / "pairs.jsonl.gz")
         if len(rows) != manifest["provenance"]["questions"]:
             parser.error("run is incomplete; resume it before final rescoring")
         expected = manifest["provenance"].get("question_records_sha256")
         try:
             digest = question_records_sha256([BenchmarkQuestion.from_mapping(r["question"]) for r in rows])
-        except BenchmarkValidationError:
+        except (BenchmarkValidationError, TypeError, KeyError):
             digest = None
         if expected is not None and digest != expected:
             parser.error("stored questions do not match the frozen benchmark digest")
