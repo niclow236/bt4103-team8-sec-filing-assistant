@@ -277,3 +277,42 @@ def test_resume_accepts_the_manifest_it_froze_even_with_tuple_settings(tmp_path)
     assert matrix.frozen_manifest_matches(tmp_path/'config.json',config)
     changed={'provenance':{'corpus':{'chunk_settings':[(1800,200)]}},'reference':None}
     assert not matrix.frozen_manifest_matches(tmp_path/'config.json',changed)
+
+
+def test_answer_phase_resumes_under_its_own_frozen_settings(tmp_path,monkeypatch):
+    from src.evaluation import quality
+    from src.evaluation.quality import query_cost
+    import importlib
+    generate=importlib.import_module('src.rag.generate')
+    from src.rag.constants import PROMPT_TEMPLATE_ID
+    from src.rag.records import GenerationConfig
+    q=question()
+    rows={cid:matrix.ranking(q,Query(q.question),[],cid,12.0) for cid in matrix.MATRIX}
+    monkeypatch.setattr(matrix,'iter_chunks',lambda **kwargs:[])
+    monkeypatch.setattr('src.evaluation.provenance.iter_chunks',lambda **kwargs:[{'chunk_id':'a','text':'x','accession_no':'f',
+                        'chunk_budget':1800,'chunk_overlap':300}])
+    config={'provenance':{'questions':1,'question_records_sha256':question_records_sha256([q]),
+                          'corpus':{'records_sha256':matrix.corpus_records_sha256([])}}}
+    matrix.dump(tmp_path/'config.json',config)
+    matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
+    matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
+    cost=query_cost('ollama',[],attempts=0,prices=None)
+    answer={'question_id':q.question_id,'source':q.source,
+            'quality':{'faithfulness':None,'correctness':0.0,'answerability_correct':0.0,
+                       'citation_precision':None,'citation_recall':0.0},
+            'answer':{'abstained':True,'verification':None},'cost':cost,
+            'latency_ms':{k:0.0 for k in ('retrieve','rerank','generate','retry_wait','total','other')},
+            'judge_overhead':{'latency_ms':0.0,'retry_wait_ms':0.0,'total_ms':0.0,'cost':cost}}
+    for cid in matrix.MATRIX:
+        (tmp_path/cid).mkdir();matrix.write_rows(tmp_path/cid/'answers.jsonl',[answer])
+    facts=tmp_path/'facts.parquet';facts.write_bytes(b'facts')
+    monkeypatch.setattr(generate,'config_from_env',lambda **kwargs:GenerationConfig('ollama','test',PROMPT_TEMPLATE_ID))
+    monkeypatch.setattr(generate,'checked_model',lambda config,llm=None:object())
+    monkeypatch.setattr(quality,'checked_model',lambda config,llm=None:object())
+    args=SimpleNamespace(run_dir=tmp_path,processed_dir=tmp_path,facts_file=facts,provider='ollama',model='test')
+    matrix.answers(args)
+    matrix.answers(args)
+    assert json.loads((tmp_path/'answer-summary.json').read_text())['team_questions']==1
+    facts.write_bytes(b'rebuilt facts')
+    with pytest.raises(ValueError,match='identical settings'):
+        matrix.answers(args)

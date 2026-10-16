@@ -445,7 +445,7 @@ def answers(args):
     with FileLock(run_dir / "answers.lock", timeout=0):
         target = run_dir / "answers-config.json"
         if target.exists():
-            if json.loads(target.read_text()) != configuration:
+            if not frozen_manifest_matches(target, configuration):
                 raise ValueError("answer resume requires identical settings/source/facts")
         else:
             dump(target, configuration)
