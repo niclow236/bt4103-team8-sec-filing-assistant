@@ -5,8 +5,10 @@ questions and 1,884 mechanical XBRL questions. Answer generation, semantic
 judging and verification cover the complete 150-question team set. The team's
 questions carry no `source` tag (#162), so results report one team slice
 beside the mechanical set. This machine's facts store holds 5,046 facts (built 11 September), so the
-generator yields 1,884 questions from it, not the 12,579 a full facts store
-gives (see the README).
+local `benchmark/generated.jsonl`, generated from it on 23 September, holds
+1,884 questions, not the 12,579 a full facts store gives (see the README).
+Regenerating it today gives the same 1,884 questions, 34 of them with different
+supporting chunks; the runs pin the 23 September file by hash.
 Mechanical labels come from the facts store, so their separate retrieval
 results do not claim independent answer quality. The app continues to use C4;
 these evaluation rows do not adopt the experimental reranker.
