@@ -4,7 +4,9 @@ The experiment measures all 2,034 questions for retrieval: the 150 team
 questions and 1,884 mechanical XBRL questions. Answer generation, semantic
 judging and verification cover the complete 150-question team set. The team's
 questions carry no `source` tag (#162), so results report one team slice
-beside the mechanical set.
+beside the mechanical set. This machine's facts store holds 5,046 facts (built 11 September), so the
+generator yields 1,884 questions from it, not the 12,579 a full facts store
+gives (see the README).
 Mechanical labels come from the facts store, so their separate retrieval
 results do not claim independent answer quality. The app continues to use C4;
 these evaluation rows do not adopt the experimental reranker.

@@ -36,7 +36,9 @@ questions carry no `source` tag (#162), so they are reported as one `team`
 slice; every question tagged `source: xbrl` forms the mechanical slice. The
 #154 policy also gated a separate LLM-assisted slice; that split no longer
 exists in the benchmark, so its gate was removed with it (#161). The
-mechanical set is the locally generated XBRL benchmark. Its labels use figure
+mechanical set is the locally generated XBRL benchmark. This machine's facts store holds 5,046 facts (built 11 September), so the
+generator yields 1,884 questions from it, not the 12,579 a full facts store
+gives (see the README). Its labels use figure
 substring matching and are a retrieval proxy, not exhaustively adjudicated
 evidence. No model tuning or checkpoint selection uses final benchmark outcomes.
 
