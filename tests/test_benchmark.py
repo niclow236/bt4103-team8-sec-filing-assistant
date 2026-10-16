@@ -397,11 +397,20 @@ def test_each_way_a_question_breaks_the_contract_is_named(tmp_path, change, said
 def test_a_question_missing_a_field_is_refused_with_every_field_it_lacks(tmp_path):
     path = tmp_path / "questions.jsonl"
     partial = {key: value for key, value in _question().items()
-               if key not in ("difficulty", "source")}
+               if key not in ("difficulty", "question_type")}
     _write_question(path, partial)
     with pytest.raises(BenchmarkValidationError,
-                       match="missing required fields: difficulty, source"):
+                       match="missing required fields: difficulty, question_type"):
         load_questions(path, chunk_ids=["AAPL-2024-1", "AAPL-2023-1"])
+
+
+def test_a_team_question_needs_no_source_and_writes_none_back(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    untagged = {key: value for key, value in _question().items() if key != "source"}
+    _write_question(path, untagged)
+    [question] = load_questions(path, chunk_ids=["AAPL-2024-1", "AAPL-2023-1"])
+    assert question.source is None
+    assert "source" not in question.to_dict()
 
 
 @pytest.mark.parametrize("text, said", [
