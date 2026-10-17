@@ -848,6 +848,10 @@ the accepted team benchmark and the complete mechanical XBRL set. The
 and latency gates before measuring. C4 remains the default; the experimental
 reranker is not added to the app unless the measurements and an answer-quality
 check justify adoption.
+The current reference from #172 uses the 150-question team benchmark as one
+slice beside that machine's 1,884 generated XBRL questions, and retains C4.
+The report distinguishes those measurements from the historical 149-question
+study, diagnostic-inclusive timing and model-free table-boost sensitivity.
 
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`)
 are applied before scoring, not after, in every method. BM25

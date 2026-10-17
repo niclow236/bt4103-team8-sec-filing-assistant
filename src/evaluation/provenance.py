@@ -41,15 +41,24 @@ def corpus_records_sha256(chunks: Sequence[dict]) -> str:
     ).encode()).hexdigest()
 
 
+def question_records_sha256(questions: Sequence[BenchmarkQuestion]) -> str:
+    """Fingerprint the benchmark questions, in order, as a run records them."""
+    return hashlib.sha256(
+        json.dumps([asdict(q) for q in questions], sort_keys=True).encode()
+    ).hexdigest()
+
+
 def record_provenance(
     inputs: Sequence[Path], questions: Sequence[BenchmarkQuestion], processed_dir: Path,
+    *, chunks: Sequence[dict] | None = None,
 ) -> dict[str, Any]:
     """Record file digests, corpus content and the actual installed settings.
 
     No environment variables or credentials are read. The source-file hashes
     distinguish dirty source trees even when the HEAD commit is unchanged.
     """
-    chunks = list(iter_chunks(processed_dir=processed_dir))
+    if chunks is None:
+        chunks = list(iter_chunks(processed_dir=processed_dir))
     settings = {
         name: getattr(constants, name) for name in (
             "EMBED_MODEL", "EMBED_DIMENSIONS", "EMBED_MAX_TOKENS",
@@ -74,10 +83,8 @@ def record_provenance(
         },
         "inputs": [{"path": str(path), "sha256": sha256(path)} for path in inputs],
         "questions": len(questions),
-        "by_source": dict(sorted(Counter(q.source for q in questions).items())),
-        "question_records_sha256": hashlib.sha256(
-            json.dumps([asdict(q) for q in questions], sort_keys=True).encode()
-        ).hexdigest(),
+        "by_benchmark": dict(sorted(Counter(q.benchmark for q in questions).items())),
+        "question_records_sha256": question_records_sha256(questions),
         "corpus": {
             "processed_dir": str(processed_dir),
             "fingerprint": corpus_fingerprint(chunks),

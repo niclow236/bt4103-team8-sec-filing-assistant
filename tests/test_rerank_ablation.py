@@ -1,10 +1,10 @@
 import gzip
-import hashlib
 import json
 from copy import deepcopy
 
 import pytest
 
+from src.evaluation.provenance import question_records_sha256
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.rerank_ablation import (
     POLICY, _clusters, main, paired_metric, read_pairs, run_pairs, summarize,
@@ -17,7 +17,7 @@ from conftest import RerankInner as Inner, RerankModel as Model, rerank_passage 
 GATE_POLICY = POLICY | {"decision_top_k": 2}
 
 
-def question(qid="q", source="handwritten", gold=("a",), kind="numeric"):
+def question(qid="q", source=None, gold=("a",), kind="numeric"):
     return BenchmarkQuestion(qid, "What was revenue for AAA in FY2024?", "1 USD",
                              gold, ("c",), "AAA", 2024, kind, "medium", source)
 
@@ -53,24 +53,30 @@ def test_multifiling_connections_cluster_related_questions():
     assert paired_metric(rows, "ndcg", 2)["clusters"] == 2
 
 
-def test_source_type_and_truncation_breakdowns():
-    rows = [row(question("h", "handwritten")), row(question("m", "xbrl")),
-            row(question("l", "llm_assisted")), row(question("u", gold=(), kind="unanswerable"))]
+def test_benchmark_type_and_truncation_breakdowns():
+    rows = [row(question("h")), row(question("m", "xbrl")),
+            row(question("l")), row(question("u", gold=(), kind="unanswerable"))]
     report = summarize(rows, 2)
-    assert report["by_source"]["handwritten"]["questions"] == 2
-    assert report["by_source"]["handwritten"]["mrr"]["questions"] == 1
+    assert report["by_benchmark"]["team"]["questions"] == 3
+    assert report["by_benchmark"]["team"]["mrr"]["questions"] == 2
     assert report["by_type"]["unanswerable"]["ndcg"]["C4"] is None
     assert report["truncation"]["rate"] == 1 / 3
     assert report["top_k_diagnostics"]["C5"]["tables"] == 4
     assert report["top_k_diagnostics"]["C5"]["outside_gold_years"] == 0
     decision = summarize(rows, 2, GATE_POLICY)["decision"]
     assert decision["advance_to_answer_evaluation"] is False
-    assert "handwritten: nDCG gain/uncertainty criterion not met" in decision["reasons"]
+    assert "team: nDCG gain/uncertainty criterion not met" in decision["reasons"]
+
+
+def test_untagged_team_questions_form_one_slice_beside_the_xbrl_set():
+    rows = [row(question("t1", None)), row(question("t2", None)), row(question("m", "xbrl"))]
+    report = summarize(rows, 2)
+    assert {name: group["questions"] for name, group in report["by_benchmark"].items()} == {"team": 2, "xbrl": 1}
+    assert report["by_benchmark_type"]["team:numeric"]["questions"] == 2
 
 
 def test_predeclared_decision_requires_all_gates():
-    rows = [row(question(source + str(i), source), filings=(str(i),))
-            for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+    rows = passing_rows()
     assert summarize(rows, 2, GATE_POLICY)["decision"]["advance_to_answer_evaluation"]
     negative = deepcopy(rows)
     negative[0]["C5"] = negative[0]["C4"]
@@ -129,30 +135,241 @@ def test_cli_invalid_k_and_run_id_do_not_load_models(tmp_path):
         main(["run", "missing.jsonl", "--run-id", "../bad", "--workload-note", "test"])
 
 
-def passing_rows():
-    return [row(question(source + str(i), source), filings=(source + str(i),))
-            for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+def passing_rows(per_benchmark=2):
+    return [row(question(f"{name}{i}", source), filings=(f"{name}{i}",))
+            for name, source in (("team", None), ("xbrl", "xbrl")) for i in range(per_benchmark)]
+
+
+def test_unmeasurable_hard_negative_gate_blocks_an_otherwise_passing_run():
+    rows = passing_rows()
+    for r in rows:
+        r["question"]["hard_negative_chunk_ids"] = []
+    assert summarize(rows, 2, GATE_POLICY)["decision"] == {
+        "advance_to_answer_evaluation": False,
+        "reasons": ["hard-negative accuracy could not be measured"],
+        "default": "C4", "adoption": "requires paired answer evaluation and team review"}
+
+
+@pytest.mark.parametrize("all_empty", [False, True])
+def test_warmup_skips_empty_pools_and_records_whether_inference_ran(tmp_path, all_empty):
+    qs = [question("empty"), question("nonempty")]
+    pool = [] if all_empty else [passage("a")]
+
+    class EmptyFirst(Inner):
+        def search(self, query, k=None):
+            self.calls.append((query, k))
+            return [] if "empty first" in query.text else pool
+
+    from dataclasses import replace
+    qs[0] = replace(qs[0], question="empty first")
+    model = Model([1])
+    out = tmp_path / "warmup"
+    run_pairs(qs, EmptyFirst(pool), CrossEncoderReranker(model=model), output_dir=out,
+              provenance={}, chunks=[{"chunk_id": "a", "accession_no": "f",
+                                      "ticker": "AAA", "fiscal_year": 2024, "content_type": "prose"}],
+              top_k=1)
+    runtime = json.loads((out / "runtime.json").read_text())
+    assert runtime["warmup_question_id"] == (None if all_empty else "nonempty")
+    assert runtime["cross_encoder_warmed"] is (not all_empty)
+    assert len([c for c in model.calls if c[0] == "predict"]) == (0 if all_empty else 2)
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.write(json.dumps(pairs[0]) + "\n")
+    model.calls.clear()
+    run_pairs(qs, EmptyFirst(pool), CrossEncoderReranker(model=model), output_dir=out,
+              provenance={}, chunks=[{"chunk_id": "a", "accession_no": "f",
+                                      "ticker": "AAA", "fiscal_year": 2024, "content_type": "prose"}],
+              top_k=1, resume=True)
+    resumed = json.loads((out / "runtime-0001.json").read_text())
+    assert resumed["warmup_question_id"] == (None if all_empty else "nonempty")
+    assert resumed["cross_encoder_warmed"] is (not all_empty)
+    assert len([c for c in model.calls if c[0] == "predict"]) == (0 if all_empty else 2)
+
+
+def test_summarize_scores_each_configuration_once_and_clusters_each_group_once(monkeypatch):
+    import src.evaluation.rerank_ablation as module
+    rows = passing_rows()
+    real_scores, real_clusters = module._scores, module._clusters
+    score_calls, cluster_calls = [], []
+
+    def scored(r, config, k):
+        score_calls.append((r["question"]["question_id"], config, k))
+        return real_scores(r, config, k)
+
+    def clustered(subset):
+        cluster_calls.append(tuple(r["question"]["question_id"] for r in subset))
+        return real_clusters(subset)
+
+    monkeypatch.setattr(module, "_scores", scored)
+    monkeypatch.setattr(module, "_clusters", clustered)
+    report = summarize(rows, 2)
+    assert len(score_calls) == len(set(score_calls)) == 2 * len(rows)
+    group_count = 1 + sum(len(report[key]) for key in (
+        "by_benchmark", "by_type", "by_benchmark_type", "by_gold_content", "by_gold_truncation"))
+    assert len(cluster_calls) == group_count
+
+
+def test_cli_invalid_resume_is_actionable_before_loading_inputs(tmp_path, monkeypatch, capsys):
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid resume must fail before reading inputs or loading models")
+    monkeypatch.setattr("src.evaluation.rerank_ablation.load_questions", unexpected)
+    for present in (False, True):
+        if present:
+            (tmp_path / "typo").mkdir()
+        with pytest.raises(SystemExit) as error:
+            main(["run", "missing.jsonl", "--run-id", "typo", "--results-root", str(tmp_path),
+                  "--resume", "--workload-note", "test"])
+        assert error.value.code == 2
+        assert "nothing to resume" in capsys.readouterr().err
+
+
+def test_resume_allows_paths_and_os_build_to_change_but_preserves_history(tmp_path):
+    provenance = {"questions": 2, "inputs": [{"path": "relative.jsonl", "sha256": "same"}],
+                  "corpus": {"processed_dir": "relative", "records_sha256": "same"},
+                  "environment": {"platform": "old OS", "machine": "arm64", "packages": {"torch": "1"}}}
+    qs, pool, chunks, reranker, out = completed_run(tmp_path, provenance)
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.write(json.dumps(pairs[0]) + "\n")
+    changed = deepcopy(provenance)
+    changed["inputs"][0]["path"] = "/absolute/questions.jsonl"
+    changed["corpus"]["processed_dir"] = "/absolute/corpus"
+    changed["environment"]["platform"] = "new OS"
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance=changed, chunks=chunks,
+              top_k=2, resume=True)
+    assert len(read_pairs(out / "pairs.jsonl.gz")) == 2
+    original, resumed = [json.loads((out / f"runtime-{i:04d}.json").read_text()) for i in range(2)]
+    assert original["environment"]["platform"] == "old OS"
+    assert resumed["environment"]["platform"] == "new OS"
+    assert resumed["inputs"][0]["path"] == "/absolute/questions.jsonl"
+    assert json.loads((out / "config.json").read_text())["provenance"] == provenance
+
+
+@pytest.mark.parametrize("field", ["input", "corpus", "package", "machine", "python"])
+def test_resume_still_refuses_changed_result_identity(tmp_path, field):
+    provenance = {"questions": 2, "inputs": [{"path": "x", "sha256": "same"}],
+                  "corpus": {"records_sha256": "same"},
+                  "environment": {"machine": "arm64", "python": "3.13", "packages": {"torch": "1"}}}
+    qs, pool, chunks, reranker, out = completed_run(tmp_path, provenance)
+    changed = deepcopy(provenance)
+    if field == "input":
+        changed["inputs"][0]["sha256"] = "different"
+    elif field == "corpus":
+        changed["corpus"]["records_sha256"] = "different"
+    elif field == "package":
+        changed["environment"]["packages"]["torch"] = "2"
+    else:
+        changed["environment"][field] = "different"
+    before = (out / "pairs.jsonl.gz").read_bytes()
+    with pytest.raises(ValueError, match="identical"):
+        run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance=changed, chunks=chunks,
+                  top_k=2, resume=True)
+    assert (out / "pairs.jsonl.gz").read_bytes() == before
+
+
+def test_cli_loads_corpus_once_and_passes_the_identical_snapshot_to_provenance_and_runner(
+    tmp_path, monkeypatch,
+):
+    import src.evaluation.rerank_ablation as module
+    snapshots = []
+    reads = []
+    chunks = [{"chunk_id": "a", "accession_no": "f"}]
+
+    def load(**kwargs):
+        reads.append(kwargs)
+        return iter(chunks)
+
+    def provenance(*args, chunks):
+        snapshots.append(chunks)
+        return {}
+
+    def run(*args, chunks, **kwargs):
+        snapshots.append(chunks)
+        return {"decision": {}}
+
+    monkeypatch.setattr(module, "iter_chunks", load)
+    monkeypatch.setattr(module, "record_provenance", provenance)
+    monkeypatch.setattr(module, "run_pairs", run)
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [question()])
+    monkeypatch.setattr(module, "build_retriever", lambda *args, **kwargs: Inner([]))
+    main(["run", "ignored.jsonl", "--run-id", "once", "--results-root", str(tmp_path),
+          "--workload-note", "test"])
+    assert len(reads) == 1
+    assert snapshots[0] is snapshots[1]
+
+
+def test_cli_runtime_validation_errors_are_reported_without_tracebacks(tmp_path, monkeypatch, capsys):
+    import src.evaluation.rerank_ablation as module
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [question()])
+    monkeypatch.setattr(module, "iter_chunks", lambda **kwargs: [])
+    monkeypatch.setattr(module, "record_provenance", lambda *args, **kwargs: {})
+    monkeypatch.setattr(module, "build_retriever", lambda *args, **kwargs: Inner([]))
+    def fail(*args, **kwargs):
+        raise ValueError("resume requires identical settings")
+    monkeypatch.setattr(module, "run_pairs", fail)
+    with pytest.raises(SystemExit) as error:
+        main(["run", "ignored.jsonl", "--run-id", "bad", "--results-root", str(tmp_path),
+              "--workload-note", "test"])
+    assert error.value.code == 2
+    assert "resume requires identical settings" in capsys.readouterr().err
+
+
+def test_table_boost_sensitivity_preserves_originals_ties_and_negative_logits():
+    from src.evaluation.rerank_ablation import table_boost_sensitivity
+    r = row(question(), a=("b", "a"), b=("a", "b"))
+    r["query"]["table_boost"] = 1.2
+    logits = {"a": -10, "b": -9, "c": -9}
+    for p in r["rerank"]["candidates"]:
+        p["raw_logit"] = logits[p["chunk_id"]]
+    r["C5"]["retrieved_scores"] = [-10 / 1.2, -9]
+    before = deepcopy(r)
+    report = table_boost_sensitivity([r], 2, {"policy": POLICY, "reranker": {"candidate_k": 50}})
+    assert report["original"]["by_gold_content"]["table"]["ndcg"]["C5"] == 1
+    assert report["without_table_boost"]["by_gold_content"]["table"]["ndcg"]["C5"] == 0
+    assert report["without_table_boost"]["overall"]["hard_negative_accuracy"]["C5"] == 0
+    for name in ("original", "without_table_boost"):
+        assert report[name]["decision"]["advance_to_answer_evaluation"] is None
+        assert "latency_ms" not in report[name]
+    assert r == before
+    r["C5"]["retrieved_scores"][0] = 99
+    with pytest.raises(ValueError, match="do not reproduce"):
+        table_boost_sensitivity([r], 2, {"policy": POLICY, "reranker": {"candidate_k": 50}})
+
+
+def test_table_boost_cli_can_diagnose_a_historical_run_without_relabelling_it(tmp_path):
+    out = completed_run(tmp_path)[-1]
+    manifest = json.loads((out / "config.json").read_text())
+    manifest["policy"]["primary_sources"] = manifest["policy"].pop("primary_benchmarks")
+    (out / "config.json").write_text(json.dumps(manifest))
+    before = {name: (out / name).read_bytes() for name in ("config.json", "pairs.jsonl.gz", "summary.json")}
+    main(["table-boost-sensitivity", str(out)])
+    report = json.loads((out / "table-boost-sensitivity-k2.json").read_text())
+    assert report["original_policy"] == manifest["policy"]
+    assert report["questions"] == 2
+    assert report["provenance"]["pairs_sha256"]
+    assert before == {name: (out / name).read_bytes() for name in before}
 
 
 def test_each_gate_blocks_on_its_own():
     assert summarize(passing_rows(), 2, GATE_POLICY)["decision"]["reasons"] == []
 
     regressed = passing_rows()
-    for r in regressed[4:]:  # the llm_assisted rows
+    for r in regressed[2:]:  # the xbrl rows
         r["C4"], r["C5"] = r["C5"], r["C4"]
     assert summarize(regressed, 2, GATE_POLICY)["decision"]["reasons"] == [
-        "llm_assisted: nDCG regression criterion not met"]
+        "xbrl: nDCG gain/uncertainty criterion not met", "xbrl: mrr regression criterion not met"]
 
-    assert summarize(passing_rows()[:4], 2, GATE_POLICY)["decision"]["reasons"] == ["missing source llm_assisted"]
+    assert summarize(passing_rows()[:2], 2, GATE_POLICY)["decision"]["reasons"] == ["missing benchmark xbrl"]
 
-    typed = passing_rows() + [
-        row(question(f"t{i}", "other", kind="temporal"), a=("a", "b"), b=("b", "a"), filings=(f"t{i}",))
+    # Enough improving team questions that the benchmark itself still passes.
+    typed = passing_rows(30) + [
+        row(question(f"t{i}", kind="temporal"), a=("a", "b"), b=("b", "a"), filings=(f"t{i}",))
         for i in range(POLICY["min_type_questions"])]
     assert summarize(typed, 2, GATE_POLICY)["decision"]["reasons"] == [
-        "temporal: nDCG regression criterion not met", "other:temporal: nDCG regression criterion not met"]
+        "temporal: nDCG regression criterion not met", "team:temporal: nDCG regression criterion not met"]
 
     negatives = passing_rows() + [
-        row(question(f"u{i}", "other", gold=(), kind="unanswerable"), a=("a", "b"), b=("c", "b"),
+        row(question(f"u{i}", gold=(), kind="unanswerable"), a=("a", "b"), b=("c", "b"),
             filings=()) for i in range(2)]
     assert summarize(negatives, 2, GATE_POLICY)["decision"]["reasons"] == [
         "hard-negative accuracy regression criterion not met"]
@@ -192,8 +409,7 @@ def test_rescore_at_another_k_carries_no_decision(tmp_path):
 
 
 def test_rescore_refuses_questions_that_differ_from_the_frozen_digest(tmp_path):
-    digest = hashlib.sha256(json.dumps(
-        [question("h").to_dict(), question("m", "xbrl").to_dict()], sort_keys=True).encode()).hexdigest()
+    digest = question_records_sha256([question("h"), question("m", "xbrl")])
     out = completed_run(tmp_path, {"questions": 2, "question_records_sha256": digest})[-1]
     main(["rescore", str(out)])
     pairs = read_pairs(out / "pairs.jsonl.gz")
@@ -202,6 +418,59 @@ def test_rescore_refuses_questions_that_differ_from_the_frozen_digest(tmp_path):
         stream.writelines(json.dumps(p) + "\n" for p in pairs)
     with pytest.raises(SystemExit):
         main(["rescore", str(out)])
+
+
+def test_rescore_accepts_untagged_team_questions_against_their_recorded_digest(tmp_path, monkeypatch):
+    from src.evaluation.provenance import record_provenance
+    monkeypatch.setattr("src.evaluation.provenance.iter_chunks", lambda **kwargs: [])
+    qs = [question("team"), question("xbrl", "xbrl")]
+    rows = [row(q, filings=(q.question_id,)) for q in qs]
+    manifest = {"top_k": 2, "policy": GATE_POLICY, "reranker": {"candidate_k": 50},
+                "provenance": record_provenance([], qs, tmp_path)}
+    (tmp_path / "config.json").write_text(json.dumps(manifest))
+    with gzip.open(tmp_path / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(r) + "\n" for r in rows)
+    main(["rescore", str(tmp_path)])
+    assert json.loads((tmp_path / "rescored-k2.json").read_text())["by_benchmark"]["team"]["questions"] == 1
+
+
+def test_rescore_refuses_a_malformed_stored_question_as_a_changed_benchmark(tmp_path, capsys):
+    digest = question_records_sha256([question("h"), question("m", "xbrl")])
+    out = completed_run(tmp_path, {"questions": 2, "question_records_sha256": digest})[-1]
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    pairs[0]["question"]["note"] = "added after the run"
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(p) + "\n" for p in pairs)
+    with pytest.raises(SystemExit):
+        main(["rescore", str(out)])
+    assert "do not match the frozen benchmark" in capsys.readouterr().err
+
+
+def test_rescore_refuses_a_run_recorded_under_the_source_split_policy(tmp_path, capsys):
+    out = completed_run(tmp_path)[-1]
+    manifest = json.loads((out / "config.json").read_text())
+    policy = {k: v for k, v in manifest["policy"].items() if k != "primary_benchmarks"}
+    manifest["policy"] = policy | {"primary_sources": ["handwritten", "xbrl"],
+                                   "max_llm_assisted_ndcg_regression": 0.02}
+    (out / "config.json").write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit):
+        main(["rescore", str(out)])
+    assert "predates" in capsys.readouterr().err
+    assert not (out / "rescored-k2.json").exists()
+
+
+@pytest.mark.parametrize("lose", [lambda r: r.update(question=None), lambda r: r.pop("question")],
+                         ids=["null", "missing"])
+def test_rescore_refuses_a_row_without_its_question_as_a_changed_benchmark(tmp_path, capsys, lose):
+    digest = question_records_sha256([question("h"), question("m", "xbrl")])
+    out = completed_run(tmp_path, {"questions": 2, "question_records_sha256": digest})[-1]
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    lose(pairs[0])
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(p) + "\n" for p in pairs)
+    with pytest.raises(SystemExit):
+        main(["rescore", str(out)])
+    assert "do not match the frozen benchmark" in capsys.readouterr().err
 
 
 def test_resume_after_interruption_before_the_first_pair(tmp_path):
@@ -248,7 +517,7 @@ def test_empty_pools_do_not_dilute_reranking_latency():
     report = summarize(rows + [deepcopy(empty) for _ in range(100)], 2, GATE_POLICY)
     assert report["latency_ms"]["rerank_median"] == 600
     assert report["latency_ms"]["rerank_p95"] == 600
-    assert report["latency_ms"]["rerank_questions"] == 6
+    assert report["latency_ms"]["rerank_questions"] == 4
     assert report["latency_ms"]["empty_pool_questions"] == 100
     assert "reranking median latency criterion not met" in report["decision"]["reasons"]
 
@@ -415,11 +684,13 @@ def test_resume_requires_the_run_directory_and_its_runtime_record(tmp_path):
                   chunks=chunks, top_k=2, resume=True)
 
 
-def test_present_but_unmeasurable_assisted_source_blocks_advancement():
-    rows = passing_rows()[:4] + [row(question("u", "llm_assisted", gold=(), kind="unanswerable"), filings=())]
+def test_present_but_unmeasurable_team_benchmark_blocks_advancement():
+    rows = passing_rows()[2:] + [row(question("u", gold=(), kind="unanswerable"), filings=())]
     decision = summarize(rows, 2, GATE_POLICY)["decision"]
     assert decision["advance_to_answer_evaluation"] is False
-    assert decision["reasons"] == ["llm_assisted: nDCG regression criterion not met"]
+    assert decision["reasons"] == ["team: nDCG gain/uncertainty criterion not met",
+                                   "team: recall regression criterion not met",
+                                   "team: mrr regression criterion not met"]
 
 
 def test_resume_refuses_changed_or_unknown_dense_encoder_revision(tmp_path):
@@ -448,7 +719,7 @@ def test_resume_refuses_changed_or_unknown_dense_encoder_revision(tmp_path):
 
 
 def test_fresh_and_completed_resume_propagate_exploratory_pool_depth(tmp_path):
-    qs = [question(source + str(i), source) for source in ("handwritten", "xbrl", "llm_assisted") for i in range(2)]
+    qs = [question(f"{name}{i}", source) for name, source in (("team", None), ("xbrl", "xbrl")) for i in range(2)]
     pool = [passage("b"), passage("a", content_type="table")]
     chunks = [{"chunk_id": p.chunk_id, "accession_no": "f", "content_type": p.content_type,
                "ticker": p.ticker, "fiscal_year": p.fiscal_year} for p in pool]

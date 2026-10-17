@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import json
 from collections import defaultdict
 from dataclasses import asdict
+from math import isfinite
 from pathlib import Path
 from statistics import mean, median
 from time import perf_counter
@@ -18,15 +18,15 @@ from filelock import FileLock, Timeout
 
 from src.config import PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
-from src.retrieval.base import Retriever
+from src.retrieval.base import Retriever, _boosted, validate_table_boost
 from src.retrieval.constants import CANDIDATE_K, FINAL_K
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from src.stack import RESULTS_ROOT, build_retriever
 
 from .benchmark import load_questions
 from .metrics import score_question
-from .provenance import corpus_records_sha256, record_provenance
-from .records import BenchmarkQuestion, RunResult
+from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
+from .records import TEAM, XBRL, BenchmarkQuestion, BenchmarkValidationError, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
 
@@ -34,10 +34,9 @@ METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
 POLICY = {
     "decision_top_k": 16,
     "decision_candidate_k": 50,
-    "primary_sources": ["handwritten", "xbrl"],
+    "primary_benchmarks": [TEAM, XBRL],
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
-    "max_llm_assisted_ndcg_regression": 0.02,
     "max_type_ndcg_regression": 0.02,
     "min_type_questions": 10,
     "max_hard_negative_regression": 0.01,
@@ -96,10 +95,24 @@ def _clusters(rows: Sequence[dict]) -> list[str]:
     return [root(key) for key in keys]
 
 
-def paired_metric(rows: Sequence[dict], metric: str, k: int, policy: dict = POLICY) -> dict:
+def _all_scores(rows: Sequence[dict], k: int) -> dict:
+    # Recompute from saved rankings rather than trusting cached metrics. One
+    # score per configuration/question/cutoff is shared by every breakdown.
+    return {row["question"]["question_id"]: {
+        config: _scores(row, config, k) for config in ("C4", "C5")
+    } for row in rows}
+
+
+def paired_metric(
+    rows: Sequence[dict], metric: str, k: int, policy: dict = POLICY,
+    *, scores: dict | None = None, identities: dict | None = None,
+) -> dict:
+    if scores is None:
+        scores = _all_scores(rows, k)
     selected = []
     for row in rows:
-        a, b = _scores(row, "C4", k)[metric], _scores(row, "C5", k)[metric]
+        scored = scores[row["question"]["question_id"]]
+        a, b = scored["C4"][metric], scored["C5"][metric]
         if a is not None and b is not None:
             selected.append((row, a, b))
     if not selected:
@@ -108,7 +121,8 @@ def paired_metric(rows: Sequence[dict], metric: str, k: int, policy: dict = POLI
     grouped: dict[str, list[float]] = defaultdict(list)
     # Build clusters from all rows so connections are retained even when a
     # question itself has no gold for this metric.
-    identities = dict(zip((r["question"]["question_id"] for r in rows), _clusters(rows)))
+    if identities is None:
+        identities = dict(zip((r["question"]["question_id"] for r in rows), _clusters(rows)))
     diffs = []
     for row, a, b in selected:
         diff = b - a
@@ -133,15 +147,17 @@ def paired_metric(rows: Sequence[dict], metric: str, k: int, policy: dict = POLI
 def summarize(
     rows: Sequence[dict], k: int, policy: dict = POLICY, *, candidate_k: int = CANDIDATE_K,
 ) -> dict:
+    scores = _all_scores(rows, k)
     groups: dict[str, dict[str, list]] = {
-        "by_source": defaultdict(list), "by_type": defaultdict(list),
-        "by_source_type": defaultdict(list), "by_gold_content": defaultdict(list),
+        "by_benchmark": defaultdict(list), "by_type": defaultdict(list),
+        "by_benchmark_type": defaultdict(list), "by_gold_content": defaultdict(list),
         "by_gold_truncation": defaultdict(list),
     }
     for row in rows:
-        groups["by_source"][row["question"]["source"]].append(row)
+        benchmark = benchmark_of(row["question"].get("source"))
+        groups["by_benchmark"][benchmark].append(row)
         groups["by_type"][row["question"]["question_type"]].append(row)
-        groups["by_source_type"][row["question"]["source"] + ":" + row["question"]["question_type"]].append(row)
+        groups["by_benchmark_type"][benchmark + ":" + row["question"]["question_type"]].append(row)
         groups["by_gold_content"][row["gold_content"]].append(row)
         gold_ids = set(row["question"]["supporting_chunk_ids"])
         gold_in_pool = [p for p in row["rerank"]["candidates"] if p["chunk_id"] in gold_ids]
@@ -151,7 +167,12 @@ def summarize(
         groups["by_gold_truncation"][truncated_gold].append(row)
 
     def group_summary(subset: Sequence[dict]) -> dict:
-        return {"questions": len(subset), **{m: paired_metric(subset, m, k, policy) for m in METRICS}}
+        # Keep each subset's historical connected-filing clusters. Building
+        # global clusters would change the published group confidence bounds.
+        identities = dict(zip((r["question"]["question_id"] for r in subset), _clusters(subset)))
+        return {"questions": len(subset), **{
+            m: paired_metric(subset, m, k, policy, scores=scores, identities=identities)
+            for m in METRICS}}
 
     report = {"questions": len(rows), "top_k": k, "candidate_k": candidate_k, "policy": policy,
               "overall": group_summary(rows),
@@ -208,29 +229,25 @@ def summarize(
             "outside_query_years": outside_query_years,
         }
     reasons = []
-    for source in policy["primary_sources"]:
-        group = report["by_source"].get(source)
+    for benchmark in policy["primary_benchmarks"]:
+        group = report["by_benchmark"].get(benchmark)
         if group is None:
-            reasons.append(f"missing primary source {source}")
+            reasons.append(f"missing benchmark {benchmark}")
             continue
         n = group["ndcg"]
         if n["delta"] is None or n["delta"] < policy["min_ndcg_gain"] or n["ci95"] is None or n["ci95"][0] <= 0:
-            reasons.append(f"{source}: nDCG gain/uncertainty criterion not met")
+            reasons.append(f"{benchmark}: nDCG gain/uncertainty criterion not met")
         for metric in ("recall", "mrr"):
             if group[metric]["delta"] is None or group[metric]["delta"] < -policy["max_recall_mrr_regression"]:
-                reasons.append(f"{source}: {metric} regression criterion not met")
-    assisted = report["by_source"].get("llm_assisted")
-    if assisted is None:
-        reasons.append("missing source llm_assisted")
-    elif (assisted["ndcg"]["delta"] is None
-          or assisted["ndcg"]["delta"] < -policy["max_llm_assisted_ndcg_regression"]):
-        reasons.append("llm_assisted: nDCG regression criterion not met")
-    for kind, group in (report["by_type"] | report["by_source_type"]).items():
+                reasons.append(f"{benchmark}: {metric} regression criterion not met")
+    for kind, group in (report["by_type"] | report["by_benchmark_type"]).items():
         n = group["ndcg"]
         if n["questions"] >= policy["min_type_questions"] and n["delta"] < -policy["max_type_ndcg_regression"]:
             reasons.append(f"{kind}: nDCG regression criterion not met")
     h = report["overall"]["hard_negative_accuracy"]
-    if h["delta"] is not None and h["delta"] < -policy["max_hard_negative_regression"]:
+    if h["delta"] is None:
+        reasons.append("hard-negative accuracy could not be measured")
+    elif h["delta"] < -policy["max_hard_negative_regression"]:
         reasons.append("hard-negative accuracy regression criterion not met")
     for statistic in ("median", "p95"):
         value = report["latency_ms"][f"rerank_{statistic}"]
@@ -268,6 +285,51 @@ def read_pairs(path: Path, *, recover: bool = False) -> list[dict]:
     return rows
 
 
+def _logit_ranking(row: dict, k: int, table_boost: float) -> dict:
+    validate_table_boost(table_boost)
+    scored = []
+    for candidate in row["rerank"]["candidates"]:
+        score = float(candidate["raw_logit"])
+        if not isfinite(score):
+            raise ValueError("sensitivity requires finite saved raw logits")
+        if candidate["content_type"] == "table":
+            score = _boosted(score, table_boost)
+        scored.append((score, candidate["chunk_id"]))
+    ranked = sorted(scored, key=lambda pair: (-pair[0], pair[1]))[:k]
+    return {"retrieved_chunk_ids": [cid for _, cid in ranked],
+            "retrieved_scores": [score for score, _ in ranked],
+            "latency_ms": row["C5"]["latency_ms"]}
+
+
+def table_boost_sensitivity(rows: Sequence[dict], k: int, manifest: dict) -> dict:
+    """Change only the final logit table boost; never infer new timings/adoption.
+
+    This can diagnose a historical source-split run as well as a current one.
+    Both are grouped as team/xbrl, with the original policy retained as context.
+    """
+    unboosted = []
+    for row in rows:
+        reconstructed = _logit_ranking(row, k, row["query"]["table_boost"])
+        if any(reconstructed[key] != row["C5"][key][:k]
+               for key in ("retrieved_chunk_ids", "retrieved_scores")):
+            raise ValueError("saved logits/boost do not reproduce the recorded C5 ranking")
+        unboosted.append({**row, "C5": _logit_ranking(row, k, 1.0)})
+    original_policy = manifest["policy"]
+    policy = POLICY | {key: original_policy[key] for key in ("seed", "bootstrap_samples")}
+    reports = {}
+    for name, pairs in (("original", rows), ("without_table_boost", unboosted)):
+        report = summarize(pairs, k, policy, candidate_k=manifest["reranker"]["candidate_k"])
+        report.pop("latency_ms")
+        report["decision"] = {"advance_to_answer_evaluation": None,
+                              "reasons": ["table-boost sensitivity only; no adoption or latency decision"],
+                              "default": "C4"}
+        reports[name] = report
+    return {"kind": "table_boost_sensitivity", "questions": len(rows), "top_k": k,
+            "method": "same candidates/raw logits; remove only final logit table boost; chunk-ID ties",
+            "limitation": "does not remove candidate-retrieval boosts or measure new latency/answers",
+            "original_policy": original_policy, **reports}
+
+
 def _repair_pairs(path: Path, rows: Sequence[dict]) -> None:
     # Atomic replacement keeps the cut stream intact if recovery is interrupted.
     whole = path.with_name(path.name + ".tmp")
@@ -289,8 +351,20 @@ def _comparable_manifest(manifest: dict) -> dict:
     result = json.loads(json.dumps(manifest))
     # Workload is a segment observation, not a retrieval setting. Preserve the
     # original note in config and record the new one in runtime history.
-    result["provenance"].pop("workload_note", None)
+    provenance = result["provenance"]
+    provenance.pop("workload_note", None)
+    provenance.get("environment", {}).pop("platform", None)
+    provenance.get("corpus", {}).pop("processed_dir", None)
+    if "inputs" in provenance:
+        provenance["inputs"] = [item["sha256"] for item in provenance["inputs"]]
     return result
+
+
+def _validate_depths(top_k: int, candidate_k: int) -> None:
+    if not 0 < top_k <= candidate_k:
+        raise ValueError("top_k must be positive and no larger than candidate_k")
+    if candidate_k > CANDIDATE_K:
+        raise ValueError(f"candidate_k must not exceed the shipped C4 depth {CANDIDATE_K}")
 
 
 def run_pairs(
@@ -300,12 +374,7 @@ def run_pairs(
 ) -> dict:
     if not questions or len({q.question_id for q in questions}) != len(questions):
         raise ValueError("questions must be nonempty with unique IDs")
-    if not 0 < top_k <= reranker.config.candidate_k:
-        raise ValueError("top_k must be positive and no larger than candidate_k")
-    if reranker.config.candidate_k > CANDIDATE_K:
-        # Hybrid fuses at max(CANDIDATE_K, k), so a deeper pool would reorder
-        # the C4 row away from the ranking the app ships.
-        raise ValueError(f"candidate_k must not exceed the shipped C4 depth {CANDIDATE_K}")
+    _validate_depths(top_k, reranker.config.candidate_k)
     if not resume:
         output_dir.mkdir(parents=True, exist_ok=False)
     elif not output_dir.is_dir():
@@ -361,11 +430,17 @@ def _run_pairs_locked(
     started = perf_counter()
     reranker.load()
     model_load_ms = (perf_counter() - started) * 1000
-    # Warm both models on one real question, without recording it as a result.
-    query = _query(questions[0], top_k=top_k, metadata_filter=True)
+    # Empty pools never call predict. Find a real nonempty pool so first-use
+    # inference cannot leak into a measured row, including after a resume.
+    warmup_question_id = None
     started = perf_counter()
-    pool = hybrid.search(query, k=reranker.config.candidate_k)
-    reranker.rerank(query, pool)
+    for warm in questions:
+        query = _query(warm, top_k=top_k, metadata_filter=True)
+        pool = hybrid.search(query, k=reranker.config.candidate_k)
+        if pool:
+            reranker.rerank(query, pool)
+            warmup_question_id = warm.question_id
+            break
     dense_info = getattr(getattr(hybrid, "dense", None), "runtime_info", {})
     recorded_revision = original_runtime.get("dense_revision")
     if resume and recorded_revision is not None and dense_info.get("revision") != recorded_revision:
@@ -375,10 +450,15 @@ def _run_pairs_locked(
     runtime = {
         "cross_encoder_load_ms": model_load_ms, "warmup_ms": (perf_counter() - started) * 1000,
         "resumed_after_questions": len(rows),
+        "warmup_question_id": warmup_question_id,
+        "cross_encoder_warmed": warmup_question_id is not None,
         **indexes,
         "cross_encoder_device": str(getattr(reranker.load(), "device", reranker.config.device)),
         "dense_device": dense_info.get("device"), "dense_revision": dense_info.get("revision"),
         "workload_note": provenance.get("workload_note"),
+        "environment": provenance.get("environment"),
+        "inputs": provenance.get("inputs"),
+        "processed_dir": provenance.get("corpus", {}).get("processed_dir"),
     }
     segment_number = 0
     while (output_dir / f"runtime-{segment_number:04d}.json").exists():
@@ -458,19 +538,41 @@ def main(argv: list[str] | None = None) -> None:
     score.add_argument("--top-k", type=int)
     score.add_argument("--processed-dir", type=Path,
                        help="derive missing gold-filing diagnostics from the exact frozen corpus")
+    sensitivity = actions.add_parser("table-boost-sensitivity")
+    sensitivity.add_argument("run_dir", type=Path)
+    sensitivity.add_argument("--top-k", type=int)
     args = parser.parse_args(argv)
-    if args.action == "rescore":
+    if args.action in ("rescore", "table-boost-sensitivity"):
         manifest = json.loads((args.run_dir / "config.json").read_text(encoding="utf-8"))
         k = manifest["top_k"] if args.top_k is None else args.top_k
         if not 0 < k <= manifest["top_k"]:
             parser.error("rescoring k must be positive and no greater than stored final k")
+        if args.action == "rescore" and "primary_benchmarks" not in manifest["policy"]:
+            parser.error("run predates the team/xbrl benchmark policy (#161); "
+                         "rescore it on its recorded source commit")
         rows = read_pairs(args.run_dir / "pairs.jsonl.gz")
         if len(rows) != manifest["provenance"]["questions"]:
             parser.error("run is incomplete; resume it before final rescoring")
-        digest = hashlib.sha256(json.dumps([r["question"] for r in rows], sort_keys=True).encode()).hexdigest()
         expected = manifest["provenance"].get("question_records_sha256")
+        try:
+            digest = question_records_sha256([BenchmarkQuestion.from_mapping(r["question"]) for r in rows])
+        except (BenchmarkValidationError, TypeError, KeyError):
+            digest = None
         if expected is not None and digest != expected:
             parser.error("stored questions do not match the frozen benchmark digest")
+        if args.action == "table-boost-sensitivity":
+            try:
+                report = table_boost_sensitivity(rows, k, manifest)
+            except (ValueError, KeyError, TypeError) as error:
+                parser.error(str(error))
+            report["provenance"] = {
+                "source_commit": manifest["provenance"].get("source_commit"),
+                "question_records_sha256": expected,
+                "config_sha256": sha256(args.run_dir / "config.json"),
+                "pairs_sha256": sha256(args.run_dir / "pairs.jsonl.gz"),
+            }
+            _dump(args.run_dir / f"table-boost-sensitivity-k{k}.json", report)
+            return
         enrichment = None
         if args.processed_dir is not None:
             enrichment = enrich_gold_filings(
@@ -482,25 +584,31 @@ def main(argv: list[str] | None = None) -> None:
             report["gold_diagnostics_provenance"] = enrichment
         _dump(args.run_dir / f"rescored-k{k}.json", report)
         return
-    config = RerankConfig(candidate_k=args.candidate_k, batch_size=args.batch_size, device=args.device)
     if not args.workload_note.strip():
         parser.error("workload-note must describe the timing conditions")
-    if not 0 < args.top_k <= config.candidate_k:
-        parser.error("top-k must be positive and no greater than candidate-k")
-    if config.candidate_k > CANDIDATE_K:
-        parser.error(f"candidate-k must not exceed the shipped C4 depth {CANDIDATE_K}")
+    try:
+        config = RerankConfig(candidate_k=args.candidate_k, batch_size=args.batch_size, device=args.device)
+        _validate_depths(args.top_k, config.candidate_k)
+    except ValueError as error:
+        parser.error(str(error))
     output = args.results_root / _safe_run_id(args.run_id)
     if output.exists() and not args.resume:
         parser.error("run directory exists; use a new ID or --resume")
+    if args.resume and not (output / "config.json").is_file():
+        parser.error(f"nothing to resume at {output}: check --run-id; if interrupted before "
+                     "config.json was written, use a new run ID")
     questions = [q for path in args.questions for q in load_questions(path, processed_dir=args.processed_dir)]
     if len({q.question_id for q in questions}) != len(questions):
         parser.error("duplicate question IDs across benchmark files")
-    provenance = record_provenance(args.questions, questions, args.processed_dir)
+    chunks = list(iter_chunks(processed_dir=args.processed_dir))
+    provenance = record_provenance(args.questions, questions, args.processed_dir, chunks=chunks)
     provenance["workload_note"] = args.workload_note
-    report = run_pairs(questions, build_retriever("hybrid", processed_dir=args.processed_dir),
-                       CrossEncoderReranker(config), output_dir=output, provenance=provenance,
-                       chunks=list(iter_chunks(processed_dir=args.processed_dir)),
-                       top_k=args.top_k, resume=args.resume)
+    try:
+        report = run_pairs(questions, build_retriever("hybrid", processed_dir=args.processed_dir),
+                           CrossEncoderReranker(config), output_dir=output, provenance=provenance,
+                           chunks=chunks, top_k=args.top_k, resume=args.resume)
+    except (ValueError, FileNotFoundError) as error:
+        parser.error(str(error))
     print(json.dumps(report["decision"], indent=2))
     print(output)
 

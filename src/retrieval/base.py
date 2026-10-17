@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
+from math import isfinite
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -226,8 +227,7 @@ def rank(
     negative one would turn "lean toward tables" into its opposite, both
     silently, so either is refused.
     """
-    if table_boost <= 0:
-        raise ValueError(f"table_boost must be positive, got {table_boost}")
+    validate_table_boost(table_boost)
     entries = [
         (
             _boosted(score, table_boost) if chunk.get("content_type") == "table" else score,
@@ -240,6 +240,11 @@ def rank(
         RetrievedPassage.from_chunk(chunk, score=score, rank=position, retriever=retriever)
         for position, (score, _, chunk) in enumerate(_ordered(entries, min_score, k), start=1)
     ]
+
+
+def validate_table_boost(table_boost: float) -> None:
+    if not isfinite(table_boost) or table_boost <= 0:
+        raise ValueError(f"table_boost must be finite and positive, got {table_boost}")
 
 
 def reorder(
@@ -269,8 +274,7 @@ def reorder(
     re-scoring a plain BM25 result set still leaves a trail back to BM25 after
     ``retriever`` has been overwritten with the second stage's name.
     """
-    if table_boost <= 0:
-        raise ValueError(f"table_boost must be positive, got {table_boost}")
+    validate_table_boost(table_boost)
     entries = [
         (
             _boosted(score, table_boost) if passage.content_type == "table" else score,
