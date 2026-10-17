@@ -109,7 +109,7 @@ from .benchmark import generate_xbrl_questions
 from .metrics import score_question
 from .records import BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
-from .run import _query, _summary
+from .run import _query, _summary, question_fields
 
 # The sizes #45 names. 1,800 is what ships, and 4,000 is what the corpus was
 # first cut at, before anyone counted its passages in the encoder's tokens.
@@ -628,10 +628,7 @@ def measure_build(
                 k=top_k,
             )
             rows.append({
-                "question_id": question.question_id,
-                "question_type": question.question_type,
-                "difficulty": question.difficulty,
-                "source": question.source,
+                **question_fields(question),
                 "retriever": retriever.name,
                 "config": configuration,
                 # To the deeper cutoff, so either one can be scored again from this file.

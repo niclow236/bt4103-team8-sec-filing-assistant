@@ -2,7 +2,8 @@
 
 from streamlit.testing.v1 import AppTest
 
-from src.app import state
+from src.app import components, state
+from src.app.components import _corpus_table_html
 from src.config import PROJECT_ROOT
 from src.pipeline.chunk import iter_chunks
 
@@ -80,7 +81,9 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     prose = passage("prose-chunk", text="Narrative text stays readable as prose.")
     table = passage(
         "table-chunk", content_type="table",
-        text="Year | 2024\nRevenue | $10", url="https://www.sec.gov/Archives/table")
+        text=("Consolidated statements\n\n"
+              "| Year | 2024 |\n| --- | --- |\n| Revenue | $10 |"),
+        url="https://www.sec.gov/Archives/table")
     table["table_caption"] = "Consolidated statements"
     app = browse(monkeypatch, [prose, table])
 
@@ -88,6 +91,7 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     assert [(panel.label, panel.icon) for panel in panels] == [
         ("Selected heading", ":material/article:"),
         ("Consolidated statements", ":material/table_chart:"),
+        ("Stored text", ":material/code:"),
     ]
     assert {caption.value for caption in app.caption} >= {
         "Chunk ID: prose-chunk", "Chunk ID: table-chunk"}
@@ -95,11 +99,113 @@ def test_every_passage_has_chunk_id_edgar_link_and_distinct_type_rendering(monke
     assert [link.url for link in links] == [prose["url"], table["url"]]
     assert all(link.label == "Open filing on EDGAR" for link in links)
     assert [text.value for text in app.text] == [prose["text"]]
-    assert [code.value for code in app.code] == [table["text"]]
+    # The rendered table does not replace what retrieval sees: the exact
+    # stored text stays on the page inside the table's own panel.
+    assert [code.value for code in panels[1].code] == [table["text"]]
+    rendered_tables = app.get("html")
+    assert len(rendered_tables) == 1
+    assert "<table>" in rendered_tables[0].value
+    assert "Consolidated statements" in rendered_tables[0].value
+    assert "Revenue" in rendered_tables[0].value
     assert [badge.value for badge in app.get("markdown")] == [
         ":blue-badge[:material/article: Prose passage]",
         ":orange-badge[:material/table_chart: Table passage]",
     ]
+
+
+def test_table_renderer_preserves_multiple_headers_and_escapes_filing_text():
+    html = _corpus_table_html(
+        "Operating expenses (part 1 of 2)\n\n"
+        "|  | 2025 | 2025 | Change |\n"
+        "| Category | Amount | Share | Percent |\n"
+        "| --- | --- | --- | --- |\n"
+        "| Research & development | $34,550 | 10 | <8% |"
+    )
+    assert "<caption>Operating expenses (part 1 of 2)</caption>" in html
+    assert html.count("<thead><tr>") == 1
+    assert html.count("<th>") == 8
+    assert "Research &amp; development" in html
+    assert "&lt;8%" in html
+
+
+def test_table_renderer_combines_repeated_years_with_financial_value_fragments():
+    html = _corpus_table_html(
+        "Management's Discussion and Analysis\n\n"
+        "|  | 2025 | 2025 | 2025 | Change | Change | 2024 | 2024 | 2024 |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| Research and development | $ | 34,550 |  | 10 | % | $ | 31,370 |  |\n"
+        "| Percentage of total net sales | 8 |  | % |  |  | 8 |  | % |"
+    )
+    assert html.count("<th>2025</th>") == 1
+    assert html.count("<th>Change</th>") == 1
+    assert html.count("<th>2024</th>") == 1
+    assert "<td>$34,550</td>" in html
+    assert "<td>10%</td>" in html
+    assert "<td>$31,370</td>" in html
+    assert html.count("<td>8%</td>") == 2
+
+
+def test_table_renderer_keeps_distinct_columns_under_a_repeated_header():
+    # Amazon FY2021 10-K, Item 7 (0001018724-22-000005_part_ii_item_7_t007_01),
+    # as stored: one year spans three measures, each split from its "$", and
+    # the second row puts a figure in the first row's "$" column.
+    year = "Year Ended December 31, 2020"
+    html = _corpus_table_html(
+        "Management's Discussion and Analysis (MD&A) (part 2 of 3)\n\n"
+        f"|  | {year} | {year} | {year} | {year} | {year} | {year} |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| Net sales | $ | 386,064 | $ | -1,438 | $ | 384,626 |\n"
+        "| Operating expenses |  | 363,165 | -989 |  |  | 362,176 |"
+    )
+    assert html.count(f"<th>{year}</th>") == 3
+    assert "<td>$386,064</td><td>$-1,438</td><td>$384,626</td>" in html
+    assert "<td>363,165</td><td>-989</td><td>362,176</td>" in html
+
+
+def test_table_renderer_joins_a_percent_split_with_its_closing_bracket():
+    # Intuit FY2021 10-K, Item 7: "(2%)" is stored as "-2" and "%)".
+    html = _corpus_table_html(
+        "(Dollars in millions)\n\n"
+        "|  | 2020-2019 % Change | 2020-2019 % Change |\n"
+        "| --- | --- | --- |\n"
+        "| QuickBooks Online Accounting | 38 | % |\n"
+        "| Desktop Services and Supplies | -2 | %) |"
+    )
+    assert html.count("<th>2020-2019 % Change</th>") == 1
+    assert "<td>38%</td>" in html
+    assert "<td>-2%)</td>" in html
+
+
+def test_table_renderer_joins_a_value_split_under_a_blank_header():
+    # Apple FY2021 10-K, Item 8 (0000320193-21-000105_part_ii_item_8_t002_00):
+    # the year sits over the "$" and the amount is under a blank header.
+    html = _corpus_table_html(
+        "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME\n\n"
+        "| Years ended | September 25, 2021 |  | September 26, 2020 |  |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| Net income | $ | 94,680 | $ | 57,411 |\n"
+        "| Other comprehensive income |  | 569 |  | 42 |"
+    )
+    assert html.count("<th>") == 3
+    assert "<td>$94,680</td><td>$57,411</td>" in html
+    assert "<td>569</td><td>42</td>" in html
+
+
+def test_sticky_column_colours_follow_the_viewers_theme(monkeypatch):
+    table = passage("themed", content_type="table",
+                    text="Label\n\n| Year | 2024 |\n| --- | --- |\n| Revenue | $10 |")
+    assert "--sec-table-base: #ffffff; --sec-table-ink: #31333f" in browse(
+        monkeypatch, [table]).get("html")[0].value
+    monkeypatch.setattr(components, "_dark_theme", lambda: True)
+    assert "--sec-table-base: #0e1117; --sec-table-ink: #fafafa" in browse(
+        monkeypatch, [table]).get("html")[0].value
+
+
+def test_unrecognised_table_falls_back_to_the_stored_text(monkeypatch):
+    table = passage("loose-table", content_type="table", text="Year | 2024\nRevenue | $10")
+    app = browse(monkeypatch, [table])
+    assert not app.get("html")
+    assert [code.value for code in app.code] == [table["text"]]
 
 
 def test_pagination_makes_a_large_item_fully_reachable(monkeypatch):
@@ -281,6 +387,35 @@ def test_repeated_headers_are_numbered_without_chunk_ids(monkeypatch):
         "Chunk ID: 0000320193-25-000073_part_ii_item_8_026",
         "Chunk ID: 0000320193-25-000073_part_ii_item_8_027",
     }
+
+
+def test_panel_heading_does_not_repeat_the_selected_item(monkeypatch):
+    rows = [passage("first"), passage("second")]
+    heading = ("Item 7.\u00a0\u00a0\u00a0\u00a0Management's Discussion and Analysis of "
+               "Financial Condition and Results of Operations")
+    for row in rows:
+        row["heading"] = heading
+    app = browse(monkeypatch, rows)
+    assert [panel.label for panel in app.main.status] == [
+        "Management's Discussion and Analysis of Financial Condition and Results of "
+        "Operations (Part 1 of 2)",
+        "Management's Discussion and Analysis of Financial Condition and Results of "
+        "Operations (Part 2 of 2)",
+    ]
+
+
+def test_item_prefix_is_removed_without_a_space_and_never_from_a_longer_item(monkeypatch):
+    rows = [passage("glued", item="1"), passage("longer", item="1"),
+            passage("bare", item="1"), passage("colon", item="1"),
+            passage("dash", item="1")]
+    rows[0]["heading"] = "Item\u00a01.Business"
+    rows[1]["heading"] = "Item 1A. Risk Factors"
+    rows[2]["heading"] = "Item 1."
+    rows[3]["heading"] = "Item 1: Overview"
+    rows[4]["heading"] = "ITEM 1 - BUSINESS"
+    app = browse(monkeypatch, rows)
+    assert [panel.label for panel in app.main.status] == [
+        "Business", "Item 1A. Risk Factors", "Item 1.", "Overview", "BUSINESS"]
 
 
 def test_each_repeated_header_has_its_own_part_count(monkeypatch):

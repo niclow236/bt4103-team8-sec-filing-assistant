@@ -1279,6 +1279,17 @@ def test_a_row_stores_what_its_ranking_was_scored_against(finished):
                 assert row["retrieved_chars"] and all(row["retrieved_chars"])
 
 
+def test_sweep_writer_preserves_question_and_benchmark_fields(finished):
+    for build in finished["builds"]:
+        questions = {row["question_id"]: row for row in map(
+            json.loads, build.benchmark.read_text(encoding="utf-8").splitlines())}
+        for retriever in ("bm25", "dense", "hybrid"):
+            for row in _rows(finished["run_dir"], f"{build.id}-{retriever}"):
+                question = questions[row["question_id"]]
+                for key in ("question_type", "difficulty", "source"):
+                    assert row[key] == question[key]
+
+
 def _by_hand(run_dir: Path, config_id: str, characters: int) -> tuple[float, float]:
     """The share found, and the share that ran out, worked out one ranking at a time."""
     found = ran_out = 0

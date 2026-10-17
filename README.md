@@ -142,7 +142,8 @@ bt4103-team8-sec-filing-assistant/
 │       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
 │       ├── app_pages/       #   one script per page
 │       │   ├── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
-│       │   └── browse.py    #     Browse: company/year/Item passage explorer
+│       │   ├── browse.py    #     Browse: company/year/Item passage explorer
+│       │   └── results.py   #     Results: saved benchmark metrics and ablation tables
 │       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
 │       ├── components.py    #   what pages draw: answers, filters, trace, corpus passages
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
@@ -156,7 +157,7 @@ bt4103-team8-sec-filing-assistant/
 │   └── removed-results.json #   each result file that was once committed: its rows, checksum and git object
 ├── benchmark/               # ground-truth Q&A dataset
 │   ├── schema.md            #   the fields a benchmark question must have
-│   ├── questions.jsonl      #   hand-written questions (none written yet)
+│   ├── questions.jsonl      #   team benchmark: the team's 150 questions
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 ├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
 └── docs/                    # reports, minutes, references
@@ -1838,10 +1839,58 @@ differently, so the tables above stand as they are.
 
 ## Streamlit app and components
 
+The Results page reads saved evaluation summaries and per-question files from
+`results/<run-id>/` (`questions.jsonl` or model-ablation `report.json`). It does
+not rerun retrieval, evaluation or model generation. Scores are computed from
+each benchmark's own saved rows: XBRL source, mechanical difficulty or an
+`xbrl-` question ID puts a row in Mechanical XBRL; all other rows belong to the
+Team benchmark, whatever `source` they carry, or none. Historical
+saved group summaries are used only when per-question rows are unavailable.
+If neither is available, a warning explains why whole-run scores cannot be
+split and are hidden. Stopped runs or runs with fewer readable question rows
+than their summaries claim are labelled incomplete; their scores are partial
+and are not comparable to a complete run. Reload saved results discovers new
+or updated runs, keeps the selected run when it still exists, and clears only
+the Results cache, not the caches used by other pages.
+The cache keeps aggregate scores rather than full question rows, and the chart
+shows retrieval metrics as separate bars rather than adding their scores.
+
+The Compare page runs one question through two configurations from the shared
+evaluation registry, using the same selected answer model. Each side shows its
+effective filters, cited answer, elapsed time and retrieved passages. Passage
+overlap is determined by chunk ID: Shared means both configurations retrieved
+the passage, while Only left and Only right mark differences. Full passage
+text is available below the tables. C0 is excluded because its fixed-size
+baseline cannot be built by the interactive stack.
+
+Both configurations run in order and use the existing stack cache. Timings
+include loading and verification and can benefit from warmed indexes or cached
+answers, so they are demo timings rather than a controlled speed benchmark.
+Changing either configuration, the question, filters or provider hides the
+saved pair; it shows again without a new run only once every setting is back
+to what it was compared with. If one side fails, the other still shows its
+answer, with passage overlap labelled Not compared (#39). Provider failures
+retain the same settings-repair advice as Ask, including on later reruns.
+
 The app's Ask page reads the processed filings and indexes on this machine,
 searches them, sends retrieved passages to the configured answer model,
 verifies the result, and shows citations to those filings. Its Browse page
-reads the processed passages directly, without an index or model:
+reads the processed passages directly, without an index or model.
+
+On Ask, the resolved company and year filters appear before the search.
+Retrieved evidence appears as soon as it is ready, while answer text streams
+into the space above it. The checked answer then replaces the draft. If the
+model fails, the draft is removed and the retrieved evidence stays visible.
+Repeated questions show cached evidence and answers without repeating the
+search. Time to evidence depends on index loading, retrieval and reranking;
+the page does not promise a fixed one-second search (#42).
+
+The answer slot names the current stage (searching, then writing). Refused or
+empty searches draw no evidence panel; the answer explains why it abstained.
+Evidence panels start collapsed and reuse Browse's table and safe-link
+rendering. Provider and index errors stay above the evidence.
+
+Start it with:
 
 ```bash
 streamlit run src/app/main.py
@@ -1919,8 +1968,11 @@ label line, which carries the statement title, where 61 of Apple's 64 FY2025
 Item 8 tables used to fall back to "Financial Statements". The full chunk ID is
 shown inside, beside a link to the source filing on EDGAR. Prose is marked with
 an article icon and rendered as text; table passages are marked with a table
-icon and rendered in a
-spacing-preserving block so the two cannot be mistaken for one another.
+icon and rendered as a horizontally scrollable grid. Repeated headers created
+by SEC column spans are collapsed, so currency signs, amounts and percentages
+remain together instead of appearing as separate columns; a span over several
+distinct figures keeps one column per figure. The exact stored text, as
+retrieval sees it, is in a "Stored text" panel under each table.
 
 ### Where things go in `src/app/`
 
@@ -1931,8 +1983,8 @@ what the first one does:
 |---|---|
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
-| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack` and `measured` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
+| `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack`, `measured` and `result_runs` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, Results' `render_results` and `result_chart_rows`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
@@ -2013,9 +2065,12 @@ python -m pytest tests/test_app_components.py tests/test_app_live.py tests/test_
 
 ## The benchmark
 
-Hand-written questions go in `benchmark/questions.jsonl`, one JSON object per
-line, and `benchmark/schema.md` lists the fields each one needs. The file does
-not exist yet; it is filled as each member writes their questions.
+The team's questions are in `benchmark/questions.jsonl`, one JSON object per
+line, and `benchmark/schema.md` lists the fields each one needs. It holds 150
+(#152, then `nicholas-21`). By type they are 88 `numeric`, 44 `factual`, 10
+`temporal`, 4 `comparative` and 4 `unanswerable`, and 27 carry hard negatives.
+Its chunk ids are those of the current chunker, so a change that renames chunks
+makes the loader refuse the file until they are remapped.
 
 ```python
 from src.evaluation import load_questions
@@ -2717,8 +2772,9 @@ What the runs do not say:
   about half a day of encoding on this laptop.
 - Every question is a figure looked up in a filing. Nothing here measures a
   question that needs an argument read across paragraphs, which is where a
-  larger passage would be expected to help, and `benchmark/questions.jsonl`
-  holds no such question yet.
+  larger passage would be expected to help. The sweep ran before
+  `benchmark/questions.jsonl` was committed, and its factual and temporal
+  questions have not been put through it.
 - These are retrieval rates. The app answers most figure questions from the
   facts store before it searches, so they are not how often the app gets such
   a question right.

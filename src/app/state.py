@@ -19,10 +19,13 @@ no page holds a cache of its own:
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
+from pathlib import Path
+from statistics import mean, median
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import streamlit as st
@@ -30,16 +33,18 @@ import streamlit as st
 from src.pipeline.chunk import iter_chunks
 from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
 from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
-from src.stack import build_stack, measured_runs
+from src.stack import RESULTS_ROOT, build_stack, measured_runs
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.rag.records import Answer
-    from src.retrieval.records import Query
+    from src.retrieval.records import Query, RetrievedPassage
     from src.stack import Stack
 
 # What a caller passes with a question that does not change its answer:
-# ``parsed`` is read from the question, and ``on_token`` only shows the
-# answer arriving.
+# ``parsed`` is read from the question; the callbacks only show evidence
+# and the answer arriving.
 NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 
 # How many answers one configuration keeps. Each holds the passages it was
@@ -47,6 +52,122 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # would otherwise grow with every new question. Past this many the answer
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
+
+RESULT_METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+
+
+def benchmark_kind(row: dict[str, Any]) -> str:
+    """Classify a saved row once, consistently for every Results view."""
+    source = str(row.get("source", "")).lower()
+    difficulty = str(row.get("difficulty", "")).lower()
+    if difficulty == "mechanical" or source == "xbrl":
+        return "mechanical"
+    if str(row.get("question_id", "")).lower().startswith("xbrl-"):
+        return "mechanical"
+    return "handwritten"
+
+
+def _read_result_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        if path.name == "report.json":
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            rows = loaded.get("results", []) if isinstance(loaded, dict) else []
+            return [row for row in rows if isinstance(row, dict)]
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+        return rows
+    except (OSError, ValueError):
+        return []
+
+
+def _saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = None) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(benchmark_kind(row), []).append(row)
+    output: dict[str, dict[str, Any]] = {}
+    for kind, items in grouped.items():
+        values: dict[str, Any] = {"questions": len(items)}
+        for metric in RESULT_METRICS:
+            measured = [row[metric] for row in items if row.get(metric) is not None]
+            values[metric] = mean(measured) if measured else None
+        answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
+        if answers:
+            latencies = [answer["latency_ms"] for answer in answers
+                         if answer.get("latency_ms") is not None]
+            values.update({
+                "abstention_rate": mean(answer.get("abstained", False) for answer in answers),
+                "median_latency_ms": median(latencies) if latencies else None,
+                "llm_questions": sum(provider is not None and row.get("route") == provider for row in items),
+            })
+        output[kind] = values
+    return output
+
+
+def _incomplete(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
+    """Describe partial results without treating a summary-only run as truncated."""
+    stopped = summary.get("stopped")
+    if stopped:
+        where = stopped.get("question_id") if isinstance(stopped, dict) else None
+        return f"stopped at {where}" if where else "stopped part-way"
+    expected = summary.get("questions")
+    if rows and isinstance(expected, int) and len(rows) < expected:
+        return f"{len(rows)} of {expected} question rows could be read"
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
+    """Read saved evaluation runs, including older files, without rerunning them."""
+    if not results_root.is_dir():
+        return []
+    runs: list[dict[str, Any]] = []
+    for run_dir in sorted((path for path in results_root.iterdir() if path.is_dir()),
+                          key=lambda path: path.stat().st_mtime, reverse=True):
+        try:
+            manifest = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        configurations = []
+        for summary in manifest.get("configurations", ()):
+            if not isinstance(summary, dict):
+                continue
+            config = summary.get("config") or {}
+            if not isinstance(config, dict):
+                continue
+            config_id = str(config.get("id") or "")
+            # Saved IDs name one child directory, never a path or a Windows drive.
+            if not config_id or config_id in {".", ".."} or any(
+                    character in config_id for character in ("/", "\\", ":")):
+                continue
+            config_dir = run_dir / config_id
+            if config_dir.resolve().parent != run_dir.resolve():
+                continue
+            rows = _read_result_rows(config_dir / "questions.jsonl")
+            if not rows:
+                rows = _read_result_rows(config_dir / "report.json")
+            configurations.append({
+                "run_id": run_dir.name,
+                "config_id": config_id,
+                "name": str(config.get("name") or config_id),
+                "questions": int(summary.get("questions") or len(rows)),
+                "incomplete": _incomplete(summary, rows),
+                "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
+                                      if rows else summary.get("by_benchmark") or {}),
+            })
+        if configurations:
+            runs.append({"run_id": run_dir.name,
+                         "configurations": configurations})
+    return runs
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
@@ -250,6 +371,33 @@ def has_kept(page: str) -> bool:
     return _key(page) in st.session_state
 
 
+class ComparisonSide(NamedTuple):
+    """One side of a comparison, including its independent failure (#39)."""
+
+    answer: Answer | None
+    seconds: float
+    error: str | None = None
+
+
+class KeptComparison(NamedTuple):
+    """The saved pair: both requests and the side each answered."""
+
+    requests: tuple[Request, Request]
+    sides: tuple[ComparisonSide, ComparisonSide]
+
+
+def keep_comparison(requests: tuple[Request, Request],
+                    sides: tuple[ComparisonSide, ComparisonSide]) -> None:
+    """Hold both sides for this browser session as what Compare is showing."""
+    st.session_state[_key("compare")] = KeptComparison(requests, sides)
+
+
+def kept_comparison(requests: tuple[Request, Request]) -> tuple[ComparisonSide, ComparisonSide] | None:
+    """Keep both sides together; changing either request hides the whole pair."""
+    held = st.session_state.get(_key("compare"))
+    return held.sides if held is not None and held.requests == requests else None
+
+
 class Remembered:
     """A built configuration that gives a repeated question the answer it gave before.
 
@@ -294,13 +442,16 @@ class Remembered:
         self._being_answered: dict[tuple[Any, ...], Event] = {}
         self._lock = Lock()
 
-    def answer(self, question: str, **overrides: Any) -> Answer:
+    def answer(self, question: str, *,
+               on_retrieved: Callable[[tuple[RetrievedPassage, ...]], None] | None = None,
+               **overrides: Any) -> Answer:
         """The answer to ``question``, asked of the stack only the first time.
 
         ``overrides`` go to ``Stack.answer`` with that first request. A
         remembered answer comes back at once, and so does one another session
         was already being given, so nothing is streamed to ``on_token`` for
-        either.
+        either. The caller's ``on_retrieved`` is still notified of cached
+        evidence, outside the lock, without repeating the search.
         """
         asked_with = tuple(sorted(
             (name, value) for name, value in overrides.items()
@@ -308,19 +459,25 @@ class Remembered:
         ))
         key = (question, asked_with)
         while True:
+            remembered = None
             with self._lock:
                 if key in self._answers:
                     self._answers.move_to_end(key)
-                    return self._answers[key]
-                done = self._being_answered.get(key)
-                if done is None:
-                    done = self._being_answered[key] = Event()
-                    break
+                    remembered = self._answers[key]
+                else:
+                    done = self._being_answered.get(key)
+                    if done is None:
+                        done = self._being_answered[key] = Event()
+                        break
+            if remembered is not None:
+                if on_retrieved is not None:
+                    on_retrieved(remembered.passages)
+                return remembered
             # Another session is asking this now. Wait for it, then look again:
             # its answer is there, or it failed and this one asks in its turn.
             done.wait()
         try:
-            answer = self.stack.answer(question, **overrides)
+            answer = self.stack.answer(question, on_retrieved=on_retrieved, **overrides)
             if _finished(answer):
                 with self._lock:
                     self._answers[key] = answer
