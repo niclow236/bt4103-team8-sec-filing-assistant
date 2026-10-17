@@ -111,3 +111,22 @@ def test_injected_encoder_is_forced_to_return_raw_logits():
     result = r.rerank(Query("q", top_k=1), [passage("a")])
     assert model.calls[1][2]["activation_fn"](-3) == -3
     assert result.passages[0].score == -3
+
+
+def test_latency_excludes_diagnostic_tokenization(monkeypatch):
+    clock = [0.0]
+
+    class TimedModel(Model):
+        def tokenizer(self, *args, **kwargs):
+            clock[0] += 2.0  # Diagnostics only; predict does its own tokenization.
+            return super().tokenizer(*args, **kwargs)
+
+        def predict(self, *args, **kwargs):
+            clock[0] += .125
+            return super().predict(*args, **kwargs)
+
+    monkeypatch.setattr("src.retrieval.rerank.perf_counter", lambda: clock[0])
+    result = CrossEncoderReranker(model=TimedModel([1])).rerank(
+        Query("q", top_k=1), [passage("a")])
+    assert result.diagnostics["latency_ms"] == 125
+    assert result.diagnostics["diagnostic_tokenization_ms"] == 2000

@@ -71,3 +71,12 @@ def test_question_digest_keeps_the_form_recorded_runs_were_frozen_with():
     )
     # Recorded manifests hold this digest; changing the hashed form orphans them.
     assert question_records_sha256([team]) == "d8bdd1dd29762137914335744c3dd68915716d9adb058f40f8b7706e01ac0ca4"
+
+
+def test_supplied_corpus_is_fingerprinted_without_reading_it_again(monkeypatch, tmp_path):
+    def unexpected(**kwargs):
+        pytest.fail("caller already loaded this corpus")
+    monkeypatch.setattr("src.evaluation.provenance.iter_chunks", unexpected)
+    chunks = [{"chunk_id": "a", "text": "value", "accession_no": "filing"}]
+    result = record_provenance([], [], tmp_path, chunks=chunks)
+    assert result["corpus"]["n_passages"] == result["corpus"]["n_filings"] == 1

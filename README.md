@@ -856,6 +856,8 @@ check justify adoption. The measured run (#161) fails the quality gates:
 
 The reranker helps prose evidence and hurts table evidence, which most
 questions rely on.
+The report distinguishes these measurements from the historical 149-question
+study, diagnostic-inclusive timings and the model-free table-boost sensitivity.
 
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`)
 are applied before scoring, not after, in every method. BM25

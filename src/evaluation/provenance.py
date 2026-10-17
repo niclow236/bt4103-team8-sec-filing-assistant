@@ -50,13 +50,15 @@ def question_records_sha256(questions: Sequence[BenchmarkQuestion]) -> str:
 
 def record_provenance(
     inputs: Sequence[Path], questions: Sequence[BenchmarkQuestion], processed_dir: Path,
+    *, chunks: Sequence[dict] | None = None,
 ) -> dict[str, Any]:
     """Record file digests, corpus content and the actual installed settings.
 
     No environment variables or credentials are read. The source-file hashes
     distinguish dirty source trees even when the HEAD commit is unchanged.
     """
-    chunks = list(iter_chunks(processed_dir=processed_dir))
+    if chunks is None:
+        chunks = list(iter_chunks(processed_dir=processed_dir))
     settings = {
         name: getattr(constants, name) for name in (
             "EMBED_MODEL", "EMBED_DIMENSIONS", "EMBED_MAX_TOKENS",

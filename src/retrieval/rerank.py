@@ -7,7 +7,7 @@ from math import isfinite
 from time import perf_counter
 from typing import Any, Sequence
 
-from .base import Retriever, has_candidates, matches, reorder, resolve_k
+from .base import Retriever, has_candidates, matches, reorder, resolve_k, validate_table_boost
 from .constants import CANDIDATE_K
 from .records import Query, RetrievedPassage
 
@@ -39,6 +39,7 @@ class RerankConfig:
             "scores": "raw logits; sign-aware Query.table_boost; no score floor",
             "ties": "chunk_id ascending",
             "truncation": "tokenizer longest_first, including query and special tokens",
+            "latency": "predict and reorder only; diagnostic token counting excluded",
         }
 
 
@@ -78,8 +79,7 @@ class CrossEncoderReranker:
         self, query: Query, candidates: Sequence[RetrievedPassage], *, k: int | None = None,
     ) -> RerankResult:
         wanted = resolve_k(query, k)
-        if not isfinite(query.table_boost) or query.table_boost <= 0:
-            raise ValueError("table_boost must be finite and positive")
+        validate_table_boost(query.table_boost)
         if wanted > self.config.candidate_k:
             raise ValueError("final k must not exceed candidate_k")
         if len(candidates) > self.config.candidate_k:
@@ -94,14 +94,17 @@ class CrossEncoderReranker:
         model = self.load()
         from torch.nn import Identity
 
-        started = perf_counter()
         # Count the exact paired input, without truncating the diagnostics.
+        # This extra pass is not part of inference and must not affect its gate.
+        diagnostic_started = perf_counter()
         encoded = model.tokenizer(
             [query.text] * len(candidates), [p.text for p in candidates],
             truncation=False, padding=False, return_length=True,
             verbose=False,
         )
         lengths = [int(n) for n in encoded["length"]]
+        started = perf_counter()
+        diagnostic_tokenization_ms = (started - diagnostic_started) * 1000
         scores = [float(n) for n in model.predict(
             [(query.text, p.text) for p in candidates],
             batch_size=self.config.batch_size, show_progress_bar=False,
@@ -118,6 +121,7 @@ class CrossEncoderReranker:
         elapsed = (perf_counter() - started) * 1000
         return RerankResult(passages, {
             "latency_ms": elapsed,
+            "diagnostic_tokenization_ms": diagnostic_tokenization_ms,
             "device": str(getattr(model, "device", self.config.device)),
             "truncated": sum(n > self.config.max_length for n in lengths),
             "candidates": [

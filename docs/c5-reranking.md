@@ -17,8 +17,10 @@ retrospectively chosen cutoffs:
 - A question-type slice (overall or within a benchmark) with at least 10
   answerable questions must not lose more than **0.02** nDCG. Mean
   hard-negative accuracy must not lose more than **0.01**.
-- Added steady-state reranking time, including input-length diagnostics and
-  ranking, must have a median at most **500 ms** and p95 at most **1,000 ms**.
+- Added steady-state reranking time (model prediction and ranking) must have a
+  median at most **500 ms** and p95 at most **1,000 ms**. The extra diagnostic
+  token-counting pass is excluded and recorded separately as
+  `diagnostic_tokenization_ms`.
   This allows a modest extra stage in an interactive query; cold model load and
   warm-up are recorded separately.
 - If these gates pass, perform a paired answer-quality comparison before
@@ -29,7 +31,8 @@ policy. A run or rescore at another cutoff or a reduced candidate depth records
 metrics with `advance_to_answer_evaluation: null`, even if those
 metrics would otherwise pass. A missing benchmark blocks advancement. The
 latency gate excludes empty candidate pools; their number and the number of
-timed questions are reported explicitly.
+timed questions are reported explicitly. An unmeasurable hard-negative gate
+also blocks advancement; missing labels are not evidence that it passed.
 
 The team benchmark is the 150-question `benchmark/questions.jsonl`. Its
 questions carry no `source` tag (#162), so they are reported as one `team`
@@ -117,7 +120,13 @@ BM25 and dense index manifests, including build identity, before loading models.
 After warm-up it also requires the loaded dense encoder revision to match the
 original runtime when that revision was recorded, before recording new pairs.
 Each segment can supply a new workload note without replacing the original
-manifest. A process-safe `run.lock` prevents concurrent writers to one run ID
+manifest. Identical input digests may be supplied through different paths, and
+an OS build-string change is allowed; paths, environment and workload are
+retained in immutable runtime segments. Source, ordered input digests, corpus
+digests, package/Python versions, machine architecture, settings, index identity
+and loaded encoder revision must still match. Warm-up searches until a nonempty
+pool exercises the cross-encoder; an entirely empty benchmark explicitly records
+`cross_encoder_warmed: false`. A process-safe `run.lock` prevents concurrent writers to one run ID
 and releases its OS lock on exit, including a killed process.
 
 To recompute metrics and the decision without models or corpus files:
@@ -128,7 +137,24 @@ python -m src.evaluation.rerank_ablation rescore results/c5-reference-YYYYMMDD
 
 An optional `--top-k` can rescore a smaller cutoff, up to the stored final k.
 It is a sensitivity check, not a replacement for the declared @16 decision.
-Incomplete runs cannot be presented as a final rescored benchmark.
+Incomplete runs cannot be presented as a final rescored benchmark. Scores are
+recomputed from recorded ranks once per question/configuration/cutoff and reused
+across metrics and slices. Connected-filing clusters are computed once per
+subset, preserving the original bootstrap grouping and confidence intervals.
+
+To isolate the final table boost without another model call:
+
+```bash
+python -m src.evaluation.rerank_ablation table-boost-sensitivity results/c5-reference-YYYYMMDD
+```
+
+This first verifies the complete benchmark digest and reproduces the recorded
+C5 ranks/scores from the saved logits and original per-query boost. It then
+sorts the same logits with boost 1.0, using chunk-ID ties. The separate
+`table-boost-sensitivity-k16.json` contains both quality reports, original
+policy and artifact hashes. It carries no adoption or latency decision and
+never modifies the original pairs/config/summary. It can diagnose historical
+source-split runs; normal `rescore` still refuses their obsolete decision policy.
 
 Older pairs lack `gold_filings`, so their gold-scope diagnostics are `null`,
 never invented zeros. To derive those fields from supporting chunk IDs without
@@ -180,7 +206,7 @@ answer-quality comparison or app adoption is triggered by this result.
 
 It replaces the #154 reference `c5-reference-20261010`, which pinned the
 earlier 149-question file and split the team's questions by source. That run
-can't be resumed or extended: this machine's corpus (28,313 passages, not
+can't be resumed or extended: the #172 machine's corpus (28,313 passages, not
 28,289) and generated XBRL set differ from it, and the runners refuse to mix
 input hashes. Both studies were therefore measured again from scratch (#161).
 
@@ -228,11 +254,15 @@ None of the 101,650 scored candidate pairs exceeded the 512-token paired input
 limit. 1,885 questions had untruncated gold in the pool, 145 had no gold in the
 pool, and 4 are unlabelled.
 
-Steady-state added reranking time: median **279.5 ms**, p95 **442.8 ms**, over
+Recorded added reranking time: median **279.5 ms**, p95 **442.8 ms**, over
 2,033 nonempty pools; 1 empty pool is excluded. Median shared C4 retrieval is
 553.9 ms; median C4 retrieval plus C5 reranking is 830.5 ms. The latency gates
-pass; the quality gates do not. These are retrieval-stage measurements, not
-generation or full answer latency.
+passed on that recorded implementation; the quality gates do not. Those timings
+include the extra diagnostic tokenization pass flagged in review, as do the
+historical M1 figures (417.1 ms / 531.8 ms). They are not corrected inference-only
+timings, and cannot be corrected by rescoring saved results. The patched runner
+excludes that diagnostic pass; new timing evidence must be measured separately.
+These are retrieval-stage measurements, not generation or full answer latency.
 
 The Apple M2 / 8 GiB laptop used MPS for both encoders. Cached cross-encoder
 loading took 9.65 s and warm-up 7.72 s, both excluded from steady-state
@@ -244,7 +274,9 @@ The run is one uninterrupted segment on source `13ca6f5`. The
 [measurement manifest](evaluation/c5-reference-20261017-manifest.json) records
 all input/source/corpus fingerprints, the pinned model revision, dependency
 versions, index build identities, hardware and artifact hashes. The corpus and
-per-question pairs remain local under `data/` and `results/`.
+per-question pairs remain local to the #172 measurement machine under `data/`
+and `results/`. These report files were imported from PR #172 at `8d912cd`;
+they were not measured on the PR #155 review checkout.
 
 Evidence type splits the result, as it did in #154. The pooled gold-evidence
 slices across both benchmarks are:
@@ -273,3 +305,64 @@ follows from these retrieval metrics.
 For #44, the C5 row is **experimental MiniLM reranking of C4, evaluated and
 rejected for default adoption**, with these paired results retained as the
 negative ablation and its prose gains/table regressions recorded explicitly.
+
+
+## Historical table-boost sensitivity (#155 review)
+
+This model-free diagnostic uses all **12,728** saved pairs from the superseded
+`c5-reference-20261010` M1 run (149 team + 12,579 XBRL), not the new #172
+benchmark. Every original C5 rank/score was reconstructed exactly from the
+saved logits and query-specific boost before removing the final boost.
+Original artifacts remain unchanged; hashes and full grouped results are in
+[the sensitivity report](evaluation/c5-reference-20261010-table-boost-sensitivity.json).
+
+| Gold evidence | Relevance-scored | C4 nDCG@16 | Original C5 | C5 final boost 1.0 | Change from original C5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Prose | 878 | 0.1636 | 0.3483 | 0.3695 | +0.0212 |
+| Prose + table | 2523 | 0.3028 | 0.3743 | 0.3709 | -0.0034 |
+| Table | 9323 | 0.5487 | 0.4358 | 0.3821 | -0.0538 |
+
+Removing the final logit boost worsens table-question nDCG by 0.0538 on this
+historical cohort. Thus that boost mitigated, rather than explained, the
+observed table regression in this comparison. It also slightly hurt prose
+retrieval. This is evidence about this fixed checkpoint, candidate pool and
+corpus; it does not establish an intrinsic weakness of all MiniLM rerankers or
+select an optimal table-score transformation. Candidate retrieval still uses
+its original table policy. No latency or answer-quality effects are inferred,
+and this diagnostic carries no adoption decision. Additive or sigmoid-based
+boosts would require separately declared experiments.
+
+
+## Fresh inference timing validation (#155 review)
+
+Source `5a1c4c0` measured all **150 current team questions** against the local
+28,289-passage / 75-filing corpus on an Apple M1 / 16 GiB laptop, with both
+encoders on MPS. This is a team-only timing validation, not the complete
+team/XBRL quality reference from #172. The initially sandboxed MPS load failed
+before any pair; native resume used the identical manifest and completed one
+measured segment. No other model or test job ran; normal desktop apps and the
+Codex session remained open.
+
+Across **149 nonempty pools** (one empty pool excluded), added inference and
+reordering time was **400.5 ms median / 467.8 ms p95**. The extra diagnostic
+tokenization pass was recorded separately at **4.9 ms median / 6.6 ms p95**.
+Cached cross-encoder load was 5.10 s; warm-up was 3.51 s on `daryl-01`, with
+`cross_encoder_warmed: true`. Load and warm-up are excluded from the quantiles.
+These are recorded laptop stage timings, not full answer latency. They do not
+replace or retroactively correct either original reference's timings; the
+cohorts/hardware differ, so a direct speedup is not inferred.
+
+Native model-free rescore exactly reproduced the complete summary. A completed
+native resume with an absolute benchmark path and relative corpus path also
+succeeded. The missing XBRL benchmark explicitly blocks advancement; this
+validation is not a new adoption decision. The [portable timing report](evaluation/c5-review-20261017-team-timing.json)
+records source/input/corpus/runtime identities, quantiles and original artifact
+hashes; per-question files remain local.
+
+Review verification: all **2,126 local tests pass** (58.85 s). The scoring
+refactor exactly preserves every aggregate, confidence interval and decision
+against the unoptimized #172 summarizer on all 12,728 historical pairs using
+the same team/XBRL groups (5.695 s versus 1.063 s on this laptop). Test-first
+regressions reproduced the latency, warm-up, unmeasurable-gate, repeated-scoring,
+corpus-read and resume problems before their fixes. The strengthened warm-up
+coverage exercises both fresh and resumed empty-first/all-empty cases.
