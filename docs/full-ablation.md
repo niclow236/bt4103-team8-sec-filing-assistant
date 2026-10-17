@@ -4,11 +4,12 @@ The experiment measures all 2,034 questions for retrieval: the 150 team
 questions and 1,884 mechanical XBRL questions. Answer generation, semantic
 judging and verification cover the complete 150-question team set. The team's
 questions carry no `source` tag (#162), so results report one team slice
-beside the mechanical set. This machine's facts store holds 5,046 facts (built 11 September), so the
-local `benchmark/generated.jsonl`, generated from it on 23 September, holds
+beside the mechanical set. The #172 measurement machine's facts store held
+5,046 facts (built 11 September), so its local `benchmark/generated.jsonl`,
+generated from it on 23 September, holds
 1,884 questions, not the 12,579 a full facts store gives (see the README).
-Regenerating it today gives the same 1,884 questions, 34 of them with different
-supporting chunks; the runs pin the 23 September file by hash.
+During #172 verification, regenerating it gave the same 1,884 questions, 34 of
+them with different supporting chunks; the runs pin the 23 September file by hash.
 Mechanical labels come from the facts store, so their separate retrieval
 results do not claim independent answer quality. The app continues to use C4;
 these evaluation rows do not adopt the experimental reranker.
@@ -37,6 +38,14 @@ after checking the exact question sequence and parsed queries, corpus digest,
 retrieval settings, library versions, index builds and loaded encoder revision.
 The original source/config/pair hashes and runtime are recorded. Their timings
 remain from that earlier workload, not a fresh simultaneous timing trial.
+The #172 reranker timings include its extra diagnostic token-counting pass.
+Current code times that pass separately, as explained in the
+[C5 review report](c5-reranking.md). Reference import compares every ranking
+setting and retains the reference's timing descriptor (or records that it was
+unrecorded); a reporting-only latency descriptor cannot invalidate identical
+saved rankings. Checkpoint/revision, depths, token limit, queries, corpus,
+packages and index identities remain guarded. A fresh run must not label
+imported diagnostic-inclusive timings as newly measured inference-only latency.
 
 C5/C6 use `cross-encoder/ms-marco-MiniLM-L-6-v2` revision
 `233902d25c440f23af6f7d6e94d2946bac0bee0a`, 512-token inputs and batches of 32.
@@ -57,6 +66,15 @@ relevance proxies in a different chunk namespace, not independently adjudicated
 C0 evidence labels. C0 answer citations use that same projected namespace.
 
 ## Run and reproduce
+
+Exact reproduction of the archived #172 measurements needs its recorded source
+(`13ca6f5` for retrieval and `9f29f9f` for answers), corpus, indexes and frozen
+benchmark files. These live on the #172 measurement machine; this checkout's
+local corpus and generated set differ. The commands below describe that
+protocol. Running current code with a new run ID makes a new measurement;
+source/settings guards intentionally prevent resuming the old study after
+changing the code or inputs. Model-free rescoring uses the saved per-question
+rankings, answers and judge outputs rather than regenerating them.
 
 ```bash
 python -m src.evaluation.rerank_ablation run \
@@ -176,6 +194,9 @@ each row's metric denominators and benchmark/type breakdowns. The
 source/input/corpus/index/model identities, hardware, runtime segments and
 artifact hashes. Large per-question and corpus files remain local in
 `results/full-matrix-20261017/` and `data/`.
+Those native artifacts are on the #172 measurement machine. The committed
+summaries and manifest are incorporated unchanged from #172 at `8d912cd`;
+they are not represented as a new full study on the PR #158 review checkout.
 
 Retrieval ran in one segment on source `13ca6f5`, on an Apple M2 / 8 GiB
 laptop with MPS; loading and warm-up (7.1 s) are excluded. C4/C5 rankings and

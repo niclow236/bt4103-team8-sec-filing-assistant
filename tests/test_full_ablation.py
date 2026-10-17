@@ -174,6 +174,31 @@ def test_reference_requires_exact_queries_and_complete_question_sequence(tmp_pat
         matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
 
 
+@pytest.mark.parametrize('changed', [None, 'revision', 'max_length', 'candidate_k'])
+def test_reference_timing_annotation_is_not_a_ranking_setting(tmp_path, changed):
+    import gzip
+    from src.evaluation.run import _query
+    q=question();reranker=CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0]))
+    provenance={'question_records_sha256':'q','retrieval_settings':{},
+                'corpus':{'records_sha256':'same'},'source_commit':'frozen'}
+    recorded=reranker.config.to_dict()
+    recorded.pop('latency')  # #172 predates the new timing-only descriptor.
+    if changed is not None:
+        recorded[changed]='changed' if changed=='revision' else recorded[changed]+1
+    matrix.dump(tmp_path/'config.json',{'provenance':provenance,'top_k':16,'reranker':recorded})
+    matrix.dump(tmp_path/'runtime.json',{'bm25_manifest':None,'dense_manifest':None})
+    record={'question':q.to_dict(),'query':json.loads(json.dumps(asdict(_query(q,top_k=16,metadata_filter=True))))}
+    with gzip.open(tmp_path/'pairs.jsonl.gz','wt') as stream:
+        stream.write(json.dumps(record)+'\n')
+    if changed is not None:
+        with pytest.raises(ValueError,match='reranking configuration'):
+            matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
+    else:
+        rows,meta=matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
+        assert rows==[record]
+        assert meta['reranker_latency_definition'].startswith('unrecorded')
+
+
 def test_pending_judge_keeps_the_completed_answer_and_all_attempt_costs(tmp_path):
     from src.rag.records import Answer,GenerationConfig,Citation,SentenceCitations
     from src.rag.constants import PROMPT_TEMPLATE_ID

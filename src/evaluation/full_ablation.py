@@ -131,7 +131,12 @@ def reference_rows(path: Path, questions, provenance, hybrid, reranker) -> tuple
             raise ValueError(f"reference package version differs: {package}")
     if original["corpus"]["records_sha256"] != provenance["corpus"]["records_sha256"]:
         raise ValueError("reference corpus differs")
-    if config["top_k"] != FINAL_K or config["reranker"] != reranker.config.to_dict():
+    # The new latency descriptor changes reporting, not rankings. A frozen
+    # reference keeps its original timing definition; all scoring parameters
+    # (including checkpoint/revision, depth and token limit) must still match.
+    recorded_reranker = {key:value for key,value in config["reranker"].items() if key != "latency"}
+    current_reranker = {key:value for key,value in reranker.config.to_dict().items() if key != "latency"}
+    if config["top_k"] != FINAL_K or recorded_reranker != current_reranker:
         raise ValueError("reference reranking configuration differs")
     if any(runtime.get(key) != value for key, value in _index_manifests(hybrid).items()):
         raise ValueError("reference indexes differ")
@@ -143,6 +148,8 @@ def reference_rows(path: Path, questions, provenance, hybrid, reranker) -> tuple
             raise ValueError("reference query policy differs")
     return rows, {"source_commit": original["source_commit"], "config_sha256": sha256(path / "config.json"),
                   "pairs_sha256": sha256(path / "pairs.jsonl.gz"), "runtime": runtime,
+                  "reranker_latency_definition": config["reranker"].get(
+                      "latency", "unrecorded in reference; preserve original timing measurement"),
                   "timing_note": "Imported original shared-retrieval/reranking timings and workload; not a new timing trial."}
 
 
