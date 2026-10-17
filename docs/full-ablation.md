@@ -232,3 +232,30 @@ recall (0.7627 → 0.8217) but lowers nDCG and MRR on both benchmarks. These are
 single-run model judgements, not statistically established human accuracy
 differences. C5/C6 do not justify changing the default under the recorded
 protocol.
+
+
+## Review integration verification (#158)
+
+PR #172 (`8d912cd`) is incorporated into the #158 feature branch alongside
+all current #155 fixes (`2ee4263`). The three `full-matrix-20261017` report
+artifacts remain byte-for-byte unchanged. Their benchmark hash matches the
+current 150-question team file. All seven retrieval/answer counts, relevance
+and correctness denominators, README table values, C4/C5 reference aggregates
+and local report links were checked. The superseded full-study links are
+replaced; historical C5 boost sensitivity is separately labelled.
+
+The combined source passes **2,147 local tests** (58.31 s). A new regression
+reproduced the timing-descriptor reference-import failure introduced by
+combining the branches. The fix ignores only reporting-only latency text when
+matching ranking settings and preserves that original text in reference
+metadata; changed revision, token limit and candidate depth remain refused.
+
+Real cached BGE/MiniLM models on the local M1/MPS ran all C0-C6 rows on seven
+team/XBRL questions covering all five question types and `nicholas-21`, plus a
+separate Cisco/Palo Alto FY2024 comparison that exercised two C6 filing
+searches. Both runs froze source `392325a`: **8 questions / 56 retrieval
+outputs**, with every saved-ranking metric recomputed exactly. Completed
+native resume of the seven-question run also succeeded. No hosted answer calls
+were made. The [smoke report](evaluation/full-matrix-review-20261017-smoke.json)
+records identities and artifact hashes; these local integration smokes do not
+replace the archived M2 study or claim new full-benchmark answer measurements.
