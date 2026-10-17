@@ -141,10 +141,17 @@ def test_the_floor_applies_to_the_boosted_score():
     assert [p.chunk_id for p in ranked] == ["table"]
 
 
-@pytest.mark.parametrize("boost", [0.0, -1.0])
+@pytest.mark.parametrize("boost", [0.0, -1.0, float("nan"), float("inf"), -float("inf")])
 def test_a_boost_that_is_not_positive_is_refused(boost):
     with pytest.raises(ValueError, match="table_boost"):
         rank([(row(), 1.0)], retriever="bm25", table_boost=boost)
+
+
+@pytest.mark.parametrize("boost", [0.0, -1.0, float("nan"), float("inf"), -float("inf")])
+def test_reorder_refuses_nonpositive_or_nonfinite_boosts(boost):
+    found = rank([(row(), 1.0)], retriever="bm25")
+    with pytest.raises(ValueError, match="table_boost"):
+        reorder([(found[0], 1.0)], retriever="second", table_boost=boost)
 
 
 # --- the boost through a second stage ---------------------------------------

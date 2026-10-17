@@ -5,6 +5,11 @@ over the **same** filtered hybrid top-50 pool, returning 16 passages in both row
 It does not add C5 to the app's selectable configurations. Adoption requires a
 retrieval benefit, an answer-quality check, and teammate review.
 
+The 2,034-question M2 reference below contains only 1,884 mechanical questions;
+it does not by itself satisfy #154's complete-XBRL acceptance criterion. A
+fresh local full-scope run covers **150 team + all 12,579 mechanical questions**
+before closing that criterion. No waiver of the smaller cohort is assumed.
+
 ## Decision criteria declared before the final run
 
 These are practical gates for this experiment, not universal thresholds or
@@ -33,6 +38,15 @@ metrics would otherwise pass. A missing benchmark blocks advancement. The
 latency gate excludes empty candidate pools; their number and the number of
 timed questions are reported explicitly. An unmeasurable hard-negative gate
 also blocks advancement; missing labels are not evidence that it passed.
+
+Adoption additionally requires the declared complete cohort: 150 team and
+12,579 XBRL questions, with canonical question-record SHA-256
+`84763df25b8c320ef5f1a60ab8e554db35b4e959eff975bdf81fc898bfc90339`.
+Counts and digest are frozen in `POLICY` before the full run. A sample,
+different question revision, or legacy policy without this declaration records
+`advance_to_answer_evaluation: null`; quality failures remain diagnostic
+`quality_gate_reasons`, not an adoption decision. A new accepted benchmark
+requires an explicit policy update and fresh measurement.
 
 The team benchmark is the 150-question `benchmark/questions.jsonl`. Its
 questions carry no `source` tag (#162), so they are reported as one `team`
@@ -141,6 +155,19 @@ Incomplete runs cannot be presented as a final rescored benchmark. Scores are
 recomputed from recorded ranks once per question/configuration/cutoff and reused
 across metrics and slices. Connected-filing clusters are computed once per
 subset, preserving the original bootstrap grouping and confidence intervals.
+
+Both ordinary rescore and table-boost sensitivity first verify the full stored
+rankings, even when a smaller rescore cutoff is requested. C4 must reproduce
+the saved pool order/hybrid scores; C5 must reproduce its raw logits, original
+table boost and chunk-ID ties. Both rows retain exactly `min(stored_k, pool)`
+passages and scores. Duplicate IDs, non-finite candidate scores and inconsistent
+rankings are refused before output. Resume checks a saved prefix before repair,
+runtime writes or scoring. These are consistency checks against recorded model
+outputs, not protection against coordinated fabrication of outputs/provenance.
+
+The shared shipped `rank`/`reorder` path rejects NaN and infinite table boosts
+as well as nonpositive ones. The normal 1.2 boost is unchanged. Direct tests for
+both paths detect restoring the old nonpositive-only check.
 
 To isolate the final table boost without another model call:
 
