@@ -1,0 +1,176 @@
+{
+  "run_id": "c5-review-20261017-team-timing",
+  "purpose": "Fresh timing validation on all current team questions; not a complete team+XBRL adoption study",
+  "measurement_source_commit": "5a1c4c0c98b14af53e5a2f238471236ee7ea47f6",
+  "source_files_sha256": {
+    "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/app/__init__.py": "5b6e1ae9068a295d803ed50441a6c177f71f53ea855a97af4ca76dce3666e5e4",
+    "src/app/answers.py": "52a45436ca60625a890d8a887430d29868535d6cba08be7d39e086dea5b76f8e",
+    "src/app/app_pages/ask.py": "ded08044f66ac5503265b3f694442067cf4050a2af8a086a9d07c31bce9ab1b2",
+    "src/app/app_pages/browse.py": "df9a22b12856a585a02bdfaf5a287d1839d4229e8e46c5602da17d7ad6d7850a",
+    "src/app/app_pages/compare.py": "25f71256aac5b90be54122682f945b60e11cea0cd511355182afdb9ad5bd81c5",
+    "src/app/app_pages/results.py": "a7153b5f426a9d3264cfb41bb489d563855ecec5da3891932189959179854f5d",
+    "src/app/components.py": "59a338256f1d4fe5da9682132762576fe70071dff3bbae39f92d66a46a6ca00f",
+    "src/app/main.py": "f76c2ea6ab538fe482ce10daefdf6b4082bb15d72ce4b8e0be4c90a9a11df0db",
+    "src/app/state.py": "0a91cc2937e076367415bb816416746dfaaa097e27b9adbed0b18f8df70c309c",
+    "src/config.py": "5d55b8a71442140d804c1727ce73a15d9e53d4aa40e2651a727deb8e6ec0d755",
+    "src/evaluation/__init__.py": "9833479d30ebf16379eb8d48a3e4f653febdeebb2b585a8d12b9bbd889f2cf40",
+    "src/evaluation/__main__.py": "f2d597c20fabcc353558a57a209fed42e316523c0481c5a47020a0b2b0784492",
+    "src/evaluation/benchmark.py": "2b3473b7d281736c745e38e2b7883a89d54067ee68aac2d03df0ec635a4b0c21",
+    "src/evaluation/chunk_sweep.py": "318d4d3f96b11369aef4b9dfbff08326ffc875feb30f72d42052808dc33f2c9f",
+    "src/evaluation/cli.py": "e4cc1a6fb330a44cfcb540133124f9bdf6571c5b3b97db09dc9cf13d7fc314b4",
+    "src/evaluation/harness.py": "31de793c55bb49c371137e2af3afdae4316e006a5eb4952e63829a802c0fad30",
+    "src/evaluation/metrics.py": "75e9a4cbb4beab8a3a808a918f34d1fa71019fbdf9b07f65f9d716482aa570d4",
+    "src/evaluation/model_ablation.py": "5d6a9c688ed9586b28cffc867c830023dbcdede99f15dd7cc1a52217446cc955",
+    "src/evaluation/provenance.py": "d413869d778bb44956336cc80d48fffb09ec73e66f322565b90f905755944774",
+    "src/evaluation/quality.py": "942ecdbc3e31c5c3e0746872b632c3af6b8e4326f537bcd49f3b54dfab92c9c0",
+    "src/evaluation/records.py": "f173bcf40219da8f40c96ed2f56d189f99324e53ca2e55d08556105e6bda911a",
+    "src/evaluation/rerank_ablation.py": "76b06bbc5d610aa3da8935db6924832ca86004c62b2de9d0a902966324e32553",
+    "src/evaluation/results.py": "facba8e3b23fc70aae3aeab69df0f3bbed81169498b3e6240dca2da5222b3e24",
+    "src/evaluation/run.py": "3253f4ad1fe28e829f3f85cde2f3a5f80926a8e33d3ab00765f497b984504017",
+    "src/pipeline/__init__.py": "ac4c7dee478cda54e11d88f5ee2fecc22bf5a8d45abcd529b88671e4e994c564",
+    "src/pipeline/__main__.py": "0770f5598ecdb9b6d259e9553707309920ec0def32f5a1b9b5c78e973e94eab8",
+    "src/pipeline/chunk.py": "69e6fb26fed074ee27064ea978d693bc6f7306b03e767a54522620dc4499b7e9",
+    "src/pipeline/cli.py": "72cbbd32394037d48bddae3a231a29c243d96fc37a3b7006d3c6d7981c4929e7",
+    "src/pipeline/constants.py": "91964519de864642e54b6ba3d8becc4def5da95c03d4dbfc097001fd6fa852f6",
+    "src/pipeline/download.py": "a2adc7f3a37af4f92e080acc0593f67d6a1b49fb84560cae406ff00ce54b69fe",
+    "src/pipeline/parse.py": "23c54ef816f0e1d0f3423710fc2fafc18e722c410896a7337526d1db6af65a10",
+    "src/pipeline/passages.py": "350f70e29eae1e43c6d111985afa8ed48352a4eb36781fe5688140463572ef7e",
+    "src/pipeline/records.py": "960ed4ec2bc2bdd6ca79c66717f6cd25abadc21eb4746b3a247095c8b50e1db2",
+    "src/pipeline/verify.py": "d7e9c1f1a1f8a83b7781bab05e1e47172312feddcab61bfc2089f62c19ae637c",
+    "src/rag/__init__.py": "c26b91aedecba203e7e57c71159fea327d269651b2f3fbc201d113365fd9d1a7",
+    "src/rag/answer.py": "ddeea1e9170177cef5d40c470734fd14d63c9c1263718b0cc03bd310c7bccb8f",
+    "src/rag/citations.py": "73441a5f3df1bc54d911ae0367c4b20dbdbb7fc101e1b2d594d29435c55f5e13",
+    "src/rag/constants.py": "ba05c7b59bfaf97abb35a1bded3fb52a2e922f26b072f0eab75a73a3e09962d4",
+    "src/rag/decompose.py": "062b086156bf139f86d3055393edfe38b6c3ce4368842f1334b9dc48bd8e80e7",
+    "src/rag/generate.py": "a219b87e36a60e65a0283f546d6e3f77bb4013e63511b2f880ff466408d0fb63",
+    "src/rag/numeric.py": "db21513bd1fd98db32ed7559999194cfca9c6d19f260e6ab7bd51c82c4dc2efb",
+    "src/rag/prompt.py": "038721536028eecfaa236c30dfc7d9c742e0f3a14f07586e49a8e5f374c43815",
+    "src/rag/query.py": "f04752ab43c46132a46536eae4cf3714020a056c6e4d0d9ade9a45575e3c0487",
+    "src/rag/records.py": "ffd55ae6ef066116e0d0b1aa7daecd39c9f5f79cf0691eddfbf9a3783050b2a4",
+    "src/rag/verify.py": "76405790fb682003d5e76d395a25aecf149d1d90528d79bbcba4ef52eacf9348",
+    "src/retrieval/__init__.py": "723f1ff2a59dd9287e570ad52be7e8ad1a13ac2fa551a2b10e3045a61288efdb",
+    "src/retrieval/__main__.py": "94c1a491fe254401f678d0a8893ea2731203211542dd9aa782b71f073771a0f0",
+    "src/retrieval/base.py": "ee1376739c9a827a4f1053cdcf94f34c7f28593fa5ed18835d5f31c3df13c414",
+    "src/retrieval/bm25.py": "a1e1db0a929e5eba6268c2c8311681932a5db90b4fca35c603501018a88636e2",
+    "src/retrieval/cli.py": "36ca386fee8bc3648ae15db79d732977be2a9f9e11f18558a8bed240d82aba5d",
+    "src/retrieval/constants.py": "a0c1fc57f67a620934ec887a68ee5b3088587b836bc4c9be7f2bc0fd660dd279",
+    "src/retrieval/dense.py": "b96e16f6cbd558503cca9fef7e6c2520d5f58dc6fa29121b28099dcecc653e82",
+    "src/retrieval/embed.py": "68a09a7553ea2d194ddcb99d4dcf6b4de992189f9b47ce1ea83d1367d812ea76",
+    "src/retrieval/embedding_config.py": "2bab8d84b8baba3c6cae8a22e924d442b4325076b75873a318059d3bd71f08b5",
+    "src/retrieval/facts.py": "998b603c26d9ec3cdb4b34acbce6feb957f36c60d628713763885959484e891a",
+    "src/retrieval/hybrid.py": "1c620e45fda598105d35ce9a57771fb5224127538ba04dc49e2b317d8a71bcce",
+    "src/retrieval/records.py": "7d68a9830a9f6410b81503954f227dfc6b2045dacc9f25ddfa639b2847bbcefd",
+    "src/retrieval/rerank.py": "ecdfe0edda6dfffa625e0466c921ab6271a6c492cbe4b1c8dd97ef98625303be",
+    "src/stack.py": "6ddb9336e22fbcec263f7684e08209404e9dfc4124a3e9cfa66965e1d0fdc740",
+    "src/utils.py": "958ed9c55afde05dea3ae0af5e05a242f2ea2b4ad5286caa56e7905eab84ddb8"
+  },
+  "questions": 150,
+  "benchmark": [
+    {
+      "path": "benchmark/questions.jsonl",
+      "sha256": "790298149d18e72a405235c66d78a757a73744618f0b04d534580d28bfdfdb38"
+    }
+  ],
+  "question_records_sha256": "3376429c0657eaf88911d1595694409df770349f6bc0de87a4151f9ac3d13d37",
+  "corpus": {
+    "fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+    "records_sha256": "aa85811812ecef6ad95f08fc19419f35f5e9875406119fa71ba949338570501c",
+    "n_passages": 28289,
+    "n_filings": 75,
+    "chunk_settings": [
+      [
+        1800,
+        300
+      ]
+    ]
+  },
+  "hardware": {
+    "cpu": "Apple M1",
+    "memory_bytes": 17179869184,
+    "environment": {
+      "python": "3.13.7",
+      "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "packages": {
+        "torch": "2.14.0",
+        "sentence-transformers": "6.0.1",
+        "transformers": "5.17.0",
+        "tokenizers": "0.23.2",
+        "chromadb": "1.5.9",
+        "rank-bm25": "0.2.2",
+        "numpy": "2.5.3",
+        "filelock": "3.32.6"
+      }
+    }
+  },
+  "reranker": {
+    "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+    "candidate_k": 50,
+    "max_length": 512,
+    "batch_size": 32,
+    "device": "mps",
+    "input": "(Query.text, RetrievedPassage.text); no added header or prompt",
+    "scores": "raw logits; sign-aware Query.table_boost; no score floor",
+    "ties": "chunk_id ascending",
+    "truncation": "tokenizer longest_first, including query and special tokens",
+    "latency": "predict and reorder only; diagnostic token counting excluded"
+  },
+  "top_k": 16,
+  "workload_note": "Review timing validation on all 150 current team questions; local 28289-passage corpus. Normal desktop apps and Codex session; no other model or test job. Inference excludes separately timed diagnostic token counting; not a full team+XBRL adoption run.",
+  "runtime": {
+    "cross_encoder_load_ms": 5097.301709000021,
+    "warmup_ms": 3506.98308396386,
+    "warmup_question_id": "daryl-01",
+    "cross_encoder_warmed": true,
+    "cross_encoder_device": "mps:0",
+    "dense_device": "mps:0",
+    "dense_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "resumed_after_questions": 0
+  },
+  "latency_ms": {
+    "rerank_questions": 149,
+    "empty_pool_questions": 1,
+    "rerank_median": 400.46424994943663,
+    "rerank_p95": 467.8034334210679,
+    "C4_median": 642.0873749593738,
+    "C5_median": 1054.4664790213574,
+    "diagnostic_tokenization_median": 4.93916601408273,
+    "diagnostic_tokenization_p95": 6.648065987974405
+  },
+  "recorded_gate_decision": {
+    "advance_to_answer_evaluation": false,
+    "reasons": [
+      "team: nDCG gain/uncertainty criterion not met",
+      "team: mrr regression criterion not met",
+      "missing benchmark xbrl",
+      "factual: nDCG regression criterion not met",
+      "numeric: nDCG regression criterion not met",
+      "team:factual: nDCG regression criterion not met",
+      "team:numeric: nDCG regression criterion not met"
+    ],
+    "default": "C4",
+    "adoption": "requires paired answer evaluation and team review"
+  },
+  "validation": {
+    "all_question_ids_match_current_team_file": true,
+    "rescore_equals_summary": true,
+    "completed_resume_with_changed_paths_succeeded": true
+  },
+  "artifacts_sha256": {
+    "config.json": "82a0ed36a144506ed6d1b6d195116870334530a0282499adc43b40ab132efef1",
+    "runtime.json": "9d356efd6446cb74be89c95e146eafd69fe20fe7c22053ee52c8112ea3dc4db2",
+    "runtime-0000.json": "9d356efd6446cb74be89c95e146eafd69fe20fe7c22053ee52c8112ea3dc4db2",
+    "pairs.jsonl.gz": "a237c2e499a48376977e178366f8814b630646b96abd4d58095d46eaf4efdc42",
+    "summary.json": "3554f38ca3f38f9110ace23e6858d8c06b27544ae3d9c3106b525547b7183908",
+    "rescored-k16.json": "3554f38ca3f38f9110ace23e6858d8c06b27544ae3d9c3106b525547b7183908"
+  },
+  "recovery_note": "Sandboxed MPS model loading failed before any pair. The identical manifest resumed outside the sandbox and completed all 150 questions in one measured segment.",
+  "limitations": [
+    "No XBRL questions are measured in this timing validation; the adoption gate remains blocked.",
+    "This local 28289-passage M1 cohort differs from the 28313-passage M2 reference in PR172.",
+    "Inference timing includes prediction and reordering; the extra diagnostic tokenization pass is separate.",
+    "Old diagnostic-inclusive timings are not corrected by this new measurement; no direct speedup is inferred."
+  ]
+}

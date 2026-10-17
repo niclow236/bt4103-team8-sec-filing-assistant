@@ -331,3 +331,38 @@ select an optimal table-score transformation. Candidate retrieval still uses
 its original table policy. No latency or answer-quality effects are inferred,
 and this diagnostic carries no adoption decision. Additive or sigmoid-based
 boosts would require separately declared experiments.
+
+
+## Fresh inference timing validation (#155 review)
+
+Source `5a1c4c0` measured all **150 current team questions** against the local
+28,289-passage / 75-filing corpus on an Apple M1 / 16 GiB laptop, with both
+encoders on MPS. This is a team-only timing validation, not the complete
+team/XBRL quality reference from #172. The initially sandboxed MPS load failed
+before any pair; native resume used the identical manifest and completed one
+measured segment. No other model or test job ran; normal desktop apps and the
+Codex session remained open.
+
+Across **149 nonempty pools** (one empty pool excluded), added inference and
+reordering time was **400.5 ms median / 467.8 ms p95**. The extra diagnostic
+tokenization pass was recorded separately at **4.9 ms median / 6.6 ms p95**.
+Cached cross-encoder load was 5.10 s; warm-up was 3.51 s on `daryl-01`, with
+`cross_encoder_warmed: true`. Load and warm-up are excluded from the quantiles.
+These are recorded laptop stage timings, not full answer latency. They do not
+replace or retroactively correct either original reference's timings; the
+cohorts/hardware differ, so a direct speedup is not inferred.
+
+Native model-free rescore exactly reproduced the complete summary. A completed
+native resume with an absolute benchmark path and relative corpus path also
+succeeded. The missing XBRL benchmark explicitly blocks advancement; this
+validation is not a new adoption decision. The [portable timing report](evaluation/c5-review-20261017-team-timing.json)
+records source/input/corpus/runtime identities, quantiles and original artifact
+hashes; per-question files remain local.
+
+Review verification: all **2,126 local tests pass** (58.85 s). The scoring
+refactor exactly preserves every aggregate, confidence interval and decision
+against the unoptimized #172 summarizer on all 12,728 historical pairs using
+the same team/XBRL groups (5.695 s versus 1.063 s on this laptop). Test-first
+regressions reproduced the latency, warm-up, unmeasurable-gate, repeated-scoring,
+corpus-read and resume problems before their fixes. The strengthened warm-up
+coverage exercises both fresh and resumed empty-first/all-empty cases.
