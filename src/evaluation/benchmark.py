@@ -14,7 +14,7 @@ from src.config import PROJECT_ROOT, PROCESSED_DIR
 from src.pipeline.chunk import iter_chunks
 from src.retrieval.facts import FACTS_FILE, load_facts, printed_forms_by_scale
 
-from .records import BenchmarkQuestion, BenchmarkValidationError
+from .records import XBRL, BenchmarkQuestion, BenchmarkValidationError
 
 DEFAULT_QUESTIONS_PATH = PROJECT_ROOT / "benchmark" / "questions.jsonl"
 DEFAULT_GENERATED_QUESTIONS_PATH = PROJECT_ROOT / "benchmark" / "generated.jsonl"
@@ -120,7 +120,7 @@ def generate_xbrl_questions(
             fiscal_year=int(fiscal_year),
             question_type="numeric",
             difficulty="mechanical",
-            source="xbrl",
+            source=XBRL,
         )
         if question.question_id in seen_ids:
             raise BenchmarkValidationError(
