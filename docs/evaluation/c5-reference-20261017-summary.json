@@ -1,0 +1,1278 @@
+{
+  "questions": 2034,
+  "top_k": 16,
+  "candidate_k": 50,
+  "policy": {
+    "decision_top_k": 16,
+    "decision_candidate_k": 50,
+    "primary_benchmarks": [
+      "team",
+      "xbrl"
+    ],
+    "min_ndcg_gain": 0.02,
+    "max_recall_mrr_regression": 0.01,
+    "max_type_ndcg_regression": 0.02,
+    "min_type_questions": 10,
+    "max_hard_negative_regression": 0.01,
+    "max_rerank_median_ms": 500,
+    "max_rerank_p95_ms": 1000,
+    "uncertainty": "95% percentile paired bootstrap of connected filing clusters",
+    "bootstrap_samples": 2000,
+    "seed": 154
+  },
+  "overall": {
+    "questions": 2034,
+    "recall": {
+      "questions": 2030,
+      "C4": 0.7666666666666667,
+      "C5": 0.8208538587848933,
+      "delta": 0.054187192118226604,
+      "wins": 213,
+      "losses": 61,
+      "ties": 1756,
+      "ci95": [
+        0.026739949475194993,
+        0.07895987963150605
+      ],
+      "clusters": 67
+    },
+    "ndcg": {
+      "questions": 2030,
+      "C4": 0.5537829816304014,
+      "C5": 0.5409197632014805,
+      "delta": -0.012863218428920898,
+      "wins": 657,
+      "losses": 856,
+      "ties": 517,
+      "ci95": [
+        -0.038636033290175564,
+        0.008743568448592443
+      ],
+      "clusters": 67
+    },
+    "mrr": {
+      "questions": 2030,
+      "C4": 0.5350337285866843,
+      "C5": 0.48502196489881216,
+      "delta": -0.050011763687872066,
+      "wins": 563,
+      "losses": 785,
+      "ties": 682,
+      "ci95": [
+        -0.07164602439491298,
+        -0.03314615153590866
+      ],
+      "clusters": 67
+    },
+    "hard_negative_accuracy": {
+      "questions": 27,
+      "C4": 0.9629629629629629,
+      "C5": 0.9629629629629629,
+      "delta": 0.0,
+      "wins": 1,
+      "losses": 1,
+      "ties": 25,
+      "ci95": [
+        -0.05362103174603174,
+        0.06006249999999966
+      ],
+      "clusters": 19
+    }
+  },
+  "by_benchmark": {
+    "team": {
+      "questions": 150,
+      "recall": {
+        "questions": 146,
+        "C4": 0.8184931506849316,
+        "C5": 0.8093607305936074,
+        "delta": -0.009132420091324202,
+        "wins": 13,
+        "losses": 15,
+        "ties": 118,
+        "ci95": [
+          -0.07855664240218381,
+          0.05024082817757494
+        ],
+        "clusters": 67
+      },
+      "ndcg": {
+        "questions": 146,
+        "C4": 0.5977658774154646,
+        "C5": 0.5194981419549854,
+        "delta": -0.07826773546047912,
+        "wins": 35,
+        "losses": 73,
+        "ties": 38,
+        "ci95": [
+          -0.1407047736002883,
+          -0.02015776429123749
+        ],
+        "clusters": 67
+      },
+      "mrr": {
+        "questions": 146,
+        "C4": 0.5484069203247286,
+        "C5": 0.4478049633015386,
+        "delta": -0.1006019570231899,
+        "wins": 31,
+        "losses": 66,
+        "ties": 49,
+        "ci95": [
+          -0.1764646904257219,
+          -0.024443444942278212
+        ],
+        "clusters": 67
+      },
+      "hard_negative_accuracy": {
+        "questions": 27,
+        "C4": 0.9629629629629629,
+        "C5": 0.9629629629629629,
+        "delta": 0.0,
+        "wins": 1,
+        "losses": 1,
+        "ties": 25,
+        "ci95": [
+          -0.05362103174603174,
+          0.06006249999999966
+        ],
+        "clusters": 19
+      }
+    },
+    "xbrl": {
+      "questions": 1884,
+      "recall": {
+        "questions": 1884,
+        "C4": 0.762650389242746,
+        "C5": 0.8217445152158528,
+        "delta": 0.05909412597310686,
+        "wins": 200,
+        "losses": 46,
+        "ties": 1638,
+        "ci95": [
+          0.03233802514324697,
+          0.08305118605279868
+        ],
+        "clusters": 10
+      },
+      "ndcg": {
+        "questions": 1884,
+        "C4": 0.5503745406619199,
+        "C5": 0.5425798251452111,
+        "delta": -0.007794715516708849,
+        "wins": 622,
+        "losses": 783,
+        "ties": 479,
+        "ci95": [
+          -0.033606198043015005,
+          0.014179399743478224
+        ],
+        "clusters": 10
+      },
+      "mrr": {
+        "questions": 1884,
+        "C4": 0.5339973772099569,
+        "C5": 0.48790608498012955,
+        "delta": -0.04609129222982727,
+        "wins": 532,
+        "losses": 719,
+        "ties": 633,
+        "ci95": [
+          -0.06699413561176257,
+          -0.028872223512075433
+        ],
+        "clusters": 10
+      },
+      "hard_negative_accuracy": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      }
+    }
+  },
+  "by_type": {
+    "comparative": {
+      "questions": 4,
+      "recall": {
+        "questions": 4,
+        "C4": 0.75,
+        "C5": 0.625,
+        "delta": -0.125,
+        "wins": 0,
+        "losses": 1,
+        "ties": 3,
+        "ci95": [
+          -0.375,
+          0.0
+        ],
+        "clusters": 4
+      },
+      "ndcg": {
+        "questions": 4,
+        "C4": 0.5191651833815294,
+        "C5": 0.5510955993971215,
+        "delta": 0.03193041601559212,
+        "wins": 2,
+        "losses": 2,
+        "ties": 0,
+        "ci95": [
+          -0.19161716495442332,
+          0.3357650139055175
+        ],
+        "clusters": 4
+      },
+      "mrr": {
+        "questions": 4,
+        "C4": 0.6011904761904762,
+        "C5": 0.625,
+        "delta": 0.02380952380952383,
+        "wins": 1,
+        "losses": 2,
+        "ties": 1,
+        "ci95": [
+          -0.375,
+          0.48214285714285715
+        ],
+        "clusters": 4
+      },
+      "hard_negative_accuracy": {
+        "questions": 4,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 4,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 4
+      }
+    },
+    "factual": {
+      "questions": 44,
+      "recall": {
+        "questions": 44,
+        "C4": 0.9545454545454546,
+        "C5": 0.7575757575757576,
+        "delta": -0.19696969696969696,
+        "wins": 0,
+        "losses": 11,
+        "ties": 33,
+        "ci95": [
+          -0.3201754385964913,
+          -0.0984848484848485
+        ],
+        "clusters": 34
+      },
+      "ndcg": {
+        "questions": 44,
+        "C4": 0.7580281218852357,
+        "C5": 0.560895127309046,
+        "delta": -0.19713299457618974,
+        "wins": 5,
+        "losses": 25,
+        "ties": 14,
+        "ci95": [
+          -0.27288137805970725,
+          -0.12466305144933648
+        ],
+        "clusters": 34
+      },
+      "mrr": {
+        "questions": 44,
+        "C4": 0.7116432178932179,
+        "C5": 0.5183367768595041,
+        "delta": -0.19330644103371375,
+        "wins": 3,
+        "losses": 20,
+        "ties": 21,
+        "ci95": [
+          -0.27559207515268125,
+          -0.11489613201815294
+        ],
+        "clusters": 34
+      },
+      "hard_negative_accuracy": {
+        "questions": 8,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 8,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 8
+      }
+    },
+    "numeric": {
+      "questions": 1972,
+      "recall": {
+        "questions": 1972,
+        "C4": 0.7641142663962136,
+        "C5": 0.8240365111561866,
+        "delta": 0.05992224475997295,
+        "wins": 212,
+        "losses": 49,
+        "ties": 1711,
+        "ci95": [
+          0.033688301111550197,
+          0.084221772642696
+        ],
+        "clusters": 60
+      },
+      "ndcg": {
+        "questions": 1972,
+        "C4": 0.5505675213997089,
+        "C5": 0.5408140736742514,
+        "delta": -0.009753447725457545,
+        "wins": 647,
+        "losses": 828,
+        "ties": 497,
+        "ci95": [
+          -0.035244265204842154,
+          0.011250936320638349
+        ],
+        "clusters": 60
+      },
+      "mrr": {
+        "questions": 1972,
+        "C4": 0.5322812111541828,
+        "C5": 0.4841332898001255,
+        "delta": -0.04814792135405726,
+        "wins": 556,
+        "losses": 762,
+        "ties": 654,
+        "ci95": [
+          -0.06895262114382815,
+          -0.031188900345925672
+        ],
+        "clusters": 60
+      },
+      "hard_negative_accuracy": {
+        "questions": 9,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 9,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 8
+      }
+    },
+    "temporal": {
+      "questions": 10,
+      "recall": {
+        "questions": 10,
+        "C4": 0.45,
+        "C5": 0.55,
+        "delta": 0.1,
+        "wins": 1,
+        "losses": 0,
+        "ties": 9,
+        "ci95": [
+          0.0,
+          0.3
+        ],
+        "clusters": 10
+      },
+      "ndcg": {
+        "questions": 10,
+        "C4": 0.3030402413012514,
+        "C5": 0.4697998014195348,
+        "delta": 0.1667595601182834,
+        "wins": 3,
+        "losses": 1,
+        "ties": 6,
+        "ci95": [
+          0.0,
+          0.3993493118234295
+        ],
+        "clusters": 10
+      },
+      "mrr": {
+        "questions": 10,
+        "C4": 0.2742857142857143,
+        "C5": 0.4576923076923077,
+        "delta": 0.1834065934065934,
+        "wins": 3,
+        "losses": 1,
+        "ties": 6,
+        "ci95": [
+          0.0,
+          0.4200851648351644
+        ],
+        "clusters": 10
+      },
+      "hard_negative_accuracy": {
+        "questions": 2,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 2,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 2
+      }
+    },
+    "unanswerable": {
+      "questions": 4,
+      "recall": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "ndcg": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "mrr": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "hard_negative_accuracy": {
+        "questions": 4,
+        "C4": 0.75,
+        "C5": 0.75,
+        "delta": 0.0,
+        "wins": 1,
+        "losses": 1,
+        "ties": 2,
+        "ci95": [
+          -0.375,
+          0.375
+        ],
+        "clusters": 4
+      }
+    }
+  },
+  "by_benchmark_type": {
+    "team:comparative": {
+      "questions": 4,
+      "recall": {
+        "questions": 4,
+        "C4": 0.75,
+        "C5": 0.625,
+        "delta": -0.125,
+        "wins": 0,
+        "losses": 1,
+        "ties": 3,
+        "ci95": [
+          -0.375,
+          0.0
+        ],
+        "clusters": 4
+      },
+      "ndcg": {
+        "questions": 4,
+        "C4": 0.5191651833815294,
+        "C5": 0.5510955993971215,
+        "delta": 0.03193041601559212,
+        "wins": 2,
+        "losses": 2,
+        "ties": 0,
+        "ci95": [
+          -0.19161716495442332,
+          0.3357650139055175
+        ],
+        "clusters": 4
+      },
+      "mrr": {
+        "questions": 4,
+        "C4": 0.6011904761904762,
+        "C5": 0.625,
+        "delta": 0.02380952380952383,
+        "wins": 1,
+        "losses": 2,
+        "ties": 1,
+        "ci95": [
+          -0.375,
+          0.48214285714285715
+        ],
+        "clusters": 4
+      },
+      "hard_negative_accuracy": {
+        "questions": 4,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 4,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 4
+      }
+    },
+    "team:factual": {
+      "questions": 44,
+      "recall": {
+        "questions": 44,
+        "C4": 0.9545454545454546,
+        "C5": 0.7575757575757576,
+        "delta": -0.19696969696969696,
+        "wins": 0,
+        "losses": 11,
+        "ties": 33,
+        "ci95": [
+          -0.3201754385964913,
+          -0.0984848484848485
+        ],
+        "clusters": 34
+      },
+      "ndcg": {
+        "questions": 44,
+        "C4": 0.7580281218852357,
+        "C5": 0.560895127309046,
+        "delta": -0.19713299457618974,
+        "wins": 5,
+        "losses": 25,
+        "ties": 14,
+        "ci95": [
+          -0.27288137805970725,
+          -0.12466305144933648
+        ],
+        "clusters": 34
+      },
+      "mrr": {
+        "questions": 44,
+        "C4": 0.7116432178932179,
+        "C5": 0.5183367768595041,
+        "delta": -0.19330644103371375,
+        "wins": 3,
+        "losses": 20,
+        "ties": 21,
+        "ci95": [
+          -0.27559207515268125,
+          -0.11489613201815294
+        ],
+        "clusters": 34
+      },
+      "hard_negative_accuracy": {
+        "questions": 8,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 8,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 8
+      }
+    },
+    "team:numeric": {
+      "questions": 88,
+      "recall": {
+        "questions": 88,
+        "C4": 0.7954545454545454,
+        "C5": 0.8731060606060606,
+        "delta": 0.07765151515151515,
+        "wins": 12,
+        "losses": 3,
+        "ties": 73,
+        "ci95": [
+          0.005813953488372093,
+          0.1507113306315434
+        ],
+        "clusters": 56
+      },
+      "ndcg": {
+        "questions": 88,
+        "C4": 0.5546990635587367,
+        "C5": 0.5030109399096139,
+        "delta": -0.051688123649122786,
+        "wins": 25,
+        "losses": 45,
+        "ties": 18,
+        "ci95": [
+          -0.13095587574966275,
+          0.027414046243553182
+        ],
+        "clusters": 56
+      },
+      "mrr": {
+        "questions": 88,
+        "C4": 0.4955396560510197,
+        "C5": 0.40336117481003847,
+        "delta": -0.09217848124098124,
+        "wins": 24,
+        "losses": 43,
+        "ties": 21,
+        "ci95": [
+          -0.19322715656148268,
+          0.010497181188153397
+        ],
+        "clusters": 56
+      },
+      "hard_negative_accuracy": {
+        "questions": 9,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 9,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 8
+      }
+    },
+    "team:temporal": {
+      "questions": 10,
+      "recall": {
+        "questions": 10,
+        "C4": 0.45,
+        "C5": 0.55,
+        "delta": 0.1,
+        "wins": 1,
+        "losses": 0,
+        "ties": 9,
+        "ci95": [
+          0.0,
+          0.3
+        ],
+        "clusters": 10
+      },
+      "ndcg": {
+        "questions": 10,
+        "C4": 0.3030402413012514,
+        "C5": 0.4697998014195348,
+        "delta": 0.1667595601182834,
+        "wins": 3,
+        "losses": 1,
+        "ties": 6,
+        "ci95": [
+          0.0,
+          0.3993493118234295
+        ],
+        "clusters": 10
+      },
+      "mrr": {
+        "questions": 10,
+        "C4": 0.2742857142857143,
+        "C5": 0.4576923076923077,
+        "delta": 0.1834065934065934,
+        "wins": 3,
+        "losses": 1,
+        "ties": 6,
+        "ci95": [
+          0.0,
+          0.4200851648351644
+        ],
+        "clusters": 10
+      },
+      "hard_negative_accuracy": {
+        "questions": 2,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 2,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 2
+      }
+    },
+    "team:unanswerable": {
+      "questions": 4,
+      "recall": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "ndcg": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "mrr": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "hard_negative_accuracy": {
+        "questions": 4,
+        "C4": 0.75,
+        "C5": 0.75,
+        "delta": 0.0,
+        "wins": 1,
+        "losses": 1,
+        "ties": 2,
+        "ci95": [
+          -0.375,
+          0.375
+        ],
+        "clusters": 4
+      }
+    },
+    "xbrl:numeric": {
+      "questions": 1884,
+      "recall": {
+        "questions": 1884,
+        "C4": 0.762650389242746,
+        "C5": 0.8217445152158528,
+        "delta": 0.05909412597310686,
+        "wins": 200,
+        "losses": 46,
+        "ties": 1638,
+        "ci95": [
+          0.03233802514324697,
+          0.08305118605279868
+        ],
+        "clusters": 10
+      },
+      "ndcg": {
+        "questions": 1884,
+        "C4": 0.5503745406619199,
+        "C5": 0.5425798251452111,
+        "delta": -0.007794715516708849,
+        "wins": 622,
+        "losses": 783,
+        "ties": 479,
+        "ci95": [
+          -0.033606198043015005,
+          0.014179399743478224
+        ],
+        "clusters": 10
+      },
+      "mrr": {
+        "questions": 1884,
+        "C4": 0.5339973772099569,
+        "C5": 0.48790608498012955,
+        "delta": -0.04609129222982727,
+        "wins": 532,
+        "losses": 719,
+        "ties": 633,
+        "ci95": [
+          -0.06699413561176257,
+          -0.028872223512075433
+        ],
+        "clusters": 10
+      },
+      "hard_negative_accuracy": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      }
+    }
+  },
+  "by_gold_content": {
+    "none": {
+      "questions": 4,
+      "recall": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "ndcg": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "mrr": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "hard_negative_accuracy": {
+        "questions": 4,
+        "C4": 0.75,
+        "C5": 0.75,
+        "delta": 0.0,
+        "wins": 1,
+        "losses": 1,
+        "ties": 2,
+        "ci95": [
+          -0.375,
+          0.375
+        ],
+        "clusters": 4
+      }
+    },
+    "prose": {
+      "questions": 113,
+      "recall": {
+        "questions": 113,
+        "C4": 0.668141592920354,
+        "C5": 0.7035398230088495,
+        "delta": 0.035398230088495575,
+        "wins": 18,
+        "losses": 12,
+        "ties": 83,
+        "ci95": [
+          -0.05431082434086105,
+          0.10329043224866437
+        ],
+        "clusters": 46
+      },
+      "ndcg": {
+        "questions": 113,
+        "C4": 0.4415366903368652,
+        "C5": 0.556581672129618,
+        "delta": 0.1150449817927528,
+        "wins": 49,
+        "losses": 27,
+        "ties": 37,
+        "ci95": [
+          0.031683512358045986,
+          0.18428133355306367
+        ],
+        "clusters": 46
+      },
+      "mrr": {
+        "questions": 113,
+        "C4": 0.3950436485834716,
+        "C5": 0.546860072081311,
+        "delta": 0.15181642349783941,
+        "wins": 46,
+        "losses": 25,
+        "ties": 42,
+        "ci95": [
+          0.04915779080520928,
+          0.23588411263638331
+        ],
+        "clusters": 46
+      },
+      "hard_negative_accuracy": {
+        "questions": 14,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 14,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 11
+      }
+    },
+    "prose+table": {
+      "questions": 206,
+      "recall": {
+        "questions": 206,
+        "C4": 0.4741100323624595,
+        "C5": 0.6270226537216829,
+        "delta": 0.1529126213592233,
+        "wins": 77,
+        "losses": 5,
+        "ties": 124,
+        "ci95": [
+          0.12690226076330138,
+          0.1737651138813384
+        ],
+        "clusters": 15
+      },
+      "ndcg": {
+        "questions": 206,
+        "C4": 0.3975622925328613,
+        "C5": 0.509981127456327,
+        "delta": 0.1124188349234656,
+        "wins": 125,
+        "losses": 53,
+        "ties": 28,
+        "ci95": [
+          0.08911720345093749,
+          0.14150020359560395
+        ],
+        "clusters": 15
+      },
+      "mrr": {
+        "questions": 206,
+        "C4": 0.567782756617708,
+        "C5": 0.6031114381842537,
+        "delta": 0.035328681566545644,
+        "wins": 66,
+        "losses": 55,
+        "ties": 85,
+        "ci95": [
+          -0.02195050620242799,
+          0.11093075191381807
+        ],
+        "clusters": 15
+      },
+      "hard_negative_accuracy": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      }
+    },
+    "table": {
+      "questions": 1711,
+      "recall": {
+        "questions": 1711,
+        "C4": 0.8083966491330606,
+        "C5": 0.8519384375608806,
+        "delta": 0.043541788427819986,
+        "wins": 118,
+        "losses": 44,
+        "ties": 1549,
+        "ci95": [
+          0.017925494218469677,
+          0.06844609039882968
+        ],
+        "clusters": 50
+      },
+      "ndcg": {
+        "questions": 1711,
+        "C4": 0.5800046606895849,
+        "C5": 0.5436103320235858,
+        "delta": -0.036394328665999065,
+        "wins": 483,
+        "losses": 776,
+        "ties": 452,
+        "ci95": [
+          -0.0626928525198973,
+          -0.015240346889271377
+        ],
+        "clusters": 50
+      },
+      "mrr": {
+        "questions": 1711,
+        "C4": 0.5403362296188129,
+        "C5": 0.46672030644853557,
+        "delta": -0.07361592317027735,
+        "wins": 451,
+        "losses": 705,
+        "ties": 555,
+        "ci95": [
+          -0.0984277104191035,
+          -0.054653642184936416
+        ],
+        "clusters": 50
+      },
+      "hard_negative_accuracy": {
+        "questions": 9,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 9,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 7
+      }
+    }
+  },
+  "by_gold_truncation": {
+    "gold_in_pool_untruncated": {
+      "questions": 1885,
+      "recall": {
+        "questions": 1885,
+        "C4": 0.8256410256410256,
+        "C5": 0.8839964633068081,
+        "delta": 0.058355437665782495,
+        "wins": 213,
+        "losses": 61,
+        "ties": 1611,
+        "ci95": [
+          0.028140475053934088,
+          0.08565957282436933
+        ],
+        "clusters": 67
+      },
+      "ndcg": {
+        "questions": 1885,
+        "C4": 0.5963816725250477,
+        "C5": 0.5825289757554406,
+        "delta": -0.01385269676960712,
+        "wins": 657,
+        "losses": 856,
+        "ties": 372,
+        "ci95": [
+          -0.04067120408101272,
+          0.008955111621253429
+        ],
+        "clusters": 67
+      },
+      "mrr": {
+        "questions": 1885,
+        "C4": 0.5761901692471985,
+        "C5": 0.5223313468141054,
+        "delta": -0.05385882243309299,
+        "wins": 563,
+        "losses": 785,
+        "ties": 537,
+        "ci95": [
+          -0.07636067733483831,
+          -0.03606812290947291
+        ],
+        "clusters": 67
+      },
+      "hard_negative_accuracy": {
+        "questions": 20,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 20,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 14
+      }
+    },
+    "no_gold_in_pool": {
+      "questions": 145,
+      "recall": {
+        "questions": 145,
+        "C4": 0.0,
+        "C5": 0.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 145,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 18
+      },
+      "ndcg": {
+        "questions": 145,
+        "C4": 0.0,
+        "C5": 0.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 145,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 18
+      },
+      "mrr": {
+        "questions": 145,
+        "C4": 0.0,
+        "C5": 0.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 145,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 18
+      },
+      "hard_negative_accuracy": {
+        "questions": 3,
+        "C4": 1.0,
+        "C5": 1.0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 3,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "clusters": 3
+      }
+    },
+    "unlabelled": {
+      "questions": 4,
+      "recall": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "ndcg": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "mrr": {
+        "questions": 0,
+        "C4": null,
+        "C5": null,
+        "delta": null,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "ci95": null,
+        "clusters": 0
+      },
+      "hard_negative_accuracy": {
+        "questions": 4,
+        "C4": 0.75,
+        "C5": 0.75,
+        "delta": 0.0,
+        "wins": 1,
+        "losses": 1,
+        "ties": 2,
+        "ci95": [
+          -0.375,
+          0.375
+        ],
+        "clusters": 4
+      }
+    }
+  },
+  "latency_ms": {
+    "rerank_questions": 2033,
+    "empty_pool_questions": 1,
+    "rerank_median": 279.48095789179206,
+    "rerank_p95": 442.7760921418666,
+    "C4_median": 553.9475630503148,
+    "C5_median": 830.4953752085567
+  },
+  "truncation": {
+    "candidates": 101650,
+    "truncated": 0,
+    "rate": 0.0
+  },
+  "top_k_diagnostics": {
+    "C4": {
+      "tables": 26373,
+      "truncated": 0,
+      "outside_gold_tickers": 0,
+      "outside_gold_years": 35,
+      "outside_gold_filings": 35,
+      "gold_scope_passages": 32480,
+      "gold_year_scope_passages": 32480,
+      "outside_query_tickers": 0,
+      "outside_query_years": 0
+    },
+    "C5": {
+      "tables": 20219,
+      "truncated": 0,
+      "outside_gold_tickers": 0,
+      "outside_gold_years": 34,
+      "outside_gold_filings": 34,
+      "gold_scope_passages": 32480,
+      "gold_year_scope_passages": 32480,
+      "outside_query_tickers": 0,
+      "outside_query_years": 0
+    }
+  },
+  "decision": {
+    "advance_to_answer_evaluation": false,
+    "reasons": [
+      "team: nDCG gain/uncertainty criterion not met",
+      "team: mrr regression criterion not met",
+      "xbrl: nDCG gain/uncertainty criterion not met",
+      "xbrl: mrr regression criterion not met",
+      "factual: nDCG regression criterion not met",
+      "team:factual: nDCG regression criterion not met",
+      "team:numeric: nDCG regression criterion not met"
+    ],
+    "default": "C4",
+    "adoption": "requires paired answer evaluation and team review"
+  }
+}

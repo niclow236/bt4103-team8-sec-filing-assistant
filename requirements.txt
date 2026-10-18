@@ -26,6 +26,9 @@ chromadb==1.5.9
 # directly.
 tokenizers==0.23.2
 
+# Process-safe experiment locking; already installed through torch.
+filelock==3.32.6
+
 # What sentence-transformers loads the embedding model with. Already installed
 # as its dependency, which accepts any 5.x; pinned here because the app works
 # around how this version registers its alias modules (_settle_lazy_aliases

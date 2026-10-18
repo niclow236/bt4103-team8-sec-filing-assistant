@@ -31,6 +31,7 @@ from src.rag.constants import (
 )
 from src.rag.generate import _mistral_client, _ollama_client
 from src.retrieval import embed
+from src.retrieval.records import RetrievedPassage
 
 # Three companies, two fiscal years each.
 COMPANIES = {"AAA": "Alpha Corp", "BBB": "Beta Inc.", "CCC": "Gamma Holdings"}
@@ -181,3 +182,42 @@ def _release_chroma():
         chromadb.api.client.SharedSystemClient.clear_system_cache()
     except Exception:
         pass
+
+
+# Shared deterministic doubles for paired reranking tests.
+def rerank_passage(cid, score=1, content_type="prose", ticker="AAA", year=2024):
+    return RetrievedPassage(cid, "Evidence " + cid, score, 1, "hybrid", ticker,
+                            "Alpha Corp", year, "8", "Statements", "https://example.test",
+                            content_type, ("bm25", "dense"))
+
+
+class RerankModel:
+    device = "test"
+
+    def __init__(self, scores, lengths=None):
+        self.scores = scores
+        self.lengths = lengths
+        self.calls = []
+
+    def tokenizer(self, queries, texts, **kwargs):
+        self.calls.append(("tokens", queries, texts, kwargs))
+        return {"length": self.lengths or [25] * len(texts)}
+
+    def predict(self, pairs, **kwargs):
+        self.calls.append(("predict", pairs, kwargs))
+        return self.scores
+
+
+class RerankInner:
+    name = "hybrid"
+
+    def __init__(self, passages):
+        self.passages = passages
+        self.calls = []
+
+    def search(self, query, k=None):
+        self.calls.append((query, k))
+        return self.passages[:k]
+
+    def has_candidates(self, query):
+        return bool(self.passages)

@@ -1,0 +1,264 @@
+{
+  "experiment": {
+    "provenance": {
+      "source_commit": "13ca6f5365090367988fd695aecfab5eee2d90e6",
+      "source_files_sha256": {
+        "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "src/app/__init__.py": "5b6e1ae9068a295d803ed50441a6c177f71f53ea855a97af4ca76dce3666e5e4",
+        "src/app/answers.py": "52a45436ca60625a890d8a887430d29868535d6cba08be7d39e086dea5b76f8e",
+        "src/app/app_pages/ask.py": "ded08044f66ac5503265b3f694442067cf4050a2af8a086a9d07c31bce9ab1b2",
+        "src/app/app_pages/browse.py": "df9a22b12856a585a02bdfaf5a287d1839d4229e8e46c5602da17d7ad6d7850a",
+        "src/app/app_pages/compare.py": "25f71256aac5b90be54122682f945b60e11cea0cd511355182afdb9ad5bd81c5",
+        "src/app/app_pages/results.py": "a7153b5f426a9d3264cfb41bb489d563855ecec5da3891932189959179854f5d",
+        "src/app/components.py": "59a338256f1d4fe5da9682132762576fe70071dff3bbae39f92d66a46a6ca00f",
+        "src/app/main.py": "f76c2ea6ab538fe482ce10daefdf6b4082bb15d72ce4b8e0be4c90a9a11df0db",
+        "src/app/state.py": "0a91cc2937e076367415bb816416746dfaaa097e27b9adbed0b18f8df70c309c",
+        "src/config.py": "5d55b8a71442140d804c1727ce73a15d9e53d4aa40e2651a727deb8e6ec0d755",
+        "src/evaluation/__init__.py": "9833479d30ebf16379eb8d48a3e4f653febdeebb2b585a8d12b9bbd889f2cf40",
+        "src/evaluation/__main__.py": "f2d597c20fabcc353558a57a209fed42e316523c0481c5a47020a0b2b0784492",
+        "src/evaluation/benchmark.py": "2b3473b7d281736c745e38e2b7883a89d54067ee68aac2d03df0ec635a4b0c21",
+        "src/evaluation/chunk_sweep.py": "318d4d3f96b11369aef4b9dfbff08326ffc875feb30f72d42052808dc33f2c9f",
+        "src/evaluation/cli.py": "e4cc1a6fb330a44cfcb540133124f9bdf6571c5b3b97db09dc9cf13d7fc314b4",
+        "src/evaluation/full_ablation.py": "75063f0aadd1e881d2f757dd789039d7d1c2d782fa91b899b90eb766757890dc",
+        "src/evaluation/harness.py": "e61e039cb40424dcb933da328c03d0177f83230a47dc08d6ecf2cc28fd1d051d",
+        "src/evaluation/metrics.py": "75e9a4cbb4beab8a3a808a918f34d1fa71019fbdf9b07f65f9d716482aa570d4",
+        "src/evaluation/model_ablation.py": "5d6a9c688ed9586b28cffc867c830023dbcdede99f15dd7cc1a52217446cc955",
+        "src/evaluation/provenance.py": "7d8609b7a45ae1fc889d48bf94fdc02e4de6182122bc2f698c27f845b874fdd2",
+        "src/evaluation/quality.py": "942ecdbc3e31c5c3e0746872b632c3af6b8e4326f537bcd49f3b54dfab92c9c0",
+        "src/evaluation/records.py": "301a5e539de73d569dffbecd7187ded5a3921322f7993acab5cab2f70440bb70",
+        "src/evaluation/rerank_ablation.py": "8ec2fa18b6df82f8f7a4749dd32d2e465e76d4683ac4dc89c1da8d8e9a8923ac",
+        "src/evaluation/results.py": "facba8e3b23fc70aae3aeab69df0f3bbed81169498b3e6240dca2da5222b3e24",
+        "src/evaluation/run.py": "69ca0e3c9c0c4a3ad776800806d785358892c17c6b08103ed0a97dc7cdb4d0ff",
+        "src/pipeline/__init__.py": "ac4c7dee478cda54e11d88f5ee2fecc22bf5a8d45abcd529b88671e4e994c564",
+        "src/pipeline/__main__.py": "0770f5598ecdb9b6d259e9553707309920ec0def32f5a1b9b5c78e973e94eab8",
+        "src/pipeline/chunk.py": "69e6fb26fed074ee27064ea978d693bc6f7306b03e767a54522620dc4499b7e9",
+        "src/pipeline/cli.py": "72cbbd32394037d48bddae3a231a29c243d96fc37a3b7006d3c6d7981c4929e7",
+        "src/pipeline/constants.py": "91964519de864642e54b6ba3d8becc4def5da95c03d4dbfc097001fd6fa852f6",
+        "src/pipeline/download.py": "a2adc7f3a37af4f92e080acc0593f67d6a1b49fb84560cae406ff00ce54b69fe",
+        "src/pipeline/parse.py": "23c54ef816f0e1d0f3423710fc2fafc18e722c410896a7337526d1db6af65a10",
+        "src/pipeline/passages.py": "350f70e29eae1e43c6d111985afa8ed48352a4eb36781fe5688140463572ef7e",
+        "src/pipeline/records.py": "960ed4ec2bc2bdd6ca79c66717f6cd25abadc21eb4746b3a247095c8b50e1db2",
+        "src/pipeline/verify.py": "d7e9c1f1a1f8a83b7781bab05e1e47172312feddcab61bfc2089f62c19ae637c",
+        "src/rag/__init__.py": "c26b91aedecba203e7e57c71159fea327d269651b2f3fbc201d113365fd9d1a7",
+        "src/rag/answer.py": "ddeea1e9170177cef5d40c470734fd14d63c9c1263718b0cc03bd310c7bccb8f",
+        "src/rag/citations.py": "73441a5f3df1bc54d911ae0367c4b20dbdbb7fc101e1b2d594d29435c55f5e13",
+        "src/rag/constants.py": "ba05c7b59bfaf97abb35a1bded3fb52a2e922f26b072f0eab75a73a3e09962d4",
+        "src/rag/decompose.py": "062b086156bf139f86d3055393edfe38b6c3ce4368842f1334b9dc48bd8e80e7",
+        "src/rag/generate.py": "a219b87e36a60e65a0283f546d6e3f77bb4013e63511b2f880ff466408d0fb63",
+        "src/rag/numeric.py": "db21513bd1fd98db32ed7559999194cfca9c6d19f260e6ab7bd51c82c4dc2efb",
+        "src/rag/prompt.py": "038721536028eecfaa236c30dfc7d9c742e0f3a14f07586e49a8e5f374c43815",
+        "src/rag/query.py": "f04752ab43c46132a46536eae4cf3714020a056c6e4d0d9ade9a45575e3c0487",
+        "src/rag/records.py": "ffd55ae6ef066116e0d0b1aa7daecd39c9f5f79cf0691eddfbf9a3783050b2a4",
+        "src/rag/verify.py": "76405790fb682003d5e76d395a25aecf149d1d90528d79bbcba4ef52eacf9348",
+        "src/retrieval/__init__.py": "723f1ff2a59dd9287e570ad52be7e8ad1a13ac2fa551a2b10e3045a61288efdb",
+        "src/retrieval/__main__.py": "94c1a491fe254401f678d0a8893ea2731203211542dd9aa782b71f073771a0f0",
+        "src/retrieval/base.py": "72ad53630d6d9e1646ca114377e7c4c2818cfc9ba1f03a7b0ef97a1a00444b45",
+        "src/retrieval/bm25.py": "a1e1db0a929e5eba6268c2c8311681932a5db90b4fca35c603501018a88636e2",
+        "src/retrieval/cli.py": "36ca386fee8bc3648ae15db79d732977be2a9f9e11f18558a8bed240d82aba5d",
+        "src/retrieval/constants.py": "a0c1fc57f67a620934ec887a68ee5b3088587b836bc4c9be7f2bc0fd660dd279",
+        "src/retrieval/dense.py": "b96e16f6cbd558503cca9fef7e6c2520d5f58dc6fa29121b28099dcecc653e82",
+        "src/retrieval/embed.py": "68a09a7553ea2d194ddcb99d4dcf6b4de992189f9b47ce1ea83d1367d812ea76",
+        "src/retrieval/embedding_config.py": "2bab8d84b8baba3c6cae8a22e924d442b4325076b75873a318059d3bd71f08b5",
+        "src/retrieval/facts.py": "998b603c26d9ec3cdb4b34acbce6feb957f36c60d628713763885959484e891a",
+        "src/retrieval/hybrid.py": "1c620e45fda598105d35ce9a57771fb5224127538ba04dc49e2b317d8a71bcce",
+        "src/retrieval/records.py": "7d68a9830a9f6410b81503954f227dfc6b2045dacc9f25ddfa639b2847bbcefd",
+        "src/retrieval/rerank.py": "e64ee66a77b81f46b5e302b69437e4bbb7eecc135a81aa3df85f8ef282c62c03",
+        "src/stack.py": "231fb73068c9b6166b7ad449efaa41ae1a8b5a19da1f3e3b65a00e8a08453852",
+        "src/utils.py": "958ed9c55afde05dea3ae0af5e05a242f2ea2b4ad5286caa56e7905eab84ddb8"
+      },
+      "inputs": [
+        {
+          "path": "benchmark/questions.jsonl",
+          "sha256": "790298149d18e72a405235c66d78a757a73744618f0b04d534580d28bfdfdb38"
+        },
+        {
+          "path": "benchmark/generated.jsonl",
+          "sha256": "a8f55acfba11c2670e4e34fbcc3211c68af04b59e09f995a98d0308e2c720985"
+        }
+      ],
+      "questions": 2034,
+      "by_benchmark": {
+        "team": 150,
+        "xbrl": 1884
+      },
+      "question_records_sha256": "357345a8bed571210a61c44524bba4d536f065794b9fb703c7d0b063bbabe65e",
+      "corpus": {
+        "processed_dir": "data/processed",
+        "fingerprint": "b07ed8d53d3551321fd844fbfe7afa1aa292995e40a178e519b561318f816374",
+        "records_sha256": "fdcb27cdc5a5b87d4d195c758186c91a18194b0111e3a7cb22f604e02f650954",
+        "n_passages": 28313,
+        "n_filings": 75,
+        "chunk_settings": [
+          [
+            1800,
+            300
+          ]
+        ]
+      },
+      "retrieval_settings": {
+        "EMBED_MODEL": "BAAI/bge-base-en-v1.5",
+        "EMBED_DIMENSIONS": 768,
+        "EMBED_MAX_TOKENS": 512,
+        "EMBED_NORMALIZE": true,
+        "QUERY_PREFIX": "Represent this sentence for searching relevant passages: ",
+        "PASSAGE_PREFIX": "",
+        "CONTEXT_HEADER": "{company} ({ticker}) FY{fiscal_year} {form}, Item {item}: {title}\n\n",
+        "DISTANCE_METRIC": "cosine",
+        "BM25_K1": 1.5,
+        "BM25_B": 0.75,
+        "CANDIDATE_K": 50,
+        "RRF_K": 60,
+        "FUSION_WEIGHTS": {
+          "bm25": 1.0,
+          "dense": 1.0
+        },
+        "FIGURE_FUSION_WEIGHTS": {
+          "bm25": 1.0,
+          "dense": 1.0
+        },
+        "MIN_BM25_SCORE": null,
+        "MIN_DENSE_SCORE": null,
+        "MIN_FUSED_SCORE": null,
+        "TABLE_BOOST": 1.2
+      },
+      "environment": {
+        "python": "3.13.5",
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "packages": {
+          "torch": "2.14.0",
+          "sentence-transformers": "6.0.1",
+          "transformers": "5.17.0",
+          "tokenizers": "0.23.2",
+          "chromadb": "1.5.9",
+          "rank-bm25": "0.2.2",
+          "numpy": "2.5.3",
+          "filelock": "3.32.5"
+        }
+      },
+      "workload_note": "Apple laptop with MPS; normal desktop apps and a Claude Code session open; no other model or evaluation jobs"
+    },
+    "reranker": {
+      "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+      "candidate_k": 50,
+      "max_length": 512,
+      "batch_size": 32,
+      "device": "mps",
+      "input": "(Query.text, RetrievedPassage.text); no added header or prompt",
+      "scores": "raw logits; sign-aware Query.table_boost; no score floor",
+      "ties": "chunk_id ascending",
+      "truncation": "tokenizer longest_first, including query and special tokens"
+    },
+    "top_k": 16,
+    "policy": {
+      "decision_top_k": 16,
+      "decision_candidate_k": 50,
+      "primary_benchmarks": [
+        "team",
+        "xbrl"
+      ],
+      "min_ndcg_gain": 0.02,
+      "max_recall_mrr_regression": 0.01,
+      "max_type_ndcg_regression": 0.02,
+      "min_type_questions": 10,
+      "max_hard_negative_regression": 0.01,
+      "max_rerank_median_ms": 500,
+      "max_rerank_p95_ms": 1000,
+      "uncertainty": "95% percentile paired bootstrap of connected filing clusters",
+      "bootstrap_samples": 2000,
+      "seed": 154
+    },
+    "query_policy": "C4 evaluation.run._query"
+  },
+  "measurement_config_sha256": "e52cf790f8958d66c61ac6ddfed06567f322151019ca5fe9a3984914871a974d",
+  "shareable_note": "processed_dir is normalized to the repo-relative path; the original config hash is retained.",
+  "hardware": {
+    "cpu": "Apple M2",
+    "memory_gib": 8,
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O"
+  },
+  "runtime_segments": {
+    "runtime-0000.json": {
+      "cross_encoder_load_ms": 9649.94104206562,
+      "warmup_ms": 7724.71212502569,
+      "resumed_after_questions": 0,
+      "dense_manifest": {
+        "index_type": "dense",
+        "path": "data/index/chroma",
+        "corpus_fingerprint": "820517f0a5523db82e165945fdb1802f07f35282f49b398b6c5564086208c358",
+        "n_passages": 28313,
+        "n_filings": 75,
+        "built_at": "2026-10-08T14:49:01+00:00",
+        "model": "BAAI/bge-base-en-v1.5",
+        "dimensions": 768,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": 512
+      },
+      "bm25_manifest": {
+        "index_type": "bm25",
+        "path": "data/index/bm25.pkl",
+        "corpus_fingerprint": "b07ed8d53d3551321fd844fbfe7afa1aa292995e40a178e519b561318f816374",
+        "n_passages": 28313,
+        "n_filings": 75,
+        "built_at": "2026-10-08T14:46:21.975261+00:00",
+        "model": "",
+        "dimensions": null,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": null
+      },
+      "cross_encoder_device": "mps:0",
+      "dense_device": "mps:0",
+      "dense_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+      "workload_note": "Apple laptop with MPS; normal desktop apps and a Claude Code session open; no other model or evaluation jobs"
+    },
+    "runtime.json": {
+      "cross_encoder_load_ms": 9649.94104206562,
+      "warmup_ms": 7724.71212502569,
+      "resumed_after_questions": 0,
+      "dense_manifest": {
+        "index_type": "dense",
+        "path": "data/index/chroma",
+        "corpus_fingerprint": "820517f0a5523db82e165945fdb1802f07f35282f49b398b6c5564086208c358",
+        "n_passages": 28313,
+        "n_filings": 75,
+        "built_at": "2026-10-08T14:49:01+00:00",
+        "model": "BAAI/bge-base-en-v1.5",
+        "dimensions": 768,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": 512
+      },
+      "bm25_manifest": {
+        "index_type": "bm25",
+        "path": "data/index/bm25.pkl",
+        "corpus_fingerprint": "b07ed8d53d3551321fd844fbfe7afa1aa292995e40a178e519b561318f816374",
+        "n_passages": 28313,
+        "n_filings": 75,
+        "built_at": "2026-10-08T14:46:21.975261+00:00",
+        "model": "",
+        "dimensions": null,
+        "chunk_budget": 1800,
+        "chunk_overlap": 300,
+        "passage_prefix": "",
+        "max_tokens": null
+      },
+      "cross_encoder_device": "mps:0",
+      "dense_device": "mps:0",
+      "dense_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+      "workload_note": "Apple laptop with MPS; normal desktop apps and a Claude Code session open; no other model or evaluation jobs"
+    }
+  },
+  "artifacts_sha256": {
+    "config.json": "e52cf790f8958d66c61ac6ddfed06567f322151019ca5fe9a3984914871a974d",
+    "pairs.jsonl.gz": "883316998a77e62b79de485db19eaaef6d46ab8b5453a3825de87d1ffc9c82ec",
+    "runtime-0000.json": "a31362c810a45bbf16ebc6f19e9db776224aeabbd1fc8a3565351627e9cf3ca8",
+    "runtime.json": "a31362c810a45bbf16ebc6f19e9db776224aeabbd1fc8a3565351627e9cf3ca8",
+    "summary.json": "4471a95cb735e844f5e24de9ab807ef0f99bdff7836174f513b2174d4a2a881c"
+  }
+}
