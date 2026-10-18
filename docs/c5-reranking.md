@@ -294,6 +294,13 @@ counts are 35 / 34 (C4 / C5). Both rows have zero query company/year-filter
 violations. These gold-scope proxies can reflect incomplete labels; they are
 not answer-correctness measurements.
 
+The [team decision on #44](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/44#issuecomment-6245852597)
+records C5 as **experimental MiniLM reranking of C4, evaluated and rejected
+for default adoption**, using this full `c5-full-20261017` study. C6 builds on
+that rejected C5 experiment, rather than the app's C4 stack. Measuring a C6
+based on C4 is tracked separately in #173. The prose gains and table regressions
+above remain part of the negative ablation result.
+
 ### Full-run timing and reproducibility
 
 An Apple M1 / 16 GiB laptop used MPS for both encoders. No other local model
@@ -458,9 +465,6 @@ company/template dependence, and gold scope is not exhaustive relevance. No
 conclusion about answer correctness, other checkpoints or larger chunk budgets
 follows from these retrieval metrics.
 
-For #44, the C5 row is **experimental MiniLM reranking of C4, evaluated and
-rejected for default adoption**, with these paired results retained as the
-negative ablation and its prose gains/table regressions recorded explicitly.
 
 
 ## Historical table-boost sensitivity (#155 review)
