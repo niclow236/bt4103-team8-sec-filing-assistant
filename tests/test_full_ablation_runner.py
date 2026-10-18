@@ -1,6 +1,7 @@
 """Exercise the actual matrix commands across interruption/replay boundaries."""
 import importlib
 import json
+import os
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -100,7 +101,10 @@ def test_retrieval_runs_and_resumes_the_actual_transaction_loop(runner,count):
     runner.fail_after=None
     runner.args.resume=True
     runner.args.workload_note='resumed overnight'
-    runner.args.questions=[runner.args.questions[0].resolve()]
+    original_path=runner.args.questions[0]
+    runner.args.questions=[Path(os.path.relpath(original_path,Path.cwd()))]
+    assert str(runner.args.questions[0])!=str(original_path)
+    assert runner.args.questions[0].resolve()==original_path.resolve()
     runner.platform='new OS build string'
     matrix.retrieval(runner.args)
     assert runner.reads==2
@@ -111,6 +115,7 @@ def test_retrieval_runs_and_resumes_the_actual_transaction_loop(runner,count):
     segment=json.loads((runner.directory/'runtime-0001.json').read_text())
     assert segment['resumed_after_questions']==count and segment['workload_note']=='resumed overnight'
     assert segment['environment']['platform']=='new OS build string'
+    assert segment['inputs'][0]['path']==str(runner.args.questions[0])
     assert json.loads((runner.directory/'summary.json').read_text())['complete']
     before=artifacts(runner.directory)
     matrix.retrieval(runner.args)
