@@ -2634,7 +2634,11 @@ abstained on all four unanswerable questions and on the same number of
 answerable ones. G3's longest answer used 887 output tokens, a full list of
 Meta's risks that finished on its own, so the 1,024-token ceiling still fits.
 Its latency is SOCLAAS's on a Sunday evening, a shared school service, and is
-not a guarantee.
+not a guarantee. A repeat of the same replay early on 19 October scored 0.8770
+(faithfulness 0.934, the same citation precision, median and p95 latency
+1,176 and 3,701 ms, still no schema failures or truncations). Temperature 0 on
+a shared server is not exactly repeatable, but the difference from G2 is not
+one run's luck.
 
 The answers' latency excludes retrieval, which was recorded rather than run.
 This is one run of each generator, judged by a smaller model than G3, so the

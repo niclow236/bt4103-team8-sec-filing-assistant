@@ -230,6 +230,8 @@ def run_generation_ablation(
 # summarised beside it by the same function, as the G row that wrote them.
 
 REPLAY_ROW = "C4"
+# What a full-matrix run's config.json records as its schema (full_ablation.py).
+FULL_MATRIX_SCHEMA = "full-matrix-v1"
 REPLAY_FIELDS = (
     "provider", "model", "judge", "correctness", "correctness_scored", "faithfulness",
     "unanswerable_abstention", "answerable_abstention", "citation_precision",
@@ -295,10 +297,13 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
 
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
+    config = json.loads((run_dir / "config.json").read_text())
+    if not isinstance(config, dict) or config.get("schema") != FULL_MATRIX_SCHEMA:
+        raise ValueError(f"{run_dir} is not a full-matrix run: its config.json does not record "
+                         f"the schema {FULL_MATRIX_SCHEMA!r}")
     if not (run_dir / "answers-config.json").is_file():
         raise ValueError(f"{run_dir} has no answers yet: it has no "
                          f"{run_dir / 'answers-config.json'}; finish its `answers` step first")
-    config = json.loads((run_dir / "config.json").read_text())
     questions = [BenchmarkQuestion.from_mapping(row) for row in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(config, questions)
     # A setting the matrix gained after the run, such as rerank after
