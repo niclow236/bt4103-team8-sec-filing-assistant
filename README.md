@@ -2379,7 +2379,8 @@ is a hosted model's judgement, from one run.
 
 ### Embedding and generation ablations
 
-Issue #46 compares three embedding configurations and both answer providers.
+Issue #46 compares three embedding configurations and the answer providers;
+#163 adds G3, SOCLAAS with `qwen3.6:35b`.
 The registry in `src/evaluation/model_ablation.py` records the encoder, vector
 width, query and passage prefixes, token limit and index directory together.
 `EmbeddingConfig` carries those settings through stack assembly and dense
@@ -2432,14 +2433,42 @@ files to the new sibling names before running again; moving existing indexes
 does not require re-encoding.
 
 G1 is local Ollama with the pinned default `llama3.2:3b`; G2 is hosted Mistral
-with the app's pinned `ministral-8b-2512`. They share retrieval indexes and use
+with the app's pinned `ministral-8b-2512`; G3 is SOCLAAS with
+`qwen3.6:35b`, pinned by its ID. They share retrieval indexes and use
 C4's passage budget and answer settings, including decomposition and refusal.
 The facts shortcut is disabled by default so numeric questions exercise the
 providers; `--no-facts` states that explicitly. `--with-facts` includes the
 shortcut and records that override. The table reports overall abstention,
 provider-routed question count and abstention rate, median answer latency and
 how many completed questions needed a retry. Reports retain routes and numeric
-verification checks. G1 needs Ollama and its model; G2 needs `MISTRAL_API_KEY`.
+verification checks. G1 needs Ollama and its model; G2 needs `MISTRAL_API_KEY`;
+G3 needs `SOCLAAS_API_KEY`.
+
+#### G rows over a full-matrix run's recorded evidence
+
+The `generation` command answers through the app's C4 stack, with
+decomposition and refusal on, and judges nothing. To set a generator beside the
+answers the [complete C0–C6 experiment](#complete-c0c6-experiment) recorded for
+C4, `replay` answers the run's recorded C4 rankings with each named G row. It
+keeps the matrix's C4 answer settings (no facts, decomposition or refusal
+shortcuts) and judges with the model and rubric that judged the run's own
+answers. So the generator is the only change:
+
+```bash
+python -m src.evaluation.model_ablation replay results/full-matrix-20261017 \
+  --rows G3 --run-id generators-c4-20261018
+```
+
+The run must be complete, over this corpus and its frozen benchmark snapshot;
+anything else is refused before a model is built. Each named row's config is
+the recorded one with only the provider and model changed. The table puts the
+recorded answers first, as the G row that wrote them, and each replayed row
+after, with judged correctness and faithfulness, abstention on unanswerable
+and on answerable questions, citation precision, answers with an invalid or
+unresolved citation marker, schema failures, answers cut at
+`MAX_OUTPUT_TOKENS`, judge failures, median and 95th-percentile (nearest-rank)
+generation latency, and mean input and output tokens. A missing key stops the
+command before it writes anything, and a stopped row keeps its answers.
 
 Each run writes `report.json` for each configuration and a `summary.csv` and
 `summary.json` under `results/<run-id>/`. C, E and G runners share the table

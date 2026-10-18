@@ -1,11 +1,12 @@
-"""Compare E1-E3 embeddings and G1-G2 providers with reproducible reports."""
+"""Compare E1-E3 embeddings and G1-G3 providers with reproducible reports."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass, fields, replace
+from math import ceil
 from pathlib import Path
 from statistics import mean, median
 from shlex import join as shell_join
@@ -15,14 +16,15 @@ from typing import Any
 
 from src.config import PROCESSED_DIR, PROJECT_ROOT
 from src.rag import ProviderUnavailable
-from src.rag.constants import DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL
+from src.rag.records import GenerationConfig
+from src.rag.constants import DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL
 from src.retrieval.embedding_config import EmbeddingConfig
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate
 from .metrics import score_question
-from .records import BenchmarkQuestion, RunResult
+from .records import UNANSWERABLE, BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
 from .run import _query, _safe_run_id, _summary, question_fields
 
@@ -70,6 +72,7 @@ EMBEDDING_EXPERIMENTS = (
 GENERATION_EXPERIMENTS = (
     GenerationExperiment("G1", "Local Ollama", "ollama", DEFAULT_MODEL),
     GenerationExperiment("G2", "Hosted Mistral", "mistral", DEFAULT_MISTRAL_MODEL),
+    GenerationExperiment("G3", "Hosted SOCLAAS", "soclaas", DEFAULT_SOCLAAS_MODEL),
 )
 MODEL_FIELDS = (
     "abstention_rate", "provider", "model", "embedding_model", "retriever",
@@ -179,7 +182,7 @@ def run_generation_ablation(
     stack_factory: Callable[[GenerationExperiment], Any],
     *, run_id: str, results_root: Path = RESULTS_ROOT,
 ) -> dict[str, Any]:
-    """Measure both providers with each stack's complete answer settings."""
+    """Measure every provider with each stack's complete answer settings."""
     run_dir = available_run_dir(results_root, run_id)
     stacks = [(experiment, stack_factory(experiment)) for experiment in GENERATION_EXPERIMENTS]
     if len({stack.config.top_k for _, stack in stacks}) != 1:
@@ -210,6 +213,246 @@ def run_generation_ablation(
             break
     manifest = write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
                                 extra_fields=MODEL_FIELDS, matrix="generation")
+    if stopped is not None:
+        raise stopped
+    return manifest
+
+
+# --- G rows over a full-matrix run's recorded evidence (#163) ----------------------
+#
+# A G row run above answers through the app's own C4 stack. To set a generator
+# beside the answers a full-matrix run (#161) recorded for C4, it has to answer
+# over the same evidence, with the same settings and the same judge, so that the
+# generator is the only change. The replay below does that: it hands the run's
+# recorded C4 rankings to the harness in place of a retriever, with the matrix's
+# C4 settings (no facts, decomposition or refusal shortcuts), and judges with the
+# model and rubric that judged the recorded answers. The recorded answers are
+# summarised beside it by the same function, as the G row that wrote them.
+
+REPLAY_ROW = "C4"
+REPLAY_FIELDS = (
+    "provider", "model", "judge", "correctness", "correctness_scored", "faithfulness",
+    "unanswerable_abstention", "answerable_abstention", "citation_precision",
+    "invalid_citation_answers", "schema_failures", "truncated", "judge_failures",
+    "median_generate_ms", "p95_generate_ms", "mean_input_tokens", "mean_output_tokens",
+    "retried_questions",
+)
+
+
+@dataclass(frozen=True)
+class RecordedAnswers:
+    """A full-matrix run's C4 answers and the evidence they were written over.
+
+    ``questions`` are the team questions, each scored against the gold passages
+    the run recorded for C4; ``retriever`` replays the run's C4 rankings;
+    ``generation`` is the config that wrote ``rows`` and, with the
+    ``answer-quality-v1`` rubric, judged them.
+    """
+
+    run_dir: Path
+    questions: tuple[BenchmarkQuestion, ...]
+    retriever: Any
+    generation: GenerationConfig
+    rows: tuple[dict[str, Any], ...]
+
+
+class _RecordedRankings:
+    """Replays every question's recorded C4 ranking, found by the query it answered."""
+
+    def __init__(self, rows: Sequence[dict[str, Any]], chunks: dict[str, dict]) -> None:
+        from src.evaluation.full_ablation import ReplayRetriever
+
+        self.replays = [ReplayRetriever(row, chunks) for row in rows]
+        self.name = ReplayRetriever.name
+
+    def search(self, query: Any, k: int | None = None) -> list[Any]:
+        for replay in self.replays:
+            try:
+                return replay.search(query, k)
+            except ValueError:
+                continue
+        raise ValueError("answer query differs from every measured query")
+
+    def has_candidates(self, query: Any) -> None:
+        return None
+
+
+def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
+                     chunks: Sequence[dict] | None = None) -> RecordedAnswers:
+    """The C4 answers a complete full-matrix run recorded, ready to replay.
+
+    Refused unless the benchmark snapshot, the matrix settings and the corpus
+    are the ones the run froze, its retrieval covered every team question, and
+    its C4 answers are complete, in order. ``chunks`` is the corpus, read from
+    ``processed_dir`` unless given.
+    """
+    from src.evaluation.full_ablation import (
+        MATRIX, MatrixConfig, check_transactions, read_rows, team_questions, validate_snapshot,
+    )
+    from src.evaluation.provenance import corpus_records_sha256
+    from src.evaluation.quality import RUBRIC_ID
+    from src.pipeline.chunk import iter_chunks
+
+    config = json.loads((run_dir / "config.json").read_text())
+    questions = [BenchmarkQuestion.from_mapping(row) for row in read_rows(run_dir / "benchmark.jsonl")]
+    validate_snapshot(config, questions)
+    # A setting the matrix gained after the run, such as rerank after
+    # full-matrix-20261017, was not recorded and ran at its default.
+    defaults = {field.name: field.default for field in fields(MatrixConfig)
+                if field.default is not MISSING}
+    frozen = config.get("matrix", {}).get(REPLAY_ROW) or {}
+    current = MATRIX[REPLAY_ROW].to_dict()
+    if not frozen or any(frozen.get(name, defaults.get(name, MISSING)) != value
+                         for name, value in current.items()) or set(frozen) - set(current):
+        raise ValueError(f"{REPLAY_ROW}'s settings differ from the run's; use its recorded source")
+    team = team_questions(questions)
+    transactions = read_rows(run_dir / "pairs.jsonl")
+    check_transactions(transactions, questions)
+    measured = {t["question"]["question_id"]: t["rows"][REPLAY_ROW] for t in transactions}
+    if any(question.question_id not in measured for question in team):
+        raise ValueError("the run's team retrieval is incomplete")
+    answered = json.loads((run_dir / "answers-config.json").read_text())
+    if answered["judge_rubric"] != RUBRIC_ID:
+        raise ValueError(f"the run was judged with {answered['judge_rubric']!r}, not {RUBRIC_ID!r}")
+    rows = read_rows(run_dir / REPLAY_ROW / "answers.jsonl")
+    if [row["question_id"] for row in rows] != [question.question_id for question in team]:
+        raise ValueError(f"the run's {REPLAY_ROW} answers do not cover its team questions in order")
+    snapshot = list(chunks) if chunks is not None else list(iter_chunks(processed_dir=processed_dir))
+    if corpus_records_sha256(snapshot) != config["provenance"]["corpus"]["records_sha256"]:
+        raise ValueError("this corpus differs from the one the run measured")
+    scored = tuple(
+        replace(question,
+                supporting_chunk_ids=tuple(measured[question.question_id]["scoring_supporting_chunk_ids"]),
+                hard_negative_chunk_ids=tuple(
+                    measured[question.question_id]["scoring_hard_negative_chunk_ids"]))
+        for question in team)
+    return RecordedAnswers(
+        run_dir=run_dir, questions=scored,
+        retriever=_RecordedRankings([measured[q.question_id] for q in team],
+                                    {chunk["chunk_id"]: chunk for chunk in snapshot}),
+        generation=GenerationConfig(**answered["generation"]), rows=tuple(rows),
+    )
+
+
+def _nearest_rank(ordered: Sequence[float], share: float) -> float | None:
+    """The nearest-rank percentile of values already in order: the smallest
+    value at or above ``share`` of them."""
+    return ordered[max(ceil(share * len(ordered)), 1) - 1] if ordered else None
+
+
+def _mean_of(values: Sequence[Any]) -> float | None:
+    known = [value for value in values if value is not None]
+    return mean(known) if known else None
+
+
+def _replay_summary(experiment: GenerationExperiment, rows: Sequence[dict[str, Any]], *,
+                    judge: GenerationConfig, origin: str) -> dict[str, Any]:
+    """What #163 compares generators on, over one G row's answers.
+
+    Correctness and faithfulness are the judge's means over the answers it
+    scored. A schema failure is an answer that failed the schema without being
+    cut at the output ceiling; a truncated one is counted on its own. An
+    answer with an invalid or unresolved citation marker counts once however
+    many it has. Latency is generation alone, with the 95th percentile taken
+    by nearest rank, and tokens are the generator's, not the judge's.
+    """
+    from .quality import quality_summary
+
+    quality = quality_summary(list(rows))
+    answers = [row["answer"] for row in rows]
+    generate_ms = sorted(row["latency_ms"]["generate"] for row in rows)
+
+    def abstention(selected):
+        return mean(row["answer"]["abstained"] for row in selected) if selected else None
+
+    return {
+        "config": {**asdict(experiment), "origin": origin},
+        "questions": len(rows),
+        "recall": None, "ndcg": None, "mrr": None, "hard_negative_accuracy": None,
+        "judge": f"{judge.provider}/{judge.model}",
+        "correctness": quality["correctness"]["mean"],
+        "correctness_scored": quality["correctness"]["scored"],
+        "faithfulness": quality["faithfulness"]["mean"],
+        "unanswerable_abstention": abstention(
+            [row for row in rows if row["question_type"] == UNANSWERABLE]),
+        "answerable_abstention": abstention(
+            [row for row in rows if row["question_type"] != UNANSWERABLE]),
+        "citation_precision": quality["citation_precision"]["mean"],
+        "invalid_citation_answers": sum(
+            bool(row["quality"]["invalid_markers"] or row["quality"]["unresolved_markers"])
+            for row in rows),
+        "schema_failures": sum(bool(a["parse_error"]) and not a["truncated"] for a in answers),
+        "truncated": sum(bool(a["truncated"]) for a in answers),
+        "judge_failures": sum(row["quality"]["method"] == "judge_failed" for row in rows),
+        "median_generate_ms": median(generate_ms) if generate_ms else None,
+        "p95_generate_ms": _nearest_rank(generate_ms, 0.95),
+        "mean_input_tokens": _mean_of([row["cost"]["input_tokens"] for row in rows]),
+        "mean_output_tokens": _mean_of([row["cost"]["output_tokens"] for row in rows]),
+        "retried_questions": sum(row.get("attempts", 1) > 1 for row in rows),
+    }
+
+
+def run_generation_replay(
+    recorded: RecordedAnswers, experiments: Sequence[GenerationExperiment], *, run_id: str,
+    results_root: Path = RESULTS_ROOT, llm_for: Callable[[GenerationConfig], Any] | None = None,
+    judge: Any | None = None,
+) -> dict[str, Any]:
+    """Answer the recorded C4 evidence with each G row, judged as the recorded answers were.
+
+    Each row's config is the recorded one with only the provider and model
+    changed. ``llm_for`` builds each chat model, :func:`checked_model` unless
+    given; every one is built, and the judge with them, before the run
+    directory is made, so a missing key stops the run before it writes
+    anything. A stopped or interrupted row keeps its answers, as
+    :func:`run_generation_ablation` does.
+    """
+    from src.evaluation.full_ablation import MATRIX
+    from src.evaluation.quality import LLMJudge
+    from src.rag.generate import checked_model
+
+    run_dir = available_run_dir(results_root, run_id)
+    llm_for = llm_for or checked_model
+    judge = judge if judge is not None else LLMJudge(recorded.generation)
+    answering = [(experiment, replace(recorded.generation, provider=experiment.provider,
+                                      model=experiment.model))
+                 for experiment in experiments]
+    models = [llm_for(config) for _, config in answering]
+    run_dir.mkdir(parents=True)
+    stack = MATRIX[REPLAY_ROW]
+    origin = f"{recorded.run_dir.name}/{REPLAY_ROW}"
+    wrote = next((experiment for experiment in GENERATION_EXPERIMENTS
+                  if (experiment.provider, experiment.model)
+                  == (recorded.generation.provider, recorded.generation.model)),
+                 GenerationExperiment("recorded", "Recorded answers", recorded.generation.provider,
+                                      recorded.generation.model))
+    summaries = [_replay_summary(wrote, recorded.rows, judge=judge.config, origin=origin)]
+    question_by_id = {question.question_id: question for question in recorded.questions}
+    stopped = None
+    for (experiment, config), llm in zip(answering, models):
+        try:
+            report = evaluate(
+                list(recorded.questions), recorded.retriever, config,
+                run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
+                use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
+                use_verification=stack.use_verification, judge=judge,
+            )
+        except (RunStopped, RunInterrupted) as error:
+            report, stopped = error.report, error
+        for row in report.get("results", []):
+            question = question_by_id.get(row.get("question_id"))
+            if question is not None:
+                row.update(question_fields(question))
+        _write_report(run_dir, experiment.id, report)
+        summaries.append(_replay_summary(experiment, report.get("results", []),
+                                         judge=judge.config, origin="replayed")
+                         | {"stopped": report.get("stopped")})
+        if stopped is not None:
+            break
+    manifest = write_comparison(
+        run_dir, run_id=run_id, top_k=stack.top_k, summaries=summaries,
+        extra_fields=REPLAY_FIELDS, matrix="generation-replay",
+        evidence={"run": recorded.run_dir.name, "row": REPLAY_ROW}, judge=judge.to_dict(),
+    )
     if stopped is not None:
         raise stopped
     return manifest
@@ -273,7 +516,43 @@ def _sample(questions: Sequence[BenchmarkQuestion], limit: int) -> list[Benchmar
     return [questions[i * (len(questions) - 1) // (limit - 1)] for i in range(limit)]
 
 
+def replay_main(argv: list[str]) -> None:
+    """``replay RUN_DIR --rows G3``: G rows over a full-matrix run's recorded C4 evidence."""
+    parser = argparse.ArgumentParser(
+        prog="python -m src.evaluation.model_ablation replay",
+        description="Answer a complete full-matrix run's recorded C4 evidence with each named G "
+                    "row, judged by the model and rubric that judged the run's own answers, and "
+                    "table them beside those answers.")
+    parser.add_argument("run_dir", type=Path, help="A complete full-matrix run, such as "
+                                                   "results/full-matrix-20261017.")
+    parser.add_argument("--rows", nargs="+", required=True,
+                        choices=[experiment.id for experiment in GENERATION_EXPERIMENTS])
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--results-root", type=Path, default=RESULTS_ROOT)
+    parser.add_argument("--processed-dir", type=Path, default=PROCESSED_DIR)
+    args = parser.parse_args(argv)
+    try:
+        run_dir = available_run_dir(args.results_root, args.run_id)
+    except (ValueError, FileExistsError) as error:
+        parser.error(str(error))
+    experiments = [experiment for experiment in GENERATION_EXPERIMENTS if experiment.id in args.rows]
+    try:
+        run_generation_replay(recorded_answers(args.run_dir, processed_dir=args.processed_dir),
+                              experiments, run_id=args.run_id, results_root=args.results_root)
+    except (RunStopped, RunInterrupted) as error:
+        raise SystemExit(f"{error}; partial results are under {run_dir}") from None
+    except (ValueError, ProviderUnavailable) as error:
+        parser.error(str(error))
+    print((run_dir / "summary.csv").read_text(encoding="utf-8"), end="")
+    print(f"written: {run_dir}")
+
+
 def main(argv: list[str] | None = None) -> None:
+    import sys
+
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["replay"]:
+        return replay_main(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("matrix", choices=("embedding", "generation"))
     parser.add_argument("questions", type=Path, nargs="?", default=DEFAULT_QUESTIONS_PATH)

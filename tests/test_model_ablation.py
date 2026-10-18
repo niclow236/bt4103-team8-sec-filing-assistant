@@ -1,4 +1,4 @@
-"""Tests for E1-E3 and G1-G2 model ablations."""
+"""Tests for E1-E3 and G1-G3 model ablations."""
 
 import csv
 import json
@@ -80,7 +80,7 @@ def test_embedding_matrix_has_three_configured_models_and_common_table(monkeypat
     assert rows[0]["recall"] == "1.0"
 
 
-def test_generation_matrix_compares_local_and_hosted_providers(monkeypatch, tmp_path):
+def test_generation_matrix_compares_the_local_and_both_hosted_providers(monkeypatch, tmp_path):
     import src.evaluation.model_ablation as module
 
     monkeypatch.setattr(module, "evaluate", _fake_evaluate)
@@ -88,10 +88,13 @@ def test_generation_matrix_compares_local_and_hosted_providers(monkeypatch, tmp_
         [_question()], _stack, run_id="generation-run", results_root=tmp_path
     )
 
-    assert [row["config"]["id"] for row in manifest["configurations"]] == ["G1", "G2"]
+    assert [row["config"]["id"] for row in manifest["configurations"]] == ["G1", "G2", "G3"]
     assert {row["config"]["provider"] for row in manifest["configurations"]} == {
         experiment.provider for experiment in GENERATION_EXPERIMENTS
     }
+    # G3 names SOCLAAS's model by its ID, not the "default" alias (#163).
+    assert [(row["config"]["provider"], row["config"]["model"])
+            for row in manifest["configurations"]][2] == ("soclaas", "qwen3.6:35b")
     assert json.loads(
         (tmp_path / "generation-run" / "G2" / "report.json").read_text()
     )["config"]["provider"] == "mistral"
@@ -137,7 +140,7 @@ def test_generation_uses_c4_stack_settings(monkeypatch, tmp_path):
     run_generation_ablation([_question()], _stack, run_id="settings", results_root=tmp_path)
 
     c4 = _stack(GENERATION_EXPERIMENTS[0]).config
-    assert [kwargs["stack"] for kwargs in seen] == [c4, c4]
+    assert [kwargs["stack"] for kwargs in seen] == [c4, c4, c4]
     assert {kwargs["top_k"] for kwargs in seen} == {c4.top_k}
     assert {kwargs["use_facts"] for kwargs in seen} == {c4.use_facts}
 
@@ -266,7 +269,7 @@ def test_default_generation_shares_parts_and_disables_facts(monkeypatch, tmp_pat
         module._default_generation_stack(experiment, processed_dir=tmp_path, parts=parts)
     assert all(row["parts"] is parts and row["processed_dir"] == tmp_path for row in seen)
     assert all(row["use_facts"] is False for row in seen)
-    assert [row["provider"] for row in seen] == ["ollama", "mistral"]
+    assert [row["provider"] for row in seen] == ["ollama", "mistral", "soclaas"]
 
 
 def test_generation_statistics_count_provider_routes_and_retries():
@@ -541,3 +544,279 @@ def test_custom_corpus_error_recommends_preparing_only_default_corpus(monkeypatc
         module.main(["embedding", "questions.jsonl", "--processed-dir", str(tmp_path / "other corpus"),
                      "--results-root", str(tmp_path / "results"), "--run-id", "missing"])
     assert join(["--processed-dir", str(default)]) in capsys.readouterr().err
+
+
+# --- G rows over a full-matrix run's recorded evidence (#163) ------------------------
+
+def _recorded_row(question_id, *, question_type="numeric", abstained=False, correctness=1.0,
+                  parse_error=None, truncated=False, invalid=(), unresolved=(), generate_ms=1000.0,
+                  input_tokens=500, output_tokens=50, attempts=1, method="llm_judge"):
+    """A row as the harness writes one, with every field the replay summary reads."""
+    return {
+        "question_id": question_id, "question_type": question_type, "attempts": attempts,
+        "route": "mistral",
+        "answer": {"abstained": abstained, "parse_error": parse_error, "truncated": truncated},
+        "quality": {"method": method, "correctness": correctness, "faithfulness": 1.0,
+                    "answerability_correct": 1.0, "citation_precision": 1.0,
+                    "citation_recall": 1.0, "invalid_markers": list(invalid),
+                    "unresolved_markers": list(unresolved)},
+        "latency_ms": {"retrieve": 0.0, "rerank": 0.0, "generate": generate_ms,
+                       "retry_wait": 0.0, "other": 0.0, "total": generate_ms},
+        "cost": {"usd": None, "input_tokens": input_tokens, "output_tokens": output_tokens},
+        "judge_overhead": {"latency_ms": 0.0, "retry_wait_ms": 0.0, "total_ms": 0.0,
+                           "cost": {"usd": None}},
+    }
+
+
+def _recorded(tmp_path, rows=None):
+    from dataclasses import replace
+    from src.evaluation.model_ablation import RecordedAnswers
+
+    questions = (_question(), replace(_question(), question_id="q002", question_type="unanswerable"))
+    return RecordedAnswers(
+        run_dir=tmp_path / "full-matrix-20261017", questions=questions, retriever=object(),
+        generation=GenerationConfig("mistral", "ministral-8b-2512", "grounded_v4"),
+        rows=tuple(rows or (_recorded_row("q001"),
+                            _recorded_row("q002", question_type="unanswerable", abstained=True))),
+    )
+
+
+def _replaying(seen, rows=None):
+    def evaluate(questions, retriever, config, **kwargs):
+        seen.append((questions, retriever, config, kwargs))
+        return {"config": config.to_dict(), "results": rows or [
+            _recorded_row("q001", generate_ms=400.0),
+            _recorded_row("q002", question_type="unanswerable", abstained=True,
+                          generate_ms=400.0)]}
+    return evaluate
+
+
+def test_g3_replays_the_recorded_evidence_with_only_the_generator_changed(monkeypatch, tmp_path):
+    import src.evaluation.model_ablation as module
+    from src.evaluation.full_ablation import MATRIX
+    from src.evaluation.model_ablation import run_generation_replay
+
+    seen = []
+    monkeypatch.setattr(module, "evaluate", _replaying(seen))
+    recorded = _recorded(tmp_path)
+    judge = SimpleNamespace(config=recorded.generation, to_dict=lambda: {"judge": "recorded"})
+    g3 = GENERATION_EXPERIMENTS[2]
+    manifest = run_generation_replay(recorded, [g3], run_id="replay", results_root=tmp_path,
+                                     llm_for=lambda config: f"llm for {config.model}",
+                                     judge=judge)
+
+    [(questions, retriever, config, kwargs)] = seen
+    assert list(questions) == list(recorded.questions) and retriever is recorded.retriever
+    # The recorded answers' template and temperature, with G3's provider and model.
+    assert config == GenerationConfig("soclaas", "qwen3.6:35b", "grounded_v4", 0.0)
+    assert kwargs["llm"] == "llm for qwen3.6:35b" and kwargs["judge"] is judge
+    assert kwargs["stack"] == MATRIX["C4"] and kwargs["top_k"] == MATRIX["C4"].top_k
+    assert (kwargs["use_facts"], kwargs["use_refusal"], kwargs["use_decomposition"],
+            kwargs["use_verification"]) == (False, False, False, False)
+    # The recorded answers are the G row whose provider and model wrote them.
+    assert [row["config"]["id"] for row in manifest["configurations"]] == ["G2", "G3"]
+    assert manifest["configurations"][0]["config"]["origin"] == "full-matrix-20261017/C4"
+    assert json.loads((tmp_path / "replay" / "G3" / "report.json").read_text())["config"][
+        "provider"] == "soclaas"
+    with (tmp_path / "replay" / "summary.csv").open(newline="") as stream:
+        table = list(csv.DictReader(stream))
+    assert [(row["config"], row["model"], row["median_generate_ms"]) for row in table] == [
+        ("G2", "ministral-8b-2512", "1000.0"), ("G3", "qwen3.6:35b", "400.0")]
+
+
+def test_the_replay_summary_counts_what_163_compares_generators_on(tmp_path):
+    from src.evaluation.model_ablation import _replay_summary
+
+    rows = [
+        _recorded_row("a1", correctness=1.0, generate_ms=100.0, input_tokens=1000, output_tokens=10),
+        _recorded_row("a2", correctness=0.5, generate_ms=200.0, invalid=[7], attempts=2),
+        # Cut at the ceiling: truncated, and not also a schema failure.
+        _recorded_row("a3", correctness=0.0, generate_ms=300.0, parse_error="cut", truncated=True),
+        _recorded_row("a4", correctness=None, generate_ms=400.0, parse_error="bad schema",
+                      method="judge_failed", input_tokens=None, output_tokens=None),
+        _recorded_row("u1", question_type="unanswerable", abstained=True, generate_ms=5000.0),
+        _recorded_row("u2", question_type="unanswerable", abstained=False, correctness=0.0,
+                      generate_ms=600.0, unresolved=[3]),
+    ]
+    judge = GenerationConfig("mistral", "ministral-8b-2512", "answer-quality-v1")
+    summary = _replay_summary(GENERATION_EXPERIMENTS[2], rows, judge=judge, origin="replayed")
+    assert summary["questions"] == 6 and summary["judge"] == "mistral/ministral-8b-2512"
+    assert (summary["correctness"], summary["correctness_scored"]) == (2.5 / 5, 5)
+    assert (summary["unanswerable_abstention"], summary["answerable_abstention"]) == (0.5, 0.0)
+    assert summary["invalid_citation_answers"] == 2
+    assert (summary["schema_failures"], summary["truncated"], summary["judge_failures"]) == (1, 1, 1)
+    assert summary["median_generate_ms"] == 350.0
+    # Nearest rank: the 6th of 6 ordered values is the 95th percentile.
+    assert summary["p95_generate_ms"] == 5000.0
+    assert (summary["mean_input_tokens"], summary["mean_output_tokens"]) == (
+        (1000 + 500 * 4) / 5, (10 + 50 * 4) / 5)
+    assert summary["retried_questions"] == 1
+
+
+def test_a_replay_that_cannot_build_its_models_writes_nothing(monkeypatch, tmp_path):
+    import pytest
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+    from src.rag import ProviderUnavailable
+
+    monkeypatch.setattr(module, "evaluate", lambda *a, **k: pytest.fail("answered"))
+
+    def no_key(config):
+        raise ProviderUnavailable("SOCLAAS_API_KEY is not set")
+
+    recorded = _recorded(tmp_path)
+    with pytest.raises(ProviderUnavailable):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="no-key",
+                              results_root=tmp_path, llm_for=no_key,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    assert not (tmp_path / "no-key").exists()
+
+
+def test_a_stopped_replay_keeps_its_answers_and_its_table(monkeypatch, tmp_path):
+    import pytest
+    import src.evaluation.model_ablation as module
+    from src.evaluation.harness import RunStopped
+    from src.evaluation.model_ablation import run_generation_replay
+
+    asked = []
+
+    def stops(questions, retriever, config, **kwargs):
+        asked.append(config.provider)
+        raise RunStopped({"results": [_recorded_row("q001")],
+                          "stopped": {"question_id": "q002", "error": "rate limit"}})
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    recorded = _recorded(tmp_path)
+    with pytest.raises(RunStopped):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2], GENERATION_EXPERIMENTS[0]],
+                              run_id="stopped",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    report = json.loads((tmp_path / "stopped" / "G3" / "report.json").read_text())
+    assert [row["question_id"] for row in report["results"]] == ["q001"]
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    assert [(row["config"]["id"], row["questions"]) for row in summary["configurations"]] == [
+        ("G2", 2), ("G3", 1)]
+    assert summary["configurations"][1]["stopped"]["question_id"] == "q002"
+    # The rows after the one that stopped are not run.
+    assert asked == ["soclaas"]
+
+
+def test_the_replay_is_judged_by_the_model_that_judged_the_recorded_answers(monkeypatch, tmp_path):
+    import src.evaluation.model_ablation as module
+    import src.evaluation.quality as quality
+    from src.evaluation.model_ablation import run_generation_replay
+
+    built = []
+
+    class Judge:
+        def __init__(self, config, **kwargs):
+            built.append(config)
+            self.config = config
+
+        def to_dict(self):
+            return {"config": self.config.to_dict()}
+
+    seen = []
+    monkeypatch.setattr(quality, "LLMJudge", Judge)
+    monkeypatch.setattr(module, "evaluate", _replaying(seen))
+    recorded = _recorded(tmp_path)
+    run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="judged",
+                          results_root=tmp_path, llm_for=lambda config: None)
+    assert built == [recorded.generation]
+    assert seen[0][3]["judge"].config == recorded.generation
+
+
+from test_full_ablation_runner import answer_run, runner  # noqa: E402,F401  (fixtures)
+
+
+def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
+    import pytest
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)   # records answers-config.json, as the real run did
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    # C4's own gold passages, as the run recorded them, rather than the question's.
+    transactions = matrix.read_rows(directory / "pairs.jsonl")
+    transactions[0]["rows"]["C4"]["scoring_supporting_chunk_ids"] = ["recorded-gold"]
+    matrix.write_rows(directory / "pairs.jsonl", transactions)
+    recorded = recorded_answers(directory, chunks=snapshot)
+
+    team = matrix.team_questions(answer_run.runner.questions)
+    assert [q.question_id for q in recorded.questions] == [q.question_id for q in team]
+    assert [row["question_id"] for row in recorded.rows] == [q.question_id for q in team]
+    assert recorded.generation == GenerationConfig("mistral", "test", "grounded_v4")
+    pairs = {t["question"]["question_id"]: t["rows"]["C4"]
+             for t in matrix.read_rows(directory / "pairs.jsonl")}
+    for question in recorded.questions:
+        measured = pairs[question.question_id]
+        # Scored against the gold passages the run recorded for C4.
+        assert question.supporting_chunk_ids == tuple(measured["scoring_supporting_chunk_ids"])
+        # And answered over the rankings it recorded for C4.
+        query = matrix.MATRIX["C4"].scoped(matrix._query(question, top_k=16, metadata_filter=True))
+        assert [p.chunk_id for p in recorded.retriever.search(query)] == (
+            measured["retrieved_chunk_ids"])
+
+    # A run recorded before the matrix named a setting (rerank, for
+    # full-matrix-20261017) ran with that setting's default, and is read.
+    config = json.loads((directory / "config.json").read_text())
+    del config["matrix"]["C4"]["rerank"]
+    (directory / "config.json").write_text(json.dumps(config))
+    assert recorded_answers(directory, chunks=snapshot).rows == recorded.rows
+    # A setting it recorded otherwise is refused.
+    config["matrix"]["C4"]["use_facts"] = True
+    (directory / "config.json").write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="C4's settings differ"):
+        recorded_answers(directory, chunks=snapshot)
+    config["matrix"]["C4"]["use_facts"] = False
+    # As is a setting this code does not know.
+    config["matrix"]["C4"]["unknown"] = True
+    (directory / "config.json").write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="C4's settings differ"):
+        recorded_answers(directory, chunks=snapshot)
+    del config["matrix"]["C4"]["unknown"]
+    (directory / "config.json").write_text(json.dumps(config))
+
+    # Anything but the run's own corpus, or C4 answers short of the team, is refused.
+    with pytest.raises(ValueError, match="corpus"):
+        recorded_answers(directory, chunks=snapshot[:1])
+    matrix.write_rows(directory / "C4" / "answers.jsonl", list(recorded.rows)[:-1])
+    with pytest.raises(ValueError, match="C4 answers"):
+        recorded_answers(directory, chunks=snapshot)
+
+
+def test_the_replay_command_runs_the_rows_it_names_over_the_run_it_names(monkeypatch, tmp_path,
+                                                                          capsys):
+    import pytest
+    import src.evaluation.model_ablation as module
+    from src.rag import ProviderUnavailable
+
+    seen = {}
+    monkeypatch.setattr(module, "recorded_answers",
+                        lambda run_dir, **kwargs: seen.update(run_dir=run_dir, **kwargs) or "recorded")
+
+    def replay(recorded, experiments, *, run_id, results_root, **kwargs):
+        seen.update(recorded=recorded, rows=[e.id for e in experiments], run_id=run_id)
+        (results_root / run_id).mkdir(parents=True)
+        (results_root / run_id / "summary.csv").write_text("config,correctness\nG3,0.9\n")
+
+    monkeypatch.setattr(module, "run_generation_replay", replay)
+    module.main(["replay", "results/full-matrix-20261017", "--rows", "G3", "--run-id",
+                 "generators-c4", "--results-root", str(tmp_path)])
+    assert seen["run_dir"] == module.Path("results/full-matrix-20261017")
+    assert (seen["recorded"], seen["rows"], seen["run_id"]) == ("recorded", ["G3"], "generators-c4")
+    assert "G3,0.9" in capsys.readouterr().out
+
+    # A missing key is a usage error before anything runs, as for the other matrices.
+    def no_key(*args, **kwargs):
+        raise ProviderUnavailable("SOCLAAS_API_KEY is not set")
+
+    monkeypatch.setattr(module, "run_generation_replay", no_key)
+    with pytest.raises(SystemExit) as raised:
+        module.main(["replay", "run", "--rows", "G3", "--run-id", "again",
+                     "--results-root", str(tmp_path)])
+    assert raised.value.code == 2 and "SOCLAAS_API_KEY is not set" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        module.main(["replay", "run", "--rows", "G9", "--run-id", "x",
+                     "--results-root", str(tmp_path)])
