@@ -293,6 +293,11 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     from src.evaluation.quality import RUBRIC_ID
     from src.pipeline.chunk import iter_chunks
 
+    if not (run_dir / "config.json").is_file():
+        raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
+    if not (run_dir / "answers-config.json").is_file():
+        raise ValueError(f"{run_dir} has no answers yet: it has no "
+                         f"{run_dir / 'answers-config.json'}; finish its `answers` step first")
     config = json.loads((run_dir / "config.json").read_text())
     questions = [BenchmarkQuestion.from_mapping(row) for row in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(config, questions)

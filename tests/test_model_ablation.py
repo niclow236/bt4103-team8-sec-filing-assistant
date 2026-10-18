@@ -786,6 +786,20 @@ def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
         recorded_answers(directory, chunks=snapshot)
 
 
+def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_path):
+    # QA of #163: these raised FileNotFoundError, a traceback rather than a
+    # refusal, for a mistyped path or a run whose answers never started.
+    import pytest
+    from src.evaluation.model_ablation import recorded_answers
+
+    with pytest.raises(ValueError, match=r"not a full-matrix run: .*config\.json"):
+        recorded_answers(tmp_path / "nope", chunks=[])
+    # Retrieval finished, answers not yet started.
+    directory = answer_run.runner.directory
+    with pytest.raises(ValueError, match=r"has no answers yet: .*answers-config\.json"):
+        recorded_answers(directory, chunks=answer_run.runner.snapshot)
+
+
 def test_the_replay_command_runs_the_rows_it_names_over_the_run_it_names(monkeypatch, tmp_path,
                                                                           capsys):
     import pytest
