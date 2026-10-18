@@ -242,6 +242,12 @@ waiver. It supports #44's C4/C5 comparison; it is not a seven-row C0–C6 matrix
 or an answer-quality evaluation. The retrieval gates fail, so a paired answer
 comparison and app adoption are not triggered.
 
+For #44, the C5 row is **experimental MiniLM reranking of C4, evaluated and
+rejected for default adoption**, with this full run retained as the negative
+ablation and its prose gains/table regressions recorded explicitly. C6 stays as
+#158 defines it, building on this rejected C5; rebasing it on C4 is tracked in
+#173. The team [agreed this representation on #44](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/44#issuecomment-6245852597).
+
 | Benchmark | All / relevance-scored | Recall@16 C4 → C5 | nDCG@16 C4 → C5 | MRR@16 C4 → C5 | nDCG delta [paired 95% CI] | nDCG wins / losses / ties |
 | --- | ---: | ---: | ---: | ---: | --- | ---: |
 | Team | 150 / 146 | 0.8185 → 0.8128 | 0.5975 → 0.5163 | 0.5485 → 0.4437 | -0.0812 [-0.1416, -0.0259] | 34 / 73 / 39 |
@@ -457,11 +463,6 @@ labels are a retrieval proxy; filing clustering does not remove all
 company/template dependence, and gold scope is not exhaustive relevance. No
 conclusion about answer correctness, other checkpoints or larger chunk budgets
 follows from these retrieval metrics.
-
-For #44, the C5 row is **experimental MiniLM reranking of C4, evaluated and
-rejected for default adoption**, with these paired results retained as the
-negative ablation and its prose gains/table regressions recorded explicitly.
-
 
 ## Historical table-boost sensitivity (#155 review)
 
