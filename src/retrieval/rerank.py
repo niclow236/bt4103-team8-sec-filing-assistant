@@ -7,7 +7,7 @@ from math import isfinite
 from time import perf_counter
 from typing import Any, Sequence
 
-from .base import Retriever, has_candidates, matches, reorder, resolve_k, validate_table_boost
+from .base import matches, reorder, resolve_k, validate_table_boost
 from .constants import CANDIDATE_K
 from .records import Query, RetrievedPassage
 
@@ -131,25 +131,3 @@ class CrossEncoderReranker:
                 for p, score, n in zip(candidates, scores, lengths)
             ],
         })
-
-
-class RerankRetriever:
-    """Retriever protocol adapter for explicit experiments and answer checks."""
-
-    name = CrossEncoderReranker.name
-
-    def __init__(self, inner: Retriever, reranker: CrossEncoderReranker) -> None:
-        self.inner = inner
-        self.reranker = reranker
-
-    def has_candidates(self, query: Query) -> bool | None:
-        return has_candidates(self.inner, query)
-
-    def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
-        wanted = resolve_k(query, k)
-        if wanted > self.reranker.config.candidate_k:
-            raise ValueError("final k must not exceed candidate_k")
-        if wanted <= 0:
-            return []
-        pool = self.inner.search(query, k=self.reranker.config.candidate_k)
-        return self.reranker.rerank(query, pool, k=wanted).passages

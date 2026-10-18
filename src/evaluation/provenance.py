@@ -27,7 +27,7 @@ def sha256(path: Path) -> str:
 def _git(*args: str) -> str | None:
     try:
         result = subprocess.run(
-            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False,
+            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None

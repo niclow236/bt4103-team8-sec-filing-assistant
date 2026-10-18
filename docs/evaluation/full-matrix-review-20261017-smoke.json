@@ -1,0 +1,162 @@
+{
+  "purpose": "Real cached-model C0-C6 integration smokes after combining PR172 and PR155; not a new full study",
+  "runs": [
+    {
+      "run_id": "pr158-review-smoke-20261017",
+      "measurement_source_commit": "392325a4ce479862c20d8b77ee011a50af2a81e8",
+      "questions": 7,
+      "retrieval_outputs": 49,
+      "question_ids": [
+        "daryl-03",
+        "daryl-01",
+        "jarren-12",
+        "nicholas-03",
+        "jarren-21",
+        "nicholas-21",
+        "xbrl-aapl-2021-accounts-payable-current-usd-0000320193-21-000105"
+      ],
+      "question_types": [
+        "comparative",
+        "factual",
+        "numeric",
+        "temporal",
+        "unanswerable"
+      ],
+      "benchmark": {
+        "team": 6,
+        "xbrl": 1
+      },
+      "question_records_sha256": "250c8e5f51efefdffc9e65220b06031b443c5687d5a188e0a7e50f9dd626374e",
+      "corpus_records_sha256": "aa85811812ecef6ad95f08fc19419f35f5e9875406119fa71ba949338570501c",
+      "corpus_passages": 28289,
+      "runtime": {
+        "identity": {
+          "dense_manifest": {
+            "index_type": "dense",
+            "path": "data/index/chroma",
+            "corpus_fingerprint": "865f2e8d72f0d58b8e0aac54c6be809291e137e4e4b4d59f21462cbba1c6016d",
+            "n_passages": 28289,
+            "n_filings": 75,
+            "built_at": "2026-10-04T13:48:32+00:00",
+            "model": "BAAI/bge-base-en-v1.5",
+            "dimensions": 768,
+            "chunk_budget": 1800,
+            "chunk_overlap": 300,
+            "passage_prefix": "",
+            "max_tokens": 512
+          },
+          "bm25_manifest": {
+            "index_type": "bm25",
+            "path": "data/index/bm25.pkl",
+            "corpus_fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+            "n_passages": 28289,
+            "n_filings": 75,
+            "built_at": "2026-10-04T12:33:02.090051+00:00",
+            "model": "",
+            "dimensions": null,
+            "chunk_budget": 1800,
+            "chunk_overlap": 300,
+            "passage_prefix": "",
+            "max_tokens": null
+          },
+          "dense": {
+            "device": "mps:0",
+            "revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
+          },
+          "cross_encoder_device": "mps:0"
+        },
+        "load_and_warmup_ms": 10203.292666992638,
+        "resumed_after_questions": 0,
+        "workload_note": "Combined PR172 study and PR155 review fixes: seven real team/XBRL questions, including all five types and nicholas-21. Cached MPS models, normal desktop apps and Codex session; no concurrent model or test job. Integration smoke only, not a new full study."
+      },
+      "decomposed_questions": [],
+      "artifacts_sha256": {
+        "config.json": "1a3ecf8a35fc71a13a630b101c8bfa347357ec512caad9dbc1f5f330a4d255dc",
+        "benchmark.jsonl": "9cffa286c57ff9afeaa23c9b93bbc27d687904e517c13d6f32a3218c91364327",
+        "pairs.jsonl": "2433214ab3689763e54be7ed5958dad1e1f1df6ba2a9f31b59275a0f0cf71351",
+        "runtime.json": "ca397203e34a604f2f9965c8ab175f6a454b16c594195fc787b8eaa95ab370c9",
+        "summary.json": "c4ef39ec72f8300668f279fccc55048d0bda2705de4673ff47616bc4e7fc5e4e"
+      }
+    },
+    {
+      "run_id": "pr158-review-decomposition-20261017",
+      "measurement_source_commit": "392325a4ce479862c20d8b77ee011a50af2a81e8",
+      "questions": 1,
+      "retrieval_outputs": 7,
+      "question_ids": [
+        "jarren-16"
+      ],
+      "question_types": [
+        "comparative"
+      ],
+      "benchmark": {
+        "team": 1
+      },
+      "question_records_sha256": "0c06bfd005e8775e22d3158b3e55ac2e5399f2b9ddd64307d72ef12e96a28ea1",
+      "corpus_records_sha256": "aa85811812ecef6ad95f08fc19419f35f5e9875406119fa71ba949338570501c",
+      "corpus_passages": 28289,
+      "runtime": {
+        "identity": {
+          "dense_manifest": {
+            "index_type": "dense",
+            "path": "data/index/chroma",
+            "corpus_fingerprint": "865f2e8d72f0d58b8e0aac54c6be809291e137e4e4b4d59f21462cbba1c6016d",
+            "n_passages": 28289,
+            "n_filings": 75,
+            "built_at": "2026-10-04T13:48:32+00:00",
+            "model": "BAAI/bge-base-en-v1.5",
+            "dimensions": 768,
+            "chunk_budget": 1800,
+            "chunk_overlap": 300,
+            "passage_prefix": "",
+            "max_tokens": 512
+          },
+          "bm25_manifest": {
+            "index_type": "bm25",
+            "path": "data/index/bm25.pkl",
+            "corpus_fingerprint": "94c37f133597e1c47d885cfa8012f0b952df1f795d1f0348d2a7781eea86840a",
+            "n_passages": 28289,
+            "n_filings": 75,
+            "built_at": "2026-10-04T12:33:02.090051+00:00",
+            "model": "",
+            "dimensions": null,
+            "chunk_budget": 1800,
+            "chunk_overlap": 300,
+            "passage_prefix": "",
+            "max_tokens": null
+          },
+          "dense": {
+            "device": "mps:0",
+            "revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
+          },
+          "cross_encoder_device": "mps:0"
+        },
+        "load_and_warmup_ms": 8762.542792013846,
+        "resumed_after_questions": 0,
+        "workload_note": "Additional real Cisco/Palo Alto FY2024 comparison to exercise the C6 multi-filing branch after PR172/PR155 integration. Normal desktop apps and Codex session; no concurrent model or test job. Integration smoke only."
+      },
+      "decomposed_questions": [
+        {
+          "question_id": "jarren-16",
+          "filing_searches": 2
+        }
+      ],
+      "artifacts_sha256": {
+        "config.json": "cd6e38e24e2194338e83b624a5f1dd4a604bc3083e83d234ae83b3b5b01260f5",
+        "benchmark.jsonl": "6c47d3e6de03d1c8c7fb9c222953ed8c7c0fa830dd0ce48457d9b84f863927f6",
+        "pairs.jsonl": "808764331aa79f1d79c0aa308ec7b0154e5d70056c8b08f6fac56a120721c118",
+        "runtime.json": "05d934039bc5559b2ec284b3cfec9dffb8d22876c2a18eca8bd55db7e061c77c",
+        "summary.json": "9e30e381c807abfec4e27b332822a7f50708fe7afefca7270c031dd8a284796a"
+      }
+    }
+  ],
+  "total_questions": 8,
+  "total_retrieval_outputs": 56,
+  "all_saved_rank_metrics_recomputed_exactly": true,
+  "completed_seven_question_native_resume_passed": true,
+  "hosted_answer_calls": 0,
+  "limitations": [
+    "Local M1 corpus has 28289 passages and differs from the 28313-passage M2 full-study corpus.",
+    "The 2034-question/150-answer study artifacts are incorporated unchanged from PR172, not remeasured here."
+  ]
+}

@@ -254,3 +254,25 @@ def test_the_answer_harness_is_what_python_m_src_evaluation_runs(monkeypatch, ca
         runpy.run_module("src.evaluation", run_name="__main__")
     assert stopped.value.code == 0
     assert "--retriever" in capsys.readouterr().out
+
+
+def test_c0_frozen_windows_have_no_section_or_table_identity(monkeypatch):
+    from src.evaluation.run import FixedSizeBM25Retriever
+    from pathlib import Path
+    source=[{'chunk_id':'source-table','accession_no':'acc','ticker':'AAPL','company':'Apple',
+             'fiscal_year':2024,'item':'8','title':'Statements','content_type':'table',
+             'url':'https://example.test','text':'Revenue 100 '*30,'chunk_budget':1800,'chunk_overlap':300}]
+    def no_read(**kwargs):raise AssertionError('snapshot must be reused')
+    monkeypatch.setattr('src.evaluation.run.iter_chunks',no_read)
+    fixed=FixedSizeBM25Retriever(Path('unused'),budget=100,chunks=source)
+    windows=fixed.baseline_chunks
+    assert len(windows)==4
+    assert len({row['chunk_id'] for row in windows})==len(windows)
+    assert all(row['item']=='' and row['content_type']=='prose' and row['chunk_overlap']==0
+               and row['chunk_budget']==100 and row['title']=='Fixed-size filing window' for row in windows)
+    assert [row['chunk_id'] for row in windows]==[
+        f'fixed-acc-{start:08d}' for start in range(0,len(source[0]['text']),100)]
+    assert ''.join(row['text'] for row in windows)==source[0]['text']
+    first=windows[0]['chunk_id']
+    windows[0]['chunk_id']='changed returned copy'
+    assert fixed.baseline_chunks[0]['chunk_id']==first

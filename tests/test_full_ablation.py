@@ -1,0 +1,403 @@
+"""Controlled matrix transitions, recorded evidence, and completion guards."""
+import json
+from dataclasses import asdict, replace
+from types import SimpleNamespace
+
+import pytest
+
+from src.evaluation import full_ablation as matrix
+from src.evaluation.provenance import question_records_sha256
+from src.evaluation.records import BenchmarkQuestion
+from src.retrieval.records import Query, RetrievedPassage
+from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
+from conftest import RerankModel
+
+
+def question(identifier="q", source=None):
+    return BenchmarkQuestion(identifier, "Compare Apple and Microsoft's revenue in FY2024",
+                             "Apple and Microsoft revenue", ("a", "b"), (), None, 2024,
+                             "comparative", "hard", source)
+
+
+def chunk(identifier, ticker):
+    return {"chunk_id":identifier,"text":"Revenue | 2024 | 100", "ticker":ticker,
+            "company":ticker,"fiscal_year":2024,"item":"8","title":"Statements",
+            "url":"https://example.test","content_type":"table","accession_no":ticker}
+
+
+class Part:
+    name="bm25"
+
+    def __init__(self, chunks):
+        self.chunks,self.calls=chunks,[]
+
+    def search(self, query, k=None):
+        self.calls.append((query,k))
+        kept=[c for c in self.chunks if not query.tickers or c["ticker"] in query.tickers]
+        return [RetrievedPassage.from_chunk(c,1.0,i,self.name) for i,c in enumerate(kept,1)][:k]
+
+    def relevant_chunk_ids(self, q, hard=False):
+        return list(q.hard_negative_chunk_ids if hard else q.supporting_chunk_ids)
+
+
+def test_matrix_filters_are_the_only_c3_c4_query_change():
+    q=Query("Revenue?",tickers=("AAPL",),fiscal_years=(2024,),items=("8",),
+            keyword_text="revenue",table_boost=2.0,wants_figures=True,top_k=16)
+    raw=matrix.MATRIX["C3"].scoped(q)
+    assert raw==replace(q,tickers=(),fiscal_years=(),items=(),content_type=None)
+    assert matrix.MATRIX["C4"].scoped(q)==q
+    for cid, config in matrix.MATRIX.items():
+        assert not config.use_facts and not config.use_refusal
+        assert config.use_decomposition==(cid=="C6")
+
+
+def test_matrix_shares_components_and_c6_reranks_each_filing():
+    from src.retrieval.hybrid import HybridRetriever
+    chunks=[chunk("a","AAPL"),chunk("b","MSFT")]
+    sparse,dense=Part(chunks),Part(chunks);dense.name="dense"
+    hybrid=HybridRetriever(sparse,dense)
+    reranker=CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0,2.0]))
+    # One-candidate sub-pools need a model with one score per supplied pair.
+    reranker._model.predict=lambda pairs,**kwargs: [float(i) for i in range(len(pairs))]
+    result=matrix.measure_question(question(),Part(chunks),hybrid,reranker,{c['chunk_id']:c for c in chunks})
+    rows=result['rows'];assert list(rows)==list(matrix.MATRIX)
+    assert rows['C3']['query']['keyword_text']==rows['C4']['query']['keyword_text']
+    assert rows['C3']['query']['table_boost']==rows['C4']['query']['table_boost']
+    assert rows['C3']['query']['tickers']==() and rows['C4']['query']['tickers']==('AAPL','MSFT')
+    assert len(rows['C6']['sub_results'])==2
+    assert set(rows['C6']['retrieved_chunk_ids'])=={'a','b'}
+    assert len([q for q,k in sparse.calls if not q.tickers])==1
+    saved=json.loads(json.dumps(rows['C6']))
+    replay=matrix.ReplayRetriever(saved,{c['chunk_id']:c for c in chunks})
+    for sub in saved['sub_results']:
+        q=Query(**{**sub['query'],'tickers':tuple(sub['query']['tickers']),
+                   'fiscal_years':tuple(sub['query']['fiscal_years']),'items':tuple(sub['query']['items'])})
+        assert [p.chunk_id for p in replay.search(q)]==sub['retrieved_chunk_ids']
+    with pytest.raises(ValueError,match="differs"):
+        replay.search(Query('different'))
+
+
+def test_single_filing_c6_is_exactly_c5():
+    from src.retrieval.hybrid import HybridRetriever
+    chunks=[chunk('a','AAPL')];part=Part(chunks)
+    q=replace(question(),question='What was Apple revenue in FY2024?',ticker='AAPL',supporting_chunk_ids=('a',))
+    rows=matrix.measure_question(q,part,HybridRetriever(part,Part(chunks)),
+         CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0])),{'a':chunks[0]})['rows']
+    assert rows['C6']['origin']=='C5_identical_no_split'
+    for field in ('retrieved_chunk_ids','retrieved_scores','latency_ms',*matrix.METRICS):
+        assert rows['C6'][field]==rows['C5'][field]
+
+
+def test_transaction_reader_recovers_only_the_unfinished_tail(tmp_path):
+    path=tmp_path/'pairs.jsonl';path.write_bytes(b'{"complete":true}\n{"partial":')
+    with pytest.raises(EOFError):matrix.read_rows(path)
+    assert matrix.read_rows(path,recover=True)==[{'complete':True}]
+    path.write_bytes(b'{"broken":\n')
+    with pytest.raises(json.JSONDecodeError):matrix.read_rows(path,recover=True)
+
+
+def test_summary_exposes_denominators(tmp_path):
+    q=question(); rows={}
+    for cid in matrix.MATRIX:
+        rows[cid]=matrix.ranking(q,Query(q.question),[],cid,10.0)
+    matrix.export_retrieval(tmp_path,[{'question':q.to_dict(),'rows':rows}],1)
+    report=json.loads((tmp_path/'summary.json').read_text())
+    assert report['complete'] and len(report['configurations'])==7
+    assert report['configurations'][0]['metric_denominators']['recall']==1
+    assert report['configurations'][0]['metric_denominators']['hard_negative_accuracy']==0
+    with pytest.raises(ValueError,match='incomplete'):
+        matrix.export_retrieval(tmp_path,[],1)
+
+
+def test_retrieval_reports_one_team_slice_beside_the_xbrl_set(tmp_path):
+    transactions=[]
+    for q in (question('t1',None),question('t2',None),question('x','xbrl')):
+        transactions.append({'question':q.to_dict(),
+                             'rows':{cid:matrix.ranking(q,Query(q.question),[],cid,10.0) for cid in matrix.MATRIX}})
+    matrix.export_retrieval(tmp_path,transactions,3)
+    c0=json.loads((tmp_path/'C0/summary.json').read_text())
+    assert {name:group['questions'] for name,group in c0['by_benchmark'].items()}=={'team':2,'xbrl':1}
+    split=json.loads((tmp_path/'by-benchmark/summary.json').read_text())['configurations']
+    assert sorted((r['config']['id'],r['benchmark']) for r in split if r['config']['id']=='C4')==[
+        ('C4','team'),('C4','xbrl')]
+
+
+def reference_fixture(path):
+    import gzip
+    from src.evaluation.rerank_ablation import _rank_record
+    from src.evaluation.run import _query
+    q = question()
+    reranker = CrossEncoderReranker(RerankConfig(), model=RerankModel([1.0, 2.0]))
+    source = {name: 'same' for name in ('src/retrieval/hybrid.py', 'src/retrieval/rerank.py',
+              'src/evaluation/run.py', 'src/rag/query.py', 'src/stack.py')}
+    provenance = {'question_records_sha256': question_records_sha256([q]), 'retrieval_settings': {},
+                  'corpus': {'records_sha256': 'same'}, 'source_commit': 'frozen',
+                  'source_files_sha256': source, 'environment': {'packages': {'tokenizers': '1'}}}
+    pool = [RetrievedPassage.from_chunk(chunk('a','AAPL'), 2.0, 1, 'hybrid'),
+            RetrievedPassage.from_chunk(chunk('b','MSFT'), 1.0, 2, 'hybrid')]
+    query = _query(q, top_k=16, metadata_filter=True)
+    result = reranker.rerank(query, pool)
+    record = {'question': q.to_dict(), 'query': json.loads(json.dumps(asdict(query))),
+              'C4': _rank_record(q, pool, 1.0, 'C4'),
+              'C5': _rank_record(q, result.passages, 2.0, 'C5'), 'rerank': result.diagnostics}
+    by_id = {p.chunk_id:p for p in pool}
+    record['rerank']['candidates'] = [{**r, 'content_type': by_id[r['chunk_id']].content_type}
+                                     for r in record['rerank']['candidates']]
+    matrix.dump(path/'config.json', {'provenance':provenance, 'top_k':16,
+                                    'reranker':reranker.config.to_dict()})
+    matrix.dump(path/'runtime.json', {'bm25_manifest':None,'dense_manifest':None})
+    def save(rows):
+        with gzip.open(path/'pairs.jsonl.gz','wt') as stream:
+            stream.writelines(json.dumps(row)+'\n' for row in rows)
+        return matrix.sha256(path/'pairs.jsonl.gz')
+    digest = save([record])
+    return q, provenance, reranker, record, save, digest
+
+
+def test_reference_rejects_mismatched_corpus_before_reading_pairs(tmp_path):
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    original=json.loads((tmp_path/'config.json').read_text())
+    original['provenance']['corpus']['records_sha256']='old'
+    matrix.dump(tmp_path/'config.json',original)
+    with pytest.raises(ValueError,match='corpus'):
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+
+
+def test_verification_switch_is_an_actual_answer_stage_ablation(monkeypatch,tmp_path):
+    from src.evaluation import harness
+    from src.rag.records import Answer,GenerationConfig,VerificationResult
+    from src.rag.constants import PROMPT_TEMPLATE_ID
+    config=GenerationConfig('ollama','test',PROMPT_TEMPLATE_ID)
+    q=question();answer=Answer(q.question,'Revenue increased.',(),(),False,config,1.0)
+    monkeypatch.setattr(harness,'answer_question',lambda *args,**kwargs:answer)
+    calls=[]
+    def verify(result,**kwargs):
+        calls.append(kwargs)
+        return replace(result,verification=VerificationResult(q.question_type,()))
+    monkeypatch.setattr(harness,'verify_answer',verify)
+    facts=tmp_path/'facts.parquet'
+    off=harness.evaluate([q],Part([]),config,run_id='off',use_verification=False,facts_file=facts)
+    assert off['results'][0]['answer']['verification'] is None
+    assert off['checks']=={'not_run':1} and not calls
+    on=harness.evaluate([q],Part([]),config,run_id='on',use_verification=True,facts_file=facts)
+    assert on['checks']=={'unchecked':1} and calls[0]['facts_file']==facts
+    assert on['results'][0]['answer']['text']==off['results'][0]['answer']['text']
+
+
+def test_reference_requires_exact_queries_and_complete_question_sequence(tmp_path):
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    rows, meta = matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                      expected_pairs_sha256=digest)
+    assert rows==[record] and meta['source_commit']=='frozen'
+    assert meta['pairs_sha256']==meta['expected_pairs_sha256']==digest
+    digest=save([])
+    with pytest.raises(ValueError,match='complete'):
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+    record['query']['keyword_text']='different'
+    digest=save([record])
+    with pytest.raises(ValueError,match='query policy'):
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+
+
+@pytest.mark.parametrize('changed', [None, 'revision', 'max_length', 'candidate_k'])
+def test_reference_timing_annotation_is_not_a_ranking_setting(tmp_path, changed):
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    original=json.loads((tmp_path/'config.json').read_text())
+    original['reranker'].pop('latency')
+    if changed is not None:
+        value=original['reranker'][changed]
+        original['reranker'][changed]='changed' if changed=='revision' else value+1
+    matrix.dump(tmp_path/'config.json',original)
+    if changed is not None:
+        with pytest.raises(ValueError,match='reranking configuration'):
+            matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                  expected_pairs_sha256=digest)
+    else:
+        rows,meta=matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                       expected_pairs_sha256=digest)
+        assert rows==[record]
+        assert meta['reranker_latency_definition'].startswith('unrecorded')
+
+
+@pytest.mark.parametrize('damage',['swapped','missing_ranking','order','score'])
+def test_reference_requires_the_archived_pair_digest_and_consistent_rankings(tmp_path,damage):
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    if damage=='swapped':
+        record['C4']['latency_ms']+=1
+    elif damage=='missing_ranking':
+        del record['C4']
+    elif damage=='order':
+        record['C5']['retrieved_chunk_ids'].reverse()
+    else:
+        record['C4']['retrieved_scores'][0]+=1
+    save([record])
+    with pytest.raises(ValueError,match='archived digest'):
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+    if damage!='swapped':
+        with pytest.raises((ValueError,KeyError),match='C4|C5|ranking'):
+            matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                  expected_pairs_sha256=matrix.sha256(tmp_path/'pairs.jsonl.gz'))
+
+
+@pytest.mark.parametrize('changed',['src/retrieval/hybrid.py','src/retrieval/rerank.py',
+                                  'src/evaluation/run.py','src/rag/query.py','src/stack.py','tokenizers'])
+def test_reference_refuses_different_ranking_source_or_tokenizer(tmp_path,changed):
+    from copy import deepcopy
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    current=deepcopy(provenance)
+    if changed=='tokenizers': current['environment']['packages'][changed]='different'
+    else: current['source_files_sha256'][changed]='different'
+    with pytest.raises(ValueError,match='source differs|package version differs'):
+        matrix.reference_rows(tmp_path,[q],current,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+
+
+def test_pending_judge_keeps_the_completed_answer_and_all_attempt_costs(tmp_path):
+    from src.rag.records import Answer,GenerationConfig,Citation,SentenceCitations
+    from src.rag.constants import PROMPT_TEMPLATE_ID
+    from src.rag.generate import ProviderUnavailable
+    from src.evaluation.quality import query_cost
+    config=GenerationConfig('mistral','test',PROMPT_TEMPLATE_ID);q=question()
+    p=RetrievedPassage.from_chunk(chunk('a','AAPL'),1.0,1,'hybrid')
+    citation=Citation(1,'a',True)
+    answer=Answer(q.question,'Revenue was 100. [1]',(citation,),(p,),False,config,12.0,
+                  sentences=(SentenceCitations('Revenue was 100. [1]','Revenue was 100.',(citation,)),))
+    assert matrix.saved_answer(answer.to_dict()).to_dict()==answer.to_dict()
+    path=tmp_path/'pending.json'
+    row={'question_id':q.question_id,'answer':answer.to_dict(),'quality':{'method':'judge_failed','error':'old'},
+         'judge_overhead':{'latency_ms':0.0,'retry_wait_ms':0.0,'total_ms':0.0,
+                          'cost':query_cost('mistral',[],attempts=1,prices=None,successful_calls=0)}}
+    matrix.dump(path,row)
+    class Judge:
+        def __init__(self):self.config=config;self.fail=True
+        def __call__(self,question,saved):
+            assert saved.to_dict()==answer.to_dict()
+            if self.fail:raise ProviderUnavailable('offline')
+            return {'faithfulness':1.0,'correctness':.5,'faithfulness_reason':'supported',
+                    'correctness_reason':'partial','input_tokens':10,'output_tokens':3}
+    judge=Judge()
+    with pytest.raises(ProviderUnavailable):matrix.finish_pending_judge(path,q,judge)
+    assert json.loads(path.read_text())['judge_overhead']['cost']['model_calls']==2
+    judge.fail=False;completed=matrix.finish_pending_judge(path,q,judge)
+    assert completed['answer']==answer.to_dict() and completed['quality']['method']=='llm_judge'
+    cost=completed['judge_overhead']['cost']
+    assert cost['model_calls']==3 and cost['successful_calls']==1 and cost['usage_calls']==1
+    assert cost['observed_input_tokens']==10 and cost['input_tokens'] is None and cost['usd'] is None
+
+
+def test_transactions_require_every_row_and_preserve_the_benchmark_order():
+    q=question();t={'question':q.to_dict(),'rows':{}}
+    with pytest.raises(ValueError,match='every matrix row'):matrix.check_transactions([t],[q])
+    with pytest.raises(ValueError,match='exact benchmark prefix'):matrix.check_transactions([t],[replace(q,question_id='other')])
+
+
+def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_path,monkeypatch):
+    from src.evaluation.quality import query_cost
+    q=question();passages=[RetrievedPassage.from_chunk(chunk('a','AAPL'),1.0,1,'bm25')]
+    rows={cid:matrix.ranking(q,Query(q.question),passages,cid,12.0) for cid in matrix.MATRIX}
+    for row in rows.values():row['recall']=999.0
+    digest=question_records_sha256([q])
+    matrix.dump(tmp_path/'config.json',{'provenance':{'questions':1,'question_records_sha256':digest}})
+    matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
+    matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
+    matrix.write_rows(tmp_path/'baseline.jsonl',[])
+    cost=query_cost('ollama',[],attempts=0,prices=None)
+    answer={'question_id':q.question_id,'source':q.source,
+            'quality':{'faithfulness':None,'correctness':0.0,'answerability_correct':0.0,
+                       'citation_precision':None,'citation_recall':0.0},
+            'answer':{'abstained':True,'verification':None},'cost':cost,
+            'latency_ms':{k:0.0 for k in ('retrieve','rerank','generate','retry_wait','total','other')},
+            'judge_overhead':{'latency_ms':0.0,'retry_wait_ms':0.0,'total_ms':0.0,'cost':cost}}
+    for cid in matrix.MATRIX:
+        (tmp_path/cid).mkdir();matrix.write_rows(tmp_path/cid/'answers.jsonl',[answer])
+    monkeypatch.setattr(matrix,'FINAL_K',1)
+    matrix.rescore(SimpleNamespace(run_dir=tmp_path))
+    result=json.loads((tmp_path/'rescored/summary.json').read_text())
+    assert result['top_k']==16 and result['configurations'][0]['recall']==.5
+    assert result['configurations'][0]['ndcg']<1.0
+    assert not (tmp_path/'rescored/C0/questions.jsonl').exists()
+    answers=json.loads((tmp_path/'rescored/answer-summary.json').read_text())
+    assert answers['team_questions']==1
+    # Every answer is a team question, so a split by source has nothing to separate.
+    assert all('by_source' not in summary for summary in answers['configurations'].values())
+    (tmp_path/'C6/answers.jsonl').unlink()
+    with pytest.raises(ValueError,match='incomplete C6'):matrix.rescore(SimpleNamespace(run_dir=tmp_path))
+
+
+def test_snapshot_cannot_change_together_with_its_recorded_rankings():
+    q=question();digest=question_records_sha256([q])
+    config={'provenance':{'questions':1,'question_records_sha256':digest}}
+    matrix.validate_snapshot(config,[q])
+    with pytest.raises(ValueError,match='frozen manifest'):
+        matrix.validate_snapshot(config,[replace(q,question='An edited benchmark question')])
+
+
+def test_snapshot_of_untagged_team_questions_matches_its_recorded_provenance(monkeypatch,tmp_path):
+    from src.evaluation.provenance import record_provenance
+    monkeypatch.setattr('src.evaluation.provenance.iter_chunks',lambda **kwargs:[])
+    questions=[question('t'),question('x','xbrl')]
+    config={'provenance':record_provenance([],questions,tmp_path)}
+    assert config['provenance']['question_records_sha256'] == 'ca02164a40b190fee60cb14f8d667ddac20ac4353766389ffb76408a0412ac29'
+    matrix.validate_snapshot(config,questions)
+
+
+def test_experimental_matrix_does_not_label_the_default_app_stack_as_measured(tmp_path):
+    from src.stack import measured_runs
+    row={'config':{'id':'C4','name':'hybrid'},'questions':1,'ndcg':.5}
+    matrix.dump(tmp_path/'ordinary/summary.json',{'run_id':'ordinary','configurations':[row]})
+    matrix.dump(tmp_path/'experimental/summary.json',{'run_id':'experimental','configurations':[row],
+                                                    'evaluation_only':True})
+    assert [r.run_id for r in measured_runs(tmp_path)]==['ordinary']
+
+
+def test_resume_accepts_the_manifest_it_froze_even_with_tuple_settings(tmp_path):
+    # Provenance records chunk settings as tuples; the frozen JSON holds lists.
+    config={'provenance':{'corpus':{'chunk_settings':[(1800,300)]}},'reference':None}
+    matrix.dump(tmp_path/'config.json',config)
+    assert matrix.frozen_manifest_matches(tmp_path/'config.json',config)
+    changed={'provenance':{'corpus':{'chunk_settings':[(1800,200)]}},'reference':None}
+    assert not matrix.frozen_manifest_matches(tmp_path/'config.json',changed)
+
+
+def test_answer_phase_resumes_under_its_own_frozen_settings(tmp_path,monkeypatch):
+    from src.evaluation import quality
+    from src.evaluation.quality import query_cost
+    import importlib
+    generate=importlib.import_module('src.rag.generate')
+    from src.rag.constants import PROMPT_TEMPLATE_ID
+    from src.rag.records import GenerationConfig
+    q=question()
+    rows={cid:matrix.ranking(q,Query(q.question),[],cid,12.0) for cid in matrix.MATRIX}
+    monkeypatch.setattr(matrix,'iter_chunks',lambda **kwargs:[])
+    monkeypatch.setattr('src.evaluation.provenance.iter_chunks',lambda **kwargs:[{'chunk_id':'a','text':'x','accession_no':'f',
+                        'chunk_budget':1800,'chunk_overlap':300}])
+    config={'provenance':{'questions':1,'question_records_sha256':question_records_sha256([q]),
+                          'corpus':{'records_sha256':matrix.corpus_records_sha256([])}}}
+    matrix.dump(tmp_path/'config.json',config)
+    matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
+    matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
+    matrix.write_rows(tmp_path/'baseline.jsonl',[])
+    cost=query_cost('ollama',[],attempts=0,prices=None)
+    answer={'question_id':q.question_id,'source':q.source,
+            'quality':{'faithfulness':None,'correctness':0.0,'answerability_correct':0.0,
+                       'citation_precision':None,'citation_recall':0.0},
+            'answer':{'abstained':True,'verification':None},'cost':cost,
+            'latency_ms':{k:0.0 for k in ('retrieve','rerank','generate','retry_wait','total','other')},
+            'judge_overhead':{'latency_ms':0.0,'retry_wait_ms':0.0,'total_ms':0.0,'cost':cost}}
+    for cid in matrix.MATRIX:
+        (tmp_path/cid).mkdir();matrix.write_rows(tmp_path/cid/'answers.jsonl',[answer])
+    facts=tmp_path/'facts.parquet';facts.write_bytes(b'facts')
+    monkeypatch.setattr(generate,'config_from_env',lambda **kwargs:GenerationConfig('ollama','test',PROMPT_TEMPLATE_ID))
+    monkeypatch.setattr(generate,'checked_model',lambda config,llm=None:object())
+    monkeypatch.setattr(quality,'checked_model',lambda config,llm=None:object())
+    args=SimpleNamespace(run_dir=tmp_path,processed_dir=tmp_path,facts_file=facts,provider='ollama',model='test')
+    matrix.answers(args)
+    matrix.answers(args)
+    assert json.loads((tmp_path/'answer-summary.json').read_text())['team_questions']==1
+    facts.write_bytes(b'rebuilt facts')
+    with pytest.raises(ValueError,match='identical settings'):
+        matrix.answers(args)

@@ -100,9 +100,9 @@ python -m src.evaluation.rerank_ablation run \
 
 Use `--device cpu` on a machine without MPS, and record that hardware difference.
 The checkpoint downloads on first use and is then cached. The default stack
-does not load it. `RerankRetriever` is a protocol adapter for explicit experiments
-and future answer checks; `CrossEncoderReranker` lets the paired runner reuse
-the exact candidate pool.
+does not load it. The paired and matrix runners use `CrossEncoderReranker`
+directly to retain the exact candidate pool and diagnostics; the unused
+retriever adapter has been removed.
 
 `results/<run-id>/` holds:
 
@@ -156,6 +156,14 @@ Incomplete runs cannot be presented as a final rescored benchmark. Scores are
 recomputed from recorded ranks once per question/configuration/cutoff and reused
 across metrics and slices. Connected-filing clusters are computed once per
 subset, preserving the original bootstrap grouping and confidence intervals.
+
+The summary also reports `diagnostic_tokenization_questions`,
+`diagnostic_tokenization_median` and `diagnostic_tokenization_p95` under
+`latency_ms`. These are recomputed from nonempty pools with a recorded
+`diagnostic_tokenization_ms`. Legacy rows without that field are excluded
+from this denominator; an entirely missing diagnostic has null quantiles.
+The three additive fields do not change existing latency/quality values.
+Rescoring old artifacts can add fields, so preserve the frozen originals.
 
 Both ordinary rescore and table-boost sensitivity first verify the full stored
 rankings, even when a smaller rescore cutoff is requested. C4 must reproduce

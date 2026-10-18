@@ -843,7 +843,7 @@ cannot run without the class, and is in the history as
 `notebooks/retrieval/rerank_comparison.py`.
 
 Issue #154 revisits that decision with an opt-in, paired C4/C5 experiment on
-the accepted team benchmark and the complete mechanical XBRL set. The
+the 150-question team benchmark and the mechanical XBRL set. The
 [experiment protocol and commands](docs/c5-reranking.md) declare the quality
 and latency gates before measuring. C4 remains the default; the experimental
 reranker is not added to the app unless the measurements and an answer-quality
@@ -2309,6 +2309,27 @@ answered without it is `unverified`. A run then says how many of its answers
 a user would see flagged, and
 how many hold a figure nothing confirmed. The facts store is read once for the
 run.
+
+### Complete C0–C6 experiment
+
+Issue #44 adds an evaluation-only [complete matrix](docs/full-ablation.md), with
+all retrieval questions and the complete team answer benchmark, frozen
+provenance, restartable per-question outputs and model-free rescoring. C5/C6
+remain experimental; the app default remains C4. The measured run (#161), over
+the 150 team questions and 1,884 XBRL questions:
+
+| Row | Team nDCG@16 (146) | Mechanical nDCG@16 (1,884) | Team judged correctness (150/150) |
+| --- | ---: | ---: | ---: |
+| C0 | 0.1004 | 0.0064 | 0.3152 |
+| C1 | 0.1474 | 0.0335 | 0.3579 |
+| C2 | 0.2610 | 0.2681 | 0.5925 |
+| C3 | 0.2612 | 0.1926 | 0.5969 |
+| C4 | 0.5978 | 0.5504 | 0.8182 |
+| C5 | 0.5195 | 0.5426 | 0.7782 |
+| C6 | 0.5160 | 0.5426 | 0.7619 |
+
+C0 is scored against gold labels projected onto its fixed windows. Correctness
+is a hosted model's judgement, from one run.
 
 ### Embedding and generation ablations
 

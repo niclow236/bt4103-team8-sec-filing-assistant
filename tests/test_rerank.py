@@ -4,7 +4,7 @@ import pytest
 
 from src.retrieval.base import Retriever
 from src.retrieval.records import Query
-from src.retrieval.rerank import CrossEncoderReranker, RerankConfig, RerankRetriever
+from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 
 
 from conftest import RerankInner as Inner, RerankModel as Model, rerank_passage as passage
@@ -24,19 +24,6 @@ def test_ties_raw_negative_table_boost_and_provenance():
     assert result.diagnostics["latency_ms"] >= 0
     assert model.calls[1][1] == [("raw full question", p.text) for p in originals]
     assert originals[2].retriever == "hybrid"
-
-
-def test_adapter_passes_all_filters_and_candidate_depth():
-    q = Query("full", top_k=1, tickers=("AAA",), fiscal_years=(2024,),
-              items=("8",), content_type="table", keyword_text="trimmed", table_boost=1.2)
-    inner = Inner([passage("b", content_type="table"), passage("a", content_type="table")])
-    scorer = CrossEncoderReranker(RerankConfig(candidate_k=2), model=Model([1, 3]))
-    r = RerankRetriever(inner, scorer)
-    assert isinstance(r, Retriever)
-    assert r.has_candidates(q)
-    assert [p.chunk_id for p in r.search(q)] == ["a"]
-    assert inner.calls == [(q, 2)]
-    assert [p.rank for p in r.search(q, k=2)] == [1, 2]
 
 
 @pytest.mark.parametrize("change", [

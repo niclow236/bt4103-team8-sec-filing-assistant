@@ -7,6 +7,8 @@ from math import log2
 
 from .records import BenchmarkQuestion, RunResult
 
+RETRIEVAL_METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+
 
 def _as_set(chunk_ids: Iterable[str]) -> set[str]:
     return set(chunk_ids)

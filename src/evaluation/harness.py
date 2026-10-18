@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from math import isfinite
+from pathlib import Path
 from time import perf_counter, sleep
 from typing import Any, TypeVar
 
@@ -23,6 +24,7 @@ from src.rag.answer import REFUSALS
 from src.rag.records import Generation, GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
+from src.retrieval.facts import FACTS_FILE
 from .records import BenchmarkQuestion, UNANSWERABLE
 from .quality import (
     JudgeInvalid, LLMJudge, TokenPrices, citation_scores, quality_summary, query_cost, resource_summary,
@@ -132,7 +134,8 @@ def _checks(rows: list[dict]) -> dict[str, int]:
     for row in rows:
         if row["answer"]["abstained"]:
             continue
-        worst[worst_check(row["answer"]["verification"]["checks"])] += 1
+        verification = row["answer"]["verification"]
+        worst["not_run" if verification is None else worst_check(verification["checks"])] += 1
     return dict(sorted(worst.items()))
 
 
@@ -214,6 +217,8 @@ def evaluate(
     use_facts: bool = True,
     use_decomposition: bool = True,
     use_refusal: bool = True,
+    use_verification: bool = True,
+    facts_file: Path = FACTS_FILE,
     stack: Any | None = None,
     judge: LLMJudge | None = None,
     token_prices: TokenPrices | None = None,
@@ -241,7 +246,7 @@ def evaluate(
     reported separately so a high overall rate cannot masquerade as quality.
     Rows can be written as JSONL and opened by ``src.app.answers``.
 
-    Every answer is put through ``verify_answer`` as the app puts it before
+    By default every answer is put through ``verify_answer`` as the app puts it before
     showing it, so each row carries its checks, and ``checks`` counts the
     answered rows by the worst of the figures each states: how many answers a
     check contradicts, how many state a figure that could not be checked, and
@@ -316,6 +321,8 @@ def evaluate(
             "use_facts": use_facts,
             "use_decomposition": use_decomposition,
             "use_refusal": use_refusal,
+            "use_verification": use_verification,
+            "facts_file": str(facts_file),
             "routes": dict(sorted(Counter(row["route"] for row in rows).items())),
             "decomposed": sum(1 for row in rows if row["sub_questions"]),
             "refused": sum(1 for row in rows
@@ -337,7 +344,7 @@ def evaluate(
         started = perf_counter()
         timed = _TimedRetriever(retriever)
         generation_calls = _ModelCalls()
-        parsed = parse_question(question.question)
+        parsed = parse_question(question.question, facts_file=facts_file)
         query = parsed.to_query(top_k=top_k)
         if question.ticker is not None:
             query = replace(query, tickers=(question.ticker,))
@@ -369,6 +376,7 @@ def evaluate(
             question.question, timed, config, query=query, min_score=min_score,
             llm=llm, use_facts=use_facts, use_decomposition=use_decomposition,
             use_refusal=use_refusal, parsed=parsed, ask_model=ask_model,
+            facts_file=facts_file,
         )
         # Checked as the app checks an answer before showing it, against the
         # company and year the question is about, so a row carries what the
@@ -376,7 +384,8 @@ def evaluate(
         # checks to show. A row measured without the metadata filter searches
         # every filing, and the app still checks its answer against the
         # sidebar's company and year, so that is the scope here too.
-        answer = verify_answer(answer, parsed=asked)
+        if use_verification:
+            answer = verify_answer(answer, parsed=asked, facts_file=facts_file)
         total_ms = (perf_counter() - started) * 1000
         answerable = question.question_type != UNANSWERABLE
         quality = citation_scores(question, answer) | {

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import PROCESSED_DIR, PROJECT_ROOT
+from .evaluation.metrics import RETRIEVAL_METRICS
 from .retrieval.constants import FINAL_K
 from .retrieval.records import Query
 from .retrieval.embedding_config import EmbeddingConfig
@@ -398,6 +399,8 @@ def measured_runs(results_root: Path = RESULTS_ROOT) -> list[MeasuredRun]:
     """
     found: list[MeasuredRun] = []
     for summary in _summaries(results_root):
+        if summary.get("evaluation_only"):
+            continue  # Controlled experimental rows do not measure the app's stacks.
         run_id = str(summary.get("run_id") or "").strip()
         for row in summary.get("configurations") or ():
             config = row.get("config") or {}
@@ -411,7 +414,7 @@ def measured_runs(results_root: Path = RESULTS_ROOT) -> list[MeasuredRun]:
                 questions=int(row.get("questions") or 0),
                 metrics={
                     metric: row.get(metric)
-                    for metric in ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+                    for metric in RETRIEVAL_METRICS
                     if metric in row
                 },
             ))

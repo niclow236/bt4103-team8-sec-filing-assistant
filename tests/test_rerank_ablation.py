@@ -923,3 +923,24 @@ def test_recovery_refuses_a_changed_prefix_without_rewriting_it(tmp_path):
         run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
                   chunks=chunks, top_k=2, resume=True)
     assert path.read_bytes() == original
+
+
+def test_summary_reproduces_diagnostic_tokenization_quantiles_with_legacy_denominators():
+    from statistics import median
+    import numpy as np
+    rows=[row(question(str(i))) for i in range(4)]
+    rows[0]['rerank']['diagnostic_tokenization_ms']=2.0
+    rows[1]['rerank']['diagnostic_tokenization_ms']=8.0
+    # A legacy nonempty row contributes to rerank latency but not the new diagnostic denominator.
+    rows[3]=row(question('3'),a=(),b=())
+    rows[3]['rerank']['diagnostic_tokenization_ms']=999.0
+    report=summarize(rows,2)
+    latency=report['latency_ms']
+    assert latency['rerank_questions']==3 and latency['empty_pool_questions']==1
+    assert latency['diagnostic_tokenization_questions']==2
+    assert latency['diagnostic_tokenization_median']==median([2.0,8.0])
+    assert latency['diagnostic_tokenization_p95']==float(np.quantile([2.0,8.0],.95))
+    for r in rows:r['rerank'].pop('diagnostic_tokenization_ms',None)
+    legacy=summarize(rows,2)['latency_ms']
+    assert legacy['diagnostic_tokenization_questions']==0
+    assert legacy['diagnostic_tokenization_median'] is legacy['diagnostic_tokenization_p95'] is None
