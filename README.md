@@ -2444,31 +2444,6 @@ how many completed questions needed a retry. Reports retain routes and numeric
 verification checks. G1 needs Ollama and its model; G2 needs `MISTRAL_API_KEY`;
 G3 needs `SOCLAAS_API_KEY`.
 
-#### G rows over a full-matrix run's recorded evidence
-
-The `generation` command answers through the app's C4 stack, with
-decomposition and refusal on, and judges nothing. To set a generator beside the
-answers the [complete C0–C6 experiment](#complete-c0c6-experiment) recorded for
-C4, `replay` answers the run's recorded C4 rankings with each named G row. It
-keeps the matrix's C4 answer settings (no facts, decomposition or refusal
-shortcuts) and judges with the model and rubric that judged the run's own
-answers. So the generator is the only change:
-
-```bash
-python -m src.evaluation.model_ablation replay results/full-matrix-20261017 \
-  --rows G3 --run-id generators-c4-20261018
-```
-
-The run must be complete, over this corpus and its frozen benchmark snapshot;
-anything else is refused before a model is built. Each named row's config is
-the recorded one with only the provider and model changed. The table puts the
-recorded answers first, as the G row that wrote them, and each replayed row
-after, with judged correctness and faithfulness, abstention on unanswerable
-and on answerable questions, citation precision, answers with an invalid or
-unresolved citation marker, schema failures, answers cut at
-`MAX_OUTPUT_TOKENS`, judge failures, median and 95th-percentile (nearest-rank)
-generation latency, and mean input and output tokens. A missing key stops the
-command before it writes anything, and a stopped row keeps its answers.
 
 Each run writes `report.json` for each configuration and a `summary.csv` and
 `summary.json` under `results/<run-id>/`. C, E and G runners share the table
@@ -2600,6 +2575,84 @@ description preserves its complete provider CSV alongside the embedding CSV.
 All six E rows and both G rows required by issue #46 are measured and
 documented. The embedding run's application commit `a0cb411` passed all
 **1,229 tests**; the provider rerun's commit `1cf4458` passed all **1,294 tests**.
+
+#### G rows over a full-matrix run's recorded evidence
+
+The `generation` command answers through the app's C4 stack, with
+decomposition and refusal on, and judges nothing. To set a generator beside the
+answers the [complete C0–C6 experiment](#complete-c0c6-experiment) recorded for
+C4, `replay` answers the run's recorded C4 rankings with each named G row. It
+keeps the matrix's C4 answer settings (no facts, decomposition or refusal
+shortcuts) and judges with the model and rubric that judged the run's own
+answers. So the generator is the only change:
+
+```bash
+python -m src.evaluation.model_ablation replay results/full-matrix-20261017 \
+  --rows G3 --run-id generators-c4-20261018
+```
+
+The run must be complete, over this corpus and its frozen benchmark snapshot;
+anything else is refused before a model is built. Each named row's config is
+the recorded one with only the provider and model changed. The table puts the
+recorded answers first, as the G row that wrote them, and each replayed row
+after, with judged correctness and faithfulness, abstention on unanswerable
+and on answerable questions, citation precision, answers with an invalid or
+unresolved citation marker, schema failures, answers cut at
+`MAX_OUTPUT_TOKENS`, judge failures, median and 95th-percentile (nearest-rank)
+generation latency, and mean input and output tokens. A missing key stops the
+command before it writes anything, and a stopped row keeps its answers.
+
+The replay was measured on 18 October 2026 at `165963f`, on an Apple M2 with
+8 GiB RAM, over `full-matrix-20261017` (#161): the 150 team questions, the
+28,313-passage corpus, and the C4 rankings, settings and judge that run
+recorded. G2 is that run's own C4 answers, which scored 0.8182 in the
+[complete C0–C6 experiment](#complete-c0c6-experiment); G3 answered the same
+evidence through SOCLAAS. Both were judged by `ministral-8b-2512` with
+`answer-quality-v1`, by the command above.
+
+| | G2 `ministral-8b-2512` (Mistral) | G3 `qwen3.6:35b` (SOCLAAS) |
+| --- | ---: | ---: |
+| Judged correctness (150 of 150 scored) | 0.8182 | **0.8780** |
+| Judged faithfulness | 0.9157 | 0.9393 |
+| Unanswerable questions abstained (4) | 4 | 4 |
+| Answerable questions abstained (146) | 1 | 1 |
+| Citation precision | 0.4385 | 0.5605 |
+| Answers with an invalid or unresolved citation | 0 | 0 |
+| Schema failures | 0 | 0 |
+| Cut off at `MAX_OUTPUT_TOKENS` (1,024) | 0 | 0 |
+| Judge failures, retried questions | 0, 0 | 0, 0 |
+| Median / p95 generation latency | 1,655 / 5,249 ms | **1,002 / 3,755 ms** |
+| Mean input / output tokens | 5,154 / 129 | 5,153 / 126 |
+
+G3 is 0.060 more correct, judged question by question over the same evidence:
+better on 36 questions, worse on 16 and the same on 98. A paired bootstrap
+(10,000 resamples) puts the difference between +0.023 and +0.097 at 95%, and
+an exact sign test on the 52 changed questions gives p = 0.008. The gain is
+largest on numeric (0.841 to 0.903, 88 questions) and temporal questions
+(0.545 to 0.800, 10), and small on factual ones (0.817 to 0.831, 44). Both
+abstained on all four unanswerable questions and on the same number of
+answerable ones. G3's longest answer used 887 output tokens, a full list of
+Meta's risks that finished on its own, so the 1,024-token ceiling still fits.
+Its latency is SOCLAAS's on a Sunday evening, a shared school service, and is
+not a guarantee.
+
+The answers' latency excludes retrieval, which was recorded rather than run.
+This is one run of each generator, judged by a smaller model than G3, so the
+judge's own preferences are part of the measurement, as they were for every
+row of the complete experiment. The summary and each question's paired scores
+are in `docs/evaluation/generators-c4-20261018-summary.json` and
+`docs/evaluation/generators-c4-20261018-paired.json`.
+
+**Recommendation.** Make SOCLAAS with `qwen3.6:35b` the generator for hosted
+answers in the demo and for later evaluation runs, in place of
+`ministral-8b-2512`. It is significantly more correct on this benchmark,
+equally careful about what the filings do not answer, and faster. Two things
+to settle first: SOCLAAS is a school service for teaching and experiments
+whose limits for a whole team are not published, and every presenter needs
+their own key. Keep Mistral one click away in the app as the fallback, and
+Ollama as the offline default, which `LLM_PROVIDER` still selects. Moving the
+hosted default changes `DEFAULT_PROVIDER` or the team's `.env` advice, not
+this measurement, so it is left to the team.
 
 ### Chunk-size sweep
 

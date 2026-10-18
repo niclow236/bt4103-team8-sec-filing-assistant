@@ -1,0 +1,81 @@
+{
+  "run_id": "generators-c4-20261018",
+  "top_k": 16,
+  "configurations": [
+    {
+      "config": {
+        "id": "G2",
+        "name": "Hosted Mistral",
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "origin": "full-matrix-20261017/C4"
+      },
+      "questions": 150,
+      "recall": null,
+      "ndcg": null,
+      "mrr": null,
+      "hard_negative_accuracy": null,
+      "judge": "mistral/ministral-8b-2512",
+      "correctness": 0.8182,
+      "correctness_scored": 150,
+      "faithfulness": 0.9157241379310345,
+      "unanswerable_abstention": 1,
+      "answerable_abstention": 0.00684931506849315,
+      "citation_precision": 0.4384775377878826,
+      "invalid_citation_answers": 0,
+      "schema_failures": 0,
+      "truncated": 0,
+      "judge_failures": 0,
+      "median_generate_ms": 1654.792478773743,
+      "p95_generate_ms": 5248.872875235975,
+      "mean_input_tokens": 5153.953333333333,
+      "mean_output_tokens": 129.29333333333332,
+      "retried_questions": 0
+    },
+    {
+      "config": {
+        "id": "G3",
+        "name": "Hosted SOCLAAS",
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "origin": "replayed"
+      },
+      "questions": 150,
+      "recall": null,
+      "ndcg": null,
+      "mrr": null,
+      "hard_negative_accuracy": null,
+      "judge": "mistral/ministral-8b-2512",
+      "correctness": 0.8779999999999999,
+      "correctness_scored": 150,
+      "faithfulness": 0.9393103448275861,
+      "unanswerable_abstention": 1,
+      "answerable_abstention": 0.00684931506849315,
+      "citation_precision": 0.5605309250136836,
+      "invalid_citation_answers": 0,
+      "schema_failures": 0,
+      "truncated": 0,
+      "judge_failures": 0,
+      "median_generate_ms": 1002.1034586243331,
+      "p95_generate_ms": 3754.6066660434008,
+      "mean_input_tokens": 5152.506666666667,
+      "mean_output_tokens": 126.42,
+      "retried_questions": 0,
+      "stopped": null
+    }
+  ],
+  "matrix": "generation-replay",
+  "evidence": {
+    "run": "full-matrix-20261017",
+    "row": "C4"
+  },
+  "judge": {
+    "rubric": "answer-quality-v1",
+    "config": {
+      "provider": "mistral",
+      "model": "ministral-8b-2512",
+      "prompt_template_id": "answer-quality-v1",
+      "temperature": 0.0
+    }
+  }
+}
