@@ -15,10 +15,12 @@ import json
 import os
 
 import httpx
+import httpx2
 import pytest
 from dotenv import dotenv_values
 from langchain_mistralai import ChatMistralAI
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 
 from src.config import PROJECT_ROOT, load_env
 from src.rag.constants import (
@@ -26,12 +28,14 @@ from src.rag.constants import (
     DEFAULT_MISTRAL_MODEL,
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_URL,
+    DEFAULT_SOCLAAS_MODEL,
     GENERATION_TIMEOUT_S,
     HOSTED_TIMEOUT_S,
     MAX_OUTPUT_TOKENS,
     NUM_CTX,
     PROMPT_TEMPLATE_ID,
     PROVIDERS,
+    SOCLAAS_API_URL,
 )
 from src.rag.citations import resolve_citations
 from src.rag.generate import (
@@ -361,6 +365,13 @@ def test_config_reads_the_provider_and_uses_its_default_model(tmp_path):
     assert (config.provider, config.model) == ("mistral", DEFAULT_MISTRAL_MODEL)
 
 
+def test_soclaas_is_chosen_by_its_name_and_answers_with_a_pinned_model_id():
+    # Pinned by ID, never SOCLAAS's "default" alias, which can be repointed
+    # under a recorded run (#163).
+    config = config_from_env(environ={"LLM_PROVIDER": "SOCLAAS"})
+    assert (config.provider, config.model) == ("soclaas", "qwen3.6:35b")
+
+
 def test_the_model_setting_applies_to_either_provider():
     config = config_from_env(environ={"LLM_PROVIDER": "mistral", "LLM_MODEL": "ministral-14b-2512"})
     assert (config.provider, config.model) == ("mistral", "ministral-14b-2512")
@@ -394,7 +405,7 @@ def test_an_unknown_provider_setting_is_refused():
 def test_an_unknown_provider_argument_is_refused_under_its_own_name():
     # Not LLM_PROVIDER, which the caller may not have set at all.
     with pytest.raises(ValueError, match="^the provider argument must be one of ollama, mistral, "
-                                         "got 'openai'$"):
+                                         "soclaas, got 'openai'$"):
         config_from_env(provider="openai", environ={})
 
 
@@ -1261,9 +1272,317 @@ def test_a_chat_model_for_the_other_provider_is_refused():
         generate(PROMPT, _config(model=DEFAULT_MISTRAL_MODEL), llm=_mistral(never))
 
 
+# --- SOCLAAS ---------------------------------------------------------------------------------
+
+def _soclaas_config(**overrides) -> GenerationConfig:
+    return _config(**{"provider": "soclaas", "model": DEFAULT_SOCLAAS_MODEL, **overrides})
+
+
+def _openai_sse(output: str, *, size: int = 1, finish_reason: str = "stop",
+                prompt_tokens: int = 50, completion_tokens: int = 20) -> str:
+    """SOCLAAS's streamed /chat/completions body for a model that wrote ``output``.
+
+    As vLLM behind SOCLAAS sent it on 18 October 2026: the reason on the last
+    piece of text's chunk, then the usage on a chunk of its own with no choices.
+    """
+    def chunk(choices, **extra):
+        return {"id": "c", "object": "chat.completion.chunk", "created": 0,
+                "model": DEFAULT_SOCLAAS_MODEL, "choices": choices, **extra}
+
+    texts = [output[i:i + size] for i in range(0, len(output), size)]
+    chunks = [chunk([{"index": 0, "delta": {"role": "assistant", "content": text},
+                      "finish_reason": None}]) for text in texts]
+    chunks.append(chunk([{"index": 0, "delta": {"content": ""}, "finish_reason": finish_reason}]))
+    chunks.append(chunk([], usage={"prompt_tokens": prompt_tokens,
+                                   "completion_tokens": completion_tokens,
+                                   "total_tokens": prompt_tokens + completion_tokens}))
+    return "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+
+def _soclaas(handler, base_url: str = SOCLAAS_API_URL) -> ChatOpenAI:
+    # httpx2, not httpx: the OpenAI client sends with it, so its errors are
+    # the ones SOCLAAS's failures arrive wrapped around.
+    return ChatOpenAI(model=DEFAULT_SOCLAAS_MODEL, api_key="test-key", base_url=base_url,
+                      max_retries=0, stream_usage=True,
+                      http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+
+
+def _soclaas_raises(exception_type):
+    def handler(request):
+        raise exception_type("boom", request=request)
+    return handler
+
+
+def _soclaas_serving(output, requests=None, **sse) -> ChatOpenAI:
+    """A ChatOpenAI whose SOCLAAS streams ``output`` back, recording each request."""
+    body = output if isinstance(output, str) else json.dumps(output)
+
+    def handler(request):
+        if requests is not None:
+            requests.append(request)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                              text=_openai_sse(body, **sse))
+
+    return _soclaas(handler)
+
+
+def test_a_soclaas_answer_streams_and_parses_like_the_others():
+    seen, result = _drain(stream(PROMPT, _soclaas_config(), llm=_soclaas_serving(
+        ANSWER, prompt_tokens=1234, completion_tokens=56)))
+    assert "".join(seen) == result.text == ANSWER_TEXT
+    assert result.parse_error is None
+    assert (result.input_tokens, result.output_tokens) == (1234, 56)
+    assert (result.stop_reason, result.truncated) == ("stop", False)
+
+
+def test_the_soclaas_request_carries_the_schema_strictly_and_the_options():
+    requests = []
+    generate(PROMPT, _soclaas_config(temperature=0.3), llm=_soclaas_serving(ANSWER, requests),
+             max_tokens=99)
+    [request] = requests
+    assert str(request.url) == f"{SOCLAAS_API_URL}/chat/completions"
+    assert request.headers["authorization"] == "Bearer test-key"
+    body = json.loads(request.content)
+    assert (body["model"], body["stream"]) == (DEFAULT_SOCLAAS_MODEL, True)
+    assert [(m["role"], m["content"]) for m in body["messages"]] == [
+        (m["role"], m["content"]) for m in PROMPT.to_messages()
+    ]
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "GroundedAnswer", "strict": True,
+                        "schema": GroundedAnswer.for_sources(3).model_json_schema()},
+    }
+    # ChatOpenAI names the ceiling max_completion_tokens, which SOCLAAS keeps
+    # to: a ceiling of 12 ended on "length" after 12 tokens on 18 October 2026.
+    assert (body["temperature"], body["max_completion_tokens"]) == (0.3, 99)
+    # The token counts come back only when the stream is asked for them.
+    assert body["stream_options"] == {"include_usage": True}
+    assert not {"format", "options", "extra_body"} & set(body)
+
+
+def test_chat_model_is_chat_openai_on_soclaas_with_the_key_from_the_dotenv_file(tmp_path):
+    llm = chat_model(_soclaas_config(), dotenv=_dotenv(tmp_path, SOCLAAS_API_KEY="test-key"))
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.model_name == DEFAULT_SOCLAAS_MODEL
+    assert llm.openai_api_key.get_secret_value() == "test-key"
+    # SOCLAAS's own address when SOCLAAS_BASE_URL is unset: a teammate needs only the key.
+    assert llm.openai_api_base == SOCLAAS_API_URL
+    assert llm.request_timeout == HOSTED_TIMEOUT_S
+    other = chat_model(_soclaas_config(), environ={"SOCLAAS_API_KEY": "k",
+                                                   "SOCLAAS_BASE_URL": "http://proxy:8080/v1/"})
+    assert other.openai_api_base == "http://proxy:8080/v1"
+
+
+def test_one_soclaas_client_serves_every_question_with_the_same_key():
+    first = chat_model(_soclaas_config(), environ={"SOCLAAS_API_KEY": "test-key"})
+    assert chat_model(_soclaas_config(), environ={"SOCLAAS_API_KEY": "test-key"}) is first
+    assert chat_model(_soclaas_config(), environ={"SOCLAAS_API_KEY": "another"}) is not first
+
+
+@pytest.mark.parametrize("values", [{}, {"SOCLAAS_API_KEY": ""}])
+def test_a_missing_soclaas_key_says_where_to_make_one(tmp_path, values):
+    path = _dotenv(tmp_path, **values)
+    with pytest.raises(ProviderUnavailable, match=r"SOCLAAS_API_KEY is not set: make a key .*"
+                                                  r"soclaas-portal\.comp\.nus\.edu\.sg.*then "
+                                                  r"restart the notebook or command") as built:
+        chat_model(_soclaas_config(), dotenv=path)
+    with pytest.raises(ProviderUnavailable) as checked:
+        check_provider(_soclaas_config(), dotenv=path)
+    assert str(checked.value) == str(built.value)
+    assert checked.value.reason == "SOCLAAS_API_KEY is not set"
+
+
+def test_an_ollama_address_is_not_taken_for_soclaas():
+    with pytest.raises(ValueError, match="SOCLAAS_BASE_URL"):
+        chat_model(_soclaas_config(), base_url="http://proxy:8080/v1",
+                   environ={"SOCLAAS_API_KEY": "test-key"})
+
+
+def test_a_soclaas_answer_cut_off_at_the_ceiling_is_truncated():
+    # The OpenAI client's parsing stream raised LengthFinishReasonError here
+    # against SOCLAAS on 18 October 2026, rather than hand the answer on.
+    cut = json.dumps(ANSWER)[:95]   # inside the second sentence's text
+    result = generate(PROMPT, _soclaas_config(), llm=_soclaas_serving(cut, finish_reason="length"))
+    assert result.truncated is True
+    assert result.answer is None
+    assert result.text.startswith("Revenue was $100. [1] It")
+
+
+# --- when SOCLAAS cannot answer -------------------------------------------------------------
+
+def _soclaas_refusing(status, body=None, headers=None):
+    return _soclaas(lambda request: httpx2.Response(status, json=body, headers=headers)
+                    if body is not None else httpx2.Response(status, headers=headers))
+
+
+@pytest.mark.parametrize("status, body, expected, busy", [
+    # The bodies SOCLAAS sent on 18 October 2026, for a wrong key and a model it
+    # does not serve: the latter is a 503, and asking again will not fix it.
+    (401, {"error": "invalid API key"},
+     r"^SOCLAAS refused the API key \(HTTP 401: invalid API key\); check SOCLAAS_API_KEY in "
+     r"your \.env, or make a new key at https://soclaas-portal", False),
+    (503, {"error": 'public model "nope:1b" is not configured'},
+     r"^SOCLAAS does not serve 'qwen3\.6:35b' \(HTTP 503: public model \"nope:1b\" is not "
+     r"configured\); set LLM_MODEL to a model it serves, such as qwen3\.6:35b, or unset it", False),
+    (429, {"error": "rate limit exceeded"}, r"SOCLAAS's rate limit .* wait a minute and ask again",
+     True),
+    (502, None, r"^SOCLAAS failed while running 'qwen3\.6:35b' \(HTTP 502\): ask again", True),
+    (400, {"error": "bad request"}, r"^SOCLAAS refused the request \(HTTP 400: bad request\)$",
+     False),
+], ids=["key", "model", "rate-limit", "outage", "other"])
+def test_a_request_soclaas_refused_says_what_to_do(status, body, expected, busy):
+    with pytest.raises(ProviderUnavailable, match=expected) as raised:
+        generate(PROMPT, _soclaas_config(), llm=_soclaas_refusing(status, body))
+    assert isinstance(raised.value, ProviderBusy) is busy
+
+
+def test_a_soclaas_rate_limit_carries_how_long_it_asked_to_be_left():
+    llm = _soclaas_refusing(429, {"error": "slow down"}, headers={"retry-after": "30"})
+    with pytest.raises(ProviderBusy, match="wait 30s and ask again") as raised:
+        generate(PROMPT, _soclaas_config(), llm=llm)
+    assert raised.value.retry_after == 30.0
+
+
+def test_a_page_that_is_not_soclaas_s_names_the_address_setting():
+    # What a wrong SOCLAAS_BASE_URL got on 18 October 2026: the school's web
+    # server's HTML 404 page. A network's login page looks the same.
+    llm = _soclaas(lambda request: httpx2.Response(
+        404, text="<!doctype html><html></html>", headers={"content-type": "text/html"}))
+    with pytest.raises(ProviderUnavailable, match=r"did not answer as SOCLAAS does \(HTTP 404: an "
+                                                  r"HTML page\).*SOCLAAS_BASE_URL") as raised:
+        generate(PROMPT, _soclaas_config(), llm=llm)
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+def test_soclaas_s_own_address_that_cannot_be_reached_is_asked_again():
+    with pytest.raises(ProviderBusy, match=r"^cannot reach SOCLAAS at https://soclaas-api\.comp\.nus"
+                                           r"\.edu\.sg/v1 \(boom\): check the internet connection"):
+        generate(PROMPT, _soclaas_config(), llm=_soclaas(_soclaas_raises(httpx2.ConnectError)))
+
+
+def test_a_soclaas_address_that_cannot_be_reached_names_the_setting():
+    llm = _soclaas(_soclaas_raises(httpx2.ConnectError), base_url="http://127.0.0.1:9/v1")
+    with pytest.raises(ProviderUnavailable, match=r"cannot reach SOCLAAS at http://127\.0\.0\.1:9/v1 "
+                                                  r"\(boom\), the address SOCLAAS_BASE_URL sets: "
+                                                  r"correct it, or unset it") as raised:
+        generate(PROMPT, _soclaas_config(), llm=llm)
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+def test_a_soclaas_certificate_a_proxy_re_signed_is_not_asked_again():
+    def handler(request):
+        raise httpx2.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                                  "self-signed certificate in certificate chain", request=request)
+
+    with pytest.raises(ProviderUnavailable, match="certificate did not verify") as raised:
+        generate(PROMPT, _soclaas_config(), llm=_soclaas(handler))
+    assert not isinstance(raised.value, ProviderBusy)
+
+
+def test_no_response_from_soclaas_in_time_is_asked_again():
+    with pytest.raises(ProviderBusy, match=r"^SOCLAAS at .* sent nothing for 120s"):
+        generate(PROMPT, _soclaas_config(), llm=_soclaas(_soclaas_raises(httpx2.ReadTimeout)))
+
+
+def test_a_connection_soclaas_drops_part_way_is_asked_again():
+    def handler(request):
+        def body():
+            yield b'data: {"id": "c", "object": "chat.completion.chunk", "created": 0, '
+            yield b'"model": "qwen3.6:35b", "choices": []}\n\n'
+            raise httpx2.RemoteProtocolError("peer closed connection", request=request)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body())
+
+    with pytest.raises(ProviderBusy, match=r"the connection to SOCLAAS .* broke off "
+                                           r"\(RemoteProtocolError: peer closed connection\)"):
+        generate(PROMPT, _soclaas_config(), llm=_soclaas(handler))
+
+
+def test_an_error_soclaas_streams_mid_answer_is_asked_again():
+    def handler(request):
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"},
+                              text='data: {"error": {"message": "engine died"}}\n\n')
+
+    with pytest.raises(ProviderBusy, match=r"^SOCLAAS stopped 'qwen3\.6:35b' part-way with an "
+                                           r"error \(engine died\): ask again"):
+        generate(PROMPT, _soclaas_config(), llm=_soclaas(handler))
+
+
+@pytest.mark.parametrize("output, finish_reason, busy", [
+    (json.dumps(ANSWER)[:40], None, True),      # the stream ended early
+    (json.dumps(ANSWER), "content_filter", False),
+], ids=["cut", "filtered"])
+def test_an_answer_soclaas_did_not_finish_is_not_handed_on(output, finish_reason, busy):
+    with pytest.raises(ProviderUnavailable, match=r"SOCLAAS stopped 'qwen3\.6:35b'") as raised:
+        generate(PROMPT, _soclaas_config(),
+                 llm=_soclaas_serving(output, finish_reason=finish_reason))
+    assert isinstance(raised.value, ProviderBusy) is busy
+
+
+def test_a_whole_soclaas_answer_whose_last_chunk_lost_its_reason_is_handed_on():
+    result = generate(PROMPT, _soclaas_config(),
+                      llm=_soclaas_serving(ANSWER, finish_reason=None))
+    assert (result.text, result.stop_reason) == (ANSWER_TEXT, None)
+
+
+def test_a_failed_soclaas_request_is_sent_once(monkeypatch):
+    # The OpenAI client asks again on its own unless told not to, inside the
+    # latency the harness measures and out of the attempts it records.
+    requests = []
+
+    def send(client, request, **kwargs):
+        requests.append(request)
+        return httpx2.Response(503, json={"error": "overloaded"}, request=request)
+
+    monkeypatch.setattr(httpx2.Client, "send", send)
+    with pytest.raises(ProviderBusy):
+        generate(PROMPT, _soclaas_config(),
+                 llm=chat_model(_soclaas_config(), environ={
+                     "SOCLAAS_API_KEY": "k", "SOCLAAS_BASE_URL": "http://127.0.0.1:9/v1"}))
+    assert len(requests) == 1
+
+
+def test_a_soclaas_chat_model_for_another_model_or_provider_is_refused():
+    def never(request):
+        raise AssertionError("no request should be sent")
+
+    with pytest.raises(ValueError, match="serves 'qwen3.6:35b' but the config records 'qwen3.8:27b'"):
+        generate(PROMPT, _soclaas_config(model="qwen3.8:27b"), llm=_soclaas(never))
+    with pytest.raises(ValueError, match="ChatOpenAI but the config records the provider 'mistral'"):
+        generate(PROMPT, _mistral_config(model=DEFAULT_SOCLAAS_MODEL), llm=_soclaas(never))
+
+
+def test_the_soclaas_client_chat_model_builds_records_the_token_counts(monkeypatch):
+    # Like any OpenAI-style server, SOCLAAS sends the counts only when the
+    # request asks for them, and ChatOpenAI asks only on OpenAI's own address.
+    def send(client, request, **kwargs):
+        asked = json.loads(request.content).get("stream_options", {}).get("include_usage")
+        body = _openai_sse(json.dumps(ANSWER), completion_tokens=56)
+        if not asked:
+            body = "".join(event + "\n\n" for event in body.split("\n\n")
+                           if event and '"usage"' not in event)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, text=body,
+                               request=request)
+
+    monkeypatch.setattr(httpx2.Client, "send", send)
+    result = generate(PROMPT, _soclaas_config(), llm=chat_model(_soclaas_config(), environ={
+        "SOCLAAS_API_KEY": "k", "SOCLAAS_BASE_URL": "http://127.0.0.1:9/v1"}))
+    assert (result.text, result.output_tokens) == (ANSWER_TEXT, 56)
+
+
+def test_an_unrelated_error_from_soclaas_is_not_disguised():
+    class Broken(ChatOpenAI):
+        def stream(self, *args, **kwargs):
+            raise KeyError("a bug, not an outage")
+
+    with pytest.raises(KeyError):
+        generate(PROMPT, _soclaas_config(),
+                 llm=Broken(model=DEFAULT_SOCLAAS_MODEL, api_key="test-key"))
+
+
 # --- the evaluation command -----------------------------------------------------------------
 
-@pytest.mark.parametrize("provider, client", [("ollama", ChatOllama), ("mistral", ChatMistralAI)])
+@pytest.mark.parametrize("provider, client", [("ollama", ChatOllama), ("mistral", ChatMistralAI),
+                                              ("soclaas", ChatOpenAI)])
 def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, provider,
                                                      client):
     import src.evaluation.cli as cli
@@ -1271,6 +1590,7 @@ def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, prov
 
     seen = {}
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.setenv("SOCLAAS_API_KEY", "test-key")
     monkeypatch.setattr(cli, "load_questions", lambda *a, **k: [])
     monkeypatch.setattr(BM25Retriever, "load", lambda **k: object())
     monkeypatch.setattr(cli, "evaluate", lambda questions, retriever, config, llm, **k:
@@ -1286,8 +1606,9 @@ def test_the_evaluation_command_chooses_the_provider(monkeypatch, tmp_path, prov
 @pytest.mark.parametrize("values, expected", [
     ({"LLM_PROVIDER": "mistrl"}, "LLM_PROVIDER must be one of ollama, mistral"),
     ({"LLM_PROVIDER": "mistral", "MISTRAL_API_KEY": ""}, "MISTRAL_API_KEY is not set"),
+    ({"LLM_PROVIDER": "soclaas", "SOCLAAS_API_KEY": ""}, "SOCLAAS_API_KEY is not set"),
     ({"LLM_PROVIDER": "ollama", "LLM_NUM_GPU": "all"}, "LLM_NUM_GPU must be a whole number"),
-], ids=["provider", "key", "gpu-layers"])
+], ids=["provider", "key", "soclaas-key", "gpu-layers"])
 def test_the_evaluation_command_refuses_its_settings_before_loading_anything(
         monkeypatch, tmp_path, capsys, values, expected):
     import src.evaluation.cli as cli

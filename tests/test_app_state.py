@@ -372,32 +372,38 @@ def test_each_provider_is_built_once_over_the_same_indexes(built):
 def test_answer_models_reads_what_env_selects(monkeypatch):
     found = state_module.answer_models()
     assert (found.models, found.default, found.problem) == (
-        {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}, "ollama", None)
+        {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512", "soclaas": "qwen3.6:35b"},
+        "ollama", None)
     monkeypatch.setenv("LLM_PROVIDER", "mistral")
     monkeypatch.setenv("LLM_MODEL", "mistral-small-2506")
     found = state_module.answer_models()
     assert (found.models, found.default, found.problem) == (
-        {"ollama": "llama3.2:3b", "mistral": "mistral-small-2506"}, "mistral", None)
+        {"ollama": "llama3.2:3b", "mistral": "mistral-small-2506", "soclaas": "qwen3.6:35b"},
+        "mistral", None)
     monkeypatch.setenv("LLM_PROVIDER", "mistrl")
     unknown = state_module.answer_models()
     assert unknown.default == "ollama" and "got 'mistrl'" in unknown.problem
     # The model was named for a provider that does not exist, so neither gets it.
-    assert unknown.models == {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512"}
+    assert unknown.models == {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512",
+                              "soclaas": "qwen3.6:35b"}
 
 
 def test_answer_models_says_what_each_provider_lacks_and_builds_no_client(monkeypatch):
     # Read on every rerun of a page, so it asks each provider's settings and
     # nothing else: no client library imported, no client built.
-    from src.rag.generate import _mistral_client
+    from src.rag.generate import _mistral_client, _soclaas_client
 
     # What is wrong and none of the advice, which is written for a command.
-    assert state_module.answer_models().unready == {"mistral": "MISTRAL_API_KEY is not set"}
+    assert state_module.answer_models().unready == {"mistral": "MISTRAL_API_KEY is not set",
+                                                    "soclaas": "SOCLAAS_API_KEY is not set"}
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.setenv("SOCLAAS_API_KEY", "test-key")
     assert state_module.answer_models().unready == {}
     monkeypatch.setenv("LLM_NUM_GPU", "many")
     assert state_module.answer_models().unready == {
         "ollama": "LLM_NUM_GPU must be a whole number of layers, got 'many'"}
     assert _mistral_client.cache_info().currsize == 0
+    assert _soclaas_client.cache_info().currsize == 0
 
 
 def test_a_request_is_everything_an_answer_was_asked_with():

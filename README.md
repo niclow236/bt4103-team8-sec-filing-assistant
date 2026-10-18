@@ -1064,7 +1064,7 @@ half a second.
 ## Answering a question
 
 The RAG stage turns a question into an answer that cites the passages it came
-from. One of two providers writes the answer, chosen with `LLM_PROVIDER` in
+from. One of three providers writes the answer, chosen with `LLM_PROVIDER` in
 `.env`:
 
 - `ollama`, the default: a local model served by Ollama. It needs no account,
@@ -1073,16 +1073,19 @@ from. One of two providers writes the answer, chosen with `LLM_PROVIDER` in
 - `mistral`: an open-weight Ministral model on Mistral's API, on the free plan.
   An answer takes about two seconds, and needs an internet connection and an
   API key from your own Mistral account.
+- `soclaas`: an open-weight model on NUS SoC's SOCLAAS API, which serves larger
+  models than Mistral's free plan. An answer takes about a second, and needs an
+  internet connection (no VPN) and a SOCLAAS API key.
 
-Both get the same prompt and the same answer schema, and everything before and
+All get the same prompt and the same answer schema, and everything before and
 after generation is the same code. Each answer records the provider and model
 that wrote it, in `answer.config`. Two settings in `.env` choose them, and
 neither is required:
 
 | Variable | Default | When to set it |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral) |
-| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks the other one with `--provider` uses that provider's default |
+| `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral); `soclaas` to answer with SOCLAAS, once you have [set it up](#setting-up-soclaas) |
+| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral, `qwen3.6:35b` with SOCLAAS | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks another one with `--provider` uses that provider's default |
 
 ### Setting up Ollama
 
@@ -1166,6 +1169,49 @@ to the exact digit at `FINAL_K` 16 (20 of 28, against 17 for 14B), abstained
 less (2 against 4), and is allowed six times as many requests a minute. The
 hosted runs under [Searching the indexes](#searching-the-indexes) and
 [the evaluation](docs/mistral-free-tier-evaluation.md) have the details.
+
+### Setting up SOCLAAS
+
+Only needed to answer with SOCLAAS, the OpenAI-compatible LLM API NUS School of
+Computing runs for teaching and experiments
+(<https://soclaas-api.comp.nus.edu.sg>). It needs no VPN to answer, so a key
+is all a teammate needs.
+
+1. Make an API key with your NUS account at
+   <https://soclaas-portal.comp.nus.edu.sg>; SOCLAAS's
+   [getting-started guide](https://dochub.comp.nus.edu.sg/cf/guides/soclaas/start)
+   walks through it. On 18 October 2026 neither page loaded from outside the
+   NUS network while the API did, so make the key on campus or over the NUS
+   VPN if they do not load.
+2. Put it in your own `.env`, as for Mistral: remove the `#` from the
+   `# SOCLAAS_API_KEY=` line `.env.example` leaves for it, paste your key after
+   the `=`, and choose the provider:
+
+   ```
+   LLM_PROVIDER=soclaas
+   SOCLAAS_API_KEY=<your key>
+   ```
+
+   The same rules as for a Mistral key apply: it is yours, it stays in `.env`,
+   and the app opens on Ollama with SOCLAAS one click away unless
+   `LLM_PROVIDER=soclaas` is set.
+3. Ask a question that needs the model. `answer.config` should record
+   `provider='soclaas'` and `model='qwen3.6:35b'`.
+
+SOCLAAS answers with `qwen3.6:35b` (Qwen 3.6 35B A3B) unless `LLM_MODEL` names
+another of its models. It is named by its ID rather than SOCLAAS's `default`
+alias, which pointed at the same model on 16 October 2026 but can be repointed,
+and a recorded run has to name the model that wrote it. Leave out `x-test-1` and
+`x-test-2`, which SOCLAAS lists as testing models that can change.
+`SOCLAAS_BASE_URL` is read too, but nobody needs to set it: unset, the code uses
+SOCLAAS's own address.
+
+The request is the one Mistral gets: the same prompt, and the answer schema as a
+strict JSON-schema response format. A missing key, a key SOCLAAS refuses, a
+model it does not serve, a rate limit, an outage, a server that cannot be
+reached and an answer that ends before it is finished each raise
+`ProviderUnavailable` saying what to do, and the ones asking again may fix are
+`ProviderBusy`, as for Mistral.
 
 ### From a question to an answer
 

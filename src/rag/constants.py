@@ -386,17 +386,20 @@ Question: {question}"""
 SOURCE_SEPARATOR = "\n\n\n"
 
 # --- generation -------------------------------------------------------------
-# Two providers, chosen with LLM_PROVIDER in .env (#106). Ollama runs a model on
-# the computer running the code: no account, no key and no network, and 2 to 4
-# minutes an answer on a laptop's CPU. Mistral's hosted API answers in about 2
-# seconds on its free plan, with each teammate's own key from their own account.
+# Three providers, chosen with LLM_PROVIDER in .env (#106, #163). Ollama runs a
+# model on the computer running the code: no account, no key and no network, and
+# 2 to 4 minutes an answer on a laptop's CPU. Mistral's hosted API answers in
+# about 2 seconds on its free plan, with each teammate's own key from their own
+# account. SOCLAAS is NUS SoC's OpenAI-compatible gateway, which serves larger
+# open-weight models than Mistral's free plan, reachable without the VPN.
 # Ollama is the default, so a fresh clone works offline, and a demo whose key or
 # connection fails still has something to fall back on.
 # ``GenerationConfig.provider`` records which one served an answer, so a results
 # row says what produced it.
 OLLAMA = "ollama"
 MISTRAL = "mistral"
-PROVIDERS = (OLLAMA, MISTRAL)
+SOCLAAS = "soclaas"
+PROVIDERS = (OLLAMA, MISTRAL, SOCLAAS)
 DEFAULT_PROVIDER = OLLAMA
 
 # The model a fresh clone uses, as Ollama names it. Swap it with
@@ -411,6 +414,14 @@ DEFAULT_MODEL = "llama3.2:3b"
 # 30. Voxtral Small and Codestral stated figures the passages did not hold. See
 # docs/mistral-free-tier-evaluation.md and notebooks/mistral/.
 DEFAULT_MISTRAL_MODEL = "ministral-8b-2512"
+
+# The SOCLAAS model used when LLM_MODEL is unset: Qwen 3.6 35B A3B, by its own
+# ID. SOCLAAS's "default" alias pointed at it on 16 October 2026, but an alias
+# can be repointed, and a recorded run has to name the model that wrote it.
+# In a two-question probe that day it computed a growth figure from a table and
+# abstained on a question the sources did not answer, in under a second each;
+# #163 measures it on the benchmark.
+DEFAULT_SOCLAAS_MODEL = "qwen3.6:35b"
 
 # Where the provider, the model, the server and the key come from when nothing
 # is passed in. All are read from the environment, with the project's .env loaded
@@ -434,6 +445,14 @@ MISTRAL_API_URL = "https://api.mistral.ai/v1"
 # Where a teammate makes their own Mistral key, named in every message that asks
 # for one.
 MISTRAL_CONSOLE = "https://console.mistral.ai"
+# The SOCLAAS key, from the SOCLAAS portal with an NUS account, and where its API
+# is. SOCLAAS_BASE_URL is unset for everyone but a test or a proxy: its own
+# address is used then, so a teammate needs only the key.
+SOCLAAS_API_KEY_ENV = "SOCLAAS_API_KEY"
+SOCLAAS_BASE_URL_ENV = "SOCLAAS_BASE_URL"
+SOCLAAS_API_URL = "https://soclaas-api.comp.nus.edu.sg/v1"
+# Where a teammate makes a SOCLAAS key, named in every message that asks for one.
+SOCLAAS_PORTAL = "https://soclaas-portal.comp.nus.edu.sg"
 # Ollama's own default address, which is always the computer the code runs on:
 # every member runs their own Ollama. 127.0.0.1 rather than localhost, which
 # Windows can resolve to ::1 first, where Ollama is not listening.
@@ -472,9 +491,9 @@ MAX_OUTPUT_TOKENS = 1024
 # is the first one: nothing streams back until the whole prompt has been read.
 GENERATION_TIMEOUT_S = 600.0
 
-# The same wait for Mistral's API. Its slowest answer in the free-plan test took
-# 23.9 s from question to last word, so two minutes only ever catches a connection
-# that has gone quiet. It is also what the test notebook ran with.
+# The same wait for Mistral's API and SOCLAAS. Mistral's slowest answer in the
+# free-plan test took 23.9 s from question to last word, so two minutes only ever
+# catches a connection that has gone quiet. It is also what the test notebook ran with.
 HOSTED_TIMEOUT_S = 120
 
 # --- financial metrics ------------------------------------------------------

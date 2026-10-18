@@ -50,8 +50,9 @@ def main(argv: list[str] | None = None) -> None:
                         help="Passages that reach the generator. Defaults to the configuration's.")
     parser.add_argument(
         "--provider", choices=PROVIDERS,
-        help="Which provider answers: ollama, the local model, or mistral, the hosted API "
-             "with your own MISTRAL_API_KEY. Defaults to LLM_PROVIDER in .env, else ollama.",
+        help="Which provider answers: ollama, the local model; mistral, the hosted API "
+             "with your own MISTRAL_API_KEY; or soclaas, NUS SoC's API with your "
+             "SOCLAAS_API_KEY. Defaults to LLM_PROVIDER in .env, else ollama.",
     )
     parser.add_argument(
         "--model",

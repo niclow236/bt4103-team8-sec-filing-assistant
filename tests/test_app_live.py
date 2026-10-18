@@ -469,7 +469,7 @@ def test_ask_page_opens_on_the_local_model_and_can_be_switched_to_mistral(monkey
     built = _standing_in(monkeypatch)
     ui = AppTest.from_file(APP, default_timeout=30).run()
     box, line = _provider(ui)
-    assert list(box.options) == ["Ollama", "Mistral"] and box.value == "ollama"
+    assert list(box.options) == ["Ollama", "Mistral", "SOCLAAS"] and box.value == "ollama"
     assert line.startswith("llama3.2:3b, on this computer")
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.button[0].click().run()
@@ -483,6 +483,14 @@ def test_ask_page_opens_on_the_local_model_and_can_be_switched_to_mistral(monkey
     assert not ui.get("html") and ui.info
     ui.button[0].click().run()
     assert built[DEFAULT_STACK].loaded_for == ["ollama", "mistral"]
+    assert len(ui.get("html")) == 1
+
+    # SOCLAAS answers with its pinned model ID, never its "default" alias (#163).
+    box.set_value("soclaas").run()
+    assert not ui.exception
+    assert _provider(ui)[1].startswith("qwen3.6:35b, on NUS SoC's SOCLAAS API")
+    ui.button[0].click().run()
+    assert built[DEFAULT_STACK].loaded_for == ["ollama", "mistral", "soclaas"]
     assert len(ui.get("html")) == 1
 
 
@@ -509,7 +517,7 @@ def test_a_mistyped_provider_in_env_is_said_and_does_not_stop_the_page(monkeypat
     assert not ui.exception
     assert _provider(ui)[0].value == "ollama"
     said = ui.sidebar.warning[0].value
-    assert "LLM_PROVIDER must be one of ollama, mistral, got 'mistrl'" in said
+    assert "LLM_PROVIDER must be one of ollama, mistral, soclaas, got 'mistrl'" in said
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.button[0].click().run()
     assert not ui.exception and not ui.error
