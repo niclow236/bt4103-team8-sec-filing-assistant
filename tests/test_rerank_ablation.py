@@ -1,6 +1,7 @@
 import gzip
 import json
 from copy import deepcopy
+from collections import Counter
 
 import pytest
 
@@ -23,14 +24,92 @@ def question(qid="q", source=None, gold=("a",), kind="numeric"):
 
 
 def row(q, a=("b", "a"), b=("a", "b"), filings=("filing1",)):
+    pool = list(dict.fromkeys((*a, *b, "c"))) if a or b else []
+    logits = {cid: float(len(b)-i) for i,cid in enumerate(b)}
     candidates = [{"chunk_id": cid, "content_type": "table" if cid == "a" else "prose",
-                   "ticker": "AAA", "fiscal_year": 2024, "truncated": cid == "b"} for cid in ("a", "b", "c")]
-    return {"question": q.to_dict(), "query": {"tickers": ["AAA"], "fiscal_years": [2024]},
+                   "ticker": "AAA", "fiscal_year": 2024, "truncated": cid == "b",
+                   "hybrid_rank":i,"hybrid_score":float(len(pool)-i+1),"raw_logit":logits.get(cid,0.0)}
+                  for i,cid in enumerate(pool,1)]
+    return {"question": q.to_dict(), "query": {"tickers": ["AAA"], "fiscal_years": [2024], "table_boost":1.0},
             "filings": list(filings), "gold_filings": [["AAA", 2024]] if q.supporting_chunk_ids else [],
             "gold_content": "table" if q.supporting_chunk_ids else "none",
-            "C4": {"retrieved_chunk_ids": list(a), "retrieved_scores": [1] * len(a), "latency_ms": 10},
-            "C5": {"retrieved_chunk_ids": list(b), "retrieved_scores": [1] * len(b), "latency_ms": 30},
+            "C4": {"retrieved_chunk_ids": list(a), "retrieved_scores": [float(len(pool)-pool.index(cid)) for cid in a], "latency_ms": 10},
+            "C5": {"retrieved_chunk_ids": list(b), "retrieved_scores": [logits[cid] for cid in b], "latency_ms": 30},
             "rerank": {"latency_ms": 20, "truncated": 1, "candidates": candidates}}
+
+
+def fixture_policy(rows, **overrides):
+    """Declare the exact tiny cohort used to isolate a quality gate in a test."""
+    from src.evaluation.records import benchmark_of
+    return GATE_POLICY | {
+        "decision_benchmark_counts": dict(Counter(benchmark_of(r['question'].get('source')) for r in rows)),
+        "decision_question_records_sha256": question_records_sha256([
+            BenchmarkQuestion.from_mapping(r['question']) for r in rows]),
+    } | overrides
+
+
+@pytest.mark.parametrize('action', ['rescore','table-boost-sensitivity'])
+@pytest.mark.parametrize('damage', ['c4_order','c4_score','c5_order','c5_score','c5_short','both_short','score_short'])
+def test_cli_refuses_rankings_not_reproduced_by_the_saved_model_outputs(tmp_path, capsys, action, damage):
+    out=completed_run(tmp_path)[-1]
+    rows=read_pairs(out/'pairs.jsonl.gz'); r=rows[0]
+    if damage.endswith('order'):
+        r[damage[:2].upper()]['retrieved_chunk_ids'].reverse()
+    elif damage in ('c4_score','c5_score'):
+        r[damage[:2].upper()]['retrieved_scores'][0]+=1
+    elif damage=='score_short':
+        r['C5']['retrieved_scores'].pop()
+    else:
+        for cid in (('C4','C5') if damage=='both_short' else ('C5',)):
+            r[cid]['retrieved_chunk_ids'].pop();r[cid]['retrieved_scores'].pop()
+    with gzip.open(out/'pairs.jsonl.gz','wt') as stream:
+        stream.writelines(json.dumps(r)+'\n' for r in rows)
+    before={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+    with pytest.raises(SystemExit) as error:
+        main([action,str(out)])
+    assert error.value.code==2
+    assert 'ranking' in capsys.readouterr().err
+    assert before=={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+
+
+def test_sensitivity_cutoff_does_not_hide_corruption_below_that_cutoff(tmp_path):
+    out=completed_run(tmp_path)[-1];rows=read_pairs(out/'pairs.jsonl.gz')
+    rows[0]['C5']['retrieved_scores'][1]=999
+    with gzip.open(out/'pairs.jsonl.gz','wt') as stream:
+        stream.writelines(json.dumps(r)+'\n' for r in rows)
+    with pytest.raises(SystemExit):main(['rescore',str(out),'--top-k','1'])
+    assert not (out/'rescored-k1.json').exists()
+
+
+def test_declared_depth_and_k_do_not_make_a_four_question_sample_adoptable():
+    decision=summarize(passing_rows(),16)['decision']
+    assert decision['advance_to_answer_evaluation'] is None
+    assert any('cohort' in reason for reason in decision['reasons'])
+
+
+def test_cohort_guard_checks_the_question_digest_as_well_as_counts():
+    rows=passing_rows();policy=fixture_policy(rows,decision_top_k=16)
+    assert summarize(rows,16,policy)['decision']['advance_to_answer_evaluation'] is True
+    changed=deepcopy(rows);changed[0]['question']['question']='Different question, same count'
+    report=summarize(changed,16,policy)
+    assert report['decision']['advance_to_answer_evaluation'] is None
+    assert 'cohort' in report['decision']['reasons'][0]
+    assert 'advance_to_answer_evaluation' not in report.get('quality_gate_reasons',[])
+
+
+@pytest.mark.parametrize('prefix_only',[False,True])
+def test_resume_refuses_corrupted_rankings_before_any_repair_or_runtime_write(tmp_path,prefix_only):
+    qs,pool,chunks,reranker,out=completed_run(tmp_path)
+    rows=read_pairs(out/'pairs.jsonl.gz')
+    if prefix_only:rows=rows[:1]
+    rows[0]['C4']['retrieved_scores'][0]+=1
+    with gzip.open(out/'pairs.jsonl.gz','wt') as stream:
+        stream.writelines(json.dumps(r)+'\n' for r in rows)
+    before={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+    with pytest.raises(ValueError,match='C4 ranking'):
+        run_pairs(qs,Inner(pool),reranker,output_dir=out,provenance={'questions':2},
+                  chunks=chunks,top_k=2,resume=True)
+    assert before=={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
 
 
 def test_paired_metric_denominators_and_bootstrap():
@@ -63,7 +142,7 @@ def test_benchmark_type_and_truncation_breakdowns():
     assert report["truncation"]["rate"] == 1 / 3
     assert report["top_k_diagnostics"]["C5"]["tables"] == 4
     assert report["top_k_diagnostics"]["C5"]["outside_gold_years"] == 0
-    decision = summarize(rows, 2, GATE_POLICY)["decision"]
+    decision = summarize(rows, 2, fixture_policy(rows))["decision"]
     assert decision["advance_to_answer_evaluation"] is False
     assert "team: nDCG gain/uncertainty criterion not met" in decision["reasons"]
 
@@ -77,14 +156,14 @@ def test_untagged_team_questions_form_one_slice_beside_the_xbrl_set():
 
 def test_predeclared_decision_requires_all_gates():
     rows = passing_rows()
-    assert summarize(rows, 2, GATE_POLICY)["decision"]["advance_to_answer_evaluation"]
+    assert summarize(rows, 2, fixture_policy(rows))["decision"]["advance_to_answer_evaluation"]
     negative = deepcopy(rows)
     negative[0]["C5"] = negative[0]["C4"]
     negative[1]["C5"] = negative[1]["C4"]
-    assert not summarize(negative, 2, GATE_POLICY)["decision"]["advance_to_answer_evaluation"]
+    assert not summarize(negative, 2, fixture_policy(negative))["decision"]["advance_to_answer_evaluation"]
     for r in rows:
         r["rerank"]["latency_ms"] = 1500
-    assert "reranking median latency criterion not met" in summarize(rows, 2, GATE_POLICY)["decision"]["reasons"]
+    assert "reranking median latency criterion not met" in summarize(rows, 2, fixture_policy(rows))["decision"]["reasons"]
 
 
 def test_run_paired_pool_resume_and_rescore(tmp_path):
@@ -135,8 +214,9 @@ def test_cli_invalid_k_and_run_id_do_not_load_models(tmp_path):
         main(["run", "missing.jsonl", "--run-id", "../bad", "--workload-note", "test"])
 
 
-def passing_rows(per_benchmark=2):
-    return [row(question(f"{name}{i}", source), filings=(f"{name}{i}",))
+def passing_rows(per_benchmark=2, *, final_k=2):
+    a,b=(("b","a","c"),("a","b","c")) if final_k>=3 else (("b","a"),("a","b"))
+    return [row(question(f"{name}{i}", source), a=a, b=b, filings=(f"{name}{i}",))
             for name, source in (("team", None), ("xbrl", "xbrl")) for i in range(per_benchmark)]
 
 
@@ -144,7 +224,7 @@ def test_unmeasurable_hard_negative_gate_blocks_an_otherwise_passing_run():
     rows = passing_rows()
     for r in rows:
         r["question"]["hard_negative_chunk_ids"] = []
-    assert summarize(rows, 2, GATE_POLICY)["decision"] == {
+    assert summarize(rows, 2, fixture_policy(rows))["decision"] == {
         "advance_to_answer_evaluation": False,
         "reasons": ["hard-negative accuracy could not be measured"],
         "default": "C4", "adoption": "requires paired answer evaluation and team review"}
@@ -351,27 +431,27 @@ def test_table_boost_cli_can_diagnose_a_historical_run_without_relabelling_it(tm
 
 
 def test_each_gate_blocks_on_its_own():
-    assert summarize(passing_rows(), 2, GATE_POLICY)["decision"]["reasons"] == []
+    assert summarize(passing_rows(), 2, fixture_policy(passing_rows()))["decision"]["reasons"] == []
 
     regressed = passing_rows()
     for r in regressed[2:]:  # the xbrl rows
         r["C4"], r["C5"] = r["C5"], r["C4"]
-    assert summarize(regressed, 2, GATE_POLICY)["decision"]["reasons"] == [
+    assert summarize(regressed, 2, fixture_policy(regressed))["decision"]["reasons"] == [
         "xbrl: nDCG gain/uncertainty criterion not met", "xbrl: mrr regression criterion not met"]
 
-    assert summarize(passing_rows()[:2], 2, GATE_POLICY)["decision"]["reasons"] == ["missing benchmark xbrl"]
+    assert summarize(passing_rows()[:2], 2, fixture_policy(passing_rows()[:2]))["decision"]["reasons"] == ["missing benchmark xbrl"]
 
     # Enough improving team questions that the benchmark itself still passes.
     typed = passing_rows(30) + [
         row(question(f"t{i}", kind="temporal"), a=("a", "b"), b=("b", "a"), filings=(f"t{i}",))
         for i in range(POLICY["min_type_questions"])]
-    assert summarize(typed, 2, GATE_POLICY)["decision"]["reasons"] == [
+    assert summarize(typed, 2, fixture_policy(typed))["decision"]["reasons"] == [
         "temporal: nDCG regression criterion not met", "team:temporal: nDCG regression criterion not met"]
 
     negatives = passing_rows() + [
         row(question(f"u{i}", gold=(), kind="unanswerable"), a=("a", "b"), b=("c", "b"),
             filings=()) for i in range(2)]
-    assert summarize(negatives, 2, GATE_POLICY)["decision"]["reasons"] == [
+    assert summarize(negatives, 2, fixture_policy(negatives))["decision"]["reasons"] == [
         "hard-negative accuracy regression criterion not met"]
 
 
@@ -502,7 +582,7 @@ def test_smaller_cutoff_cannot_pass_the_declared_final_gate():
 
 
 def test_legacy_cutoff_does_not_follow_a_retuned_app_default(monkeypatch):
-    legacy_policy = {key:value for key,value in POLICY.items() if key != "decision_top_k"}
+    legacy_policy = {key:value for key,value in fixture_policy(passing_rows()).items() if key != "decision_top_k"}
     monkeypatch.setattr("src.evaluation.rerank_ablation.FINAL_K", 1)
     assert summarize(passing_rows(), 1, legacy_policy)["decision"]["advance_to_answer_evaluation"] is None
     assert summarize(passing_rows(), 16, legacy_policy)["decision"]["advance_to_answer_evaluation"] is True
@@ -514,7 +594,7 @@ def test_empty_pools_do_not_dilute_reranking_latency():
         r["rerank"]["latency_ms"] = 600
     empty = row(question("empty", gold=(), kind="unanswerable"), a=(), b=(), filings=())
     empty["rerank"] = {"latency_ms": 0, "candidates": [], "truncated": 0}
-    report = summarize(rows + [deepcopy(empty) for _ in range(100)], 2, GATE_POLICY)
+    report = summarize(rows + [deepcopy(empty) for _ in range(100)], 2, fixture_policy(rows + [deepcopy(empty) for _ in range(100)]))
     assert report["latency_ms"]["rerank_median"] == 600
     assert report["latency_ms"]["rerank_p95"] == 600
     assert report["latency_ms"]["rerank_questions"] == 4
@@ -526,7 +606,7 @@ def test_gold_truncation_slice_uses_supporting_passages_in_the_pool():
     rows = [row(question("short")), row(question("long")),
             row(question("missing", gold=("outside",))),
             row(question("unlabelled", gold=(), kind="unanswerable"))]
-    rows[1]["rerank"]["candidates"][0]["truncated"] = True
+    next(p for p in rows[1]["rerank"]["candidates"] if p["chunk_id"]=="a")["truncated"] = True
     report = summarize(rows, 2)
     groups = report["by_gold_truncation"]
     assert {k: v["questions"] for k, v in groups.items()} == {
@@ -600,8 +680,8 @@ def test_concurrent_resume_is_refused_and_does_not_append(tmp_path):
 
 
 def test_rescore_at_declared_cutoff_can_advance_but_sensitivity_cannot(tmp_path):
-    rows = passing_rows()
-    manifest = {"top_k": 16, "policy": POLICY, "provenance": {"questions": len(rows)},
+    rows = passing_rows(final_k=16)
+    manifest = {"top_k": 16, "policy": fixture_policy(rows,decision_top_k=16), "provenance": {"questions": len(rows)},
                 "reranker": {"candidate_k": CANDIDATE_K}}
     (tmp_path / "config.json").write_text(json.dumps(manifest), encoding="utf-8")
     with gzip.open(tmp_path / "pairs.jsonl.gz", "wt", encoding="utf-8") as stream:
@@ -639,12 +719,13 @@ def test_backfill_requires_exact_corpus_and_keeps_recorded_rankings(tmp_path, mo
 
 @pytest.mark.parametrize("candidate_k", [16, 32])
 def test_reduced_candidate_pool_carries_no_decision(tmp_path, candidate_k):
-    rows = passing_rows()
-    assert summarize(rows, 16)["decision"]["advance_to_answer_evaluation"] is True
-    decision = summarize(rows, 16, candidate_k=candidate_k)["decision"]
+    rows = passing_rows(final_k=16)
+    policy=fixture_policy(rows,decision_top_k=16)
+    assert summarize(rows, 16, policy)["decision"]["advance_to_answer_evaluation"] is True
+    decision = summarize(rows, 16, policy, candidate_k=candidate_k)["decision"]
     assert decision["advance_to_answer_evaluation"] is None
     assert decision["reasons"] == [f"exploratory pool of {candidate_k}; decided over 50 candidates"]
-    manifest = {"top_k": 16, "policy": POLICY, "provenance": {"questions": len(rows)},
+    manifest = {"top_k": 16, "policy": policy, "provenance": {"questions": len(rows)},
                 "reranker": {"candidate_k": candidate_k}}
     (tmp_path / "config.json").write_text(json.dumps(manifest), encoding="utf-8")
     with gzip.open(tmp_path / "pairs.jsonl.gz", "wt", encoding="utf-8") as stream:
@@ -656,7 +737,7 @@ def test_reduced_candidate_pool_carries_no_decision(tmp_path, candidate_k):
 
 
 def test_legacy_pool_does_not_follow_a_retuned_app_default(monkeypatch):
-    legacy = {key:value for key,value in POLICY.items() if key != "decision_candidate_k"}
+    legacy = {key:value for key,value in fixture_policy(passing_rows(),decision_top_k=16).items() if key != "decision_candidate_k"}
     monkeypatch.setattr("src.evaluation.rerank_ablation.CANDIDATE_K", 8)
     assert summarize(passing_rows(), 16, legacy, candidate_k=8)["decision"]["advance_to_answer_evaluation"] is None
     assert summarize(passing_rows(), 16, legacy, candidate_k=50)["decision"]["advance_to_answer_evaluation"] is True
@@ -686,7 +767,7 @@ def test_resume_requires_the_run_directory_and_its_runtime_record(tmp_path):
 
 def test_present_but_unmeasurable_team_benchmark_blocks_advancement():
     rows = passing_rows()[2:] + [row(question("u", gold=(), kind="unanswerable"), filings=())]
-    decision = summarize(rows, 2, GATE_POLICY)["decision"]
+    decision = summarize(rows, 2, fixture_policy(rows))["decision"]
     assert decision["advance_to_answer_evaluation"] is False
     assert decision["reasons"] == ["team: nDCG gain/uncertainty criterion not met",
                                    "team: recall regression criterion not met",

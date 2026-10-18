@@ -847,17 +847,15 @@ the 150-question team benchmark and the mechanical XBRL set. The
 [experiment protocol and commands](docs/c5-reranking.md) declare the quality
 and latency gates before measuring. C4 remains the default; the experimental
 reranker is not added to the app unless the measurements and an answer-quality
-check justify adoption. The measured run (#161) fails the quality gates:
-
-| Benchmark | Relevance-scored | nDCG@16 C4 → C5 | nDCG delta [paired 95% CI] |
-| --- | ---: | ---: | --- |
-| Team | 146 of 150 | 0.5978 → 0.5195 | -0.0783 [-0.1407, -0.0202] |
-| Mechanical XBRL | 1,884 | 0.5504 → 0.5426 | -0.0078 [-0.0336, +0.0142] |
-
-The reranker helps prose evidence and hurts table evidence, which most
-questions rely on.
-The report distinguishes these measurements from the historical 149-question
-study, diagnostic-inclusive timings and the model-free table-boost sensitivity.
+check justify adoption.
+The fresh complete reference uses all **150 team + 12,579 mechanical XBRL
+questions (12,729 total)** across 15 companies and FY2021–2025, and retains C4.
+Team nDCG@16 falls from **0.5975 to 0.5163**; mechanical XBRL falls from
+**0.4719 to 0.4165**. Added reranking is **401.0 ms median / 456.4 ms p95** on
+the recorded M1/MPS workload, excluding diagnostic token counting. Quality
+gates fail despite acceptable latency. The report preserves the earlier
+1,884-XBRL M2 study as partial historical evidence and includes frozen
+identities, exact rescore/resume verification and table-boost sensitivity.
 
 The filters on a `Query` (`tickers`, `fiscal_years`, `items`, `content_type`)
 are applied before scoring, not after, in every method. BM25

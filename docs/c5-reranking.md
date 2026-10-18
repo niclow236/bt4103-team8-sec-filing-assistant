@@ -5,6 +5,11 @@ over the **same** filtered hybrid top-50 pool, returning 16 passages in both row
 It does not add C5 to the app's selectable configurations. Adoption requires a
 retrieval benefit, an answer-quality check, and teammate review.
 
+The fresh complete study now covers **150 team + all 12,579 mechanical XBRL
+questions (12,729 total)**. It supersedes the partial 2,034-question M2
+reference below for #154's complete-set criterion. No smaller-cohort waiver
+is used. The predeclared quality gates fail, so C4 remains the default.
+
 ## Decision criteria declared before the final run
 
 These are practical gates for this experiment, not universal thresholds or
@@ -34,16 +39,26 @@ latency gate excludes empty candidate pools; their number and the number of
 timed questions are reported explicitly. An unmeasurable hard-negative gate
 also blocks advancement; missing labels are not evidence that it passed.
 
+Adoption additionally requires the declared complete cohort: 150 team and
+12,579 XBRL questions, with canonical question-record SHA-256
+`84763df25b8c320ef5f1a60ab8e554db35b4e959eff975bdf81fc898bfc90339`.
+Counts and digest are frozen in `POLICY` before the full run. A sample,
+different question revision, or legacy policy without this declaration records
+`advance_to_answer_evaluation: null`; quality failures remain diagnostic
+`quality_gate_reasons`, not an adoption decision. A new accepted benchmark
+requires an explicit policy update and fresh measurement.
+
 The team benchmark is the 150-question `benchmark/questions.jsonl`. Its
 questions carry no `source` tag (#162), so they are reported as one `team`
 slice; every question tagged `source: xbrl` forms the mechanical slice. The
 #154 policy also gated a separate LLM-assisted slice; that split no longer
 exists in the benchmark, so its gate was removed with it (#161). The
-mechanical set is the locally generated XBRL benchmark. This machine's facts store holds 5,046 facts (built 11 September), so the
-local `benchmark/generated.jsonl`, generated from it on 23 September, holds
-1,884 questions, not the 12,579 a full facts store gives (see the README).
-Regenerating it today gives the same 1,884 questions, 34 of them with different
-supporting chunks; the runs pin the 23 September file by hash. Its labels use figure
+mechanical set is the frozen 12,579-question `benchmark/generated.jsonl` on
+the local M1, pinned by input and canonical question-record hashes in the full
+measurement manifest. The historical #172 M2 snapshot held only 5,046 facts
+and generated 1,884 questions; regeneration changed 34 supporting-chunk labels.
+That partial study remains separately labelled below. The full run does not
+mix its labels or results with that snapshot. Generated labels use figure
 substring matching and are a retrieval proxy, not exhaustively adjudicated
 evidence. No model tuning or checkpoint selection uses final benchmark outcomes.
 
@@ -142,6 +157,19 @@ recomputed from recorded ranks once per question/configuration/cutoff and reused
 across metrics and slices. Connected-filing clusters are computed once per
 subset, preserving the original bootstrap grouping and confidence intervals.
 
+Both ordinary rescore and table-boost sensitivity first verify the full stored
+rankings, even when a smaller rescore cutoff is requested. C4 must reproduce
+the saved pool order/hybrid scores; C5 must reproduce its raw logits, original
+table boost and chunk-ID ties. Both rows retain exactly `min(stored_k, pool)`
+passages and scores. Duplicate IDs, non-finite candidate scores and inconsistent
+rankings are refused before output. Resume checks a saved prefix before repair,
+runtime writes or scoring. These are consistency checks against recorded model
+outputs, not protection against coordinated fabrication of outputs/provenance.
+
+The shared shipped `rank`/`reorder` path rejects NaN and infinite table boosts
+as well as nonpositive ones. The normal 1.2 boost is unchanged. Direct tests for
+both paths detect restoring the old nonpositive-only check.
+
 To isolate the final table boost without another model call:
 
 ```bash
@@ -197,14 +225,142 @@ intervals when a benchmark covers few independent filings; report that limitatio
 Filing clustering does not remove every dependence between questions about
 the same company or generated from the same template.
 
-## Result and relationship to #44
+## Complete benchmark result and relationship to #44
 
-**Retain C4.** The reference run `c5-reference-20261017` covers 2,034 paired
+**Retain C4.** The fresh native run `c5-full-20261017` completed **all
+12,729 paired questions: 150 team + 12,579 mechanical XBRL**, covering all
+15 companies and FY2021–2025. Both rows searched the same 28,289-passage /
+75-filing corpus, from frozen source `a9f9159`. This is new retrieval and
+cross-encoder inference for every nonempty pool, with no historical ranking
+reuse. The frozen generated question file was not regenerated or relabelled
+between measurement and reporting. Its ordered question digest matches the
+complete cohort declared in `POLICY` before the run.
+
+This full study supersedes the partial 1,884-XBRL reference from #172 below
+for #154's complete-set acceptance criterion. It requires no partial-cohort
+waiver. It supports #44's C4/C5 comparison; it is not a seven-row C0–C6 matrix
+or an answer-quality evaluation. The retrieval gates fail, so a paired answer
+comparison and app adoption are not triggered.
+
+| Benchmark | All / relevance-scored | Recall@16 C4 → C5 | nDCG@16 C4 → C5 | MRR@16 C4 → C5 | nDCG delta [paired 95% CI] | nDCG wins / losses / ties |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| Team | 150 / 146 | 0.8185 → 0.8128 | 0.5975 → 0.5163 | 0.5485 → 0.4437 | -0.0812 [-0.1416, -0.0259] | 34 / 73 / 39 |
+| Mechanical XBRL | 12,579 / 12,579 | 0.6517 → 0.6654 | 0.4719 → 0.4165 | 0.4762 → 0.3839 | -0.0554 [-0.0670, -0.0439] | 3409 / 5801 / 3369 |
+
+The four unanswerable team questions receive no fabricated relevance score.
+Hard-negative accuracy is unchanged at **0.9630 → 0.9630** over **27 labelled
+questions** (one win, one loss, 25 ties). There are 67 connected filing clusters
+for the team relevance metrics and 75 for XBRL. XBRL Recall@16 improves, but
+its nDCG and MRR decline; additional coverage does not establish better ranking.
+
+The full-cohort guard is satisfied, and `advance_to_answer_evaluation` is
+**false**, rather than an exploratory null. The following criteria fail on
+unrounded values:
+
+- team: nDCG gain/uncertainty criterion not met
+- team: mrr regression criterion not met
+- xbrl: nDCG gain/uncertainty criterion not met
+- xbrl: mrr regression criterion not met
+- factual: nDCG regression criterion not met
+- numeric: nDCG regression criterion not met
+- team:factual: nDCG regression criterion not met
+- team:numeric: nDCG regression criterion not met
+- xbrl:numeric: nDCG regression criterion not met
+
+| Benchmark:type | Relevance-scored | nDCG@16 C4 → C5 | Wins / losses / ties |
+| --- | ---: | ---: | ---: |
+| team:factual | 44 | 0.7558 → 0.5610 | 5 / 25 / 14 |
+| team:numeric | 88 | 0.5554 → 0.4934 | 23 / 46 / 19 |
+| team:temporal | 10 | 0.3030 → 0.4694 | 3 / 1 / 6 |
+| team:comparative | 4 | 0.5192 → 0.6452 | 3 / 1 / 0 |
+| xbrl:numeric | 12,579 | 0.4719 → 0.4165 | 3409 / 5801 / 3369 |
+
+Gold-evidence slices pool both benchmarks. These describe this fixed model,
+candidate policy and corpus; they do not establish a weakness of every reranker:
+
+| Gold evidence | Relevance-scored | nDCG@16 C4 → C5 | Delta [paired 95% CI] |
+| --- | ---: | ---: | --- |
+| prose | 879 | 0.1637 → 0.3488 | +0.1851 [+0.1614, +0.2100] |
+| prose+table | 2,523 | 0.3028 → 0.3743 | +0.0715 [+0.0611, +0.0826] |
+| table | 9,323 | 0.5487 → 0.4358 | -0.1129 [-0.1290, -0.0976] |
+
+Only **1 of 636,400 candidate inputs** exceeds the 512-token paired limit.
+All **11,198 questions with gold evidence in the candidate pool** have
+untruncated gold there; **1,527** have no gold in the pool, and **4** are
+unlabelled. The truncated nongold passage appears once in C5's top 16 and
+never in C4's. Across 203,600 gold-scope eligible top-16 passages per row,
+outside-gold-company counts are 0 / 0 and outside-gold-year/company-year
+counts are 35 / 34 (C4 / C5). Both rows have zero query company/year-filter
+violations. These gold-scope proxies can reflect incomplete labels; they are
+not answer-correctness measurements.
+
+### Full-run timing and reproducibility
+
+An Apple M1 / 16 GiB laptop used MPS for both encoders. No other local model
+or test job ran; normal desktop apps and the Codex session remained open.
+This is a recorded laptop workload, not isolated hardware throughput.
+The native run completed one uninterrupted measured segment. Cached
+cross-encoder load took **5.405 s**, and warm-up **3.370 s** on `daryl-01`;
+both are excluded from steady-state timings.
+
+Across **12,728 nonempty pools** (one empty pool excluded), added model
+prediction/reordering took **401.0 ms median / 456.4 ms p95**. The extra
+diagnostic token-counting pass is separate: **4.7 / 5.5 ms**. Median shared
+C4 retrieval was **519.4 ms**; median per-question C4 retrieval plus C5
+reranking was **920.4 ms**. The latency gates pass; the quality gates fail.
+These are retrieval-stage measurements, not generation or full-answer latency.
+They do not retrospectively correct the older diagnostic-inclusive timings or
+establish a speedup across different machines/cohorts.
+
+Both saved rankings and scores were reconstructed at the full stored depth
+for all 12,729 pairs. An independent model-free rescore reproduced every
+summary field, confidence interval and decision exactly. A completed native
+resume verified the input/corpus/source/index identities and preserved all six
+original artifact byte hashes, including the compressed pairs and summary.
+All 12,729 IDs are unique. The [full summary](evaluation/c5-full-20261017-summary.json)
+contains every metric/slice and denominator; the [measurement manifest](evaluation/c5-full-20261017-manifest.json)
+records input/source/corpus/model/index identities, environment, hardware,
+company/year coverage, runtime history, diagnostic timing and artifact hashes.
+Large per-question pairs, indexes and corpus remain local and ignored.
+
+The review changes passed **2,153 local tests** (60.53 s), plus all 115 focused
+ranking/runner tests after the final candidate-depth forwarding adjustment.
+[Python 3.10 and 3.12 CI both passed on `a9f9159`](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/actions/runs/39043475119).
+Restoring the former `<= 0` boost checks in memory causes four new direct
+NaN/+infinity tests to fail, covering both shipped ranking paths. The shared
+finite-positive validation affects C4 too; valid default `1.2` behavior is
+unchanged. Corruption tests reject C4/C5 order/score edits and one-/two-sided
+truncation before rescore/sensitivity/resume writes. Four-question samples and
+same-count/different-digest cohorts cannot produce an adoption decision.
+
+### Full-cohort table-boost sensitivity
+
+The model-free diagnostic reconstructs every original C5 ranking, then
+removes only the final logit table boost, keeping candidates and raw logits
+fixed. It supplies no new latency, answer or adoption decision:
+
+| Gold evidence | Questions | C4 nDCG@16 | Original C5 | C5 final boost 1.0 | Change from original C5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| prose | 879 | 0.1637 | 0.3488 | 0.3700 | +0.0212 |
+| prose+table | 2,523 | 0.3028 | 0.3743 | 0.3709 | -0.0034 |
+| table | 9,323 | 0.5487 | 0.4358 | 0.3821 | -0.0538 |
+
+Removing the boost worsens table-question nDCG by 0.0538, so it mitigates
+rather than explains this observed table regression. It slightly improves
+prose ranking. This does not select an optimal boost or isolate an intrinsic
+model limitation; retrieval-stage boosts remain fixed. The [full sensitivity report](evaluation/c5-full-20261017-table-boost-sensitivity.json)
+retains the original policy and artifact fingerprints. Original artifacts are
+unchanged. Additive/sigmoid alternatives require a separately declared study.
+
+## Historical partial M2 reference (#172)
+
+**Historical partial evidence; superseded by the full run above.** The
+reference run `c5-reference-20261017` covers 2,034 paired
 questions (the 150 team questions and 1,884 mechanical XBRL questions) on
 28,313 passages from 75 filings, and fails the predeclared retrieval gates. No
 answer-quality comparison or app adoption is triggered by this result.
 
-It replaces the #154 reference `c5-reference-20261010`, which pinned the
+At the time of #172, it replaced the #154 reference `c5-reference-20261010`, which pinned the
 earlier 149-question file and split the team's questions by source. That run
 can't be resumed or extended: the #172 machine's corpus (28,313 passages, not
 28,289) and generated XBRL set differ from it, and the runners refuse to mix
@@ -338,7 +494,7 @@ boosts would require separately declared experiments.
 Source `5a1c4c0` measured all **150 current team questions** against the local
 28,289-passage / 75-filing corpus on an Apple M1 / 16 GiB laptop, with both
 encoders on MPS. This is a team-only timing validation, not the complete
-team/XBRL quality reference from #172. The initially sandboxed MPS load failed
+team/XBRL study. The full native study above now supplies the complete cohort. The initially sandboxed MPS load failed
 before any pair; native resume used the identical manifest and completed one
 measured segment. No other model or test job ran; normal desktop apps and the
 Codex session remained open.
@@ -359,7 +515,7 @@ validation is not a new adoption decision. The [portable timing report](evaluati
 records source/input/corpus/runtime identities, quantiles and original artifact
 hashes; per-question files remain local.
 
-Review verification: all **2,126 local tests pass** (58.85 s). The scoring
+Earlier review verification on `2ee4263`: **2,126 local tests passed** (58.85 s). The scoring
 refactor exactly preserves every aggregate, confidence interval and decision
 against the unoptimized #172 summarizer on all 12,728 historical pairs using
 the same team/XBRL groups (5.695 s versus 1.063 s on this laptop). Test-first

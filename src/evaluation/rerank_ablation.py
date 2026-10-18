@@ -35,6 +35,8 @@ POLICY = {
     "decision_top_k": 16,
     "decision_candidate_k": 50,
     "primary_benchmarks": [TEAM, XBRL],
+    "decision_benchmark_counts": {TEAM: 150, XBRL: 12579},
+    "decision_question_records_sha256": "84763df25b8c320ef5f1a60ab8e554db35b4e959eff975bdf81fc898bfc90339",
     "min_ndcg_gain": 0.02,
     "max_recall_mrr_regression": 0.01,
     "max_type_ndcg_regression": 0.02,
@@ -264,7 +266,14 @@ def summarize(
         exploratory.append(f"sensitivity rescore; decided at k={declared_k}")
     if candidate_k != declared_candidates:
         exploratory.append(f"exploratory pool of {candidate_k}; decided over {declared_candidates} candidates")
+    if not exploratory:
+        counts = {name:group["questions"] for name,group in report["by_benchmark"].items()}
+        digest = question_records_sha256([BenchmarkQuestion.from_mapping(row["question"]) for row in rows])
+        if (counts != policy.get("decision_benchmark_counts")
+                or digest != policy.get("decision_question_records_sha256")):
+            exploratory.append("exploratory benchmark cohort; adoption requires the declared complete benchmark counts and question digest")
     if exploratory:
+        report["quality_gate_reasons"] = list(reasons)
         report["decision"] = {"advance_to_answer_evaluation": None, "reasons": exploratory, "default": "C4"}
     return report
 
@@ -301,19 +310,46 @@ def _logit_ranking(row: dict, k: int, table_boost: float) -> dict:
             "latency_ms": row["C5"]["latency_ms"]}
 
 
+def verify_rankings(rows: Sequence[dict], k: int, *, candidate_k: int = 50) -> None:
+    """Check stored rankings against the recorded pool/logits, at stored k.
+
+    This detects inconsistent edits/corruption, not coordinated fabrication of
+    both model outputs and rankings. Frozen input/model/artifact provenance is
+    retained separately. Checking the full stored depth also protects a rescore
+    requested at a smaller cutoff.
+    """
+    for row in rows:
+        candidates = row["rerank"]["candidates"]
+        ids = [p["chunk_id"] for p in candidates]
+        if len(ids) != len(set(ids)) or len(ids) > candidate_k:
+            raise ValueError("saved candidate pool has duplicate IDs or exceeds the ranking depth")
+        for p in candidates:
+            for field in ("hybrid_score", "raw_logit"):
+                value = p[field]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+                    raise ValueError("saved candidate pool contains non-finite or invalid ranking scores")
+        n = min(k, len(candidates))
+        for cid in ("C4", "C5"):
+            if (len(row[cid]["retrieved_chunk_ids"]) != n
+                    or len(row[cid]["retrieved_scores"]) != n):
+                raise ValueError("recorded rankings do not retain the expected number of passages and scores")
+        if (ids[:n] != row["C4"]["retrieved_chunk_ids"]
+                or [p["hybrid_score"] for p in candidates[:n]] != row["C4"]["retrieved_scores"]):
+            raise ValueError("saved candidate pool does not reproduce the recorded C4 ranking")
+        reconstructed = _logit_ranking(row, n, row["query"]["table_boost"])
+        if any(reconstructed[key] != row["C5"][key]
+               for key in ("retrieved_chunk_ids", "retrieved_scores")):
+            raise ValueError("saved logits/boost do not reproduce the recorded C5 ranking")
+
+
 def table_boost_sensitivity(rows: Sequence[dict], k: int, manifest: dict) -> dict:
     """Change only the final logit table boost; never infer new timings/adoption.
 
     This can diagnose a historical source-split run as well as a current one.
     Both are grouped as team/xbrl, with the original policy retained as context.
     """
-    unboosted = []
-    for row in rows:
-        reconstructed = _logit_ranking(row, k, row["query"]["table_boost"])
-        if any(reconstructed[key] != row["C5"][key][:k]
-               for key in ("retrieved_chunk_ids", "retrieved_scores")):
-            raise ValueError("saved logits/boost do not reproduce the recorded C5 ranking")
-        unboosted.append({**row, "C5": _logit_ranking(row, k, 1.0)})
+    verify_rankings(rows, manifest.get("top_k", k), candidate_k=manifest["reranker"]["candidate_k"])
+    unboosted = [{**row, "C5": _logit_ranking(row, k, 1.0)} for row in rows]
     original_policy = manifest["policy"]
     policy = POLICY | {key: original_policy[key] for key in ("seed", "bootstrap_samples")}
     reports = {}
@@ -411,6 +447,7 @@ def _run_pairs_locked(
                 repair_needed = True
         if [r["question"] for r in rows] != [q.to_dict() for q in questions[:len(rows)]]:
             raise ValueError("stored questions are not an exact prefix of the requested benchmark")
+        verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
         runtime_path = output_dir / "runtime.json"
         if runtime_path.exists():
             original_runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
@@ -493,6 +530,7 @@ def _run_pairs_locked(
             stream.flush()
             if i % 25 == 0 or i == len(questions):
                 print(f"paired C4/C5: {i}/{len(questions)}", flush=True)
+    verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
     report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
     _dump(output_dir / "summary.json", report)
     return report
@@ -573,6 +611,10 @@ def main(argv: list[str] | None = None) -> None:
             }
             _dump(args.run_dir / f"table-boost-sensitivity-k{k}.json", report)
             return
+        try:
+            verify_rankings(rows, manifest["top_k"], candidate_k=manifest["reranker"]["candidate_k"])
+        except (ValueError, KeyError, TypeError) as error:
+            parser.error(str(error))
         enrichment = None
         if args.processed_dir is not None:
             enrichment = enrich_gold_filings(
