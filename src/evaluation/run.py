@@ -18,7 +18,7 @@ from src.retrieval.records import Query
 from src.stack import RESULTS_ROOT, STACKS, build_retriever
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
-from .metrics import score_question
+from .metrics import RETRIEVAL_METRICS, score_question
 from .records import BenchmarkQuestion, RunResult
 from .results import _safe_run_id, available_run_dir, write_comparison
 
@@ -54,7 +54,7 @@ def _query(question: BenchmarkQuestion, *, top_k: int, metadata_filter: bool) ->
 
 
 def _summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    metric_names = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+    metric_names = RETRIEVAL_METRICS
     return {
         "questions": len(rows),
         **{
@@ -118,9 +118,7 @@ def run_configuration(
                 "config": configuration,
                 "retrieved_chunk_ids": list(result.retrieved_chunk_ids),
                 "retrieved_scores": list(result.retrieved_scores),
-                **{name: metrics[name] for name in (
-                    "recall", "ndcg", "mrr", "hard_negative_accuracy"
-                )},
+                **{name: metrics[name] for name in RETRIEVAL_METRICS},
             }
         )
 
@@ -171,10 +169,13 @@ class FixedSizeBM25Retriever:
 
     name = "bm25-fixed-size"
 
-    def __init__(self, processed_dir: Path, budget: int = CHUNK_CHAR_BUDGET) -> None:
+    def __init__(
+        self, processed_dir: Path, budget: int = CHUNK_CHAR_BUDGET,
+        *, chunks: Sequence[dict[str, Any]] | None = None,
+    ) -> None:
         from src.retrieval.bm25 import BM25Retriever
 
-        source_chunks = list(iter_chunks(processed_dir=processed_dir))
+        source_chunks = list(iter_chunks(processed_dir=processed_dir)) if chunks is None else chunks
         grouped: dict[str, list[dict[str, Any]]] = {}
         for chunk in source_chunks:
             grouped.setdefault(chunk["accession_no"], []).append(chunk)

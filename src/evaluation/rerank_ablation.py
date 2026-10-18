@@ -23,14 +23,15 @@ from src.retrieval.constants import CANDIDATE_K, FINAL_K
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from src.stack import RESULTS_ROOT, build_retriever
 
+from .artifacts import dump_json as _dump, read_jsonl
 from .benchmark import load_questions
-from .metrics import score_question
+from .metrics import RETRIEVAL_METRICS, score_question
 from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
 from .records import TEAM, XBRL, BenchmarkQuestion, BenchmarkValidationError, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
 
-METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+METRICS = RETRIEVAL_METRICS
 POLICY = {
     "decision_top_k": 16,
     "decision_candidate_k": 50,
@@ -48,10 +49,6 @@ POLICY = {
     "bootstrap_samples": 2000,
     "seed": 154,
 }
-
-
-def _dump(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
 
 
 def _rank_record(question: BenchmarkQuestion, passages: list, latency: float, config: str) -> dict:
@@ -181,10 +178,15 @@ def summarize(
               **{name: {key: group_summary(subset) for key, subset in sorted(group.items())}
                  for name, group in groups.items()}}
     times = [r["rerank"]["latency_ms"] for r in rows if r["rerank"]["candidates"]]
+    diagnostic = [r["rerank"]["diagnostic_tokenization_ms"] for r in rows
+                  if r["rerank"]["candidates"] and "diagnostic_tokenization_ms" in r["rerank"]]
     report["latency_ms"] = {
         "rerank_questions": len(times), "empty_pool_questions": len(rows) - len(times),
         "rerank_median": median(times) if times else None,
         "rerank_p95": float(np.quantile(times, .95)) if times else None,
+        "diagnostic_tokenization_questions": len(diagnostic),
+        "diagnostic_tokenization_median": median(diagnostic) if diagnostic else None,
+        "diagnostic_tokenization_p95": float(np.quantile(diagnostic, .95)) if diagnostic else None,
         "C4_median": median(r["C4"]["latency_ms"] for r in rows) if rows else None,
         "C5_median": median(r["C5"]["latency_ms"] for r in rows) if rows else None,
     }
@@ -280,18 +282,8 @@ def summarize(
 
 def read_pairs(path: Path, *, recover: bool = False) -> list[dict]:
     """Read strictly, or recover complete newline-terminated rows after a kill."""
-    rows = []
-    try:
-        with gzip.open(path, "rt", encoding="utf-8") as stream:
-            for line in stream:
-                if recover and not line.endswith("\n"):
-                    break
-                if line.strip():
-                    rows.append(json.loads(line))
-    except EOFError:
-        if not recover:
-            raise
-    return rows
+    with gzip.open(path, "rt", encoding="utf-8") as stream:
+        return read_jsonl(stream, recover=recover)
 
 
 def _logit_ranking(row: dict, k: int, table_boost: float) -> dict:

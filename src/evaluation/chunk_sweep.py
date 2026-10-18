@@ -67,7 +67,6 @@ import gc
 import json
 import random
 import shutil
-import subprocess
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -106,7 +105,8 @@ from src.stack import RESULTS_ROOT, RETRIEVERS, build_retriever
 from src.utils import start_run_log
 
 from .benchmark import generate_xbrl_questions
-from .metrics import score_question
+from .provenance import _git
+from .metrics import RETRIEVAL_METRICS, score_question
 from .records import BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
 from .run import _query, _summary, question_fields
@@ -140,7 +140,7 @@ SWEEP_FIELDS = (
     "dense_fingerprint",
 )
 
-METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+METRICS = RETRIEVAL_METRICS
 
 
 @dataclass(frozen=True)
@@ -720,15 +720,8 @@ def compared_with(
 
 
 def _commit() -> str | None:
-    """The commit the working tree is at, marked where it has changes not in it."""
-    try:
-        described = subprocess.run(
-            ["git", "describe", "--always", "--dirty"], cwd=PROJECT_ROOT,
-            capture_output=True, text=True, check=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return described.stdout.strip() or None
+    """Preserve the sweep's dirty-tree identity using shared git execution."""
+    return _git("describe", "--always", "--dirty")
 
 
 def curve(summaries: Sequence[Mapping[str, Any]], top_k: int) -> str:

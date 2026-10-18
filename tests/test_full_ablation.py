@@ -122,14 +122,46 @@ def test_retrieval_reports_one_team_slice_beside_the_xbrl_set(tmp_path):
         ('C4','team'),('C4','xbrl')]
 
 
+def reference_fixture(path):
+    import gzip
+    from src.evaluation.rerank_ablation import _rank_record
+    from src.evaluation.run import _query
+    q = question()
+    reranker = CrossEncoderReranker(RerankConfig(), model=RerankModel([1.0, 2.0]))
+    source = {name: 'same' for name in ('src/retrieval/hybrid.py', 'src/retrieval/rerank.py',
+              'src/evaluation/run.py', 'src/rag/query.py', 'src/stack.py')}
+    provenance = {'question_records_sha256': question_records_sha256([q]), 'retrieval_settings': {},
+                  'corpus': {'records_sha256': 'same'}, 'source_commit': 'frozen',
+                  'source_files_sha256': source, 'environment': {'packages': {'tokenizers': '1'}}}
+    pool = [RetrievedPassage.from_chunk(chunk('a','AAPL'), 2.0, 1, 'hybrid'),
+            RetrievedPassage.from_chunk(chunk('b','MSFT'), 1.0, 2, 'hybrid')]
+    query = _query(q, top_k=16, metadata_filter=True)
+    result = reranker.rerank(query, pool)
+    record = {'question': q.to_dict(), 'query': json.loads(json.dumps(asdict(query))),
+              'C4': _rank_record(q, pool, 1.0, 'C4'),
+              'C5': _rank_record(q, result.passages, 2.0, 'C5'), 'rerank': result.diagnostics}
+    by_id = {p.chunk_id:p for p in pool}
+    record['rerank']['candidates'] = [{**r, 'content_type': by_id[r['chunk_id']].content_type}
+                                     for r in record['rerank']['candidates']]
+    matrix.dump(path/'config.json', {'provenance':provenance, 'top_k':16,
+                                    'reranker':reranker.config.to_dict()})
+    matrix.dump(path/'runtime.json', {'bm25_manifest':None,'dense_manifest':None})
+    def save(rows):
+        with gzip.open(path/'pairs.jsonl.gz','wt') as stream:
+            stream.writelines(json.dumps(row)+'\n' for row in rows)
+        return matrix.sha256(path/'pairs.jsonl.gz')
+    digest = save([record])
+    return q, provenance, reranker, record, save, digest
+
+
 def test_reference_rejects_mismatched_corpus_before_reading_pairs(tmp_path):
-    reranker=CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0]))
-    provenance={'question_records_sha256':'q','retrieval_settings':{},'corpus':{'records_sha256':'new'}}
-    original={**provenance,'corpus':{'records_sha256':'old'}}
-    matrix.dump(tmp_path/'config.json',{'provenance':original})
-    matrix.dump(tmp_path/'runtime.json',{})
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    original=json.loads((tmp_path/'config.json').read_text())
+    original['provenance']['corpus']['records_sha256']='old'
+    matrix.dump(tmp_path/'config.json',original)
     with pytest.raises(ValueError,match='corpus'):
-        matrix.reference_rows(tmp_path,[question()],provenance,SimpleNamespace(),reranker)
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
 
 
 def test_verification_switch_is_an_actual_answer_stage_ablation(monkeypatch,tmp_path):
@@ -154,49 +186,74 @@ def test_verification_switch_is_an_actual_answer_stage_ablation(monkeypatch,tmp_
 
 
 def test_reference_requires_exact_queries_and_complete_question_sequence(tmp_path):
-    import gzip
-    from src.evaluation.run import _query
-    q=question();reranker=CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0]))
-    provenance={'question_records_sha256':'q','retrieval_settings':{},'corpus':{'records_sha256':'same'},'source_commit':'frozen'}
-    matrix.dump(tmp_path/'config.json',{'provenance':provenance,'top_k':16,'reranker':reranker.config.to_dict()})
-    matrix.dump(tmp_path/'runtime.json',{'bm25_manifest':None,'dense_manifest':None})
-    record={'question':q.to_dict(),'query':json.loads(json.dumps(asdict(_query(q,top_k=16,metadata_filter=True))))}
-    def save(rows):
-        with gzip.open(tmp_path/'pairs.jsonl.gz','wt') as stream:
-            stream.writelines(json.dumps(r)+'\n' for r in rows)
-    save([record]);rows,meta=matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    rows, meta = matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                      expected_pairs_sha256=digest)
     assert rows==[record] and meta['source_commit']=='frozen'
-    save([])
+    assert meta['pairs_sha256']==meta['expected_pairs_sha256']==digest
+    digest=save([])
     with pytest.raises(ValueError,match='complete'):
-        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
-    record['query']['keyword_text']='different';save([record])
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+    record['query']['keyword_text']='different'
+    digest=save([record])
     with pytest.raises(ValueError,match='query policy'):
-        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
 
 
 @pytest.mark.parametrize('changed', [None, 'revision', 'max_length', 'candidate_k'])
 def test_reference_timing_annotation_is_not_a_ranking_setting(tmp_path, changed):
-    import gzip
-    from src.evaluation.run import _query
-    q=question();reranker=CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0]))
-    provenance={'question_records_sha256':'q','retrieval_settings':{},
-                'corpus':{'records_sha256':'same'},'source_commit':'frozen'}
-    recorded=reranker.config.to_dict()
-    recorded.pop('latency')  # #172 predates the new timing-only descriptor.
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    original=json.loads((tmp_path/'config.json').read_text())
+    original['reranker'].pop('latency')
     if changed is not None:
-        recorded[changed]='changed' if changed=='revision' else recorded[changed]+1
-    matrix.dump(tmp_path/'config.json',{'provenance':provenance,'top_k':16,'reranker':recorded})
-    matrix.dump(tmp_path/'runtime.json',{'bm25_manifest':None,'dense_manifest':None})
-    record={'question':q.to_dict(),'query':json.loads(json.dumps(asdict(_query(q,top_k=16,metadata_filter=True))))}
-    with gzip.open(tmp_path/'pairs.jsonl.gz','wt') as stream:
-        stream.write(json.dumps(record)+'\n')
+        value=original['reranker'][changed]
+        original['reranker'][changed]='changed' if changed=='revision' else value+1
+    matrix.dump(tmp_path/'config.json',original)
     if changed is not None:
         with pytest.raises(ValueError,match='reranking configuration'):
-            matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
+            matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                  expected_pairs_sha256=digest)
     else:
-        rows,meta=matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker)
+        rows,meta=matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                       expected_pairs_sha256=digest)
         assert rows==[record]
         assert meta['reranker_latency_definition'].startswith('unrecorded')
+
+
+@pytest.mark.parametrize('damage',['swapped','missing_ranking','order','score'])
+def test_reference_requires_the_archived_pair_digest_and_consistent_rankings(tmp_path,damage):
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    if damage=='swapped':
+        record['C4']['latency_ms']+=1
+    elif damage=='missing_ranking':
+        del record['C4']
+    elif damage=='order':
+        record['C5']['retrieved_chunk_ids'].reverse()
+    else:
+        record['C4']['retrieved_scores'][0]+=1
+    save([record])
+    with pytest.raises(ValueError,match='archived digest'):
+        matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
+    if damage!='swapped':
+        with pytest.raises((ValueError,KeyError),match='C4|C5|ranking'):
+            matrix.reference_rows(tmp_path,[q],provenance,SimpleNamespace(),reranker,
+                                  expected_pairs_sha256=matrix.sha256(tmp_path/'pairs.jsonl.gz'))
+
+
+@pytest.mark.parametrize('changed',['src/retrieval/hybrid.py','src/retrieval/rerank.py',
+                                  'src/evaluation/run.py','src/rag/query.py','src/stack.py','tokenizers'])
+def test_reference_refuses_different_ranking_source_or_tokenizer(tmp_path,changed):
+    from copy import deepcopy
+    q, provenance, reranker, record, save, digest = reference_fixture(tmp_path)
+    current=deepcopy(provenance)
+    if changed=='tokenizers': current['environment']['packages'][changed]='different'
+    else: current['source_files_sha256'][changed]='different'
+    with pytest.raises(ValueError,match='source differs|package version differs'):
+        matrix.reference_rows(tmp_path,[q],current,SimpleNamespace(),reranker,
+                              expected_pairs_sha256=digest)
 
 
 def test_pending_judge_keeps_the_completed_answer_and_all_attempt_costs(tmp_path):
@@ -247,6 +304,7 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     matrix.dump(tmp_path/'config.json',{'provenance':{'questions':1,'question_records_sha256':digest}})
     matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
     matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
+    matrix.write_rows(tmp_path/'baseline.jsonl',[])
     cost=query_cost('ollama',[],attempts=0,prices=None)
     answer={'question_id':q.question_id,'source':q.source,
             'quality':{'faithfulness':None,'correctness':0.0,'answerability_correct':0.0,
@@ -283,6 +341,7 @@ def test_snapshot_of_untagged_team_questions_matches_its_recorded_provenance(mon
     monkeypatch.setattr('src.evaluation.provenance.iter_chunks',lambda **kwargs:[])
     questions=[question('t'),question('x','xbrl')]
     config={'provenance':record_provenance([],questions,tmp_path)}
+    assert config['provenance']['question_records_sha256'] == 'ca02164a40b190fee60cb14f8d667ddac20ac4353766389ffb76408a0412ac29'
     matrix.validate_snapshot(config,questions)
 
 
@@ -321,6 +380,7 @@ def test_answer_phase_resumes_under_its_own_frozen_settings(tmp_path,monkeypatch
     matrix.dump(tmp_path/'config.json',config)
     matrix.write_rows(tmp_path/'benchmark.jsonl',[q.to_dict()])
     matrix.write_rows(tmp_path/'pairs.jsonl',[{'question':q.to_dict(),'rows':rows}])
+    matrix.write_rows(tmp_path/'baseline.jsonl',[])
     cost=query_cost('ollama',[],attempts=0,prices=None)
     answer={'question_id':q.question_id,'source':q.source,
             'quality':{'faithfulness':None,'correctness':0.0,'answerability_correct':0.0,

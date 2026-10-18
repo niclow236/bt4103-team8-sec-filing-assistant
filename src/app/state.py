@@ -53,7 +53,9 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
 
-RESULT_METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+from src.evaluation.metrics import RETRIEVAL_METRICS
+
+RESULT_METRICS = RETRIEVAL_METRICS
 
 
 def benchmark_kind(row: dict[str, Any]) -> str:
