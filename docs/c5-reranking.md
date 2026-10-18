@@ -242,6 +242,12 @@ waiver. It supports #44's C4/C5 comparison; it is not a seven-row C0–C6 matrix
 or an answer-quality evaluation. The retrieval gates fail, so a paired answer
 comparison and app adoption are not triggered.
 
+For #44, the C5 row is **experimental MiniLM reranking of C4, evaluated and
+rejected for default adoption**, with this full run retained as the negative
+ablation and its prose gains/table regressions recorded explicitly. C6 stays as
+#158 defines it, building on this rejected C5; rebasing it on C4 is tracked in
+#173. The team [agreed this representation on #44](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/44#issuecomment-6245852597).
+
 | Benchmark | All / relevance-scored | Recall@16 C4 → C5 | nDCG@16 C4 → C5 | MRR@16 C4 → C5 | nDCG delta [paired 95% CI] | nDCG wins / losses / ties |
 | --- | ---: | ---: | ---: | ---: | --- | ---: |
 | Team | 150 / 146 | 0.8185 → 0.8128 | 0.5975 → 0.5163 | 0.5485 → 0.4437 | -0.0812 [-0.1416, -0.0259] | 34 / 73 / 39 |
@@ -293,13 +299,6 @@ outside-gold-company counts are 0 / 0 and outside-gold-year/company-year
 counts are 35 / 34 (C4 / C5). Both rows have zero query company/year-filter
 violations. These gold-scope proxies can reflect incomplete labels; they are
 not answer-correctness measurements.
-
-The [team decision on #44](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/44#issuecomment-6245852597)
-records C5 as **experimental MiniLM reranking of C4, evaluated and rejected
-for default adoption**, using this full `c5-full-20261017` study. C6 builds on
-that rejected C5 experiment, rather than the app's C4 stack. Measuring a C6
-based on C4 is tracked separately in #173. The prose gains and table regressions
-above remain part of the negative ablation result.
 
 ### Full-run timing and reproducibility
 
@@ -464,8 +463,6 @@ labels are a retrieval proxy; filing clustering does not remove all
 company/template dependence, and gold scope is not exhaustive relevance. No
 conclusion about answer correctness, other checkpoints or larger chunk budgets
 follows from these retrieval metrics.
-
-
 
 ## Historical table-boost sensitivity (#155 review)
 
