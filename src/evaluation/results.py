@@ -41,7 +41,10 @@ def write_comparison(
         writer.writeheader()
         for summary in summaries:
             config = summary["config"]
-            writer.writerow({**config, **summary, "config": config["id"], "name": config["name"]})
+            row = {**config, **summary, "config": config["id"], "name": config["name"]}
+            if stopped := summary.get("stopped"):
+                row["stopped"] = f"{stopped['question_id']}: {stopped['error']}"
+            writer.writerow(row)
     manifest = {"run_id": run_id, "top_k": top_k, "configurations": list(summaries), **metadata}
     (run_dir / "summary.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

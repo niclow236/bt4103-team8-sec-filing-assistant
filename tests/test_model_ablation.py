@@ -1088,7 +1088,11 @@ def test_a_stopped_replay_s_table_says_which_row_stopped(monkeypatch, tmp_path):
     with (tmp_path / "stopped" / "summary.csv").open(newline="") as stream:
         table = {row["config"]: row.get("stopped") for row in csv.DictReader(stream)}
     # The recorded answers are complete; the replayed row names where it stopped.
-    assert table["G2"] == "" and "q002" in table["G3"]
+    assert table["G2"] == "" and table["G3"] == "q002: rate limit"
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    assert summary["configurations"][1]["stopped"] == {
+        "question_id": "q002", "error": "rate limit",
+    }
 
 
 def test_an_answers_config_without_its_fields_is_refused_by_name(answer_run):
