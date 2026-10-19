@@ -2382,12 +2382,17 @@ the older C5-based C6 definition:
 C0 is scored against gold labels projected onto its fixed windows. Correctness
 is a hosted model's judgement, from one run.
 
-Issue #173 rebases the current C6 definition on C4 and disables reranking. A
-fresh 150-team-question retrieval diagnostic measures C4 → C6 as Recall@16
-**0.7991 → 0.8128**, nDCG@16 **0.5785 → 0.5782**, and MRR@16
-**0.5315 → 0.5227**. See the [matrix report](docs/full-ablation.md#current-c4-based-c6-evidence-173)
-for the frozen identities, limitations, and the distinction from the archived
-C5-based row.
+Issue #173 rebases the current C6 definition on C4 and disables reranking. The
+fresh paired acceptance study covers **150 team + all 12,579 frozen XBRL
+questions per row**, plus **150 team answer evaluations per row**. Team C4 → C6
+Recall@16 is **0.8185 → 0.8288** and nDCG@16
+**0.5975 → 0.5973**; all XBRL rankings are exactly C4.
+Decomposition activates on 10 team questions. The
+[paired report](docs/full-ablation.md#complete-paired-acceptance-study) records
+answer scores, conditional denominators, frozen identities and limitations.
+Its measurements remain separate from the archived C5-based row above and the
+earlier team-only diagnostic. Verification annotates claims; hosted judge-score
+differences do not establish that it corrects answer text.
 
 ### Embedding and generation ablations
 

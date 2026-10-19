@@ -102,7 +102,87 @@ verification the app runs. Its recorded config has `use_decomposition: true`,
 `use_verification: true`, and `rerank: false`. The older C5-based C6 remains only
 in the explicitly archived tables below.
 
-A fresh local retrieval measurement on the complete 150-question team slice
+### Complete paired acceptance study
+
+The fresh `c6-rebase-full-20261019` study completes the #173 acceptance run at
+committed source `979add1`: **150 team + all 12,579 frozen XBRL questions
+(12,729 per row)**,
+plus **150 team answer evaluations for each of C4 and C6 (300 outputs)**.
+The input file hashes, ordered canonical question digest, corpus records and
+retrieval settings match the complete #155 study. Both rows were retrieved
+fresh; no historical ranking or timing was imported. The corpus has **28,289
+passages / 75 filings**, measured on Apple M1 / 16 GiB with the BGE encoder on
+MPS. C6 has decomposition and verification enabled, with `rerank: false`;
+no cross-encoder was constructed or warmed.
+
+| Benchmark | Row | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Team | C4 | 0.8185 | 0.5975 | 0.5485 | 0.9630 |
+| Team | C6 | 0.8288 | 0.5973 | 0.5411 | 0.9630 |
+| Team | C6 − C4 | +0.0103 | -0.0002 | -0.0074 | +0.0000 |
+| XBRL | C4 | 0.6517 | 0.4719 | 0.4762 | — |
+| XBRL | C6 | 0.6517 | 0.4719 | 0.4762 | — |
+| XBRL | C6 − C4 | +0.0000 | +0.0000 | +0.0000 | — |
+
+Relevance-scored denominators are **146 team** (four unanswerable questions
+excluded) and **12,579 XBRL**. Hard-negative accuracy covers **27 team
+questions** and has no eligible XBRL questions.
+
+Decomposition activates on **10 team questions**. The other
+**140 team + 12,579 XBRL questions** preserve C4's ranked IDs, scores,
+metrics and measured latency exactly. Decomposed C6 searches use filtered
+hybrid evidence per filing, followed by the app's balanced interleave; their
+per-filing outputs and provenance remain in the native transactions.
+On those 10 decomposed questions, recall is **0.3500 → 0.5000**, nDCG
+**0.2070 → 0.2040**, and MRR **0.2314 → 0.1239**: coverage increases without
+an observed ranking-quality gain on this subset.
+
+| Row | Correctness (n/150) | Faithfulness (n/150) | Answerability | Citation precision (n) | Citation recall (n) |
+| --- | --- | --- | ---: | --- | --- |
+| C4 | 0.8024 (150/150) | 0.9151 (145/150) | 0.9933 | 0.4299 (145) | 0.7705 (146) |
+| C6 | 0.8067 (150/150) | 0.9099 (145/150) | 0.9933 | 0.4345 (145) | 0.8014 (146) |
+
+Each row has **145 LLM-judged outputs and five automatically scored
+abstentions**; correctness is scored on all 150. Generation and separate
+judging use Mistral `ministral-8b-2512`, temperature zero and rubric
+`answer-quality-v1`, with the facts-answer and refusal shortcuts disabled in
+both rows. These are automated single-run assessments, not human accuracy.
+Conditional faithfulness/citation denominators are explicit in the table.
+
+C6 records verification on **150 outputs**, versus **0** for C4.
+The five C6 abstentions have `not_applicable` checks.
+Claim-status counts and paired quality deltas for decomposed and unsplit team
+questions are in the report. Verification annotates claims and does not rewrite
+answers. Separate hosted generations/judgements are nondeterministic, so small
+quality differences, especially on identical retrieved evidence, are not a
+causal estimate of verification's benefit.
+
+Completed retrieval resume preserved **23 original native artifact hashes**;
+completed answer resume preserved all **11 checked answer/config hashes**.
+Model-free CLI rescore reproduced every retrieval and answer aggregate exactly.
+The original C5 reports, archived seven-row matrix and earlier team diagnostic
+are byte-identical. Timing is a recorded laptop workload: hosted answer
+preparation overlapped XBRL retrieval, load/warm-up is excluded, and replay
+lookup time is not actual retrieval latency. Token/call accounting is recorded;
+USD cost remains unknown without configured prices.
+
+A separate diagnostic checks the fresh C4 against the trusted full #155 pairs:
+**12,727 / 12,729 ranked ID lists** and **12,726 score arrays** match exactly.
+The maximum absolute score difference among matching ID lists is **0.0001169**.
+The fresh run's two changed ID lists are retained; the historical rankings and
+timings are not substituted. The controlled C4/C6 comparison uses only this
+fresh run, and the summary records the historical pairs' trusted digest.
+
+See the [complete paired summary](evaluation/c6-rebase-full-20261019-summary.json),
+[provenance and hashes](evaluation/c6-rebase-full-20261019-manifest.json), and
+[report generator](../tools/report_c6_rebase.py). Native per-question evidence,
+answers and runtime history stay local under
+`results/c6-rebase-full-20261019/`. This is a complete **paired C4/C6 study**,
+not a new measurement of C0–C3/C5 or a substitution into the archived M2 matrix.
+
+### Earlier team-only diagnostic
+
+A local retrieval measurement on the complete 150-question team slice
 found the following effect relative to C4 (146 relevance-scored questions):
 
 | Row | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
@@ -118,14 +198,14 @@ per-question outputs under `results/c6-rebase-team-pr182-20261019/`. Its frozen
 identities, artifact hashes, aggregate results, and limitations are committed in
 [the diagnostic summary](evaluation/c6-rebase-team-20261019-summary.json).
 
-This is not yet the complete #173 acceptance study. The accepted C5 study's
-12,579-question XBRL snapshot and native per-question rankings are not present
-in this workspace, and this checkout's generated mechanical set has a different
-identity and 12,591 questions. Those datasets must not be spliced. The hosted
-C6 team answer/judge phase also requires explicit approval to send the 150
-benchmark questions and their recorded evidence to Mistral. Until both are
-available, the archived answer numbers below remain historical C5-based C6
-results and are not attributed to the current row.
+This diagnostic alone does not satisfy the complete #173 acceptance criterion.
+Its measurement workspace had a different 12,591-question generated set and
+did not have the accepted C5 study's frozen 12,579-question snapshot. Those
+datasets must not be spliced. The complete paired study above instead uses
+those frozen 150 + 12,579 questions and their matching corpus, plus hosted
+generation and judging for all 150 team questions. The archived answer numbers
+below remain historical C5-based C6 results and are
+not attributed to the current row.
 
 ## Run and reproduce
 
@@ -178,7 +258,8 @@ python -m src.evaluation.full_ablation rescore results/c6-rebase-full-YYYYMMDD
 
 Retrieval `--configurations` freezes the selected rows in `config.json`; a
 resume cannot add or remove rows. Without the flag all seven rows are measured
-as before. A C4/C6-only run never constructs or warms a cross-encoder. Answer
+as before. Without `--reference`, a C4/C6-only run never constructs or warms a
+cross-encoder. Answer
 and rescore commands default to the rows whose retrieval this run froze, and
 refuse requests for unmeasured rows. Their answer-summary `complete` flag means
 all frozen rows have answers; the explicit configuration list distinguishes a
