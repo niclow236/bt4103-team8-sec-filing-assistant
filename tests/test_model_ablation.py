@@ -1254,3 +1254,9 @@ def test_an_answers_config_whose_generation_is_not_a_config_is_refused_by_name(a
             answered | {"generation": generation | {name: []}}))
         with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
             recorded_answers(directory, chunks=snapshot)
+    # PR review of #180: a provider the generator does not know was refused
+    # only when the judge was built, with advice to set LLM_PROVIDER.
+    (directory / "answers-config.json").write_text(json.dumps(answered | {"generation": {
+        "provider": "Mistral", "model": "test", "prompt_template_id": "grounded_v4"}}))
+    with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
+        recorded_answers(directory, chunks=snapshot)

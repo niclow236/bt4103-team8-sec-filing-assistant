@@ -21,7 +21,9 @@ from src.config import PROCESSED_DIR, PROJECT_ROOT
 from src.rag import ProviderUnavailable
 from src.rag.generate import without_answer_locally
 from src.rag.records import GenerationConfig
-from src.rag.constants import DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL
+from src.rag.constants import (
+    DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL, PROVIDERS,
+)
 from src.retrieval.embedding_config import EmbeddingConfig
 from src.retrieval.facts import FACTS_FILE
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
@@ -351,10 +353,10 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
         generation = GenerationConfig(**answered["generation"])
     except TypeError:
         generation = None
-    # The config does not check its fields' types, and a provider that is not
-    # a string fails only when the judge is built from it.
-    if generation is None or not all(isinstance(value, str) for value in (
-            generation.provider, generation.model, generation.prompt_template_id)):
+    # The config does not check its fields, and a provider the generator does
+    # not know fails only when the judge is built from it.
+    if generation is None or generation.provider not in PROVIDERS or not all(
+            isinstance(value, str) for value in (generation.model, generation.prompt_template_id)):
         raise ValueError(f"{answers_config}'s 'generation' is not a generation config: "
                          f"{answered['generation']!r}")
     rows = read_rows(run_dir / REPLAY_ROW / "answers.jsonl")
