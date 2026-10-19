@@ -337,7 +337,12 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     measured = {t["question"]["question_id"]: t["rows"][REPLAY_ROW] for t in transactions}
     if any(question.question_id not in measured for question in team):
         raise ValueError("the run's team retrieval is incomplete")
-    answered = json.loads((run_dir / "answers-config.json").read_text())
+    answers_config = run_dir / "answers-config.json"
+    answered = json.loads(answers_config.read_text())
+    for name in ("judge_rubric", "generation"):
+        if not isinstance(answered, dict) or name not in answered:
+            raise ValueError(f"{answers_config} does not record {name!r}, which a complete "
+                             f"`answers` step writes")
     if answered["judge_rubric"] != RUBRIC_ID:
         raise ValueError(f"the run was judged with {answered['judge_rubric']!r}, not {RUBRIC_ID!r}")
     rows = read_rows(run_dir / REPLAY_ROW / "answers.jsonl")

@@ -1089,3 +1089,22 @@ def test_a_stopped_replay_s_table_says_which_row_stopped(monkeypatch, tmp_path):
         table = {row["config"]: row.get("stopped") for row in csv.DictReader(stream)}
     # The recorded answers are complete; the replayed row names where it stopped.
     assert table["G2"] == "" and "q002" in table["G3"]
+
+
+def test_an_answers_config_without_its_fields_is_refused_by_name(answer_run):
+    # QA of #163 (#180): `{}` raised KeyError: 'judge_rubric', a traceback
+    # rather than a refusal.
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    (directory / "answers-config.json").write_text("{}")
+    with pytest.raises(ValueError, match=r"answers-config\.json does not record 'judge_rubric'"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text(json.dumps({"judge_rubric": "answer-quality-v1"}))
+    with pytest.raises(ValueError, match=r"answers-config\.json does not record 'generation'"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text("null")
+    with pytest.raises(ValueError, match=r"answers-config\.json does not record 'judge_rubric'"):
+        recorded_answers(directory, chunks=snapshot)
