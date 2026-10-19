@@ -62,14 +62,14 @@ MATRIX = {
                     use_refusal=False) for key, value in STACKS.items()},
     "C5": replace(MatrixConfig(**STACKS["C4"].to_dict()), id="C5", name="C4 + experimental MiniLM reranking",
                   top_k=FINAL_K, use_facts=False, use_decomposition=False, use_refusal=False, rerank=True),
-    "C6": replace(MatrixConfig(**STACKS["C4"].to_dict()), id="C6", name="C5 + filing decomposition and verification",
+    "C6": replace(MatrixConfig(**STACKS["C4"].to_dict()), id="C6", name="C4 + filing decomposition and verification",
                   top_k=FINAL_K, use_facts=False, use_decomposition=True, use_refusal=False,
-                  use_verification=True, rerank=True),
+                  use_verification=True, rerank=False),
 }
 
 
 # What a full-matrix run's config.json records as its schema.
-FULL_MATRIX_SCHEMA = "full-matrix-v1"
+FULL_MATRIX_SCHEMA = "full-matrix-v2"
 
 
 def scored_for(question: BenchmarkQuestion, row: dict) -> BenchmarkQuestion:
@@ -563,6 +563,11 @@ def answers(args: argparse.Namespace) -> None:
     }:
         raise ValueError("answer matrix settings differ from frozen retrieval; use its recorded source")
     team = team_questions(questions)
+    configuration_ids = tuple(getattr(args, "configurations", None) or MATRIX)
+    if len(set(configuration_ids)) != len(configuration_ids) or any(
+        cid not in MATRIX for cid in configuration_ids
+    ):
+        raise ValueError("answer configurations must be unique matrix row IDs")
     transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
     check_transactions(transactions,questions)
     selected = {t["question"]["question_id"]:t for t in transactions}
@@ -576,6 +581,7 @@ def answers(args: argparse.Namespace) -> None:
     generation = config_from_env(provider=args.provider, model=args.model)
     configuration = {"retrieval_config_sha256":sha256(run_dir/"config.json"),
                      "generation":generation.to_dict(), "judge_rubric":"answer-quality-v1",
+                      "configurations":list(configuration_ids),
                      "facts_sha256":sha256(args.facts_file),
                      "questions":[q.to_dict() for q in team],
                      "source":record_provenance([],team,args.processed_dir,chunks=chunks),
@@ -596,7 +602,7 @@ def answers(args: argparse.Namespace) -> None:
         })
         llm = checked_model(generation, None)
         judge = LLMJudge(generation, llm=llm)
-        for cid in MATRIX:
+        for cid in configuration_ids:
             directory = run_dir/cid
             directory.mkdir(exist_ok=True)
             path = directory/"answers.jsonl"
@@ -638,8 +644,11 @@ def answers(args: argparse.Namespace) -> None:
                     if pending.exists():pending.unlink()
                     print(f"{cid} answers: {len(stored)}/{len(team)}",flush=True)
             dump(directory/"answer-summary.json",answer_summary(stored,cid))
-        dump(run_dir/"answer-summary.json",{"complete":True,"team_questions":len(team),
-             "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text()) for cid in MATRIX}})
+        dump(run_dir/"answer-summary.json",{
+            "complete":set(configuration_ids)==set(MATRIX), "team_questions":len(team),
+            "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text())
+                              for cid in configuration_ids},
+        })
 
 
 def rescore(args: argparse.Namespace) -> None:
@@ -664,13 +673,15 @@ def rescore(args: argparse.Namespace) -> None:
     export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
                      write_question_outputs=False)
     team=team_questions(questions)
+    configuration_ids = tuple(getattr(args, "configurations", None) or MATRIX)
     summaries={}
-    for cid in MATRIX:
+    for cid in configuration_ids:
         rows=read_rows(directory/cid/'answers.jsonl')
         if [r['question_id'] for r in rows]!=[q.question_id for q in team]:
             raise ValueError(f"cannot rescore incomplete {cid} team answers")
         summaries[cid]=answer_summary(rows,cid)
-    dump(target/'answer-summary.json',{'complete':True,'team_questions':len(team),'configurations':summaries})
+    dump(target/'answer-summary.json',{'complete':set(configuration_ids)==set(MATRIX),
+         'team_questions':len(team),'configurations':summaries})
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -694,9 +705,13 @@ def main(argv: list[str] | None = None) -> None:
     answer.add_argument("--facts-file",type=Path,default=FACTS_FILE)
     answer.add_argument("--provider",choices=("mistral","ollama"),default="mistral")
     answer.add_argument("--model")
+    answer.add_argument("--configurations",nargs="+",choices=tuple(MATRIX),
+                        help="Answer only these matrix rows (default: every row)")
     answer.add_argument("--workload-note", default="Answer replay over recorded evidence")
     scoring=commands.add_parser("rescore")
     scoring.add_argument("run_dir",type=Path)
+    scoring.add_argument("--configurations",nargs="+",choices=tuple(MATRIX),
+                         help="Rescore answers only for these matrix rows (default: every row)")
     args=parser.parse_args(argv)
     if args.command == "retrieval":
         if bool(args.reference) != bool(args.reference_pairs_sha256):

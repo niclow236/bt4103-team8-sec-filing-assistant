@@ -20,9 +20,9 @@ reported in [the full C5 results](c5-reranking.md#complete-benchmark-result-and-
 [summary](evaluation/c5-full-20261017-summary.json) and
 [manifest](evaluation/c5-full-20261017-manifest.json). Team nDCG@16 falls
 0.5975 → 0.5163 and XBRL 0.4719 → 0.4165; C4 remains the default.
-The [team agreement on #44](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/issues/44#issuecomment-6245852597)
-records C5 as evaluated and rejected for default adoption, and C6 as building
-on that rejected C5. A C6 based on the app's C4 is separate work in #173.
+Issue #173 rebases the matrix runner's C6 on the retained C4 stack. The tables
+under **Archived #172 matrix result** remain the frozen, C5-based historical
+study and are labelled as such; they are not evidence for the current C6.
 
 The matrix tables below retain the #172 machine's original 150 + 1,884
 cohort and measurements. Its C4/C5 imports belong to that frozen matrix;
@@ -38,7 +38,7 @@ identity checks prevent incompatible results from being spliced together.
 | C3 | Hybrid BM25/dense fusion | Off | Off |
 | C4 | C3 with company/year/Item/content metadata filters | Off | Off |
 | C5 | C4 with the pinned experimental MiniLM reranker | Off | Off |
-| C6 | C5 with the existing company/year decomposition and claim checks | On | On |
+| C6 | C4 with the existing company/year decomposition and claim checks | On | On |
 
 C2 replaces sparse scoring with dense scoring; C3 combines both. Query parsing,
 keyword trimming, figure weighting, score thresholds and the final 16-passage
@@ -73,14 +73,16 @@ saved rankings. Checkpoint/revision, depths, token limit, queries, corpus,
 packages and index identities remain guarded. A fresh run must not label
 imported diagnostic-inclusive timings as newly measured inference-only latency.
 
-C5/C6 use `cross-encoder/ms-marco-MiniLM-L-6-v2` revision
+C5 alone uses `cross-encoder/ms-marco-MiniLM-L-6-v2` revision
 `233902d25c440f23af6f7d6e94d2946bac0bee0a`, 512-token inputs and batches of 32.
-Each decomposed C6 filing search reranks its own top-50 pool; the existing
-interleave gives a shared final budget of 16. A single-filing query has exactly
-the C5 ranking. Decomposition is by explicit company/year, not LLM topic
-splitting. C6 verification annotates claims; it does not rewrite an answer or
-establish semantic correctness. All rows disable the facts-answer shortcut and
-automatic refusal so those additional techniques cannot confound the matrix.
+C6 has `rerank: false`: each decomposed filing search keeps C4's first 16
+filtered-hybrid passages, and the existing balanced interleave gives a shared
+final budget of 16. A single-filing query has exactly the C4 ranking and score.
+Decomposition is by explicit company/year, not LLM topic splitting. C6
+verification matches the app's post-answer claim check and annotates claims; it
+does not rewrite an answer or establish semantic correctness. All rows disable
+the facts-answer shortcut and automatic refusal so those additional techniques
+cannot confound the matrix.
 
 C0 uses the existing deterministic reconstruction of filing text from processed
 passages, then cuts across section boundaries. It is not a fresh parse of raw
@@ -90,6 +92,40 @@ with their source passages; a window overlapping gold and a hard negative is
 treated as gold, with the conflict count recorded. These are reproducible
 relevance proxies in a different chunk namespace, not independently adjudicated
 C0 evidence labels. C0 answer citations use that same projected namespace.
+
+## Current C4-based C6 evidence (#173)
+
+The runner now records schema `full-matrix-v2`. Its C6 is the configuration the
+matrix shows going forward: C4 filtered hybrid retrieval, company/year
+decomposition with balanced interleave, and the same post-answer claim
+verification the app runs. Its recorded config has `use_decomposition: true`,
+`use_verification: true`, and `rerank: false`. The older C5-based C6 remains only
+in the explicitly archived tables below.
+
+A fresh local retrieval measurement on the complete 150-question team slice
+found the following effect relative to C4 (146 relevance-scored questions):
+
+| Row | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
+| --- | ---: | ---: | ---: | --- |
+| C4 | 0.7991 | 0.5785 | 0.5315 | 0.9630 (27) |
+| C6 (C4-based) | 0.8128 | 0.5782 | 0.5227 | 0.9630 (27) |
+| C6 − C4 | +0.0137 | −0.0003 | −0.0088 | 0.0000 |
+
+Decomposition fired on 10 questions. The other 140 C6 outputs preserve C4's
+ranked IDs, scores, metrics, and measured latency exactly; none of the 150 C6
+rows contains reranker diagnostics. The native run keeps transactional
+per-question outputs under `results/c6-rebase-team-20261019/`. Its frozen
+identities, artifact hashes, aggregate results, and limitations are committed in
+[the diagnostic summary](evaluation/c6-rebase-team-20261019-summary.json).
+
+This is not yet the complete #173 acceptance study. The accepted C5 study's
+12,579-question XBRL snapshot and native per-question rankings are not present
+in this workspace, and this checkout's generated mechanical set has a different
+identity and 12,591 questions. Those datasets must not be spliced. The hosted
+C6 team answer/judge phase also requires explicit approval to send the 150
+benchmark questions and their recorded evidence to Mistral. Until both are
+available, the archived answer numbers below remain historical C5-based C6
+results and are not attributed to the current row.
 
 ## Run and reproduce
 
@@ -118,7 +154,15 @@ HF_HUB_OFFLINE=1 python -u -m src.evaluation.full_ablation retrieval \
 python -u -m src.evaluation.full_ablation answers results/full-matrix-YYYYMMDD \
   --provider mistral --model ministral-8b-2512
 
+# Re-evaluate only the rebased row without regenerating C0-C5 answers.
+python -u -m src.evaluation.full_ablation answers results/full-matrix-YYYYMMDD \
+  --configurations C6 --provider mistral --model ministral-8b-2512
+
 python -m src.evaluation.full_ablation rescore results/full-matrix-YYYYMMDD
+
+# Model-free rescore when only C6 answers were measured.
+python -m src.evaluation.full_ablation rescore results/full-matrix-YYYYMMDD \
+  --configurations C6
 ```
 
 Omit both `--reference` and `--reference-pairs-sha256` to measure C4/C5 again.
@@ -166,7 +210,7 @@ prices. Replay timing measures the answer phase over saved evidence; actual
 retrieval timings are recorded separately and must not be replaced by replay
 lookup times in an end-to-end latency claim.
 
-## Archived #172 matrix result (150 team + 1,884 XBRL)
+## Archived #172 matrix result (C5-based C6; 150 team + 1,884 XBRL)
 
 The run `full-matrix-20261017` covers **2,034 retrieval questions in every row**
 and **150 team answers in every row** (1,050 answer outputs, including
@@ -189,14 +233,14 @@ them.
 | Team | C3 | 146 | 0.4692 | 0.2612 | 0.2113 | 0.8889 (27) |
 | Team | C4 | 146 | 0.8185 | 0.5978 | 0.5484 | 0.9630 (27) |
 | Team | C5 | 146 | 0.8094 | 0.5195 | 0.4478 | 0.9630 (27) |
-| Team | C6 | 146 | 0.8128 | 0.5160 | 0.4411 | 0.9630 (27) |
+| Team | C6 (archived, C5-based) | 146 | 0.8128 | 0.5160 | 0.4411 | 0.9630 (27) |
 | Mechanical XBRL | C0 | 1884 | 0.0124 | 0.0064 | 0.0072 | — (0) |
 | Mechanical XBRL | C1 | 1884 | 0.0838 | 0.0335 | 0.0237 | — (0) |
 | Mechanical XBRL | C2 | 1884 | 0.4628 | 0.2681 | 0.2455 | — (0) |
 | Mechanical XBRL | C3 | 1884 | 0.3442 | 0.1926 | 0.1783 | — (0) |
 | Mechanical XBRL | C4 | 1884 | 0.7627 | 0.5504 | 0.5340 | — (0) |
 | Mechanical XBRL | C5 | 1884 | 0.8217 | 0.5426 | 0.4879 | — (0) |
-| Mechanical XBRL | C6 | 1884 | 0.8217 | 0.5426 | 0.4879 | — (0) |
+| Mechanical XBRL | C6 (archived, C5-based) | 1884 | 0.8217 | 0.5426 | 0.4879 | — (0) |
 
 C0 uses projected fixed-window relevance labels; compare its proxies with that
 different namespace in mind. One C0 window overlapped both gold and a hard
@@ -211,7 +255,7 @@ IDs. The four unanswerable team questions have no relevance scores.
 | C3 | 150 | 0.5969 (150/150) | 0.8508 (118/150) | 0.8133 | 0.3680 (118) | 0.4452 (146) | {"not_run": 118} |
 | C4 | 150 | 0.8182 (150/150) | 0.9157 (145/150) | 0.9933 | 0.4385 (145) | 0.7945 (146) | {"not_run": 145} |
 | C5 | 150 | 0.7782 (150/150) | 0.9142 (144/150) | 0.9867 | 0.4325 (144) | 0.7763 (146) | {"not_run": 144} |
-| C6 | 150 | 0.7619 (150/150) | 0.9019 (144/150) | 0.9867 | 0.4289 (144) | 0.7865 (146) | {"mismatch": 22, "supported": 40, "unchecked": 28, "unverified": 54} |
+| C6 (archived, C5-based) | 150 | 0.7619 (150/150) | 0.9019 (144/150) | 0.9867 | 0.4289 (144) | 0.7865 (146) | {"mismatch": 22, "supported": 40, "unchecked": 28, "unverified": 54} |
 
 Correctness and faithfulness are recorded model judgements; their denominators
 expose unscored cases and abstentions. Faithfulness and citation precision have
@@ -222,8 +266,8 @@ not establish independent answer correctness. Token/call usage, timings and
 known/unknown cost counts are in the
 [answer summary](evaluation/full-matrix-20261017-answers.json).
 
-Decomposition activates on **10 team questions**; all 1,884 mechanical
-questions keep exactly the C5 ranks and scores. C6 therefore tests balanced
+In this archived study, decomposition activates on **10 team questions**; all
+1,884 mechanical questions keep exactly the C5 ranks and scores. Its C6 tests balanced
 retrieval on that small subset and verification annotations across all 150 team
 outputs. Verification does not rewrite responses; differences between
 independently generated C5/C6 answers cannot be attributed to verification
@@ -245,7 +289,7 @@ laptop with MPS; loading and warm-up (7.1 s) are excluded. C4/C5 rankings and
 their timings were imported from the [C5 reference](c5-reranking.md)
 `c5-reference-20261017`, measured earlier on the same source, corpus, indexes
 and loaded encoder revision; the import checks passed. C0–C3 and decomposed C6
-searches were newly measured, and C6 single-filing ranks are exactly C5. The
+searches were newly measured, and the archived C6 single-filing ranks are exactly C5. The
 answer phase ran on source `9f29f9f`, which only fixes the benchmark snapshot
 check that refused untagged team questions; no retrieval, generation or scoring
 code differs. Desktop apps, a Claude Code session and the hosted answer phase
@@ -269,10 +313,10 @@ observed retrieval improvement: team nDCG@16 0.2612 → 0.5978 and XBRL
 while the fixed hybrid weighting is not uniformly better than dense alone: it
 matches dense on the team set and trails it on XBRL. C4 has the highest nDCG on
 each benchmark and the highest mean judged correctness on the team set:
-**0.8182**, versus **0.7782** for C5 and **0.7619** for C6. C5 raises XBRL
+**0.8182**, versus **0.7782** for C5 and **0.7619** for the archived C5-based C6. C5 raises XBRL
 recall (0.7627 → 0.8217) but lowers nDCG and MRR on both benchmarks. These are
 single-run model judgements, not statistically established human accuracy
-differences. C5/C6 do not justify changing the default under the recorded
+differences. C5 and the archived C6 do not justify changing the default under the recorded
 protocol.
 
 

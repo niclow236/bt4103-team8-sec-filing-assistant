@@ -253,6 +253,17 @@ def test_answer_loop_clears_a_stale_checkpoint_even_when_the_row_is_already_comp
     assert not pending.exists() and not state.generated and not state.judged
 
 
+def test_answer_loop_can_measure_only_the_rebased_c6_row(answer_run):
+    state=answer_run
+    state.args.configurations=("C6",)
+    matrix.write_rows(state.args.run_dir/'C6/answers.jsonl',[])
+    matrix.answers(state.args)
+    assert [qid for qid,_ in state.generated]==['q1','q2']
+    summary=json.loads((state.args.run_dir/'answer-summary.json').read_text())
+    assert summary['complete'] is False
+    assert list(summary['configurations'])==['C6']
+
+
 def test_answer_loop_rejects_a_nonprefix_before_generation_or_file_rewrite(answer_run):
     state=answer_run
     path=state.args.run_dir/'C0/answers.jsonl'

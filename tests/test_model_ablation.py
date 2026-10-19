@@ -864,10 +864,10 @@ def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_
     other = tmp_path / "c5-reference"
     other.mkdir()
     (other / "config.json").write_text(json.dumps({"provenance": {}, "policy": {}}))
-    with pytest.raises(ValueError, match=r"not a full-matrix run: .*full-matrix-v1"):
+    with pytest.raises(ValueError, match=r"not a full-matrix run: .*full-matrix-v2"):
         recorded_answers(other, chunks=[])
     (other / "config.json").write_text("[]")
-    with pytest.raises(ValueError, match=r"not a full-matrix run: .*full-matrix-v1"):
+    with pytest.raises(ValueError, match=r"not a full-matrix run: .*full-matrix-v2"):
         recorded_answers(other, chunks=[])
     # Retrieval finished, answers not yet started.
     directory = answer_run.runner.directory

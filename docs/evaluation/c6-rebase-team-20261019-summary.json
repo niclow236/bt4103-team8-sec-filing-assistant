@@ -1,0 +1,66 @@
+{
+  "purpose": "Issue #173 local team retrieval measurement of the C4-based C6 definition; not the complete acceptance run",
+  "matrix_schema": "full-matrix-v2",
+  "measurement_source_commit": "2dc50179fcdb95b1aa76f7ec964961d1da8ef7fe",
+  "measurement_source_full_ablation_sha256": "c4c1cf6a17999c0736b0fb2560247ee7f2f94907a52cec8ba688c052348e583e",
+  "question_file_sha256": "d6622c60867b37394db41cad019c0870b837c6dba7807548524047af517f5ac5",
+  "question_records_sha256": "3376429c0657eaf88911d1595694409df770349f6bc0de87a4151f9ac3d13d37",
+  "corpus_records_sha256": "0fbf275b8ae6377b5605b366782ecb6834f6366af610014777786a9be9e3c029",
+  "corpus": {
+    "passages": 29234,
+    "filings": 75,
+    "chunk_budget": 1800,
+    "chunk_overlap": 300
+  },
+  "questions": 150,
+  "relevance_scored_questions": 146,
+  "decomposed_questions": 10,
+  "c4_identical_questions": 140,
+  "c6_reranker_diagnostics": 0,
+  "c6_config": {
+    "base": "C4",
+    "retriever": "hybrid",
+    "metadata_filter": true,
+    "top_k": 16,
+    "candidate_k": 50,
+    "use_decomposition": true,
+    "use_verification": true,
+    "rerank": false
+  },
+  "retrieval": {
+    "C4": {
+      "recall_at_16": 0.7990867579908676,
+      "ndcg_at_16": 0.5785160769032628,
+      "mrr_at_16": 0.5314791563079234,
+      "hard_negative_accuracy": 0.9629629629629629
+    },
+    "C6": {
+      "recall_at_16": 0.8127853881278538,
+      "ndcg_at_16": 0.5782197993506706,
+      "mrr_at_16": 0.5227177407828093,
+      "hard_negative_accuracy": 0.9629629629629629
+    },
+    "C6_minus_C4": {
+      "recall_at_16": 0.013698630136986245,
+      "ndcg_at_16": -0.0002962775525922383,
+      "mrr_at_16": -0.008761415525114117,
+      "hard_negative_accuracy": 0.0
+    }
+  },
+  "native_artifacts_sha256": {
+    "config.json": "6f4c4b0c693e168a4ecbc072c5f279d50accd77cec8ce0d1cc1cf9be5247fd33",
+    "benchmark.jsonl": "d6622c60867b37394db41cad019c0870b837c6dba7807548524047af517f5ac5",
+    "pairs.jsonl": "ce683d5cb532d9db7f30f72396652259808c352af137bcf1ec519a0d5ec9fb0a",
+    "C4/questions.jsonl": "d98f36fe6a9a7ed5ba167ac52d9de7aa8ff8e4fca3b40935d194a696a53e990d",
+    "C4/summary.json": "66cb694b8b97f6f908718d8c931735550171d95e43254e8c5ba41f3c8d8c4234",
+    "C6/questions.jsonl": "05f9e50675d393cb5bafe4b717ea6f29eccf92991e670d2676525265b907ff54",
+    "C6/summary.json": "9f5be4db6c86c1975c900c9d41b2f631840b9bba74a1c4860320004473187f26",
+    "summary.json": "ae05cced4467cff2b7083f5cd378f904f090b9c79448db9be8d79211d63cd598",
+    "by-benchmark/summary.json": "92feae6bb7f6a0116a0a9206199db08f51b5fa9de0e7cd820aa541242efa3016"
+  },
+  "limitations": [
+    "This run covers the complete 150-question team slice only, not the frozen 12,579-question mechanical XBRL slice used by the accepted C5 study.",
+    "The frozen full-study per-question artifacts are not present in this workspace, so they were not spliced with this different 29,234-passage corpus.",
+    "The hosted team answer and judge phase was not run because exporting the benchmark questions and evidence to Mistral requires explicit user approval."
+  ]
+}

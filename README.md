@@ -2363,9 +2363,11 @@ run.
 
 Issue #44 adds an evaluation-only [complete matrix](docs/full-ablation.md), with
 all retrieval questions and the complete team answer benchmark, frozen
-provenance, restartable per-question outputs and model-free rescoring. C5/C6
-remain experimental; the app default remains C4. The measured run (#161), over
-the 150 team questions and 1,884 XBRL questions:
+provenance, restartable per-question outputs and model-free rescoring. C5 remains
+experimental; C6 is now based on the app-default C4, with decomposition and
+post-answer claim verification enabled and reranking disabled. The archived
+measured run (#161), over the 150 team questions and 1,884 XBRL questions, used
+the older C5-based C6 definition:
 
 | Row | Team nDCG@16 (146) | Mechanical nDCG@16 (1,884) | Team judged correctness (150/150) |
 | --- | ---: | ---: | ---: |
@@ -2375,10 +2377,17 @@ the 150 team questions and 1,884 XBRL questions:
 | C3 | 0.2612 | 0.1926 | 0.5969 |
 | C4 | 0.5978 | 0.5504 | 0.8182 |
 | C5 | 0.5195 | 0.5426 | 0.7782 |
-| C6 | 0.5160 | 0.5426 | 0.7619 |
+| C6 (archived, C5-based) | 0.5160 | 0.5426 | 0.7619 |
 
 C0 is scored against gold labels projected onto its fixed windows. Correctness
 is a hosted model's judgement, from one run.
+
+Issue #173 rebases the current C6 definition on C4 and disables reranking. A
+fresh 150-team-question retrieval diagnostic measures C4 → C6 as Recall@16
+**0.7991 → 0.8128**, nDCG@16 **0.5785 → 0.5782**, and MRR@16
+**0.5315 → 0.5227**. See the [matrix report](docs/full-ablation.md#current-c4-based-c6-evidence-173)
+for the frozen identities, limitations, and the distinction from the archived
+C5-based row.
 
 ### Embedding and generation ablations
 

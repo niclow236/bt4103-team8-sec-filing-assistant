@@ -49,16 +49,22 @@ def test_matrix_filters_are_the_only_c3_c4_query_change():
     for cid, config in matrix.MATRIX.items():
         assert not config.use_facts and not config.use_refusal
         assert config.use_decomposition==(cid=="C6")
+        assert config.use_verification==(cid=="C6")
+        assert config.rerank==(cid=="C5")
 
 
-def test_matrix_shares_components_and_c6_reranks_each_filing():
+def test_matrix_shares_components_and_c6_uses_c4_for_each_filing():
     from src.retrieval.hybrid import HybridRetriever
     chunks=[chunk("a","AAPL"),chunk("b","MSFT")]
     sparse,dense=Part(chunks),Part(chunks);dense.name="dense"
     hybrid=HybridRetriever(sparse,dense)
     reranker=CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0,2.0]))
     # One-candidate sub-pools need a model with one score per supplied pair.
-    reranker._model.predict=lambda pairs,**kwargs: [float(i) for i in range(len(pairs))]
+    rerank_calls=[]
+    def predict(pairs,**kwargs):
+        rerank_calls.append(list(pairs))
+        return [float(i) for i in range(len(pairs))]
+    reranker._model.predict=predict
     result=matrix.measure_question(question(),Part(chunks),hybrid,reranker,{c['chunk_id']:c for c in chunks})
     rows=result['rows'];assert list(rows)==list(matrix.MATRIX)
     assert rows['C3']['query']['keyword_text']==rows['C4']['query']['keyword_text']
@@ -66,6 +72,8 @@ def test_matrix_shares_components_and_c6_reranks_each_filing():
     assert rows['C3']['query']['tickers']==() and rows['C4']['query']['tickers']==('AAPL','MSFT')
     assert len(rows['C6']['sub_results'])==2
     assert set(rows['C6']['retrieved_chunk_ids'])=={'a','b'}
+    assert all(sub['rerank_diagnostics'] is None for sub in rows['C6']['sub_results'])
+    assert len(rerank_calls)==1  # C5 only; C6 never invokes the cross-encoder.
     assert len([q for q,k in sparse.calls if not q.tickers])==1
     saved=json.loads(json.dumps(rows['C6']))
     replay=matrix.ReplayRetriever(saved,{c['chunk_id']:c for c in chunks})
@@ -77,15 +85,15 @@ def test_matrix_shares_components_and_c6_reranks_each_filing():
         replay.search(Query('different'))
 
 
-def test_single_filing_c6_is_exactly_c5():
+def test_single_filing_c6_is_exactly_c4():
     from src.retrieval.hybrid import HybridRetriever
     chunks=[chunk('a','AAPL')];part=Part(chunks)
     q=replace(question(),question='What was Apple revenue in FY2024?',ticker='AAPL',supporting_chunk_ids=('a',))
     rows=matrix.measure_question(q,part,HybridRetriever(part,Part(chunks)),
          CrossEncoderReranker(RerankConfig(),model=RerankModel([1.0])),{'a':chunks[0]})['rows']
-    assert rows['C6']['origin']=='C5_identical_no_split'
+    assert rows['C6']['origin']=='C4_identical_no_split'
     for field in ('retrieved_chunk_ids','retrieved_scores','latency_ms',*matrix.METRICS):
-        assert rows['C6'][field]==rows['C5'][field]
+        assert rows['C6'][field]==rows['C4'][field]
 
 
 def test_transaction_reader_recovers_only_the_unfinished_tail(tmp_path):
