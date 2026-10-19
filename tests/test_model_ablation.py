@@ -578,6 +578,7 @@ def _recorded(tmp_path, rows=None):
         generation=GenerationConfig("mistral", "ministral-8b-2512", "grounded_v4"),
         rows=tuple(rows or (_recorded_row("q001"),
                             _recorded_row("q002", question_type="unanswerable", abstained=True))),
+        facts_file=tmp_path / "facts.parquet",
     )
 
 
@@ -613,6 +614,8 @@ def test_g3_replays_the_recorded_evidence_with_only_the_generator_changed(monkey
     assert kwargs["stack"] == MATRIX["C4"] and kwargs["top_k"] == MATRIX["C4"].top_k
     assert (kwargs["use_facts"], kwargs["use_refusal"], kwargs["use_decomposition"],
             kwargs["use_verification"]) == (False, False, False, False)
+    # Parsed with the facts store its queries were checked against.
+    assert kwargs["facts_file"] == recorded.facts_file
     # The recorded answers are the G row whose provider and model wrote them.
     assert [row["config"]["id"] for row in manifest["configurations"]] == ["G2", "G3"]
     assert manifest["configurations"][0]["config"]["origin"] == "full-matrix-20261017/C4"
@@ -672,22 +675,25 @@ def test_a_replay_that_cannot_build_its_models_writes_nothing(monkeypatch, tmp_p
     assert not (tmp_path / "no-key").exists()
 
 
-def test_a_stopped_replay_keeps_its_answers_and_its_table(monkeypatch, tmp_path):
-    import pytest
+import pytest  # noqa: E402
+from src.evaluation.harness import RunInterrupted, RunStopped  # noqa: E402
+
+
+@pytest.mark.parametrize("stopper", [RunStopped, RunInterrupted])
+def test_a_stopped_replay_keeps_its_answers_and_its_table(monkeypatch, tmp_path, stopper):
     import src.evaluation.model_ablation as module
-    from src.evaluation.harness import RunStopped
     from src.evaluation.model_ablation import run_generation_replay
 
     asked = []
 
     def stops(questions, retriever, config, **kwargs):
         asked.append(config.provider)
-        raise RunStopped({"results": [_recorded_row("q001")],
-                          "stopped": {"question_id": "q002", "error": "rate limit"}})
+        raise stopper({"results": [_recorded_row("q001")],
+                       "stopped": {"question_id": "q002", "error": "rate limit"}})
 
     monkeypatch.setattr(module, "evaluate", stops)
     recorded = _recorded(tmp_path)
-    with pytest.raises(RunStopped):
+    with pytest.raises(stopper):
         run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2], GENERATION_EXPERIMENTS[0]],
                               run_id="stopped",
                               results_root=tmp_path, llm_for=lambda config: None,
@@ -700,6 +706,24 @@ def test_a_stopped_replay_keeps_its_answers_and_its_table(monkeypatch, tmp_path)
     assert summary["configurations"][1]["stopped"]["question_id"] == "q002"
     # The rows after the one that stopped are not run.
     assert asked == ["soclaas"]
+
+
+def test_recorded_answers_from_a_generator_outside_the_registry_are_their_own_row(
+        monkeypatch, tmp_path):
+    from dataclasses import replace
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+
+    monkeypatch.setattr(module, "evaluate", _replaying([]))
+    recorded = replace(_recorded(tmp_path),
+                       generation=GenerationConfig("mistral", "ministral-14b-2512", "grounded_v4"))
+    manifest = run_generation_replay(
+        recorded, [GENERATION_EXPERIMENTS[2]], run_id="outside", results_root=tmp_path,
+        llm_for=lambda config: None,
+        judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    first = manifest["configurations"][0]["config"]
+    assert (first["id"], first["provider"], first["model"]) == (
+        "recorded", "mistral", "ministral-14b-2512")
 
 
 def test_the_replay_is_judged_by_the_model_that_judged_the_recorded_answers(monkeypatch, tmp_path):
@@ -778,6 +802,19 @@ def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
     del config["matrix"]["C4"]["unknown"]
     (directory / "config.json").write_text(json.dumps(config))
 
+    # Review of #163: a query this code would build differently from the one
+    # the run recorded, as a changed facts label or company list makes it, is
+    # refused before any model is asked. It failed part-way through the paid
+    # run instead, losing every answer before it.
+    pairs = matrix.read_rows(directory / "pairs.jsonl")
+    original = json.loads(json.dumps(pairs))
+    pairs[-1]["rows"]["C4"]["query"]["wants_figures"] = not pairs[-1]["rows"]["C4"]["query"][
+        "wants_figures"]
+    matrix.write_rows(directory / "pairs.jsonl", pairs)
+    with pytest.raises(ValueError, match=r"query .* differs from the one the run recorded"):
+        recorded_answers(directory, chunks=snapshot)
+    matrix.write_rows(directory / "pairs.jsonl", original)
+
     # Anything but the run's own corpus, or C4 answers short of the team, is refused.
     with pytest.raises(ValueError, match="corpus"):
         recorded_answers(directory, chunks=snapshot[:1])
@@ -808,6 +845,29 @@ def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_
     directory = answer_run.runner.directory
     with pytest.raises(ValueError, match=r"has no answers yet: .*answers-config\.json"):
         recorded_answers(directory, chunks=answer_run.runner.snapshot)
+
+
+def test_a_run_judged_otherwise_or_short_of_its_team_retrieval_is_refused(answer_run):
+    import pytest
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    answered = json.loads((directory / "answers-config.json").read_text())
+    (directory / "answers-config.json").write_text(
+        json.dumps(answered | {"judge_rubric": "answer-quality-v0"}))
+    with pytest.raises(ValueError, match="judged with 'answer-quality-v0'"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text(json.dumps(answered))
+
+    # A retrieval stopped before its last team question.
+    team = {q.question_id for q in matrix.team_questions(answer_run.runner.questions)}
+    pairs = matrix.read_rows(directory / "pairs.jsonl")
+    last = max(i for i, t in enumerate(pairs) if t["question"]["question_id"] in team)
+    matrix.write_rows(directory / "pairs.jsonl", pairs[:last])
+    with pytest.raises(ValueError, match="team retrieval is incomplete"):
+        recorded_answers(directory, chunks=snapshot)
 
 
 def test_the_replay_command_runs_the_rows_it_names_over_the_run_it_names(monkeypatch, tmp_path,
@@ -844,3 +904,12 @@ def test_the_replay_command_runs_the_rows_it_names_over_the_run_it_names(monkeyp
     with pytest.raises(SystemExit):
         module.main(["replay", "run", "--rows", "G9", "--run-id", "x",
                      "--results-root", str(tmp_path)])
+
+    def stopped(*args, **kwargs):
+        raise RunStopped({"results": [], "stopped": {"question_id": "q2", "error": "busy"}})
+
+    monkeypatch.setattr(module, "run_generation_replay", stopped)
+    with pytest.raises(SystemExit) as raised:
+        module.main(["replay", "run", "--rows", "G3", "--run-id", "halted",
+                     "--results-root", str(tmp_path)])
+    assert str(raised.value).endswith(f"partial results are under {tmp_path / 'halted'}")

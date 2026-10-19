@@ -19,6 +19,7 @@ from src.rag import ProviderUnavailable
 from src.rag.records import GenerationConfig
 from src.rag.constants import DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL
 from src.retrieval.embedding_config import EmbeddingConfig
+from src.retrieval.facts import FACTS_FILE
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
@@ -246,7 +247,8 @@ class RecordedAnswers:
     ``questions`` are the team questions, each scored against the gold passages
     the run recorded for C4; ``retriever`` replays the run's C4 rankings;
     ``generation`` is the config that wrote ``rows`` and, with the
-    ``answer-quality-v1`` rubric, judged them.
+    ``answer-quality-v1`` rubric, judged them; ``facts_file`` is the facts store
+    each question's query was checked against, which a replay parses with.
     """
 
     run_dir: Path
@@ -254,6 +256,7 @@ class RecordedAnswers:
     retriever: Any
     generation: GenerationConfig
     rows: tuple[dict[str, Any], ...]
+    facts_file: Path = FACTS_FILE
 
 
 class _RecordedRankings:
@@ -278,21 +281,27 @@ class _RecordedRankings:
 
 
 def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
-                     chunks: Sequence[dict] | None = None) -> RecordedAnswers:
+                     chunks: Sequence[dict] | None = None,
+                     facts_file: Path = FACTS_FILE) -> RecordedAnswers:
     """The C4 answers a complete full-matrix run recorded, ready to replay.
 
     Refused unless the benchmark snapshot, the matrix settings and the corpus
     are the ones the run froze, its retrieval covered every team question, and
-    its C4 answers are complete, in order. ``chunks`` is the corpus, read from
-    ``processed_dir`` unless given.
+    its C4 answers are complete, in order, and every team question's query,
+    built as the harness will build it, is the one the run recorded. A changed
+    facts store or company list can change a query; caught here, it stops the
+    replay before any model is asked, rather than part-way through. ``chunks``
+    is the corpus, read from ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
         FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
         team_questions, validate_snapshot,
     )
+    from src.evaluation.harness import benchmark_query
     from src.evaluation.provenance import corpus_records_sha256
     from src.evaluation.quality import RUBRIC_ID
     from src.pipeline.chunk import iter_chunks
+    from src.rag.query import parse_question
 
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
@@ -330,11 +339,21 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     if corpus_records_sha256(snapshot) != config["provenance"]["corpus"]["records_sha256"]:
         raise ValueError("this corpus differs from the one the run measured")
     scored = tuple(scored_for(question, measured[question.question_id]) for question in team)
+    stack = MATRIX[REPLAY_ROW]
+    for question in scored:
+        parsed = parse_question(question.question, facts_file=facts_file)
+        query = stack.scoped(benchmark_query(parsed, question, top_k=stack.top_k))
+        if json.loads(json.dumps(asdict(query))) != measured[question.question_id]["query"]:
+            raise ValueError(
+                f"{question.question_id}'s query {query.text!r} differs from the one the run "
+                f"recorded; the facts store ({facts_file}) or config/companies.txt has changed "
+                f"since the run, so its rankings cannot be replayed")
     return RecordedAnswers(
         run_dir=run_dir, questions=scored,
         retriever=_RecordedRankings([measured[q.question_id] for q in team],
                                     {chunk["chunk_id"]: chunk for chunk in snapshot}),
         generation=GenerationConfig(**answered["generation"]), rows=tuple(rows),
+        facts_file=facts_file,
     )
 
 
@@ -439,7 +458,8 @@ def run_generation_replay(
                 list(recorded.questions), recorded.retriever, config,
                 run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
                 use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
-                use_verification=stack.use_verification, judge=judge,
+                use_verification=stack.use_verification, facts_file=recorded.facts_file,
+                judge=judge,
             )
         except (RunStopped, RunInterrupted) as error:
             report, stopped = error.report, error
