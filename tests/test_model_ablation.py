@@ -1181,3 +1181,43 @@ def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_pat
         caplog.clear()
         ask_twice()
         assert "LLM_PROVIDER=ollama" in caplog.messages[0]
+
+
+def test_a_replay_leaves_the_advice_in_another_thread_s_retry_notices(monkeypatch, tmp_path,
+                                                                    caplog):
+    # PR review of #180: the filter sits on the harness's shared logger, so an
+    # evaluation on another thread, whose provider LLM_PROVIDER does choose,
+    # lost its advice while a replay row ran.
+    import threading
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+    from src.rag.generate import ProviderBusy
+
+    def busy_once():
+        failures = iter([ProviderBusy("cannot reach SOCLAAS: check the internet connection, "
+                                      "or set LLM_PROVIDER=ollama to answer locally")])
+
+        def ask():
+            for failure in failures:
+                raise failure
+            return "answer"
+        return harness.answer_with_retries("other-run", ask)
+
+    def evaluate(questions, retriever, config, **kwargs):
+        other = threading.Thread(target=busy_once)
+        other.start()
+        other.join()
+        return {"results": [_recorded_row("q001"), _recorded_row(
+            "q002", question_type="unanswerable", abstained=True)]}
+
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    recorded = _recorded(tmp_path)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="threaded",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    [notice] = caplog.messages
+    assert notice.startswith("other-run:") and "or set LLM_PROVIDER=ollama" in notice

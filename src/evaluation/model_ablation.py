@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
@@ -460,11 +461,17 @@ def _replay_summary(experiment: GenerationExperiment, rows: Sequence[dict[str, A
 
 
 class _WithoutAnswerLocally(logging.Filter):
-    """Drops the advice to set ``LLM_PROVIDER`` from a logged notice, as
-    :func:`without_answer_locally` does from a failure's message."""
+    """Drops the advice to set ``LLM_PROVIDER`` from a notice logged on the
+    thread that made it, as :func:`without_answer_locally` does from a
+    failure's message. Another thread's run may be one LLM_PROVIDER chooses."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread = threading.get_ident()
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg, record.args = without_answer_locally(record.getMessage()), ()
+        if record.thread == self.thread:
+            record.msg, record.args = without_answer_locally(record.getMessage()), ()
         return True
 
 
