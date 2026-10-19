@@ -266,7 +266,7 @@ python -m pytest
 ```
 
 That one command runs the whole suite. The tests need no network, no EDGAR
-identity and nothing under `data/`: each builds its own small corpus in a
+identity, no `.env` and nothing under `data/`: each builds its own small corpus in a
 temporary directory, the dense-index tests replace the embedding model with a
 deterministic stand-in, and a test of a command replaces the stage the command
 calls. The suite takes a few minutes on a laptop. One test counts tokens with
