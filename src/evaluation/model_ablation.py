@@ -208,7 +208,12 @@ def run_generation_ablation(
                 use_refusal=stack.config.use_refusal, stack=stack.config,
             )
         except (RunStopped, RunInterrupted) as error:
-            report, stopped = error.report, error
+            report = error.report
+            # The row named the provider, so LLM_PROVIDER is no way out (#183).
+            # Raised afresh, as its message was made from the report before this.
+            report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
+            stopped = type(error)(report)
+            stopped.__cause__ = error.__cause__
         question_by_id = {question.question_id: question for question in questions}
         for row in report.get("results", []):
             question = question_by_id.get(row.get("question_id"))

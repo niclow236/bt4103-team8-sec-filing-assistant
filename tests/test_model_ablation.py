@@ -1283,3 +1283,60 @@ def test_the_generation_matrix_s_missing_key_advice_does_not_offer_llm_provider(
     assert "LLM_PROVIDER" not in error
     assert error.rstrip().endswith("so the key is read")
     assert not (tmp_path / "no-key").exists()
+
+
+def test_a_stopped_generation_matrix_does_not_offer_llm_provider(monkeypatch, tmp_path):
+    # #183: the stop the matrix records and reports kept the provider's general advice.
+    import src.evaluation.model_ablation as module
+    from src.rag.generate import ProviderBusy
+
+    unreachable = ProviderBusy("cannot reach SOCLAAS")
+
+    def stops_on_soclaas(questions, retriever, config, **kwargs):
+        report = _fake_evaluate(questions, retriever, config)
+        if config.provider == "soclaas":
+            report["stopped"] = {
+                "question_id": "q002", "error": "ProviderBusy: cannot reach SOCLAAS: try another "
+                                                "network, or set LLM_PROVIDER=ollama to answer locally"}
+            raise RunStopped(report) from unreachable
+        return report
+
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    monkeypatch.setattr(module, "_default_generation_stack",
+                        lambda experiment, **kwargs: _stack(experiment))
+    monkeypatch.setattr(module, "evaluate", stops_on_soclaas)
+    with pytest.raises(SystemExit) as raised:
+        module.main(["generation", "--run-id", "stopped", "--results-root", str(tmp_path)])
+    advice = "ProviderBusy: cannot reach SOCLAAS: try another network"
+    run_dir = tmp_path / "stopped"
+    assert str(raised.value) == f"stopped at q002: {advice}; partial results are under {run_dir}"
+    # The completed answers stay, with a stop record that names only the provider's problem.
+    report = json.loads((run_dir / "G3" / "report.json").read_text())
+    assert [row["question_id"] for row in report["results"]] == ["q001"]
+    assert report["stopped"] == {"question_id": "q002", "error": advice}
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["configurations"][2]["stopped"] == {"question_id": "q002", "error": advice}
+    assert "LLM_PROVIDER" not in (run_dir / "summary.csv").read_text()
+
+
+def test_a_stopped_generation_matrix_raises_its_error_without_llm_provider(monkeypatch, tmp_path):
+    # #183: a caller other than the command, such as a notebook, reads the
+    # error it is raised rather than the files.
+    import src.evaluation.model_ablation as module
+    from src.rag.generate import ProviderBusy
+
+    unreachable = ProviderBusy("cannot reach Mistral")
+
+    def stops(questions, retriever, config, **kwargs):
+        raise RunStopped({**_fake_evaluate(questions, retriever, config), "stopped": {
+            "question_id": "q001", "error": "ProviderBusy: Mistral failed (HTTP 503): ask again, "
+                                            "or set LLM_PROVIDER=ollama to answer locally"}}
+                         ) from unreachable
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    with pytest.raises(RunStopped) as raised:
+        run_generation_ablation([_question()], _stack, run_id="stopped", results_root=tmp_path)
+    assert str(raised.value) == "stopped at q001: ProviderBusy: Mistral failed (HTTP 503): ask again"
+    assert raised.value.__cause__ is unreachable
+    assert raised.value.report["results"] == [{"question_id": "q001", "question_type": "numeric",
+                                               "difficulty": "easy", "source": "handwritten"}]
