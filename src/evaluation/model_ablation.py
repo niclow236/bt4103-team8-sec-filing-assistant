@@ -8,7 +8,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
 from pathlib import Path
+from shutil import copy2
 from statistics import mean, median
+from tempfile import mkdtemp
 from shlex import join as shell_join
 from time import perf_counter
 from types import SimpleNamespace
@@ -247,8 +249,10 @@ class RecordedAnswers:
     ``questions`` are the team questions, each scored against the gold passages
     the run recorded for C4; ``retriever`` replays the run's C4 rankings;
     ``generation`` is the config that wrote ``rows`` and, with the
-    ``answer-quality-v1`` rubric, judged them; ``facts_file`` is the facts store
-    each question's query was checked against, which a replay parses with.
+    ``answer-quality-v1`` rubric, judged them; ``facts_file`` is a private
+    snapshot of the facts store each question's query was checked against,
+    which a replay keeps and parses with, so a rebuild of the store while the
+    replay runs cannot change a query part-way through.
     """
 
     run_dir: Path
@@ -290,8 +294,9 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     its C4 answers are complete, in order, and every team question's query,
     built as the harness will build it, is the one the run recorded. A changed
     facts store or company list can change a query; caught here, it stops the
-    replay before any model is asked, rather than part-way through. ``chunks``
-    is the corpus, read from ``processed_dir`` unless given.
+    replay before any model is asked, rather than part-way through. The check
+    reads a snapshot of ``facts_file``, which the replay then parses with.
+    ``chunks`` is the corpus, read from ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
         FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
@@ -339,6 +344,12 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     if corpus_records_sha256(snapshot) != config["provenance"]["corpus"]["records_sha256"]:
         raise ValueError("this corpus differs from the one the run measured")
     scored = tuple(scored_for(question, measured[question.question_id]) for question in team)
+    # A store that does not exist, as on a fresh clone, is parsed as missing,
+    # the way the run that recorded the queries would have parsed it.
+    if Path(facts_file).is_file():
+        facts_snapshot = Path(mkdtemp(prefix="replay-facts-")) / Path(facts_file).name
+        copy2(facts_file, facts_snapshot)
+        facts_file = facts_snapshot
     stack = MATRIX[REPLAY_ROW]
     for question in scored:
         parsed = parse_question(question.question, facts_file=facts_file)
@@ -346,7 +357,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
         if json.loads(json.dumps(asdict(query))) != measured[question.question_id]["query"]:
             raise ValueError(
                 f"{question.question_id}'s query {query.text!r} differs from the one the run "
-                f"recorded; the facts store ({facts_file}) or config/companies.txt has changed "
+                f"recorded; the facts store or config/companies.txt has changed "
                 f"since the run, so its rankings cannot be replayed")
     return RecordedAnswers(
         run_dir=run_dir, questions=scored,
@@ -446,6 +457,12 @@ def run_generation_replay(
                  for experiment in experiments]
     models = [llm_for(config) for _, config in answering]
     run_dir.mkdir(parents=True)
+    # The snapshot the queries were checked against, kept with the run.
+    facts_file = run_dir / Path(recorded.facts_file).name
+    if Path(recorded.facts_file).is_file():
+        copy2(recorded.facts_file, facts_file)
+    else:
+        facts_file = recorded.facts_file
     stack = MATRIX[REPLAY_ROW]
     origin = f"{recorded.run_dir.name}/{REPLAY_ROW}"
     recorded_experiment = next(
@@ -462,7 +479,7 @@ def run_generation_replay(
                 list(recorded.questions), recorded.retriever, config,
                 run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
                 use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
-                use_verification=stack.use_verification, facts_file=recorded.facts_file,
+                use_verification=stack.use_verification, facts_file=facts_file,
                 judge=judge,
             )
         except (RunStopped, RunInterrupted) as error:

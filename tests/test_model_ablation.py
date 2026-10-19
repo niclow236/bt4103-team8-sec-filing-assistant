@@ -568,6 +568,13 @@ def _recorded_row(question_id, *, question_type="numeric", abstained=False, corr
     }
 
 
+def _snapshot(tmp_path):
+    path = tmp_path / "snapshot" / "facts.parquet"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"facts the queries were checked against")
+    return path
+
+
 def _recorded(tmp_path, rows=None):
     from dataclasses import replace
     from src.evaluation.model_ablation import RecordedAnswers
@@ -578,7 +585,7 @@ def _recorded(tmp_path, rows=None):
         generation=GenerationConfig("mistral", "ministral-8b-2512", "grounded_v4"),
         rows=tuple(rows or (_recorded_row("q001"),
                             _recorded_row("q002", question_type="unanswerable", abstained=True))),
-        facts_file=tmp_path / "facts.parquet",
+        facts_file=_snapshot(tmp_path),
     )
 
 
@@ -614,8 +621,10 @@ def test_g3_replays_the_recorded_evidence_with_only_the_generator_changed(monkey
     assert kwargs["stack"] == MATRIX["C4"] and kwargs["top_k"] == MATRIX["C4"].top_k
     assert (kwargs["use_facts"], kwargs["use_refusal"], kwargs["use_decomposition"],
             kwargs["use_verification"]) == (False, False, False, False)
-    # Parsed with the facts store its queries were checked against.
-    assert kwargs["facts_file"] == recorded.facts_file
+    # Parsed with a copy, kept with the run, of the facts store its queries
+    # were checked against.
+    assert kwargs["facts_file"] == tmp_path / "replay" / "facts.parquet"
+    assert kwargs["facts_file"].read_bytes() == recorded.facts_file.read_bytes()
     # The recorded answers are the G row whose provider and model wrote them.
     assert [row["config"]["id"] for row in manifest["configurations"]] == ["G2", "G3"]
     assert manifest["configurations"][0]["config"]["origin"] == "full-matrix-20261017/C4"
@@ -861,6 +870,46 @@ def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_
     directory = answer_run.runner.directory
     with pytest.raises(ValueError, match=r"has no answers yet: .*answers-config\.json"):
         recorded_answers(directory, chunks=answer_run.runner.snapshot)
+
+
+def test_the_replay_parses_with_a_snapshot_of_the_facts_store(answer_run, tmp_path):
+    # Follow-up review of #163: the queries were checked against the facts
+    # store once, but the harness parsed every question again against the
+    # live file, so a facts rebuild during a long replay could still fail it
+    # part-way. The check and the replay now read one snapshot of it.
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    facts = tmp_path / "facts.parquet"
+    facts.write_bytes(b"facts as of the check")
+    recorded = recorded_answers(answer_run.runner.directory, chunks=answer_run.runner.snapshot,
+                                facts_file=facts)
+    assert recorded.facts_file != facts
+    facts.write_bytes(b"rebuilt part-way through")
+    assert recorded.facts_file.read_bytes() == b"facts as of the check"
+
+    # A fresh clone has no store: there is nothing to copy, and the replay
+    # parses with it missing, as the run that recorded the queries did.
+    absent = tmp_path / "absent.parquet"
+    recorded = recorded_answers(answer_run.runner.directory, chunks=answer_run.runner.snapshot,
+                                facts_file=absent)
+    assert recorded.facts_file == absent
+
+
+def test_a_replay_without_a_facts_store_parses_with_it_missing(monkeypatch, tmp_path):
+    from dataclasses import replace
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+
+    seen = []
+    monkeypatch.setattr(module, "evaluate", _replaying(seen))
+    recorded = replace(_recorded(tmp_path), facts_file=tmp_path / "absent.parquet")
+    run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="no-facts",
+                          results_root=tmp_path, llm_for=lambda config: None,
+                          judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    assert seen[0][3]["facts_file"] == tmp_path / "absent.parquet"
+    assert not (tmp_path / "no-facts" / "absent.parquet").exists()
 
 
 def test_a_run_judged_otherwise_or_short_of_its_team_retrieval_is_refused(answer_run):
