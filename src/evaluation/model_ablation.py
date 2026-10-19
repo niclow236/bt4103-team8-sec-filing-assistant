@@ -527,9 +527,12 @@ def run_generation_replay(
                 judge=judge,
             )
         except (RunStopped, RunInterrupted) as error:
-            report, stopped = error.report, error
+            report = error.report
             # The row named the provider, so LLM_PROVIDER is no way out (#180).
+            # Raised afresh, as its message was made from the report before this.
             report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
+            stopped = type(error)(report)
+            stopped.__cause__ = error.__cause__
         finally:
             harness_log.removeFilter(notices)
         if recorded.facts is None:

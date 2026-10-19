@@ -1114,21 +1114,29 @@ def test_a_stopped_replay_s_record_does_not_offer_llm_provider(monkeypatch, tmp_
     # QA of #180: the stop a replay records kept the provider's general advice.
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
+    from src.rag.generate import ProviderBusy
+
+    unreachable = ProviderBusy("cannot reach SOCLAAS")
 
     def stops(questions, retriever, config, **kwargs):
         raise RunStopped({"results": [_recorded_row("q001")], "stopped": {
             "question_id": "q002", "error": "ProviderBusy: cannot reach SOCLAAS: try another "
-                                            "network, or set LLM_PROVIDER=ollama to answer locally"}})
+                                            "network, or set LLM_PROVIDER=ollama to answer locally"}}
+                         ) from unreachable
 
     monkeypatch.setattr(module, "evaluate", stops)
     recorded = _recorded(tmp_path)
-    with pytest.raises(RunStopped):
+    with pytest.raises(RunStopped) as raised:
         run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="stopped",
                               results_root=tmp_path, llm_for=lambda config: None,
                               judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
     report = json.loads((tmp_path / "stopped" / "G3" / "report.json").read_text())
     summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
     advice = "ProviderBusy: cannot reach SOCLAAS: try another network"
+    # PR review of #180: a caller other than the command, such as a notebook,
+    # reads the error it is raised rather than the files.
+    assert str(raised.value) == f"stopped at q002: {advice}"
+    assert raised.value.__cause__ is unreachable
     assert report["stopped"]["error"] == advice
     assert summary["configurations"][1]["stopped"]["error"] == advice
     assert "LLM_PROVIDER" not in (tmp_path / "stopped" / "summary.csv").read_text()
