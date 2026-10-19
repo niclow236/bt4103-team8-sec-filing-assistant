@@ -198,7 +198,10 @@ def run_generation_ablation(
     run_dir.mkdir(parents=True)
     summaries = []
     stopped = None
+    # The harness's retry notices are the provider's advice too (#183).
+    notices = _WithoutAnswerLocally()
     for experiment, stack in stacks:
+        harness_log.addFilter(notices)
         try:
             report = evaluate(
                 questions, stack.retriever, stack.generation, run_id=experiment.id,
@@ -214,6 +217,8 @@ def run_generation_ablation(
             report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
             stopped = type(error)(report)
             stopped.__cause__ = error.__cause__
+        finally:
+            harness_log.removeFilter(notices)
         question_by_id = {question.question_id: question for question in questions}
         for row in report.get("results", []):
             question = question_by_id.get(row.get("question_id"))

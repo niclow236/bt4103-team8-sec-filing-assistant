@@ -1340,3 +1340,75 @@ def test_a_stopped_generation_matrix_raises_its_error_without_llm_provider(monke
     assert raised.value.__cause__ is unreachable
     assert raised.value.report["results"] == [{"question_id": "q001", "question_type": "numeric",
                                                "difficulty": "easy", "source": "handwritten"}]
+
+
+def _busy_once(label, message):
+    """Ask through the harness's retries, which fails once with ``message``."""
+    import src.evaluation.harness as harness
+    from src.rag.generate import ProviderBusy
+
+    failures = iter([ProviderBusy(message)])
+
+    def ask():
+        for failure in failures:
+            raise failure
+        return "answer"
+    return harness.answer_with_retries(label, ask)
+
+
+@pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
+def test_the_generation_matrix_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path,
+                                                                         caplog, log_threads):
+    # #183: a busy provider's "asking again" notice during a G row offered
+    # LLM_PROVIDER, which the row's fixed provider ignores.
+    import logging
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+
+    busy = ("SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask again, or set "
+            "LLM_PROVIDER=ollama to answer locally")
+
+    def evaluate(questions, retriever, config, **kwargs):
+        if config.provider == "soclaas":
+            _busy_once("q001", busy)
+        return _fake_evaluate(questions, retriever, config)
+
+    monkeypatch.setattr(logging, "logThreads", log_threads)
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_ablation([_question()], _stack, run_id="busy", results_root=tmp_path)
+        [notice] = caplog.messages
+        assert notice == ("q001: SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask "
+                          "again; asking again in 10s")
+        # Outside the matrix, where LLM_PROVIDER does choose the provider, the advice stays.
+        caplog.clear()
+        _busy_once("q001", busy)
+        assert "LLM_PROVIDER=ollama" in caplog.messages[0]
+
+
+def test_the_generation_matrix_leaves_the_advice_in_another_thread_s_retry_notices(
+        monkeypatch, tmp_path, caplog):
+    # #183: the filter sits on the harness's shared logger, so an evaluation on
+    # another thread, whose provider LLM_PROVIDER does choose, must keep its advice.
+    import threading
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+
+    def evaluate(questions, retriever, config, **kwargs):
+        if config.provider == "soclaas":
+            other = threading.Thread(target=_busy_once, args=(
+                "other-run", "cannot reach SOCLAAS: check the internet connection, or set "
+                             "LLM_PROVIDER=ollama to answer locally"))
+            other.start()
+            other.join()
+        return _fake_evaluate(questions, retriever, config)
+
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_ablation([_question()], _stack, run_id="threaded", results_root=tmp_path)
+    [notice] = caplog.messages
+    assert notice.startswith("other-run:") and "or set LLM_PROVIDER=ollama" in notice
