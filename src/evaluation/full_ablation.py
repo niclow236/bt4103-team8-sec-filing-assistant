@@ -70,6 +70,15 @@ MATRIX = {
 
 # What a full-matrix run's config.json records as its schema.
 FULL_MATRIX_SCHEMA = "full-matrix-v2"
+REPLAYABLE_SCHEMAS = ("full-matrix-v1", FULL_MATRIX_SCHEMA)
+
+
+def selected_configurations(args: argparse.Namespace) -> tuple[str, ...]:
+    """The matrix rows a command works on: every row unless explicitly selected."""
+    ids = tuple(getattr(args, "configurations", None) or MATRIX)
+    if len(set(ids)) != len(ids) or any(cid not in MATRIX for cid in ids):
+        raise ValueError("configurations must be unique matrix row IDs")
+    return ids
 
 
 def scored_for(question: BenchmarkQuestion, row: dict) -> BenchmarkQuestion:
@@ -563,11 +572,7 @@ def answers(args: argparse.Namespace) -> None:
     }:
         raise ValueError("answer matrix settings differ from frozen retrieval; use its recorded source")
     team = team_questions(questions)
-    configuration_ids = tuple(getattr(args, "configurations", None) or MATRIX)
-    if len(set(configuration_ids)) != len(configuration_ids) or any(
-        cid not in MATRIX for cid in configuration_ids
-    ):
-        raise ValueError("answer configurations must be unique matrix row IDs")
+    configuration_ids = selected_configurations(args)
     transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
     check_transactions(transactions,questions)
     selected = {t["question"]["question_id"]:t for t in transactions}
@@ -581,7 +586,6 @@ def answers(args: argparse.Namespace) -> None:
     generation = config_from_env(provider=args.provider, model=args.model)
     configuration = {"retrieval_config_sha256":sha256(run_dir/"config.json"),
                      "generation":generation.to_dict(), "judge_rubric":"answer-quality-v1",
-                      "configurations":list(configuration_ids),
                      "facts_sha256":sha256(args.facts_file),
                      "questions":[q.to_dict() for q in team],
                      "source":record_provenance([],team,args.processed_dir,chunks=chunks),
@@ -598,6 +602,7 @@ def answers(args: argparse.Namespace) -> None:
             number += 1
         dump(run_dir / f"answers-runtime-{number:04d}.json", {
             "source": configuration["source"], "facts_path": str(args.facts_file),
+            "configurations": list(configuration_ids),
             "workload_note": getattr(args, "workload_note", "Answer replay over recorded evidence"),
         })
         llm = checked_model(generation, None)
@@ -644,10 +649,11 @@ def answers(args: argparse.Namespace) -> None:
                     if pending.exists():pending.unlink()
                     print(f"{cid} answers: {len(stored)}/{len(team)}",flush=True)
             dump(directory/"answer-summary.json",answer_summary(stored,cid))
+        answered = [cid for cid in MATRIX if (run_dir/cid/"answer-summary.json").exists()]
         dump(run_dir/"answer-summary.json",{
-            "complete":set(configuration_ids)==set(MATRIX), "team_questions":len(team),
+            "complete":answered==list(MATRIX), "team_questions":len(team),
             "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text())
-                              for cid in configuration_ids},
+                              for cid in answered},
         })
 
 
@@ -673,7 +679,7 @@ def rescore(args: argparse.Namespace) -> None:
     export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
                      write_question_outputs=False)
     team=team_questions(questions)
-    configuration_ids = tuple(getattr(args, "configurations", None) or MATRIX)
+    configuration_ids = selected_configurations(args)
     summaries={}
     for cid in configuration_ids:
         rows=read_rows(directory/cid/'answers.jsonl')

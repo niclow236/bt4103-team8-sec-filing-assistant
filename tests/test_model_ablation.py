@@ -807,6 +807,10 @@ def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
     del config["matrix"]["C4"]["rerank"]
     (directory / "config.json").write_text(json.dumps(config))
     assert recorded_answers(directory, chunks=snapshot).rows == recorded.rows
+    # So is a full-matrix-v1 run, whose C4 row the C6 rebase (#173) left alone.
+    config["schema"] = "full-matrix-v1"
+    (directory / "config.json").write_text(json.dumps(config))
+    assert recorded_answers(directory, chunks=snapshot).rows == recorded.rows
     # A setting it recorded otherwise is refused.
     config["matrix"]["C4"]["use_facts"] = True
     (directory / "config.json").write_text(json.dumps(config))

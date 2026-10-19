@@ -264,6 +264,25 @@ def test_answer_loop_can_measure_only_the_rebased_c6_row(answer_run):
     assert list(summary['configurations'])==['C6']
 
 
+@pytest.mark.parametrize('first,then',[(None,('C6',)),(('C6',),None)])
+def test_answer_loop_adds_rows_to_a_run_that_already_answered_others(answer_run,first,then):
+    state=answer_run
+    matrix.write_rows(state.args.run_dir/'C6/answers.jsonl',[])
+    state.args.configurations=first
+    matrix.answers(state.args)
+    state.args.configurations=then
+    matrix.answers(state.args)
+    assert [qid for qid,_ in state.generated]==['q1','q2']
+    summary=json.loads((state.args.run_dir/'answer-summary.json').read_text())
+    assert summary['complete'] is True and list(summary['configurations'])==list(matrix.MATRIX)
+
+
+def test_answer_loop_refuses_a_repeated_row(answer_run):
+    answer_run.args.configurations=('C6','C6')
+    with pytest.raises(ValueError,match='unique matrix row IDs'):matrix.answers(answer_run.args)
+    assert not answer_run.generated
+
+
 def test_answer_loop_rejects_a_nonprefix_before_generation_or_file_rewrite(answer_run):
     state=answer_run
     path=state.args.run_dir/'C0/answers.jsonl'
@@ -296,6 +315,7 @@ def test_answer_resume_allows_os_path_and_workload_changes_but_records_them(answ
     assert runtime['source']['environment']['platform']=='different OS build'
     assert runtime['source']['corpus']['processed_dir']==str(state.args.processed_dir)
     assert runtime['workload_note']==state.args.workload_note
+    assert runtime['configurations']==list(matrix.MATRIX)
 
 
 @pytest.mark.parametrize('answer_run',[

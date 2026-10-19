@@ -114,7 +114,7 @@ found the following effect relative to C4 (146 relevance-scored questions):
 Decomposition fired on 10 questions. The other 140 C6 outputs preserve C4's
 ranked IDs, scores, metrics, and measured latency exactly; none of the 150 C6
 rows contains reranker diagnostics. The native run keeps transactional
-per-question outputs under `results/c6-rebase-team-20261019/`. Its frozen
+per-question outputs under `results/c6-rebase-team-pr182-20261019/`. Its frozen
 identities, artifact hashes, aggregate results, and limitations are committed in
 [the diagnostic summary](evaluation/c6-rebase-team-20261019-summary.json).
 
@@ -267,8 +267,8 @@ known/unknown cost counts are in the
 [answer summary](evaluation/full-matrix-20261017-answers.json).
 
 In this archived study, decomposition activates on **10 team questions**; all
-1,884 mechanical questions keep exactly the C5 ranks and scores. Its C6 tests balanced
-retrieval on that small subset and verification annotations across all 150 team
+1,884 mechanical questions keep exactly the C5 ranks and scores. Its C6 tests
+balanced retrieval on that small subset and verification annotations across all 150 team
 outputs. Verification does not rewrite responses; differences between
 independently generated C5/C6 answers cannot be attributed to verification
 itself. Hosted generation/judging variation also limits causal interpretation
@@ -289,7 +289,8 @@ laptop with MPS; loading and warm-up (7.1 s) are excluded. C4/C5 rankings and
 their timings were imported from the [C5 reference](c5-reranking.md)
 `c5-reference-20261017`, measured earlier on the same source, corpus, indexes
 and loaded encoder revision; the import checks passed. C0–C3 and decomposed C6
-searches were newly measured, and the archived C6 single-filing ranks are exactly C5. The
+searches were newly measured, and the archived C6 single-filing ranks are
+exactly C5. The
 answer phase ran on source `9f29f9f`, which only fixes the benchmark snapshot
 check that refused untagged team questions; no retrieval, generation or scoring
 code differs. Desktop apps, a Claude Code session and the hosted answer phase
@@ -313,11 +314,12 @@ observed retrieval improvement: team nDCG@16 0.2612 → 0.5978 and XBRL
 while the fixed hybrid weighting is not uniformly better than dense alone: it
 matches dense on the team set and trails it on XBRL. C4 has the highest nDCG on
 each benchmark and the highest mean judged correctness on the team set:
-**0.8182**, versus **0.7782** for C5 and **0.7619** for the archived C5-based C6. C5 raises XBRL
+**0.8182**, versus **0.7782** for C5 and **0.7619** for the archived C5-based
+C6. C5 raises XBRL
 recall (0.7627 → 0.8217) but lowers nDCG and MRR on both benchmarks. These are
 single-run model judgements, not statistically established human accuracy
-differences. C5 and the archived C6 do not justify changing the default under the recorded
-protocol.
+differences. C5 and the archived C6 do not justify changing the default under
+the recorded protocol.
 
 
 ## Earlier integration verification (17 October)

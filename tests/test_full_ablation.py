@@ -332,8 +332,15 @@ def test_rescore_recomputes_metrics_at_the_recorded_cutoff_without_models(tmp_pa
     assert answers['team_questions']==1
     # Every answer is a team question, so a split by source has nothing to separate.
     assert all('by_source' not in summary for summary in answers['configurations'].values())
+    (tmp_path/'C0/answers.jsonl').unlink()
+    matrix.rescore(SimpleNamespace(run_dir=tmp_path,configurations=('C6',)))
+    answers=json.loads((tmp_path/'rescored/answer-summary.json').read_text())
+    assert answers['complete'] is False and list(answers['configurations'])==['C6']
+    with pytest.raises(ValueError,match='unique matrix row IDs'):
+        matrix.rescore(SimpleNamespace(run_dir=tmp_path,configurations=('C6','C6')))
     (tmp_path/'C6/answers.jsonl').unlink()
-    with pytest.raises(ValueError,match='incomplete C6'):matrix.rescore(SimpleNamespace(run_dir=tmp_path))
+    with pytest.raises(ValueError,match='incomplete C6'):
+        matrix.rescore(SimpleNamespace(run_dir=tmp_path,configurations=('C6',)))
 
 
 def test_snapshot_cannot_change_together_with_its_recorded_rankings():
