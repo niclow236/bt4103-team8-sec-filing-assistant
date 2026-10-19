@@ -347,6 +347,11 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
                              f"`answers` step writes")
     if answered["judge_rubric"] != RUBRIC_ID:
         raise ValueError(f"the run was judged with {answered['judge_rubric']!r}, not {RUBRIC_ID!r}")
+    try:
+        generation = GenerationConfig(**answered["generation"])
+    except TypeError:
+        raise ValueError(f"{answers_config}'s 'generation' is not a generation config: "
+                         f"{answered['generation']!r}") from None
     rows = read_rows(run_dir / REPLAY_ROW / "answers.jsonl")
     if [row["question_id"] for row in rows] != [question.question_id for question in team]:
         raise ValueError(f"the run's {REPLAY_ROW} answers do not cover its team questions in order")
@@ -364,7 +369,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
         run_dir=run_dir, questions=scored,
         retriever=_RecordedRankings([measured[q.question_id] for q in team],
                                     {chunk["chunk_id"]: chunk for chunk in snapshot}),
-        generation=GenerationConfig(**answered["generation"]), rows=tuple(rows),
+        generation=generation, rows=tuple(rows),
         facts_file=Path(facts_file), facts=facts,
     )
 

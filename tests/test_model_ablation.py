@@ -1221,3 +1221,22 @@ def test_a_replay_leaves_the_advice_in_another_thread_s_retry_notices(monkeypatc
                               judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
     [notice] = caplog.messages
     assert notice.startswith("other-run:") and "or set LLM_PROVIDER=ollama" in notice
+
+
+def test_an_answers_config_whose_generation_is_not_a_config_is_refused_by_name(answer_run):
+    # PR review of #180: a `generation` that is there but is not a config
+    # raised TypeError, a traceback rather than a refusal.
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    answered = json.loads((directory / "answers-config.json").read_text())
+    (directory / "answers-config.json").write_text(json.dumps(answered | {"generation": None}))
+    with pytest.raises(ValueError, match=r"answers-config\.json's 'generation' is not a "
+                                         r"generation config: None"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text(json.dumps(
+        answered | {"generation": {"model": "test", "prompt_template_id": "grounded_v4"}}))
+    with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
+        recorded_answers(directory, chunks=snapshot)
