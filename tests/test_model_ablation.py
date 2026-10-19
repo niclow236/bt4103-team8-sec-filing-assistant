@@ -4,6 +4,9 @@ import csv
 import json
 from types import SimpleNamespace
 
+import pytest
+
+from src.evaluation.harness import RunInterrupted, RunStopped
 from src.evaluation.model_ablation import (
     EMBEDDING_EXPERIMENTS,
     GENERATION_EXPERIMENTS,
@@ -13,6 +16,7 @@ from src.evaluation.model_ablation import (
 from src.evaluation.records import BenchmarkQuestion
 from src.rag.records import GenerationConfig
 from src.retrieval.records import RetrievedPassage
+from test_full_ablation_runner import answer_run, runner  # noqa: F401  (fixtures)
 
 
 def _question():
@@ -684,10 +688,6 @@ def test_a_replay_that_cannot_build_its_models_writes_nothing(monkeypatch, tmp_p
     assert not (tmp_path / "no-key").exists()
 
 
-import pytest  # noqa: E402
-from src.evaluation.harness import RunInterrupted, RunStopped  # noqa: E402
-
-
 @pytest.mark.parametrize("stopper", [RunStopped, RunInterrupted])
 def test_a_stopped_replay_keeps_its_answers_and_its_table(monkeypatch, tmp_path, stopper):
     import src.evaluation.model_ablation as module
@@ -774,9 +774,6 @@ def test_the_replay_is_judged_by_the_model_that_judged_the_recorded_answers(monk
                           results_root=tmp_path, llm_for=lambda config: None)
     assert built == [recorded.generation]
     assert seen[0][3]["judge"].config == recorded.generation
-
-
-from test_full_ablation_runner import answer_run, runner  # noqa: E402,F401  (fixtures)
 
 
 def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):

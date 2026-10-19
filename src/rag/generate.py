@@ -15,16 +15,16 @@ LangChain is the client: ``ChatOllama`` for Ollama, ``ChatMistralAI`` for
 Mistral, ``ChatOpenAI`` for SOCLAAS. Each streams and reports the token
 counts, and all implement the chat-model interface every LangChain model
 shares. That interface is the provider interface here: :func:`generate` takes
-any chat model, so a test passes a fake one. What differs between the providers (how the client is built, how
-a request is sent, how a failure and a stop read) is kept in one ``_Provider``
-each, at the end of this module.
+any chat model, so a test passes a fake one. What differs between the
+providers (how the client is built, how a request is sent, how a failure and a
+stop read) is kept in one ``_Provider`` each, at the end of this module.
 
 Pydantic fixes the shape of the answer. The JSON schema of
 ``GroundedAnswer.for_sources(n)`` is sent with every request, as Ollama's output
 format or as Mistral's and SOCLAAS's strict JSON-schema response format, and
-all constrain
-decoding to it: the model cannot leave out the source numbers, and cannot cite a
-source it was not shown. The same Pydantic model then validates what came back.
+all constrain decoding to it: the model cannot leave out the source numbers,
+and cannot cite a source it was not shown. The same Pydantic model then
+validates what came back.
 
 The model writes JSON, and nobody wants to watch JSON arrive. :func:`stream`
 reads the partial JSON as it grows and yields the answer as prose, adding a
@@ -1205,8 +1205,8 @@ class _Provider:
 
     ``package`` is the LangChain package its chat model comes from;
     ``default_model`` is the model it answers with when nothing names one;
-    ``build``
-    makes that model for a config, from the settings :func:`chat_model` read;
+    ``build`` makes that model for a config, from the settings
+    :func:`chat_model` read;
     ``settings`` checks those settings and returns what ``build`` builds with,
     as the keyword arguments of the provider's client, building nothing
     itself, which is all :func:`check_provider` runs;

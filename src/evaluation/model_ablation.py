@@ -299,8 +299,8 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     ``chunks`` is the corpus, read from ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
-        FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
-        team_questions, validate_snapshot,
+        FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, query_record, read_rows,
+        scored_for, team_questions, validate_snapshot,
     )
     from src.evaluation.harness import benchmark_query
     from src.evaluation.provenance import corpus_records_sha256
@@ -354,7 +354,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     for question in scored:
         parsed = parse_question(question.question, facts_file=facts_file)
         query = stack.scoped(benchmark_query(parsed, question, top_k=stack.top_k))
-        if json.loads(json.dumps(asdict(query))) != measured[question.question_id]["query"]:
+        if query_record(query) != measured[question.question_id]["query"]:
             raise ValueError(
                 f"{question.question_id}'s query {query.text!r} differs from the one the run "
                 f"recorded; the facts store or config/companies.txt has changed "
@@ -448,11 +448,15 @@ def run_generation_replay(
     run_dir = available_run_dir(results_root, run_id)
     llm_for = llm_for or checked_model
     judge = judge if judge is not None else LLMJudge(recorded.generation)
+    recorded_model = (recorded.generation.provider, recorded.generation.model)
+
+    def wrote_recorded(experiment: GenerationExperiment) -> bool:
+        return (experiment.provider, experiment.model) == recorded_model
+
     # A row repeating the model that wrote the recorded answers is named apart
     # from them, so the table never shows two rows with one id (#163).
-    recorded_model = (recorded.generation.provider, recorded.generation.model)
     answering = [(replace(experiment, id=f"{experiment.id}-replay")
-                  if (experiment.provider, experiment.model) == recorded_model else experiment,
+                  if wrote_recorded(experiment) else experiment,
                   replace(recorded.generation, provider=experiment.provider, model=experiment.model))
                  for experiment in experiments]
     models = [llm_for(config) for _, config in answering]
@@ -466,8 +470,7 @@ def run_generation_replay(
     stack = MATRIX[REPLAY_ROW]
     origin = f"{recorded.run_dir.name}/{REPLAY_ROW}"
     recorded_experiment = next(
-        (experiment for experiment in GENERATION_EXPERIMENTS
-         if (experiment.provider, experiment.model) == recorded_model),
+        (experiment for experiment in GENERATION_EXPERIMENTS if wrote_recorded(experiment)),
         GenerationExperiment("recorded", "Recorded answers", *recorded_model))
     summaries = [_replay_summary(recorded_experiment, recorded.rows, judge=judge.config,
                                  origin=origin)]
