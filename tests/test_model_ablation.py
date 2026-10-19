@@ -1108,3 +1108,68 @@ def test_an_answers_config_without_its_fields_is_refused_by_name(answer_run):
     (directory / "answers-config.json").write_text("null")
     with pytest.raises(ValueError, match=r"answers-config\.json does not record 'judge_rubric'"):
         recorded_answers(directory, chunks=snapshot)
+
+
+def test_a_stopped_replay_s_record_does_not_offer_llm_provider(monkeypatch, tmp_path):
+    # QA of #180: the stop a replay records kept the provider's general advice.
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+
+    def stops(questions, retriever, config, **kwargs):
+        raise RunStopped({"results": [_recorded_row("q001")], "stopped": {
+            "question_id": "q002", "error": "ProviderBusy: cannot reach SOCLAAS: try another "
+                                            "network, or set LLM_PROVIDER=ollama to answer locally"}})
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    recorded = _recorded(tmp_path)
+    with pytest.raises(RunStopped):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="stopped",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    report = json.loads((tmp_path / "stopped" / "G3" / "report.json").read_text())
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    advice = "ProviderBusy: cannot reach SOCLAAS: try another network"
+    assert report["stopped"]["error"] == advice
+    assert summary["configurations"][1]["stopped"]["error"] == advice
+    assert "LLM_PROVIDER" not in (tmp_path / "stopped" / "summary.csv").read_text()
+
+
+def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path, caplog):
+    # QA of #180: a busy provider's "asking again" notice during a replay
+    # offered LLM_PROVIDER, which a replay row's fixed provider ignores.
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+    from src.rag.generate import ProviderBusy
+
+    busy = ("SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask again, or set "
+            "LLM_PROVIDER=ollama to answer locally")
+
+    def ask_twice():
+        failures = iter([ProviderBusy(busy)])
+
+        def ask():
+            for failure in failures:
+                raise failure
+            return "answer"
+        return harness.answer_with_retries("q001", ask)
+
+    def evaluate(questions, retriever, config, **kwargs):
+        ask_twice()
+        return {"results": [_recorded_row("q001"), _recorded_row(
+            "q002", question_type="unanswerable", abstained=True)]}
+
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    recorded = _recorded(tmp_path)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="busy",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+        [notice] = caplog.messages
+        assert notice == ("q001: SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask "
+                          "again; asking again in 10s")
+        # Outside a replay, where LLM_PROVIDER does choose the provider, the advice stays.
+        caplog.clear()
+        ask_twice()
+        assert "LLM_PROVIDER=ollama" in caplog.messages[0]

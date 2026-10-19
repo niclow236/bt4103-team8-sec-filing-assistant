@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
@@ -25,7 +26,7 @@ from src.retrieval.facts import FACTS_FILE
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
-from .harness import RunInterrupted, RunStopped, evaluate
+from .harness import RunInterrupted, RunStopped, evaluate, logger as harness_log
 from .metrics import score_question
 from .records import UNANSWERABLE, BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
@@ -458,6 +459,15 @@ def _replay_summary(experiment: GenerationExperiment, rows: Sequence[dict[str, A
     }
 
 
+class _WithoutAnswerLocally(logging.Filter):
+    """Drops the advice to set ``LLM_PROVIDER`` from a logged notice, as
+    :func:`without_answer_locally` does from a failure's message."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg, record.args = without_answer_locally(record.getMessage()), ()
+        return True
+
+
 def run_generation_replay(
     recorded: RecordedAnswers, experiments: Sequence[GenerationExperiment], *, run_id: str,
     results_root: Path = RESULTS_ROOT, llm_for: Callable[[GenerationConfig], Any] | None = None,
@@ -504,7 +514,10 @@ def run_generation_replay(
                                  origin=origin)]
     question_by_id = {question.question_id: question for question in recorded.questions}
     stopped = None
+    # The harness's retry notices are the provider's advice too (#180).
+    notices = _WithoutAnswerLocally()
     for (experiment, config), llm in zip(answering, models):
+        harness_log.addFilter(notices)
         try:
             report = evaluate(
                 list(recorded.questions), recorded.retriever, config,
@@ -515,6 +528,10 @@ def run_generation_replay(
             )
         except (RunStopped, RunInterrupted) as error:
             report, stopped = error.report, error
+            # The row named the provider, so LLM_PROVIDER is no way out (#180).
+            report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
+        finally:
+            harness_log.removeFilter(notices)
         if recorded.facts is None:
             # The path it parsed with was never written: there was no store.
             report["facts_file"] = None
