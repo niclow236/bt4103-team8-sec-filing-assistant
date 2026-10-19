@@ -17,6 +17,7 @@ from typing import Any
 
 from src.config import PROCESSED_DIR, PROJECT_ROOT
 from src.rag import ProviderUnavailable
+from src.rag.generate import without_answer_locally
 from src.rag.records import GenerationConfig
 from src.rag.constants import DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL
 from src.retrieval.embedding_config import EmbeddingConfig
@@ -613,10 +614,12 @@ def replay_main(argv: list[str]) -> None:
     try:
         run_generation_replay(recorded_answers(args.run_dir, processed_dir=args.processed_dir),
                               experiments, run_id=args.run_id, results_root=args.results_root)
+    # Each row and the judge name their own provider, so LLM_PROVIDER is no way out.
     except (RunStopped, RunInterrupted) as error:
-        raise SystemExit(f"{error}; partial results are under {run_dir}") from None
+        raise SystemExit(f"{without_answer_locally(str(error))}; partial results are under "
+                         f"{run_dir}") from None
     except (ValueError, ProviderUnavailable) as error:
-        parser.error(str(error))
+        parser.error(without_answer_locally(str(error)))
     print((run_dir / "summary.csv").read_text(encoding="utf-8"), end="")
     print(f"written: {run_dir}")
 

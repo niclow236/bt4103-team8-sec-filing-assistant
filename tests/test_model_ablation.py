@@ -1026,3 +1026,45 @@ def test_the_top_level_help_lists_the_replay_command(capsys):
     assert raised.value.code == 0
     help_text = " ".join(capsys.readouterr().out.split())
     assert "python -m src.evaluation.model_ablation replay --help" in help_text
+
+
+def test_a_replay_s_missing_key_advice_does_not_offer_llm_provider(monkeypatch, tmp_path, capsys):
+    # QA of #163 (#180): a replay row fixes its provider, so setting
+    # LLM_PROVIDER, which the provider's general advice offers, changes nothing.
+    import pytest
+    import src.evaluation.model_ablation as module
+
+    monkeypatch.setattr(module, "recorded_answers", lambda run_dir, **kwargs: _recorded(tmp_path))
+    monkeypatch.setenv("MISTRAL_API_KEY", "judge-key")   # the judge's, so G3's key is the one missing
+    with pytest.raises(SystemExit) as raised:
+        module.main(["replay", "run", "--rows", "G3", "--run-id", "no-key",
+                     "--results-root", str(tmp_path)])
+    error = capsys.readouterr().err
+    assert raised.value.code == 2 and "SOCLAAS_API_KEY is not set: make a key" in error
+    assert "LLM_PROVIDER" not in error
+    assert error.rstrip().endswith("so the key is read")
+
+
+@pytest.mark.parametrize("error, advice", [
+    ("ProviderBusy: SOCLAAS sent nothing for 120s while running 'qwen3.6:35b': ask again, "
+     "or set LLM_PROVIDER=ollama to answer locally",
+     "ProviderBusy: SOCLAAS sent nothing for 120s while running 'qwen3.6:35b': ask again"),
+    ("ProviderUnavailable: SOCLAAS stopped 'qwen3.6:35b' without finishing (finish_reason "
+     "'content_filter'); set LLM_PROVIDER=ollama to answer locally",
+     "ProviderUnavailable: SOCLAAS stopped 'qwen3.6:35b' without finishing (finish_reason "
+     "'content_filter')"),
+], ids=["ask-again", "finish-reason"])
+def test_a_replay_stopped_part_way_does_not_offer_llm_provider(monkeypatch, tmp_path, error,
+                                                               advice):
+    import src.evaluation.model_ablation as module
+
+    def stopped(*args, **kwargs):
+        raise RunStopped({"results": [], "stopped": {"question_id": "q2", "error": error}})
+
+    monkeypatch.setattr(module, "recorded_answers", lambda run_dir, **kwargs: "recorded")
+    monkeypatch.setattr(module, "run_generation_replay", stopped)
+    with pytest.raises(SystemExit) as raised:
+        module.main(["replay", "run", "--rows", "G3", "--run-id", "halted",
+                     "--results-root", str(tmp_path)])
+    assert str(raised.value) == (
+        f"stopped at q2: {advice}; partial results are under {tmp_path / 'halted'}")
