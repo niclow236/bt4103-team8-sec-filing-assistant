@@ -627,7 +627,11 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["replay"]:
         return replay_main(argv[1:])
-    parser = argparse.ArgumentParser(description=__doc__)
+    # `replay` is sent to its own parser above, so this one only points to it.
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="replay: answer a full-matrix run's recorded C4 evidence with G rows; see "
+               "python -m src.evaluation.model_ablation replay --help")
     parser.add_argument("matrix", choices=("embedding", "generation"))
     parser.add_argument("questions", type=Path, nargs="?", default=DEFAULT_QUESTIONS_PATH)
     parser.add_argument("--run-id", required=True)

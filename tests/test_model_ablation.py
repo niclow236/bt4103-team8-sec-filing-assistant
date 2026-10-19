@@ -1013,3 +1013,16 @@ def test_the_replay_command_runs_the_rows_it_names_over_the_run_it_names(monkeyp
         module.main(["replay", "run", "--rows", "G3", "--run-id", "halted",
                      "--results-root", str(tmp_path)])
     assert str(raised.value).endswith(f"partial results are under {tmp_path / 'halted'}")
+
+
+def test_the_top_level_help_lists_the_replay_command(capsys):
+    # QA of #163 (#180): main() sends `replay` to its own parser before
+    # argparse runs, so the top-level help never showed it.
+    import pytest
+    import src.evaluation.model_ablation as module
+
+    with pytest.raises(SystemExit) as raised:
+        module.main(["--help"])
+    assert raised.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "python -m src.evaluation.model_ablation replay --help" in help_text
