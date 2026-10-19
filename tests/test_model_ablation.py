@@ -1013,3 +1013,254 @@ def test_the_replay_command_runs_the_rows_it_names_over_the_run_it_names(monkeyp
         module.main(["replay", "run", "--rows", "G3", "--run-id", "halted",
                      "--results-root", str(tmp_path)])
     assert str(raised.value).endswith(f"partial results are under {tmp_path / 'halted'}")
+
+
+def test_the_top_level_help_lists_the_replay_command(capsys):
+    # QA of #163 (#180): main() sends `replay` to its own parser before
+    # argparse runs, so the top-level help never showed it.
+    import pytest
+    import src.evaluation.model_ablation as module
+
+    with pytest.raises(SystemExit) as raised:
+        module.main(["--help"])
+    assert raised.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "python -m src.evaluation.model_ablation replay --help" in help_text
+
+
+def test_a_replay_s_missing_key_advice_does_not_offer_llm_provider(monkeypatch, tmp_path, capsys):
+    # QA of #163 (#180): a replay row fixes its provider, so setting
+    # LLM_PROVIDER, which the provider's general advice offers, changes nothing.
+    import pytest
+    import src.evaluation.model_ablation as module
+
+    monkeypatch.setattr(module, "recorded_answers", lambda run_dir, **kwargs: _recorded(tmp_path))
+    monkeypatch.setenv("MISTRAL_API_KEY", "judge-key")   # the judge's, so G3's key is the one missing
+    with pytest.raises(SystemExit) as raised:
+        module.main(["replay", "run", "--rows", "G3", "--run-id", "no-key",
+                     "--results-root", str(tmp_path)])
+    error = capsys.readouterr().err
+    assert raised.value.code == 2 and "SOCLAAS_API_KEY is not set: make a key" in error
+    assert "LLM_PROVIDER" not in error
+    assert error.rstrip().endswith("so the key is read")
+
+
+@pytest.mark.parametrize("error, advice", [
+    ("ProviderBusy: SOCLAAS sent nothing for 120s while running 'qwen3.6:35b': ask again, "
+     "or set LLM_PROVIDER=ollama to answer locally",
+     "ProviderBusy: SOCLAAS sent nothing for 120s while running 'qwen3.6:35b': ask again"),
+    ("ProviderUnavailable: SOCLAAS stopped 'qwen3.6:35b' without finishing (finish_reason "
+     "'content_filter'); set LLM_PROVIDER=ollama to answer locally",
+     "ProviderUnavailable: SOCLAAS stopped 'qwen3.6:35b' without finishing (finish_reason "
+     "'content_filter')"),
+], ids=["ask-again", "finish-reason"])
+def test_a_replay_stopped_part_way_does_not_offer_llm_provider(monkeypatch, tmp_path, error,
+                                                               advice):
+    import src.evaluation.model_ablation as module
+
+    def stopped(*args, **kwargs):
+        raise RunStopped({"results": [], "stopped": {"question_id": "q2", "error": error}})
+
+    monkeypatch.setattr(module, "recorded_answers", lambda run_dir, **kwargs: "recorded")
+    monkeypatch.setattr(module, "run_generation_replay", stopped)
+    with pytest.raises(SystemExit) as raised:
+        module.main(["replay", "run", "--rows", "G3", "--run-id", "halted",
+                     "--results-root", str(tmp_path)])
+    assert str(raised.value) == (
+        f"stopped at q2: {advice}; partial results are under {tmp_path / 'halted'}")
+
+
+def test_a_stopped_replay_s_table_says_which_row_stopped(monkeypatch, tmp_path):
+    # QA of #163 (#180): the table showed a partial row's figures as if it were complete.
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+
+    def stops(questions, retriever, config, **kwargs):
+        raise RunStopped({"results": [_recorded_row("q001")],
+                          "stopped": {"question_id": "q002", "error": "rate limit"}})
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    recorded = _recorded(tmp_path)
+    with pytest.raises(RunStopped):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="stopped",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    with (tmp_path / "stopped" / "summary.csv").open(newline="") as stream:
+        table = {row["config"]: row.get("stopped") for row in csv.DictReader(stream)}
+    # The recorded answers are complete; the replayed row names where it stopped.
+    assert table["G2"] == "" and table["G3"] == "q002: rate limit"
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    assert summary["configurations"][1]["stopped"] == {
+        "question_id": "q002", "error": "rate limit",
+    }
+
+
+def test_an_answers_config_without_its_fields_is_refused_by_name(answer_run):
+    # QA of #163 (#180): `{}` raised KeyError: 'judge_rubric', a traceback
+    # rather than a refusal.
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    (directory / "answers-config.json").write_text("{}")
+    with pytest.raises(ValueError, match=r"answers-config\.json does not record 'judge_rubric'"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text(json.dumps({"judge_rubric": "answer-quality-v1"}))
+    with pytest.raises(ValueError, match=r"answers-config\.json does not record 'generation'"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text("null")
+    with pytest.raises(ValueError, match=r"answers-config\.json does not record 'judge_rubric'"):
+        recorded_answers(directory, chunks=snapshot)
+
+
+def test_a_stopped_replay_s_record_does_not_offer_llm_provider(monkeypatch, tmp_path):
+    # QA of #180: the stop a replay records kept the provider's general advice.
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+    from src.rag.generate import ProviderBusy
+
+    unreachable = ProviderBusy("cannot reach SOCLAAS")
+
+    def stops(questions, retriever, config, **kwargs):
+        raise RunStopped({"results": [_recorded_row("q001")], "stopped": {
+            "question_id": "q002", "error": "ProviderBusy: cannot reach SOCLAAS: try another "
+                                            "network, or set LLM_PROVIDER=ollama to answer locally"}}
+                         ) from unreachable
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    recorded = _recorded(tmp_path)
+    with pytest.raises(RunStopped) as raised:
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="stopped",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    report = json.loads((tmp_path / "stopped" / "G3" / "report.json").read_text())
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    advice = "ProviderBusy: cannot reach SOCLAAS: try another network"
+    # PR review of #180: a caller other than the command, such as a notebook,
+    # reads the error it is raised rather than the files.
+    assert str(raised.value) == f"stopped at q002: {advice}"
+    assert raised.value.__cause__ is unreachable
+    assert report["stopped"]["error"] == advice
+    assert summary["configurations"][1]["stopped"]["error"] == advice
+    assert "LLM_PROVIDER" not in (tmp_path / "stopped" / "summary.csv").read_text()
+
+
+@pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
+def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path, caplog,
+                                                            log_threads):
+    # QA of #180: a busy provider's "asking again" notice during a replay
+    # offered LLM_PROVIDER, which a replay row's fixed provider ignores. PR
+    # review: with logging.logThreads off, a record names no thread.
+    import logging
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+    from src.rag.generate import ProviderBusy
+
+    busy = ("SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask again, or set "
+            "LLM_PROVIDER=ollama to answer locally")
+
+    def ask_twice():
+        failures = iter([ProviderBusy(busy)])
+
+        def ask():
+            for failure in failures:
+                raise failure
+            return "answer"
+        return harness.answer_with_retries("q001", ask)
+
+    def evaluate(questions, retriever, config, **kwargs):
+        ask_twice()
+        return {"results": [_recorded_row("q001"), _recorded_row(
+            "q002", question_type="unanswerable", abstained=True)]}
+
+    monkeypatch.setattr(logging, "logThreads", log_threads)
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    recorded = _recorded(tmp_path)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="busy",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+        [notice] = caplog.messages
+        assert notice == ("q001: SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask "
+                          "again; asking again in 10s")
+        # Outside a replay, where LLM_PROVIDER does choose the provider, the advice stays.
+        caplog.clear()
+        ask_twice()
+        assert "LLM_PROVIDER=ollama" in caplog.messages[0]
+
+
+def test_a_replay_leaves_the_advice_in_another_thread_s_retry_notices(monkeypatch, tmp_path,
+                                                                    caplog):
+    # PR review of #180: the filter sits on the harness's shared logger, so an
+    # evaluation on another thread, whose provider LLM_PROVIDER does choose,
+    # lost its advice while a replay row ran.
+    import threading
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+    from src.rag.generate import ProviderBusy
+
+    def busy_once():
+        failures = iter([ProviderBusy("cannot reach SOCLAAS: check the internet connection, "
+                                      "or set LLM_PROVIDER=ollama to answer locally")])
+
+        def ask():
+            for failure in failures:
+                raise failure
+            return "answer"
+        return harness.answer_with_retries("other-run", ask)
+
+    def evaluate(questions, retriever, config, **kwargs):
+        other = threading.Thread(target=busy_once)
+        other.start()
+        other.join()
+        return {"results": [_recorded_row("q001"), _recorded_row(
+            "q002", question_type="unanswerable", abstained=True)]}
+
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    recorded = _recorded(tmp_path)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="threaded",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    [notice] = caplog.messages
+    assert notice.startswith("other-run:") and "or set LLM_PROVIDER=ollama" in notice
+
+
+def test_an_answers_config_whose_generation_is_not_a_config_is_refused_by_name(answer_run):
+    # PR review of #180: a `generation` that is there but is not a config
+    # raised TypeError, a traceback rather than a refusal.
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    answered = json.loads((directory / "answers-config.json").read_text())
+    (directory / "answers-config.json").write_text(json.dumps(answered | {"generation": None}))
+    with pytest.raises(ValueError, match=r"answers-config\.json's 'generation' is not a "
+                                         r"generation config: None"):
+        recorded_answers(directory, chunks=snapshot)
+    (directory / "answers-config.json").write_text(json.dumps(
+        answered | {"generation": {"model": "test", "prompt_template_id": "grounded_v4"}}))
+    with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
+        recorded_answers(directory, chunks=snapshot)
+    # PR review of #180: fields of the wrong type built a config that crashed
+    # later, when the judge looked its provider up.
+    for name in ("provider", "model", "prompt_template_id"):
+        generation = {"provider": "mistral", "model": "test", "prompt_template_id": "grounded_v4"}
+        (directory / "answers-config.json").write_text(json.dumps(
+            answered | {"generation": generation | {name: []}}))
+        with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
+            recorded_answers(directory, chunks=snapshot)
+    # PR review of #180: a provider the generator does not know was refused
+    # only when the judge was built, with advice to set LLM_PROVIDER.
+    (directory / "answers-config.json").write_text(json.dumps(answered | {"generation": {
+        "provider": "Mistral", "model": "test", "prompt_template_id": "grounded_v4"}}))
+    with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
+        recorded_answers(directory, chunks=snapshot)

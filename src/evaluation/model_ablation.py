@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
@@ -17,14 +19,17 @@ from typing import Any
 
 from src.config import PROCESSED_DIR, PROJECT_ROOT
 from src.rag import ProviderUnavailable
+from src.rag.generate import without_answer_locally
 from src.rag.records import GenerationConfig
-from src.rag.constants import DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL
+from src.rag.constants import (
+    DEFAULT_MODEL, DEFAULT_MISTRAL_MODEL, DEFAULT_SOCLAAS_MODEL, PROVIDERS,
+)
 from src.retrieval.embedding_config import EmbeddingConfig
 from src.retrieval.facts import FACTS_FILE
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
-from .harness import RunInterrupted, RunStopped, evaluate
+from .harness import RunInterrupted, RunStopped, evaluate, logger as harness_log
 from .metrics import score_question
 from .records import UNANSWERABLE, BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
@@ -237,7 +242,7 @@ REPLAY_FIELDS = (
     "unanswerable_abstention", "answerable_abstention", "citation_precision",
     "invalid_citation_answers", "schema_failures", "truncated", "judge_failures",
     "median_generate_ms", "p95_generate_ms", "mean_input_tokens", "mean_output_tokens",
-    "retried_questions",
+    "retried_questions", "stopped",
 )
 
 
@@ -336,9 +341,24 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     measured = {t["question"]["question_id"]: t["rows"][REPLAY_ROW] for t in transactions}
     if any(question.question_id not in measured for question in team):
         raise ValueError("the run's team retrieval is incomplete")
-    answered = json.loads((run_dir / "answers-config.json").read_text())
+    answers_config = run_dir / "answers-config.json"
+    answered = json.loads(answers_config.read_text())
+    for name in ("judge_rubric", "generation"):
+        if not isinstance(answered, dict) or name not in answered:
+            raise ValueError(f"{answers_config} does not record {name!r}, which a complete "
+                             f"`answers` step writes")
     if answered["judge_rubric"] != RUBRIC_ID:
         raise ValueError(f"the run was judged with {answered['judge_rubric']!r}, not {RUBRIC_ID!r}")
+    try:
+        generation = GenerationConfig(**answered["generation"])
+    except TypeError:
+        generation = None
+    # The config does not check its fields, and a provider the generator does
+    # not know fails only when the judge is built from it.
+    if generation is None or generation.provider not in PROVIDERS or not all(
+            isinstance(value, str) for value in (generation.model, generation.prompt_template_id)):
+        raise ValueError(f"{answers_config}'s 'generation' is not a generation config: "
+                         f"{answered['generation']!r}")
     rows = read_rows(run_dir / REPLAY_ROW / "answers.jsonl")
     if [row["question_id"] for row in rows] != [question.question_id for question in team]:
         raise ValueError(f"the run's {REPLAY_ROW} answers do not cover its team questions in order")
@@ -356,7 +376,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
         run_dir=run_dir, questions=scored,
         retriever=_RecordedRankings([measured[q.question_id] for q in team],
                                     {chunk["chunk_id"]: chunk for chunk in snapshot}),
-        generation=GenerationConfig(**answered["generation"]), rows=tuple(rows),
+        generation=generation, rows=tuple(rows),
         facts_file=Path(facts_file), facts=facts,
     )
 
@@ -452,6 +472,23 @@ def _replay_summary(experiment: GenerationExperiment, rows: Sequence[dict[str, A
     }
 
 
+class _WithoutAnswerLocally(logging.Filter):
+    """Drops the advice to set ``LLM_PROVIDER`` from a notice logged on the
+    thread that made it, as :func:`without_answer_locally` does from a
+    failure's message. Another thread's run may be one LLM_PROVIDER chooses."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread = threading.get_ident()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # A filter runs on the thread that logs, and record.thread is None
+        # when logging.logThreads is off.
+        if threading.get_ident() == self.thread:
+            record.msg, record.args = without_answer_locally(record.getMessage()), ()
+        return True
+
+
 def run_generation_replay(
     recorded: RecordedAnswers, experiments: Sequence[GenerationExperiment], *, run_id: str,
     results_root: Path = RESULTS_ROOT, llm_for: Callable[[GenerationConfig], Any] | None = None,
@@ -498,7 +535,10 @@ def run_generation_replay(
                                  origin=origin)]
     question_by_id = {question.question_id: question for question in recorded.questions}
     stopped = None
+    # The harness's retry notices are the provider's advice too (#180).
+    notices = _WithoutAnswerLocally()
     for (experiment, config), llm in zip(answering, models):
+        harness_log.addFilter(notices)
         try:
             report = evaluate(
                 list(recorded.questions), recorded.retriever, config,
@@ -508,7 +548,14 @@ def run_generation_replay(
                 judge=judge,
             )
         except (RunStopped, RunInterrupted) as error:
-            report, stopped = error.report, error
+            report = error.report
+            # The row named the provider, so LLM_PROVIDER is no way out (#180).
+            # Raised afresh, as its message was made from the report before this.
+            report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
+            stopped = type(error)(report)
+            stopped.__cause__ = error.__cause__
+        finally:
+            harness_log.removeFilter(notices)
         if recorded.facts is None:
             # The path it parsed with was never written: there was no store.
             report["facts_file"] = None
@@ -613,10 +660,12 @@ def replay_main(argv: list[str]) -> None:
     try:
         run_generation_replay(recorded_answers(args.run_dir, processed_dir=args.processed_dir),
                               experiments, run_id=args.run_id, results_root=args.results_root)
+    # Each row and the judge name their own provider, so LLM_PROVIDER is no way out.
     except (RunStopped, RunInterrupted) as error:
-        raise SystemExit(f"{error}; partial results are under {run_dir}") from None
+        raise SystemExit(f"{without_answer_locally(str(error))}; partial results are under "
+                         f"{run_dir}") from None
     except (ValueError, ProviderUnavailable) as error:
-        parser.error(str(error))
+        parser.error(without_answer_locally(str(error)))
     print((run_dir / "summary.csv").read_text(encoding="utf-8"), end="")
     print(f"written: {run_dir}")
 
@@ -627,7 +676,11 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["replay"]:
         return replay_main(argv[1:])
-    parser = argparse.ArgumentParser(description=__doc__)
+    # `replay` is sent to its own parser above, so this one only points to it.
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="replay: answer a full-matrix run's recorded C4 evidence with G rows; see "
+               "python -m src.evaluation.model_ablation replay --help")
     parser.add_argument("matrix", choices=("embedding", "generation"))
     parser.add_argument("questions", type=Path, nargs="?", default=DEFAULT_QUESTIONS_PATH)
     parser.add_argument("--run-id", required=True)

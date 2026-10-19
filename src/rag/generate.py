@@ -131,6 +131,15 @@ class ProviderBusy(ProviderUnavailable):
 _ANSWER_LOCALLY = f"set {LLM_PROVIDER_ENV}={OLLAMA} to answer locally"
 
 
+def without_answer_locally(message: str) -> str:
+    """A failure's message without its advice to set ``LLM_PROVIDER``, for a
+    caller whose provider is fixed by something else, such as a replay row,
+    so that setting it would change nothing (#180)."""
+    for clause in (f", or {_ANSWER_LOCALLY}", f"; {_ANSWER_LOCALLY}"):
+        message = message.replace(clause, "")
+    return message
+
+
 # --- the entry points ------------------------------------------------------------
 
 def generate(
