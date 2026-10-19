@@ -8,9 +8,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
 from pathlib import Path
-from shutil import copy2
 from statistics import mean, median
-from tempfile import mkdtemp
+from tempfile import TemporaryDirectory
 from shlex import join as shell_join
 from time import perf_counter
 from types import SimpleNamespace
@@ -249,9 +248,10 @@ class RecordedAnswers:
     ``questions`` are the team questions, each scored against the gold passages
     the run recorded for C4; ``retriever`` replays the run's C4 rankings;
     ``generation`` is the config that wrote ``rows`` and, with the
-    ``answer-quality-v1`` rubric, judged them; ``facts_file`` is a private
-    snapshot of the facts store each question's query was checked against,
-    which a replay keeps and parses with, so a rebuild of the store while the
+    ``answer-quality-v1`` rubric, judged them. ``facts`` is the facts store, as
+    read from ``facts_file`` when each question's query was checked against
+    it, or None where there was none; a replay writes it into its run
+    directory and parses with that copy, so a rebuild of the store while the
     replay runs cannot change a query part-way through.
     """
 
@@ -261,6 +261,7 @@ class RecordedAnswers:
     generation: GenerationConfig
     rows: tuple[dict[str, Any], ...]
     facts_file: Path = FACTS_FILE
+    facts: bytes | None = None
 
 
 class _RecordedRankings:
@@ -295,18 +296,17 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     built as the harness will build it, is the one the run recorded. A changed
     facts store or company list can change a query; caught here, it stops the
     replay before any model is asked, rather than part-way through. The check
-    reads a snapshot of ``facts_file``, which the replay then parses with.
+    reads the store from ``facts_file`` once, and the replay parses with what
+    it read.
     ``chunks`` is the corpus, read from ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
-        FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, query_record, read_rows,
-        scored_for, team_questions, validate_snapshot,
+        FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
+        team_questions, validate_snapshot,
     )
-    from src.evaluation.harness import benchmark_query
     from src.evaluation.provenance import corpus_records_sha256
     from src.evaluation.quality import RUBRIC_ID
     from src.pipeline.chunk import iter_chunks
-    from src.rag.query import parse_question
 
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
@@ -344,12 +344,39 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     if corpus_records_sha256(snapshot) != config["provenance"]["corpus"]["records_sha256"]:
         raise ValueError("this corpus differs from the one the run measured")
     scored = tuple(scored_for(question, measured[question.question_id]) for question in team)
-    # A store that does not exist, as on a fresh clone, is parsed as missing,
-    # the way the run that recorded the queries would have parsed it.
-    if Path(facts_file).is_file():
-        facts_snapshot = Path(mkdtemp(prefix="replay-facts-")) / Path(facts_file).name
-        copy2(facts_file, facts_snapshot)
-        facts_file = facts_snapshot
+    # Read once. A store that does not exist, as on a fresh clone, is parsed
+    # as missing, the way the run that recorded the queries would have.
+    facts = Path(facts_file).read_bytes() if Path(facts_file).is_file() else None
+    with TemporaryDirectory(prefix="replay-facts-") as scratch:
+        checked = _facts_copy(facts, facts_file, Path(scratch))
+        _check_queries(scored, measured, checked)
+    return RecordedAnswers(
+        run_dir=run_dir, questions=scored,
+        retriever=_RecordedRankings([measured[q.question_id] for q in team],
+                                    {chunk["chunk_id"]: chunk for chunk in snapshot}),
+        generation=GenerationConfig(**answered["generation"]), rows=tuple(rows),
+        facts_file=Path(facts_file), facts=facts,
+    )
+
+
+def _facts_copy(facts: bytes | None, facts_file: Path, directory: Path) -> Path:
+    """The facts store as read, written into ``directory`` under its own name,
+    or ``facts_file`` itself where there was no store to read."""
+    if facts is None:
+        return Path(facts_file)
+    copy = directory / Path(facts_file).name
+    copy.write_bytes(facts)
+    return copy
+
+
+def _check_queries(scored: Sequence[BenchmarkQuestion], measured: dict[str, dict],
+                   facts_file: Path) -> None:
+    """Refuse a run whose recorded C4 query for any question is not the one the
+    harness would build now, with ``facts_file``."""
+    from src.evaluation.full_ablation import MATRIX, query_record
+    from src.evaluation.harness import benchmark_query
+    from src.rag.query import parse_question
+
     stack = MATRIX[REPLAY_ROW]
     for question in scored:
         parsed = parse_question(question.question, facts_file=facts_file)
@@ -359,13 +386,6 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
                 f"{question.question_id}'s query {query.text!r} differs from the one the run "
                 f"recorded; the facts store or config/companies.txt has changed "
                 f"since the run, so its rankings cannot be replayed")
-    return RecordedAnswers(
-        run_dir=run_dir, questions=scored,
-        retriever=_RecordedRankings([measured[q.question_id] for q in team],
-                                    {chunk["chunk_id"]: chunk for chunk in snapshot}),
-        generation=GenerationConfig(**answered["generation"]), rows=tuple(rows),
-        facts_file=facts_file,
-    )
 
 
 def _nearest_rank(ordered: Sequence[float], share: float) -> float | None:
@@ -461,12 +481,8 @@ def run_generation_replay(
                  for experiment in experiments]
     models = [llm_for(config) for _, config in answering]
     run_dir.mkdir(parents=True)
-    # The snapshot the queries were checked against, kept with the run.
-    facts_file = run_dir / Path(recorded.facts_file).name
-    if Path(recorded.facts_file).is_file():
-        copy2(recorded.facts_file, facts_file)
-    else:
-        facts_file = recorded.facts_file
+    # The store the queries were checked against, kept with the run.
+    facts_file = _facts_copy(recorded.facts, recorded.facts_file, run_dir)
     stack = MATRIX[REPLAY_ROW]
     origin = f"{recorded.run_dir.name}/{REPLAY_ROW}"
     recorded_experiment = next(

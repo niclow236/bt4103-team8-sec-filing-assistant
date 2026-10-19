@@ -572,13 +572,6 @@ def _recorded_row(question_id, *, question_type="numeric", abstained=False, corr
     }
 
 
-def _snapshot(tmp_path):
-    path = tmp_path / "snapshot" / "facts.parquet"
-    path.parent.mkdir(exist_ok=True)
-    path.write_bytes(b"facts the queries were checked against")
-    return path
-
-
 def _recorded(tmp_path, rows=None):
     from dataclasses import replace
     from src.evaluation.model_ablation import RecordedAnswers
@@ -589,7 +582,7 @@ def _recorded(tmp_path, rows=None):
         generation=GenerationConfig("mistral", "ministral-8b-2512", "grounded_v4"),
         rows=tuple(rows or (_recorded_row("q001"),
                             _recorded_row("q002", question_type="unanswerable", abstained=True))),
-        facts_file=_snapshot(tmp_path),
+        facts=b"facts the queries were checked against",
     )
 
 
@@ -628,7 +621,7 @@ def test_g3_replays_the_recorded_evidence_with_only_the_generator_changed(monkey
     # Parsed with a copy, kept with the run, of the facts store its queries
     # were checked against.
     assert kwargs["facts_file"] == tmp_path / "replay" / "facts.parquet"
-    assert kwargs["facts_file"].read_bytes() == recorded.facts_file.read_bytes()
+    assert kwargs["facts_file"].read_bytes() == recorded.facts
     # The recorded answers are the G row whose provider and model wrote them.
     assert [row["config"]["id"] for row in manifest["configurations"]] == ["G2", "G3"]
     assert manifest["configurations"][0]["config"]["origin"] == "full-matrix-20261017/C4"
@@ -869,7 +862,9 @@ def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_
         recorded_answers(directory, chunks=answer_run.runner.snapshot)
 
 
-def test_the_replay_parses_with_a_snapshot_of_the_facts_store(answer_run, tmp_path):
+def test_the_replay_parses_with_a_snapshot_of_the_facts_store(answer_run, tmp_path, monkeypatch):
+    import tempfile
+
     # Follow-up review of #163: the queries were checked against the facts
     # store once, but the harness parsed every question again against the
     # live file, so a facts rebuild during a long replay could still fail it
@@ -878,20 +873,25 @@ def test_the_replay_parses_with_a_snapshot_of_the_facts_store(answer_run, tmp_pa
     from src.evaluation.model_ablation import recorded_answers
 
     matrix.answers(answer_run.args)
+    # The check's own copy of the store is gone once the run is read: QA of
+    # #163 found one left in the temporary directory by every load.
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     facts = tmp_path / "facts.parquet"
     facts.write_bytes(b"facts as of the check")
     recorded = recorded_answers(answer_run.runner.directory, chunks=answer_run.runner.snapshot,
                                 facts_file=facts)
-    assert recorded.facts_file != facts
     facts.write_bytes(b"rebuilt part-way through")
-    assert recorded.facts_file.read_bytes() == b"facts as of the check"
+    assert recorded.facts == b"facts as of the check"
+    assert list(scratch.iterdir()) == []
 
     # A fresh clone has no store: there is nothing to copy, and the replay
     # parses with it missing, as the run that recorded the queries did.
     absent = tmp_path / "absent.parquet"
     recorded = recorded_answers(answer_run.runner.directory, chunks=answer_run.runner.snapshot,
                                 facts_file=absent)
-    assert recorded.facts_file == absent
+    assert (recorded.facts_file, recorded.facts) == (absent, None)
 
 
 def test_a_replay_without_a_facts_store_parses_with_it_missing(monkeypatch, tmp_path):
@@ -901,7 +901,7 @@ def test_a_replay_without_a_facts_store_parses_with_it_missing(monkeypatch, tmp_
 
     seen = []
     monkeypatch.setattr(module, "evaluate", _replaying(seen))
-    recorded = replace(_recorded(tmp_path), facts_file=tmp_path / "absent.parquet")
+    recorded = replace(_recorded(tmp_path), facts_file=tmp_path / "absent.parquet", facts=None)
     run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="no-facts",
                           results_root=tmp_path, llm_for=lambda config: None,
                           judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
