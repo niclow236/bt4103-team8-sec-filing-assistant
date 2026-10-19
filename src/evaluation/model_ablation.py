@@ -230,8 +230,6 @@ def run_generation_ablation(
 # summarised beside it by the same function, as the G row that wrote them.
 
 REPLAY_ROW = "C4"
-# What a full-matrix run's config.json records as its schema (full_ablation.py).
-FULL_MATRIX_SCHEMA = "full-matrix-v1"
 REPLAY_FIELDS = (
     "provider", "model", "judge", "correctness", "correctness_scored", "faithfulness",
     "unanswerable_abstention", "answerable_abstention", "citation_precision",
@@ -289,7 +287,8 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
-        MATRIX, MatrixConfig, check_transactions, read_rows, team_questions, validate_snapshot,
+        FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
+        team_questions, validate_snapshot,
     )
     from src.evaluation.provenance import corpus_records_sha256
     from src.evaluation.quality import RUBRIC_ID
@@ -330,12 +329,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     snapshot = list(chunks) if chunks is not None else list(iter_chunks(processed_dir=processed_dir))
     if corpus_records_sha256(snapshot) != config["provenance"]["corpus"]["records_sha256"]:
         raise ValueError("this corpus differs from the one the run measured")
-    scored = tuple(
-        replace(question,
-                supporting_chunk_ids=tuple(measured[question.question_id]["scoring_supporting_chunk_ids"]),
-                hard_negative_chunk_ids=tuple(
-                    measured[question.question_id]["scoring_hard_negative_chunk_ids"]))
-        for question in team)
+    scored = tuple(scored_for(question, measured[question.question_id]) for question in team)
     return RecordedAnswers(
         run_dir=run_dir, questions=scored,
         retriever=_RecordedRankings([measured[q.question_id] for q in team],
@@ -430,12 +424,13 @@ def run_generation_replay(
     run_dir.mkdir(parents=True)
     stack = MATRIX[REPLAY_ROW]
     origin = f"{recorded.run_dir.name}/{REPLAY_ROW}"
-    wrote = next((experiment for experiment in GENERATION_EXPERIMENTS
+    recorded_experiment = next((experiment for experiment in GENERATION_EXPERIMENTS
                   if (experiment.provider, experiment.model)
                   == (recorded.generation.provider, recorded.generation.model)),
                  GenerationExperiment("recorded", "Recorded answers", recorded.generation.provider,
                                       recorded.generation.model))
-    summaries = [_replay_summary(wrote, recorded.rows, judge=judge.config, origin=origin)]
+    summaries = [_replay_summary(recorded_experiment, recorded.rows, judge=judge.config,
+                                 origin=origin)]
     question_by_id = {question.question_id: question for question in recorded.questions}
     stopped = None
     for (experiment, config), llm in zip(answering, models):

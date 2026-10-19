@@ -4,23 +4,25 @@ Three providers answer, chosen with ``LLM_PROVIDER`` in .env (#106, #163).
 Ollama, the default, runs a model on the machine running the code, with no
 account, key or network. Mistral's hosted API answers in seconds rather than
 minutes, with each teammate's own key, and so does SOCLAAS, NUS SoC's
-OpenAI-compatible API, which serves larger open-weight models. One function, :func:`generate`, runs a ``GroundedPrompt``
-through the configured model and returns a ``Generation``: the answer, how long
-it took, and how many tokens it used.
+OpenAI-compatible API, which serves larger open-weight models. One function,
+:func:`generate`, runs a ``GroundedPrompt`` through the configured model and
+returns a ``Generation``: the answer, how long it took, and how many tokens it
+used.
 
 Two libraries do the work, each where it earns its place.
 
 LangChain is the client: ``ChatOllama`` for Ollama, ``ChatMistralAI`` for
-Mistral, ``ChatOpenAI`` for SOCLAAS. Each streams and reports the token counts,
-and all implement the chat-model interface every LangChain model shares. That
-interface is the provider interface here: :func:`generate` takes any chat model,
-so a test passes a fake one. What differs between the providers (how the client is built, how
+Mistral, ``ChatOpenAI`` for SOCLAAS. Each streams and reports the token
+counts, and all implement the chat-model interface every LangChain model
+shares. That interface is the provider interface here: :func:`generate` takes
+any chat model, so a test passes a fake one. What differs between the providers (how the client is built, how
 a request is sent, how a failure and a stop read) is kept in one ``_Provider``
 each, at the end of this module.
 
 Pydantic fixes the shape of the answer. The JSON schema of
 ``GroundedAnswer.for_sources(n)`` is sent with every request, as Ollama's output
-format or as Mistral's and SOCLAAS's strict JSON-schema response format, and all constrain
+format or as Mistral's and SOCLAAS's strict JSON-schema response format, and
+all constrain
 decoding to it: the model cannot leave out the source numbers, and cannot cite a
 source it was not shown. The same Pydantic model then validates what came back.
 
@@ -338,7 +340,8 @@ def config_from_env(
     Provider: the argument, else ``LLM_PROVIDER``, else ``DEFAULT_PROVIDER``
     (Ollama). Model: the argument, else ``LLM_MODEL`` when the provider is the
     one the environment names, else that provider's default, ``DEFAULT_MODEL``
-    for Ollama and ``DEFAULT_MISTRAL_MODEL`` for Mistral. ``LLM_MODEL`` is set
+    for Ollama, ``DEFAULT_MISTRAL_MODEL`` for Mistral and
+    ``DEFAULT_SOCLAAS_MODEL`` for SOCLAAS. ``LLM_MODEL`` is set
     for the provider in .env, so ``--provider mistral`` beside an Ollama
     ``LLM_MODEL`` asks Mistral for its default rather than for a model it does
     not serve. The environment is the process's, with ``dotenv`` (the project's
@@ -353,7 +356,7 @@ def config_from_env(
         chosen_provider = _provider_name(provider, "the provider argument")
     else:
         chosen_provider = _provider_name(configured, LLM_PROVIDER_ENV)
-    default = _DEFAULT_MODELS[chosen_provider]
+    default = _PROVIDERS[chosen_provider].default_model
     configured_model = env.get(LLM_MODEL_ENV) if chosen_provider == configured else None
     chosen = (model or configured_model or "").strip() or default
     return GenerationConfig(
@@ -362,11 +365,6 @@ def config_from_env(
         prompt_template_id=PROMPT_TEMPLATE_ID,
         temperature=temperature,
     )
-
-
-# The model each provider answers with when nothing names one.
-_DEFAULT_MODELS = {OLLAMA: DEFAULT_MODEL, MISTRAL: DEFAULT_MISTRAL_MODEL,
-                   SOCLAAS: DEFAULT_SOCLAAS_MODEL}
 
 
 def _provider_setting(value: str | None) -> str:
@@ -422,7 +420,7 @@ def check_provider(
     """Refuse the settings :func:`chat_model` would refuse, and build nothing.
 
     For a caller that has to say early that a provider cannot answer, and may
-    never need its client. The app offers both providers and builds a chat
+    never need its client. The app offers every provider and builds a chat
     model only when an answer needs one, since a figure looked up in the facts
     store needs none; it says beside the provider picked that its key is
     missing, before a question is asked. That check runs on every rerun of the
@@ -1203,7 +1201,9 @@ def _soclaas_unavailable(
 class _Provider:
     """Everything that differs between the providers, for one of them.
 
-    ``package`` is the LangChain package its chat model comes from; ``build``
+    ``package`` is the LangChain package its chat model comes from;
+    ``default_model`` is the model it answers with when nothing names one;
+    ``build``
     makes that model for a config, from the settings :func:`chat_model` read;
     ``settings`` checks those settings and returns what ``build`` builds with,
     as the keyword arguments of the provider's client, building nothing
@@ -1216,6 +1216,7 @@ class _Provider:
     """
 
     package: str
+    default_model: str
     build: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
     settings: Callable[[GenerationConfig, str | None, Mapping[str, str]], dict[str, Any]]
     request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
@@ -1224,12 +1225,14 @@ class _Provider:
 
 
 _PROVIDERS = {
-    OLLAMA: _Provider("langchain_ollama", _ollama_model, _ollama_settings, _ollama_request,
-                      _ollama_unavailable, _ollama_stop_reason),
-    MISTRAL: _Provider("langchain_mistralai", _mistral_model, _mistral_settings,
-                       _mistral_request, _mistral_unavailable, _mistral_stop_reason),
-    SOCLAAS: _Provider("langchain_openai", _soclaas_model, _soclaas_settings,
-                       _soclaas_request, _soclaas_unavailable, _soclaas_stop_reason),
+    OLLAMA: _Provider("langchain_ollama", DEFAULT_MODEL, _ollama_model, _ollama_settings,
+                      _ollama_request, _ollama_unavailable, _ollama_stop_reason),
+    MISTRAL: _Provider("langchain_mistralai", DEFAULT_MISTRAL_MODEL, _mistral_model,
+                       _mistral_settings, _mistral_request, _mistral_unavailable,
+                       _mistral_stop_reason),
+    SOCLAAS: _Provider("langchain_openai", DEFAULT_SOCLAAS_MODEL, _soclaas_model,
+                       _soclaas_settings, _soclaas_request, _soclaas_unavailable,
+                       _soclaas_stop_reason),
 }
 _PACKAGES = frozenset(provider.package for provider in _PROVIDERS.values())
 
