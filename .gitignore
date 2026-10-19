@@ -300,11 +300,11 @@ results/
 # out, the per-question files of these two runs included.
 !/results/
 /results/*
-!/results/chunk-sweep-bm25-20261007/
-/results/chunk-sweep-bm25-20261007/*
-!/results/chunk-sweep-bm25-20261007/summary.csv
-!/results/chunk-sweep-bm25-20261007/summary.json
-!/results/chunk-sweep-fy2025-20261007/
-/results/chunk-sweep-fy2025-20261007/*
-!/results/chunk-sweep-fy2025-20261007/summary.csv
-!/results/chunk-sweep-fy2025-20261007/summary.json
+!/results/chunk-sweep-bm25-20261008/
+/results/chunk-sweep-bm25-20261008/*
+!/results/chunk-sweep-bm25-20261008/summary.csv
+!/results/chunk-sweep-bm25-20261008/summary.json
+!/results/chunk-sweep-fy2025-20261008/
+/results/chunk-sweep-fy2025-20261008/*
+!/results/chunk-sweep-fy2025-20261008/summary.csv
+!/results/chunk-sweep-fy2025-20261008/summary.json
