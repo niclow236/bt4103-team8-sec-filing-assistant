@@ -372,9 +372,9 @@ def _facts_copy(facts: bytes | None, facts_file: Path, directory: Path) -> Path:
 
 
 def _check_queries(scored: Sequence[BenchmarkQuestion], measured: dict[str, dict],
-                   facts_file: Path, *, store: Path) -> None:
+                   snapshot: Path, *, store: Path) -> None:
     """Refuse a run whose recorded C4 query for any question is not the one the
-    harness would build now, parsing with ``facts_file``, the copy of ``store``
+    harness would build now, parsing with ``snapshot``, the copy of ``store``
     that the refusal names."""
     from src.evaluation.full_ablation import MATRIX, query_record
     from src.evaluation.harness import benchmark_query
@@ -382,7 +382,7 @@ def _check_queries(scored: Sequence[BenchmarkQuestion], measured: dict[str, dict
 
     stack = MATRIX[REPLAY_ROW]
     for question in scored:
-        parsed = parse_question(question.question, facts_file=facts_file)
+        parsed = parse_question(question.question, facts_file=snapshot)
         query = stack.scoped(benchmark_query(parsed, question, top_k=stack.top_k))
         if query_record(query) != measured[question.question_id]["query"]:
             raise ValueError(
@@ -506,6 +506,9 @@ def run_generation_replay(
             )
         except (RunStopped, RunInterrupted) as error:
             report, stopped = error.report, error
+        if recorded.facts is None:
+            # The path it parsed with was never written: there was no store.
+            report["facts_file"] = None
         for row in report.get("results", []):
             question = question_by_id.get(row.get("question_id"))
             if question is not None:

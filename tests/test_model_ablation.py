@@ -2,6 +2,7 @@
 
 import csv
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -589,7 +590,9 @@ def _recorded(tmp_path, rows=None):
 def _replaying(seen, rows=None):
     def evaluate(questions, retriever, config, **kwargs):
         seen.append((questions, retriever, config, kwargs))
-        return {"config": config.to_dict(), "results": rows or [
+        # As the harness's report does, it names the store it parsed with.
+        return {"config": config.to_dict(), "facts_file": str(kwargs.get("facts_file")),
+                "results": rows or [
             _recorded_row("q001", generate_ms=400.0),
             _recorded_row("q002", question_type="unanswerable", abstained=True,
                           generate_ms=400.0)]}
@@ -625,8 +628,9 @@ def test_g3_replays_the_recorded_evidence_with_only_the_generator_changed(monkey
     # The recorded answers are the G row whose provider and model wrote them.
     assert [row["config"]["id"] for row in manifest["configurations"]] == ["G2", "G3"]
     assert manifest["configurations"][0]["config"]["origin"] == "full-matrix-20261017/C4"
-    assert json.loads((tmp_path / "replay" / "G3" / "report.json").read_text())["config"][
-        "provider"] == "soclaas"
+    report = json.loads((tmp_path / "replay" / "G3" / "report.json").read_text())
+    assert report["config"]["provider"] == "soclaas"
+    assert report["facts_file"] == str(tmp_path / "replay" / "facts.parquet")
     with (tmp_path / "replay" / "summary.csv").open(newline="") as stream:
         table = list(csv.DictReader(stream))
     assert [(row["config"], row["model"], row["median_generate_ms"]) for row in table] == [
@@ -826,8 +830,11 @@ def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
     pairs[-1]["rows"]["C4"]["query"]["wants_figures"] = not pairs[-1]["rows"]["C4"]["query"][
         "wants_figures"]
     matrix.write_rows(directory / "pairs.jsonl", pairs)
+    # It names the store to look at, not the deleted copy it parsed with,
+    # which keeps the store's file name (follow-up review of #163).
+    from src.retrieval.facts import FACTS_FILE
     with pytest.raises(ValueError, match=r"query .* differs from the one the run recorded; "
-                                         r"the facts store \(.*facts\.parquet\)"):
+                                         + re.escape(f"the facts store ({FACTS_FILE})")):
         recorded_answers(directory, chunks=snapshot)
     matrix.write_rows(directory / "pairs.jsonl", original)
 
@@ -929,6 +936,10 @@ def test_a_replay_without_a_facts_store_parses_with_it_missing(monkeypatch, tmp_
     parsed_with = seen[0][3]["facts_file"]
     assert parsed_with != live and parsed_with.parent == tmp_path / "no-facts"
     assert not parsed_with.exists()
+    # Its report says there was no store, rather than naming a file never
+    # written (follow-up review of #163).
+    report = json.loads((tmp_path / "no-facts" / "G3" / "report.json").read_text())
+    assert report["facts_file"] is None
 
 
 def test_a_run_judged_otherwise_or_short_of_its_team_retrieval_is_refused(answer_run):
