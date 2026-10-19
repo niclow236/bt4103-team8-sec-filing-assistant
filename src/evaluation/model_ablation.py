@@ -350,8 +350,13 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     try:
         generation = GenerationConfig(**answered["generation"])
     except TypeError:
+        generation = None
+    # The config does not check its fields' types, and a provider that is not
+    # a string fails only when the judge is built from it.
+    if generation is None or not all(isinstance(value, str) for value in (
+            generation.provider, generation.model, generation.prompt_template_id)):
         raise ValueError(f"{answers_config}'s 'generation' is not a generation config: "
-                         f"{answered['generation']!r}") from None
+                         f"{answered['generation']!r}")
     rows = read_rows(run_dir / REPLAY_ROW / "answers.jsonl")
     if [row["question_id"] for row in rows] != [question.question_id for question in team]:
         raise ValueError(f"the run's {REPLAY_ROW} answers do not cover its team questions in order")

@@ -1240,3 +1240,11 @@ def test_an_answers_config_whose_generation_is_not_a_config_is_refused_by_name(a
         answered | {"generation": {"model": "test", "prompt_template_id": "grounded_v4"}}))
     with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
         recorded_answers(directory, chunks=snapshot)
+    # PR review of #180: fields of the wrong type built a config that crashed
+    # later, when the judge looked its provider up.
+    for name in ("provider", "model", "prompt_template_id"):
+        generation = {"provider": "mistral", "model": "test", "prompt_template_id": "grounded_v4"}
+        (directory / "answers-config.json").write_text(json.dumps(
+            answered | {"generation": generation | {name: []}}))
+        with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
+            recorded_answers(directory, chunks=snapshot)
