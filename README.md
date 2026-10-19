@@ -56,19 +56,19 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. The one hosted option is Mistral's API on its free plan, which answers in seconds rather than minutes and needs a free account and API key of your own. Exact versions are pinned in `requirements.txt`.
+Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: Mistral's API on its free plan, with a free account and API key of your own, and NUS SoC's SOCLAAS API, with a key from your NUS account, which SoC pays for. Exact versions are pinned in `requirements.txt`.
 
 | Layer | What it uses |
 |---|---|
 | Filings | `edgartools` for EDGAR search, download and XBRL figures |
 | Keyword search | `rank-bm25` |
 | Dense search | `sentence-transformers` running `BAAI/bge-base-en-v1.5`, vectors stored in `chromadb` |
-| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default, or [Mistral's API](https://docs.mistral.ai), `ministral-8b-2512` by default |
-| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) and `ChatMistralAI` (`langchain-mistralai`) |
-| Holding the answer to a shape | `pydantic`, whose JSON schema either provider decodes against |
+| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default, [Mistral's API](https://docs.mistral.ai), `ministral-8b-2512` by default, or [SOCLAAS](https://soclaas-api.comp.nus.edu.sg), `qwen3.6:35b` by default |
+| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`), `ChatMistralAI` (`langchain-mistralai`) and `ChatOpenAI` (`langchain-openai`) |
+| Holding the answer to a shape | `pydantic`, whose JSON schema every provider decodes against |
 | Tests | `pytest`, with `pytest-cov` to measure coverage |
 
-Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral needs nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral).
+Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral and SOCLAAS need nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral) and [Setting up SOCLAAS](#setting-up-soclaas).
 
 ## Repository structure
 
@@ -1970,16 +1970,17 @@ measured without the metadata filter searches every filing, and the sidebar
 says so when one is picked.
 
 The sidebar's Answer model box chooses what writes the answer: the local
-Ollama model, or Mistral's free API (`ministral-8b-2512`), which answers in
-seconds rather than minutes and needs your own `MISTRAL_API_KEY` in `.env`.
+Ollama model, Mistral's free API (`ministral-8b-2512`) or SOCLAAS
+(`qwen3.6:35b`). The two hosted ones answer in seconds rather than minutes and
+need your own key in `.env`, `MISTRAL_API_KEY` or `SOCLAAS_API_KEY`.
 It opens on the provider `.env` names (`LLM_PROVIDER`, which unset means
 Ollama), and switching it lasts for the browser session and changes nothing
 in `.env`. Before this box the provider was `.env`'s alone to choose, so a
 `.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
 model, minutes at a time, with nothing on the page to say so.
 
-A figure question the facts store answers needs neither provider, whichever
-is picked: the chat model is built when an answer first needs one, not when
+A figure question the facts store answers needs no provider, whichever is
+picked: the chat model is built when an answer first needs one, not when
 the configuration is loaded. So Mistral with no key still answers "What was
 Apple's total revenue in FY2024?", and a question that does need the model
 fails with what the provider lacks. The box does not wait for that. As
@@ -2214,9 +2215,10 @@ python -m src.app.answers logs/evaluation-answers.jsonl --output logs/evaluation
 ```
 
 Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
-`--provider ollama` or `--provider mistral` to override `LLM_PROVIDER`, or
-`--model` to choose one of that provider's models. A `--provider` other than
-`LLM_PROVIDER` uses its own default model rather than `LLM_MODEL`. The JSON
+`--provider ollama`, `--provider mistral` or `--provider soclaas` to override
+`LLM_PROVIDER`, or `--model` to choose one of that provider's models. A
+`--provider` other than `LLM_PROVIDER` uses its own default model rather than
+`LLM_MODEL`. The JSON
 report records these settings, individual answers and aggregate rates. The
 command needs a populated benchmark and built indexes. Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`,
@@ -2650,10 +2652,11 @@ are in `docs/evaluation/generators-c4-20261018-summary.json` and
 **Recommendation.** Make SOCLAAS with `qwen3.6:35b` the generator for hosted
 answers in the demo and for later evaluation runs, in place of
 `ministral-8b-2512`. It is significantly more correct on this benchmark,
-equally careful about what the filings do not answer, and faster. Two things
-to settle first: SOCLAAS is a school service for teaching and experiments
-whose limits for a whole team are not published, and every presenter needs
-their own key. Keep Mistral one click away in the app as the fallback, and
+equally careful about what the filings do not answer, and faster. SOCLAAS
+is a school service for teaching and experiments; its default limits are 90
+requests a minute and $80 a day per user, and the 352 SOCLAAS requests this
+work made cost SoC $0.79, about $0.0022 each, so a full replay is about $0.34.
+Every presenter needs their own key. Keep Mistral one click away in the app as the fallback, and
 Ollama as the offline default, which `LLM_PROVIDER` still selects. Moving the
 hosted default changes `DEFAULT_PROVIDER` or the team's `.env` advice, not
 this measurement, so it is left to the team.
