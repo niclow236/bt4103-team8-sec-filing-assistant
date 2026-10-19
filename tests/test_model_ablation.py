@@ -1412,3 +1412,34 @@ def test_the_generation_matrix_leaves_the_advice_in_another_thread_s_retry_notic
         run_generation_ablation([_question()], _stack, run_id="threaded", results_root=tmp_path)
     [notice] = caplog.messages
     assert notice.startswith("other-run:") and "or set LLM_PROVIDER=ollama" in notice
+
+
+def test_a_stopped_generation_matrix_s_table_says_which_row_stopped(monkeypatch, tmp_path):
+    # #183: summary.csv showed a stopped row's partial figures as if they were complete.
+    import src.evaluation.model_ablation as module
+
+    def stops_on_mistral(questions, retriever, config, **kwargs):
+        report = _fake_evaluate(questions, retriever, config)
+        if config.provider == "mistral":
+            report["stopped"] = {"question_id": "q002", "error": "rate limit"}
+            raise RunStopped(report)
+        return report
+
+    monkeypatch.setattr(module, "evaluate", stops_on_mistral)
+    with pytest.raises(RunStopped):
+        run_generation_ablation([_question()], _stack, run_id="stopped", results_root=tmp_path)
+    with (tmp_path / "stopped" / "summary.csv").open(newline="") as stream:
+        table = {row["config"]: row.get("stopped") for row in csv.DictReader(stream)}
+    # G1 finished; G2 names where it stopped and why.
+    assert table == {"G1": "", "G2": "q002: rate limit"}
+    # The app reads the structured record from the JSON.
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    assert [row["stopped"] for row in summary["configurations"]] == [
+        None, {"question_id": "q002", "error": "rate limit"}]
+
+
+def test_the_embedding_matrix_s_table_has_no_stop_column(tmp_path):
+    # #183: only a G row can stop part-way, so the E table is left as it was.
+    run_embedding_ablation([_question()], _stack, run_id="embedding", results_root=tmp_path)
+    with (tmp_path / "embedding" / "summary.csv").open(newline="") as stream:
+        assert "stopped" not in csv.DictReader(stream).fieldnames

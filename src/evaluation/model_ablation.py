@@ -86,6 +86,8 @@ MODEL_FIELDS = (
     "max_tokens", "n_indexed", "n_truncated", "truncation_rate", "build_ms",
     "median_latency_ms", "retried_questions", "llm_questions", "llm_abstention_rate",
 )
+# A G row can stop part-way, so its table says where (#183); an E row cannot.
+GENERATION_FIELDS = (*MODEL_FIELDS, "stopped")
 
 
 def _write_report(run_dir: Path, config_id: str, report: dict[str, Any]) -> None:
@@ -229,7 +231,7 @@ def run_generation_ablation(
         if stopped is not None:
             break
     manifest = write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
-                                extra_fields=MODEL_FIELDS, matrix="generation")
+                                extra_fields=GENERATION_FIELDS, matrix="generation")
     if stopped is not None:
         raise stopped
     return manifest
