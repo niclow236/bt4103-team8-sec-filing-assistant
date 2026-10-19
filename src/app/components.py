@@ -28,7 +28,7 @@ import pandas as pd
 from src.config import read_tickers
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
-from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA
+from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
 from src.rag.query import ParsedQuestion, parse_question
 from src.rag.records import Answer, Citation, abstention_text
 from src.retrieval.constants import FINAL_K
@@ -891,11 +891,13 @@ _PROVIDERS = {
              "Setting up Ollama"),
     MISTRAL: ("Mistral", "on Mistral's API, with the MISTRAL_API_KEY in your .env. "
                          "An answer takes seconds.", "Setting up Mistral"),
+    SOCLAAS: ("SOCLAAS", "on NUS SoC's SOCLAAS API, with the SOCLAAS_API_KEY in your .env. "
+                         "An answer takes seconds.", "Setting up SOCLAAS"),
 }
 
 
 def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
-    """Pick what writes the answers, in the sidebar: the local model or the hosted one.
+    """Pick what writes the answers, in the sidebar: the local model or a hosted one.
 
     ``available`` is what ``state.answer_models()`` returns, taken whole so
     that a page does not take it apart to hand it over: each provider with
@@ -916,7 +918,7 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
             format_func=lambda option: _PROVIDERS[option][0], key=key,
             help="Opens on LLM_PROVIDER from .env, which unset means Ollama. "
                  "LLM_MODEL names the model of the provider .env selects; the "
-                 "other one answers with its default.",
+                 "others answer with their defaults.",
         )
         label, means, setup = _PROVIDERS[provider]
         st.caption(f"{models[provider]}, {means}")

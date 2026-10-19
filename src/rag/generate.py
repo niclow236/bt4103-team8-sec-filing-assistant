@@ -1,27 +1,30 @@
-"""Generate an answer from a grounded prompt, with a local model or Mistral's API.
+"""Generate an answer from a grounded prompt, with a local model or a hosted API.
 
-Two providers answer, chosen with ``LLM_PROVIDER`` in .env (#106). Ollama, the
-default, runs a model on the machine running the code, with no account, key or
-network. Mistral's hosted API answers in seconds rather than minutes, with each
-teammate's own key. One function, :func:`generate`, runs a ``GroundedPrompt``
-through the configured model and returns a ``Generation``: the answer, how long
-it took, and how many tokens it used.
+Three providers answer, chosen with ``LLM_PROVIDER`` in .env (#106, #163).
+Ollama, the default, runs a model on the machine running the code, with no
+account, key or network. Mistral's hosted API answers in seconds rather than
+minutes, with each teammate's own key, and so does SOCLAAS, NUS SoC's
+OpenAI-compatible API, which serves larger open-weight models. One function,
+:func:`generate`, runs a ``GroundedPrompt`` through the configured model and
+returns a ``Generation``: the answer, how long it took, and how many tokens it
+used.
 
 Two libraries do the work, each where it earns its place.
 
 LangChain is the client: ``ChatOllama`` for Ollama, ``ChatMistralAI`` for
-Mistral. Each streams and reports the token counts, and both implement the
-chat-model interface every LangChain model shares. That interface is the
-provider interface here: :func:`generate` takes any chat model, so a test passes
-a fake one. What differs between the two providers (how the client is built, how
-a request is sent, how a failure and a stop read) is kept in one ``_Provider``
-each, at the end of this module.
+Mistral, ``ChatOpenAI`` for SOCLAAS. Each streams and reports the token
+counts, and all implement the chat-model interface every LangChain model
+shares. That interface is the provider interface here: :func:`generate` takes
+any chat model, so a test passes a fake one. What differs between the
+providers (how the client is built, how a request is sent, how a failure and a
+stop read) is kept in one ``_Provider`` each, at the end of this module.
 
 Pydantic fixes the shape of the answer. The JSON schema of
 ``GroundedAnswer.for_sources(n)`` is sent with every request, as Ollama's output
-format or as Mistral's strict JSON-schema response format, and both constrain
-decoding to it: the model cannot leave out the source numbers, and cannot cite a
-source it was not shown. The same Pydantic model then validates what came back.
+format or as Mistral's and SOCLAAS's strict JSON-schema response format, and
+all constrain decoding to it: the model cannot leave out the source numbers,
+and cannot cite a source it was not shown. The same Pydantic model then
+validates what came back.
 
 The model writes JSON, and nobody wants to watch JSON arrive. :func:`stream`
 reads the partial JSON as it grows and yields the answer as prose, adding a
@@ -68,6 +71,7 @@ from .constants import (
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_URL,
     DEFAULT_PROVIDER,
+    DEFAULT_SOCLAAS_MODEL,
     LLM_BASE_URL_ENV,
     LLM_MODEL_ENV,
     LLM_NUM_GPU_ENV,
@@ -82,6 +86,11 @@ from .constants import (
     OLLAMA,
     PROMPT_TEMPLATE_ID,
     PROVIDERS,
+    SOCLAAS,
+    SOCLAAS_API_KEY_ENV,
+    SOCLAAS_API_URL,
+    SOCLAAS_BASE_URL_ENV,
+    SOCLAAS_PORTAL,
 )
 from .prompt import GroundedPrompt
 from .records import Generation, GenerationConfig, GroundedAnswer, render_sentence
@@ -331,7 +340,8 @@ def config_from_env(
     Provider: the argument, else ``LLM_PROVIDER``, else ``DEFAULT_PROVIDER``
     (Ollama). Model: the argument, else ``LLM_MODEL`` when the provider is the
     one the environment names, else that provider's default, ``DEFAULT_MODEL``
-    for Ollama and ``DEFAULT_MISTRAL_MODEL`` for Mistral. ``LLM_MODEL`` is set
+    for Ollama, ``DEFAULT_MISTRAL_MODEL`` for Mistral and
+    ``DEFAULT_SOCLAAS_MODEL`` for SOCLAAS. ``LLM_MODEL`` is set
     for the provider in .env, so ``--provider mistral`` beside an Ollama
     ``LLM_MODEL`` asks Mistral for its default rather than for a model it does
     not serve. The environment is the process's, with ``dotenv`` (the project's
@@ -346,7 +356,7 @@ def config_from_env(
         chosen_provider = _provider_name(provider, "the provider argument")
     else:
         chosen_provider = _provider_name(configured, LLM_PROVIDER_ENV)
-    default = DEFAULT_MISTRAL_MODEL if chosen_provider == MISTRAL else DEFAULT_MODEL
+    default = _PROVIDERS[chosen_provider].default_model
     configured_model = env.get(LLM_MODEL_ENV) if chosen_provider == configured else None
     chosen = (model or configured_model or "").strip() or default
     return GenerationConfig(
@@ -379,13 +389,15 @@ def chat_model(
     environ: Mapping[str, str] | None = None,
     dotenv: Path = ENV_FILE,
 ) -> Any:
-    """The LangChain chat model for a config: ``ChatOllama`` or ``ChatMistralAI``.
+    """The LangChain chat model for a config: ``ChatOllama``, ``ChatMistralAI`` or
+    ``ChatOpenAI`` (SOCLAAS).
 
     For Ollama, the server is ``base_url``, else ``LLM_BASE_URL`` from the
     environment or .env, else Ollama's default address. ``LLM_NUM_GPU``, when
     set, says how many layers go on the GPU; see ``constants.LLM_NUM_GPU_ENV``
     for when to set it. For Mistral, see :func:`_mistral_settings`, which refuses
-    ``base_url``, since Mistral's address comes from ``MISTRAL_BASE_URL``. The
+    ``base_url``, since Mistral's address comes from ``MISTRAL_BASE_URL``, and
+    :func:`_soclaas_settings` likewise for SOCLAAS. The
     settings are read as :func:`config_from_env` reads them: the process
     environment with ``dotenv`` loaded into it, or ``environ`` in place of both.
     The generation options are not set here: :func:`stream` sends them with
@@ -408,7 +420,7 @@ def check_provider(
     """Refuse the settings :func:`chat_model` would refuse, and build nothing.
 
     For a caller that has to say early that a provider cannot answer, and may
-    never need its client. The app offers both providers and builds a chat
+    never need its client. The app offers every provider and builds a chat
     model only when an answer needs one, since a figure looked up in the facts
     store needs none; it says beside the provider picked that its key is
     missing, before a question is asked. That check runs on every rerun of the
@@ -428,8 +440,8 @@ def _ollama_settings(
 ) -> dict[str, Any]:
     """What ``ChatOllama`` is built with, on the server :func:`chat_model` describes.
 
-    Named as :func:`_ollama_client` takes them, as Mistral's settings are for
-    its client, so both providers' ``settings`` return one shape.
+    Named as :func:`_ollama_client` takes them, as Mistral's and SOCLAAS's
+    settings are for theirs, so every provider's ``settings`` returns one shape.
     """
     if base_url is None:
         base_url = (env.get(LLM_BASE_URL_ENV) or "").strip() or DEFAULT_OLLAMA_URL
@@ -989,12 +1001,212 @@ def _mistral_request(
     }
 
 
+def _soclaas_request(
+    config: GenerationConfig, model: Any, schema: type[GroundedAnswer], max_tokens: int
+) -> dict[str, Any]:
+    """What goes to SOCLAAS with the messages: Mistral's strict JSON-schema
+    response format and settings, the format sent as part of the body.
+
+    Given to ``ChatOpenAI`` as ``response_format``, it would send the request
+    through the OpenAI client's parsing stream, which raises at the end of an
+    answer cut at the output ceiling instead of handing it on as truncated.
+    In ``extra_body`` the client streams as it does without one, and the
+    server still reads the format from the body.
+    """
+    request = _mistral_request(config, model, schema, max_tokens)
+    return {"extra_body": {"response_format": request.pop("response_format")}, **request}
+
+
+def _soclaas_stop_reason(
+    metadata: Mapping[str, Any], config: GenerationConfig, whole: bool
+) -> str | None:
+    """Why SOCLAAS stopped, as its OpenAI-style ``finish_reason`` says, read as
+    :func:`_mistral_stop_reason` reads Mistral's.
+
+    "stop" is a finished answer and "length" one cut at the ceiling. No reason
+    is a stream that ended early, unless the output is a whole JSON document,
+    which is handed on with none. Any other reason, such as "content_filter",
+    comes back the same for the same prompt.
+    """
+    reason = metadata.get("finish_reason")
+    if reason in ("stop", "length"):
+        return reason
+    if reason is None and whole:
+        return None
+    if reason is None:
+        raise ProviderBusy(
+            f"SOCLAAS stopped {config.model!r} part-way without finishing: ask again, or "
+            f"{_ANSWER_LOCALLY}"
+        )
+    raise ProviderUnavailable(
+        f"SOCLAAS stopped {config.model!r} without finishing (finish_reason {reason!r}); "
+        f"{_ANSWER_LOCALLY}"
+    )
+
+
+def _soclaas_settings(
+    config: GenerationConfig, base_url: str | None, env: Mapping[str, str],
+) -> dict[str, Any]:
+    """What ``ChatOpenAI`` is built with for SOCLAAS: the model, the key and the
+    address, named as :func:`_soclaas_client` takes them.
+
+    As for Mistral: a missing key is refused here, with where to make one, and
+    ``base_url``, the Ollama server's address, is refused rather than ignored.
+    The address is SOCLAAS's own unless ``SOCLAAS_BASE_URL`` names another.
+    """
+    if base_url is not None:
+        raise ValueError(
+            f"base_url is the Ollama server's address; SOCLAAS's comes from {SOCLAAS_BASE_URL_ENV}"
+        )
+    key = (env.get(SOCLAAS_API_KEY_ENV) or "").strip()
+    if not key:
+        lacks = f"{SOCLAAS_API_KEY_ENV} is not set"
+        raise ProviderUnavailable(
+            f"the provider is {SOCLAAS!r} but {lacks}: make a key with your SoC account at "
+            f"{SOCLAAS_PORTAL} and put it in your .env, as 'Setting up SOCLAAS' in the README "
+            f"says, then restart the notebook or command so the key is read, or {_ANSWER_LOCALLY}",
+            reason=lacks,
+        )
+    address = (env.get(SOCLAAS_BASE_URL_ENV) or "").strip().rstrip("/") or SOCLAAS_API_URL
+    return {"model": config.model, "key": key, "base_url": address}
+
+
+def _soclaas_model(config: GenerationConfig, base_url: str | None, env: Mapping[str, str]) -> Any:
+    """``ChatOpenAI`` on SOCLAAS for the config, one per model, key and address,
+    as :func:`_mistral_model` keeps one per question run."""
+    return _soclaas_client(**_soclaas_settings(config, base_url, env),
+                           timeout=constants.HOSTED_TIMEOUT_S)
+
+
+@lru_cache(maxsize=8)
+def _soclaas_client(model: str, key: str, base_url: str, timeout: float) -> Any:
+    """One ``ChatOpenAI`` per model, key, address and timeout, built on first use.
+
+    ``max_retries=0`` sends a request once, as both other providers do: the
+    OpenAI client would otherwise ask again on its own after a rate limit or
+    an outage, inside the measured latency, where the evaluation harness asks
+    again on ``ProviderBusy`` and records it. ``stream_usage`` asks for the
+    token counts, which ChatOpenAI asks for only on OpenAI's own address.
+    """
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(model=model, api_key=key, base_url=base_url, timeout=timeout,
+                      max_retries=0, stream_usage=True)
+
+
+def _soclaas_unavailable(
+    error: Exception, model: Any, config: GenerationConfig
+) -> ProviderUnavailable | None:
+    """The error to raise in place of one from SOCLAAS's client, or None.
+
+    ChatOpenAI raises the OpenAI client's errors, which wrap httpx2's: an
+    ``APIStatusError`` for a refused request, with its body read, an
+    ``APIConnectionError`` (or its ``APITimeoutError``) when no response came,
+    and a bare ``APIError`` for an error sent inside the stream. A connection
+    that breaks off part-way is a connection error too, told apart by the
+    httpx2 error it wraps. Each becomes
+    a message that says what to do, and the ones asking again may fix are
+    :class:`ProviderBusy`. Anything else comes through as itself.
+    """
+    import httpx2
+    import openai
+
+    url = getattr(model, "openai_api_base", None)
+    api = f"SOCLAAS at {url}" if url else "SOCLAAS"
+    if isinstance(error, openai.APIStatusError):
+        status = error.status_code
+        detail, _ = _error_detail(error.response)
+        said = f"HTTP {status}: {detail}" if detail else f"HTTP {status}"
+        # A rate limit is asked again whatever it is written in: a gateway in
+        # front of SOCLAAS may send its 429 as plain text.
+        if status == 429:
+            retry_after = _retry_after(error.response)
+            wait = f"wait {ceil(retry_after)}s" if retry_after else "wait a minute"
+            return ProviderBusy(
+                f"SOCLAAS's rate limit for {config.model!r} was reached ({said}); {wait} and "
+                f"ask again",
+                retry_after=retry_after,
+            )
+        content_type = error.response.headers.get("content-type", "")
+        # SOCLAAS refuses in JSON. A page in anything else below 500, such as
+        # a web server's 404 or a network's login page, is not SOCLAAS's.
+        if status < 500 and content_type and "json" not in content_type:
+            return ProviderUnavailable(
+                f"{api} did not answer as SOCLAAS does ({said}): correct "
+                f"{SOCLAAS_BASE_URL_ENV} or unset it, since nobody needs to set it, or sign in "
+                f"to the network if it has a login page"
+            )
+        if status in (401, 403):
+            refused = f"SOCLAAS refused the API key ({said})"
+            return ProviderUnavailable(
+                f"{refused}; check {SOCLAAS_API_KEY_ENV} in your .env, or make a new key at "
+                f"{SOCLAAS_PORTAL}, then restart the notebook or command so the new key is read",
+                reason=refused,
+            )
+        # SOCLAAS answers a model it does not serve with a 503, which asking
+        # again will never fix.
+        if "not configured" in detail:
+            return ProviderUnavailable(
+                f"SOCLAAS does not serve {config.model!r} ({said}); set {LLM_MODEL_ENV} to a "
+                f"model it serves, such as {DEFAULT_SOCLAAS_MODEL}, or unset it"
+            )
+        if status >= 500:
+            return ProviderBusy(
+                f"SOCLAAS failed while running {config.model!r} ({said}): ask again, or "
+                f"{_ANSWER_LOCALLY}",
+                retry_after=_retry_after(error.response),
+            )
+        return ProviderUnavailable(f"SOCLAAS refused the request ({said})")
+    if isinstance(error, openai.APITimeoutError):
+        return ProviderBusy(
+            f"{api} sent nothing for {constants.HOSTED_TIMEOUT_S}s while running "
+            f"{config.model!r}: ask again, or {_ANSWER_LOCALLY}"
+        )
+    # httpx2's own error, under the OpenAI client's and ChatOpenAI's wrappers.
+    # The OpenAI client sends with httpx2, not with the httpx the other two
+    # providers use.
+    cause = error
+    while cause is not None and not isinstance(cause, httpx2.TransportError):
+        cause = cause.__cause__
+    # A connection that broke off part-way, which the OpenAI client also
+    # reports as a connection error.
+    if isinstance(cause, (httpx2.RemoteProtocolError, httpx2.ReadError, httpx2.WriteError)):
+        return ProviderBusy(
+            f"the connection to {api} broke off ({type(cause).__name__}: {cause}): ask again, "
+            f"or {_ANSWER_LOCALLY}"
+        )
+    if isinstance(error, openai.APIConnectionError):
+        why = f" ({cause})" if cause is not None and str(cause) else ""
+        if "CERTIFICATE_VERIFY_FAILED" in why:
+            return ProviderUnavailable(
+                f"cannot reach {api}{why}: its certificate did not verify, as happens on a "
+                f"network whose proxy re-signs HTTPS, so asking again will not help: try "
+                f"another network, or {_ANSWER_LOCALLY}"
+            )
+        if url and url.rstrip("/") != SOCLAAS_API_URL:
+            return ProviderUnavailable(
+                f"cannot reach {api}{why}, the address {SOCLAAS_BASE_URL_ENV} sets: correct it, "
+                f"or unset it, since nobody needs to set it"
+            )
+        return ProviderBusy(
+            f"cannot reach {api}{why}: check the internet connection, or {_ANSWER_LOCALLY}"
+        )
+    if isinstance(error, openai.APIError):
+        return ProviderBusy(
+            f"SOCLAAS stopped {config.model!r} part-way with an error ({error.message}): ask "
+            f"again, or {_ANSWER_LOCALLY}"
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class _Provider:
     """Everything that differs between the providers, for one of them.
 
-    ``package`` is the LangChain package its chat model comes from; ``build``
-    makes that model for a config, from the settings :func:`chat_model` read;
+    ``package`` is the LangChain package its chat model comes from;
+    ``default_model`` is the model it answers with when nothing names one;
+    ``build`` makes that model for a config, from the settings
+    :func:`chat_model` read;
     ``settings`` checks those settings and returns what ``build`` builds with,
     as the keyword arguments of the provider's client, building nothing
     itself, which is all :func:`check_provider` runs;
@@ -1006,6 +1218,7 @@ class _Provider:
     """
 
     package: str
+    default_model: str
     build: Callable[[GenerationConfig, str | None, Mapping[str, str]], Any]
     settings: Callable[[GenerationConfig, str | None, Mapping[str, str]], dict[str, Any]]
     request: Callable[[GenerationConfig, Any, type[GroundedAnswer], int], dict[str, Any]]
@@ -1014,10 +1227,14 @@ class _Provider:
 
 
 _PROVIDERS = {
-    OLLAMA: _Provider("langchain_ollama", _ollama_model, _ollama_settings, _ollama_request,
-                      _ollama_unavailable, _ollama_stop_reason),
-    MISTRAL: _Provider("langchain_mistralai", _mistral_model, _mistral_settings,
-                       _mistral_request, _mistral_unavailable, _mistral_stop_reason),
+    OLLAMA: _Provider("langchain_ollama", DEFAULT_MODEL, _ollama_model, _ollama_settings,
+                      _ollama_request, _ollama_unavailable, _ollama_stop_reason),
+    MISTRAL: _Provider("langchain_mistralai", DEFAULT_MISTRAL_MODEL, _mistral_model,
+                       _mistral_settings, _mistral_request, _mistral_unavailable,
+                       _mistral_stop_reason),
+    SOCLAAS: _Provider("langchain_openai", DEFAULT_SOCLAAS_MODEL, _soclaas_model,
+                       _soclaas_settings, _soclaas_request, _soclaas_unavailable,
+                       _soclaas_stop_reason),
 }
 _PACKAGES = frozenset(provider.package for provider in _PROVIDERS.values())
 

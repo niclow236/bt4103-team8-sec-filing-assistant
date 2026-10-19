@@ -28,8 +28,10 @@ from src.rag.constants import (
     LLM_PROVIDER_ENV,
     MISTRAL_API_KEY_ENV,
     MISTRAL_BASE_URL_ENV,
+    SOCLAAS_API_KEY_ENV,
+    SOCLAAS_BASE_URL_ENV,
 )
-from src.rag.generate import _mistral_client, _ollama_client
+from src.rag.generate import _mistral_client, _ollama_client, _soclaas_client
 from src.retrieval import embed
 from src.retrieval.records import RetrievedPassage
 
@@ -144,7 +146,8 @@ def fake_model(monkeypatch):
 # The settings that choose and reach the model that answers, read from the
 # environment and the project's .env.
 LLM_SETTINGS = (LLM_PROVIDER_ENV, LLM_MODEL_ENV, LLM_BASE_URL_ENV, LLM_NUM_GPU_ENV,
-                MISTRAL_API_KEY_ENV, MISTRAL_BASE_URL_ENV)
+                MISTRAL_API_KEY_ENV, MISTRAL_BASE_URL_ENV, SOCLAAS_API_KEY_ENV,
+                SOCLAAS_BASE_URL_ENV)
 
 
 @pytest.fixture(autouse=True)
@@ -166,11 +169,13 @@ def _no_local_settings(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     _mistral_client.cache_clear()
     _ollama_client.cache_clear()
+    _soclaas_client.cache_clear()
     yield
     for name in LLM_SETTINGS:
         os.environ.pop(name, None)
     _mistral_client.cache_clear()
     _ollama_client.cache_clear()
+    _soclaas_client.cache_clear()
 
 
 @pytest.fixture(autouse=True)

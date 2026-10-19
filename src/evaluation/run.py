@@ -45,12 +45,9 @@ def _query(question: BenchmarkQuestion, *, top_k: int, metadata_filter: bool) ->
 
     from src.rag.query import parse_question
 
-    query = parse_question(question.question).to_query(top_k=top_k)
-    if question.ticker is not None:
-        query = replace(query, tickers=(question.ticker,))
-    if question.fiscal_year is not None:
-        query = replace(query, fiscal_years=(question.fiscal_year,))
-    return query
+    from .harness import benchmark_query
+
+    return benchmark_query(parse_question(question.question), question, top_k=top_k)
 
 
 def _summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:

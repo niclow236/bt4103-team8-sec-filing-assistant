@@ -56,19 +56,19 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. The one hosted option is Mistral's API on its free plan, which answers in seconds rather than minutes and needs a free account and API key of your own. Exact versions are pinned in `requirements.txt`.
+Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: Mistral's API on its free plan, with a free account and API key of your own, and NUS SoC's SOCLAAS API, with a key from your SoC account, which SoC pays for. Exact versions are pinned in `requirements.txt`.
 
 | Layer | What it uses |
 |---|---|
 | Filings | `edgartools` for EDGAR search, download and XBRL figures |
 | Keyword search | `rank-bm25` |
 | Dense search | `sentence-transformers` running `BAAI/bge-base-en-v1.5`, vectors stored in `chromadb` |
-| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default, or [Mistral's API](https://docs.mistral.ai), `ministral-8b-2512` by default |
-| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`) and `ChatMistralAI` (`langchain-mistralai`) |
-| Holding the answer to a shape | `pydantic`, whose JSON schema either provider decodes against |
+| Answer generation | a local model served by [Ollama](https://ollama.com), `llama3.2:3b` by default, [Mistral's API](https://docs.mistral.ai), `ministral-8b-2512` by default, or [SOCLAAS](https://soclaas-api.comp.nus.edu.sg), `qwen3.6:35b` by default |
+| Talking to the model | LangChain's `ChatOllama` (`langchain-ollama`), `ChatMistralAI` (`langchain-mistralai`) and `ChatOpenAI` (`langchain-openai`) |
+| Holding the answer to a shape | `pydantic`, whose JSON schema every provider decodes against |
 | Tests | `pytest`, with `pytest-cov` to measure coverage |
 
-Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral needs nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral).
+Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral and SOCLAAS need nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral) and [Setting up SOCLAAS](#setting-up-soclaas).
 
 ## Repository structure
 
@@ -120,7 +120,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
-│   │   ├── generate.py      #   runs the prompt through Ollama or Mistral, streaming
+│   │   ├── generate.py      #   runs the prompt through Ollama, Mistral or SOCLAAS, streaming
 │   │   ├── numeric.py       #   answers a numeric question from the facts store, citing the table
 │   │   ├── decompose.py     #   searches a multi-filing question once per filing, then interleaves
 │   │   ├── citations.py     #   resolves [n] markers back to the passages they were shown as
@@ -1064,7 +1064,7 @@ half a second.
 ## Answering a question
 
 The RAG stage turns a question into an answer that cites the passages it came
-from. One of two providers writes the answer, chosen with `LLM_PROVIDER` in
+from. One of three providers writes the answer, chosen with `LLM_PROVIDER` in
 `.env`:
 
 - `ollama`, the default: a local model served by Ollama. It needs no account,
@@ -1073,16 +1073,19 @@ from. One of two providers writes the answer, chosen with `LLM_PROVIDER` in
 - `mistral`: an open-weight Ministral model on Mistral's API, on the free plan.
   An answer takes about two seconds, and needs an internet connection and an
   API key from your own Mistral account.
+- `soclaas`: an open-weight model on NUS SoC's SOCLAAS API, which serves larger
+  models than Mistral's free plan. An answer takes about a second, and needs an
+  internet connection (no VPN) and a SOCLAAS API key.
 
-Both get the same prompt and the same answer schema, and everything before and
+All get the same prompt and the same answer schema, and everything before and
 after generation is the same code. Each answer records the provider and model
 that wrote it, in `answer.config`. Two settings in `.env` choose them, and
 neither is required:
 
 | Variable | Default | When to set it |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral) |
-| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks the other one with `--provider` uses that provider's default |
+| `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral); `soclaas` to answer with SOCLAAS, once you have [set it up](#setting-up-soclaas) |
+| `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral, `qwen3.6:35b` with SOCLAAS | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks another one with `--provider` uses that provider's default |
 
 ### Setting up Ollama
 
@@ -1166,6 +1169,50 @@ to the exact digit at `FINAL_K` 16 (20 of 28, against 17 for 14B), abstained
 less (2 against 4), and is allowed six times as many requests a minute. The
 hosted runs under [Searching the indexes](#searching-the-indexes) and
 [the evaluation](docs/mistral-free-tier-evaluation.md) have the details.
+
+### Setting up SOCLAAS
+
+Only needed to answer with SOCLAAS, the OpenAI-compatible LLM API NUS School of
+Computing runs for teaching and experiments
+(<https://soclaas-api.comp.nus.edu.sg>). It needs no VPN to answer, so a key
+is all a teammate needs.
+
+1. Make an API key at <https://soclaas-portal.comp.nus.edu.sg>, signing in
+   with your School of Computing (SoC) account; activate one at
+   <https://mysoc.nus.edu.sg/~newacct> if you have not. SOCLAAS's
+   [getting-started guide](https://dochub.comp.nus.edu.sg/cf/guides/soclaas/start)
+   walks through it. On 18 October 2026 neither page loaded from outside the
+   NUS network while the API did, so make the key on campus or over the NUS
+   VPN if they do not load.
+2. Put it in your own `.env`, as for Mistral: remove the `#` from the
+   `# SOCLAAS_API_KEY=` line `.env.example` leaves for it, paste your key after
+   the `=`, and choose the provider:
+
+   ```
+   LLM_PROVIDER=soclaas
+   SOCLAAS_API_KEY=<your key>
+   ```
+
+   The same rules as for a Mistral key apply: it is yours, it stays in `.env`,
+   and the app opens on Ollama with SOCLAAS one click away unless
+   `LLM_PROVIDER=soclaas` is set.
+3. Ask a question that needs the model. `answer.config` should record
+   `provider='soclaas'` and `model='qwen3.6:35b'`.
+
+SOCLAAS answers with `qwen3.6:35b` (Qwen 3.6 35B A3B) unless `LLM_MODEL` names
+another of its models. It is named by its ID rather than SOCLAAS's `default`
+alias, which pointed at the same model on 16 October 2026 but can be repointed,
+and a recorded run has to name the model that wrote it. Leave out `x-test-1` and
+`x-test-2`, which SOCLAAS lists as testing models that can change.
+`SOCLAAS_BASE_URL` is read too, but nobody needs to set it: unset, the code uses
+SOCLAAS's own address.
+
+The request is the one Mistral gets: the same prompt, and the answer schema as a
+strict JSON-schema response format. A missing key, a key SOCLAAS refuses, a
+model it does not serve, a rate limit, an outage, a server that cannot be
+reached and an answer that ends before it is finished each raise
+`ProviderUnavailable` saying what to do, and the ones asking again may fix are
+`ProviderBusy`, as for Mistral.
 
 ### From a question to an answer
 
@@ -1529,8 +1576,8 @@ The model does not write free text. `GroundedAnswer` in `src/rag/records.py` is
 a Pydantic model: whether the sources answer the question at all, then the
 answer as a list of sentences, each with the numbers of the sources it draws on.
 Its JSON schema goes with every request, as Ollama's output format or as
-Mistral's strict JSON-schema response format, and either one restricts the
-model's decoding to that shape. For a prompt with eight sources the schema only
+Mistral's and SOCLAAS's strict JSON-schema response format, and each restricts
+the model's decoding to that shape. For a prompt with eight sources the schema only
 admits the numbers 1 to 8, so the model cannot cite a source it was not shown:
 asked outright to cite source 9 of 3, the model wrote `[2]`. The same Pydantic
 model validates the output afterwards.
@@ -1924,16 +1971,17 @@ measured without the metadata filter searches every filing, and the sidebar
 says so when one is picked.
 
 The sidebar's Answer model box chooses what writes the answer: the local
-Ollama model, or Mistral's free API (`ministral-8b-2512`), which answers in
-seconds rather than minutes and needs your own `MISTRAL_API_KEY` in `.env`.
+Ollama model, Mistral's free API (`ministral-8b-2512`) or SOCLAAS
+(`qwen3.6:35b`). The two hosted ones answer in seconds rather than minutes and
+need your own key in `.env`, `MISTRAL_API_KEY` or `SOCLAAS_API_KEY`.
 It opens on the provider `.env` names (`LLM_PROVIDER`, which unset means
 Ollama), and switching it lasts for the browser session and changes nothing
 in `.env`. Before this box the provider was `.env`'s alone to choose, so a
 `.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
 model, minutes at a time, with nothing on the page to say so.
 
-A figure question the facts store answers needs neither provider, whichever
-is picked: the chat model is built when an answer first needs one, not when
+A figure question the facts store answers needs no provider, whichever is
+picked: the chat model is built when an answer first needs one, not when
 the configuration is loaded. So Mistral with no key still answers "What was
 Apple's total revenue in FY2024?", and a question that does need the model
 fails with what the provider lacks. The box does not wait for that. As
@@ -2168,11 +2216,12 @@ python -m src.app.answers logs/evaluation-answers.jsonl --output logs/evaluation
 ```
 
 Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
-`--provider ollama` or `--provider mistral` to override `LLM_PROVIDER`, or
-`--model` to choose one of that provider's models. A `--provider` other than
-`LLM_PROVIDER` uses its own default model rather than `LLM_MODEL`. The JSON
-report records these settings, individual answers and aggregate rates. The
-command needs a populated benchmark and built indexes. Programmatic runs use
+`--provider ollama`, `--provider mistral` or `--provider soclaas` to override
+`LLM_PROVIDER`, or `--model` to choose one of that provider's models. A
+`--provider` other than `LLM_PROVIDER` uses its own default model rather than
+`LLM_MODEL`. The JSON report records these settings, individual answers and
+aggregate rates. The command needs a populated benchmark and built indexes.
+Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`,
 which returns the report. A run that stops part-way raises instead:
 `RunStopped`, a `ProviderUnavailable`, when the provider cannot answer, and
@@ -2333,7 +2382,8 @@ is a hosted model's judgement, from one run.
 
 ### Embedding and generation ablations
 
-Issue #46 compares three embedding configurations and both answer providers.
+Issue #46 compares three embedding configurations and the answer providers;
+#163 adds G3, SOCLAAS with `qwen3.6:35b`.
 The registry in `src/evaluation/model_ablation.py` records the encoder, vector
 width, query and passage prefixes, token limit and index directory together.
 `EmbeddingConfig` carries those settings through stack assembly and dense
@@ -2386,14 +2436,17 @@ files to the new sibling names before running again; moving existing indexes
 does not require re-encoding.
 
 G1 is local Ollama with the pinned default `llama3.2:3b`; G2 is hosted Mistral
-with the app's pinned `ministral-8b-2512`. They share retrieval indexes and use
+with the app's pinned `ministral-8b-2512`; G3 is SOCLAAS with
+`qwen3.6:35b`, pinned by its ID. They share retrieval indexes and use
 C4's passage budget and answer settings, including decomposition and refusal.
 The facts shortcut is disabled by default so numeric questions exercise the
 providers; `--no-facts` states that explicitly. `--with-facts` includes the
 shortcut and records that override. The table reports overall abstention,
 provider-routed question count and abstention rate, median answer latency and
 how many completed questions needed a retry. Reports retain routes and numeric
-verification checks. G1 needs Ollama and its model; G2 needs `MISTRAL_API_KEY`.
+verification checks. G1 needs Ollama and its model; G2 needs `MISTRAL_API_KEY`;
+G3 needs `SOCLAAS_API_KEY`.
+
 
 Each run writes `report.json` for each configuration and a `summary.csv` and
 `summary.json` under `results/<run-id>/`. C, E and G runners share the table
@@ -2525,6 +2578,94 @@ description preserves its complete provider CSV alongside the embedding CSV.
 All six E rows and both G rows required by issue #46 are measured and
 documented. The embedding run's application commit `a0cb411` passed all
 **1,229 tests**; the provider rerun's commit `1cf4458` passed all **1,294 tests**.
+
+#### G rows over a full-matrix run's recorded evidence
+
+The `generation` command answers through the app's C4 stack, with
+decomposition and refusal on, and judges nothing. To set a generator beside the
+answers the [complete C0–C6 experiment](#complete-c0c6-experiment) recorded for
+C4, `replay` answers the run's recorded C4 rankings with each named G row. It
+keeps the matrix's C4 answer settings (no facts, decomposition or refusal
+shortcuts) and judges with the model and rubric that judged the run's own
+answers. So the generator is the only change:
+
+```bash
+python -m src.evaluation.model_ablation replay results/full-matrix-20261017 \
+  --rows G3 --run-id generators-c4-20261018
+```
+
+The run must be complete, over this corpus and its frozen benchmark snapshot;
+anything else is refused before a model is built, and so is a run whose
+recorded queries this code would no longer build, as a changed facts store or
+company list makes it. Each named row's config is the recorded one with only
+the provider and model changed. Any G row can be replayed, so a baseline can be
+repeated to measure run-to-run noise; a replay of the model that wrote the
+recorded answers is named apart from them, such as `G2-replay`. The table puts
+the recorded answers first, as the G row that wrote them, and each replayed
+row after, with judged correctness and faithfulness, abstention on unanswerable
+and on answerable questions, citation precision, answers with an invalid or
+unresolved citation marker, schema failures, answers cut at
+`MAX_OUTPUT_TOKENS`, judge failures, median and 95th-percentile (nearest-rank)
+generation latency, and mean input and output tokens. A missing key stops the
+command before it writes anything, and a stopped row keeps its answers.
+
+The replay was measured on 18 October 2026 at `165963f`, on an Apple M2 with
+8 GiB RAM, over `full-matrix-20261017` (#161): the 150 team questions, the
+28,313-passage corpus, and the C4 rankings, settings and judge that run
+recorded. G2 is that run's own C4 answers, which scored 0.8182 in the
+[complete C0–C6 experiment](#complete-c0c6-experiment); G3 answered the same
+evidence through SOCLAAS. Both were judged by `ministral-8b-2512` with
+`answer-quality-v1`, by the command above.
+
+| | G2 `ministral-8b-2512` (Mistral) | G3 `qwen3.6:35b` (SOCLAAS) |
+| --- | ---: | ---: |
+| Judged correctness (150 of 150 scored) | 0.8182 | **0.8780** |
+| Judged faithfulness | 0.9157 | 0.9393 |
+| Unanswerable questions abstained (4) | 4 | 4 |
+| Answerable questions abstained (146) | 1 | 1 |
+| Citation precision | 0.4385 | 0.5605 |
+| Answers with an invalid or unresolved citation | 0 | 0 |
+| Schema failures | 0 | 0 |
+| Cut off at `MAX_OUTPUT_TOKENS` (1,024) | 0 | 0 |
+| Judge failures, retried questions | 0, 0 | 0, 0 |
+| Median / p95 generation latency | 1,655 / 5,249 ms | **1,002 / 3,755 ms** |
+| Mean input / output tokens | 5,154 / 129 | 5,153 / 126 |
+
+G3 is 0.060 more correct, judged question by question over the same evidence:
+better on 36 questions, worse on 16 and the same on 98. A paired bootstrap
+(10,000 resamples) puts the difference between +0.023 and +0.097 at 95%, and
+an exact sign test on the 52 changed questions gives p = 0.008. The gain is
+largest on numeric (0.841 to 0.903, 88 questions) and temporal questions
+(0.545 to 0.800, 10), and small on factual ones (0.817 to 0.831, 44). Both
+abstained on all four unanswerable questions and on the same number of
+answerable ones. G3's longest answer used 887 output tokens, a full list of
+Meta's risks that finished on its own, so the 1,024-token ceiling still fits.
+Its latency is SOCLAAS's on a Sunday evening, a shared school service, and is
+not a guarantee. A repeat of the same replay early on 19 October scored 0.8770
+(faithfulness 0.934, the same citation precision, median and p95 latency
+1,176 and 3,701 ms, still no schema failures or truncations). Temperature 0 on
+a shared server is not exactly repeatable, but the difference from G2 is not
+one run's luck.
+
+The answers' latency excludes retrieval, which was recorded rather than run.
+This is one run of each generator, judged by a smaller model than G3, so the
+judge's own preferences are part of the measurement, as they were for every
+row of the complete experiment. The summary and each question's paired scores
+are in `docs/evaluation/generators-c4-20261018-summary.json` and
+`docs/evaluation/generators-c4-20261018-paired.json`.
+
+**Recommendation.** Make SOCLAAS with `qwen3.6:35b` the generator for hosted
+answers in the demo and for later evaluation runs, in place of
+`ministral-8b-2512`. It is significantly more correct on this benchmark,
+equally careful about what the filings do not answer, and faster. SOCLAAS
+is a school service for teaching and experiments. Its usage page, read on 19
+October 2026, gave default limits of 90 requests a minute and $80 a day per
+user, and the 352 SOCLAAS requests this work made cost SoC $0.79, as its usage
+record showed: about $0.0022 each, so a full replay is about $0.34.
+Every presenter needs their own key. Keep Mistral one click away in the app as
+the fallback, and Ollama as the offline default, which `LLM_PROVIDER` still
+selects. Moving the hosted default changes `DEFAULT_PROVIDER` or the team's
+`.env` advice, not this measurement, so it is left to the team.
 
 ### Chunk-size sweep
 

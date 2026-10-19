@@ -36,19 +36,26 @@ filelock==3.32.6
 # at that again, and tests/test_app_live.py says which way it went.
 transformers==5.17.0
 
-# Answer generation, by a local model served by Ollama (the default) or by
-# Mistral's API on its free plan, with each member's own key (see the README).
+# Answer generation, by a local model served by Ollama (the default), by
+# Mistral's API on its free plan, with each member's own key, or by NUS SoC's
+# SOCLAAS API with a key from its portal (see the README).
 # Ollama itself is not a Python package: install it from
 # https://ollama.com/download and pull a model.
 #
 # LangChain's chat models are the clients, streaming and token counts included:
-# langchain-ollama for Ollama and langchain-mistralai for Mistral.
-# langchain-core is what generate reads partial JSON with. ollama is the client
-# library underneath langchain-ollama, pinned because generate catches its errors.
-langchain-core==1.6.3
+# langchain-ollama for Ollama, langchain-mistralai for Mistral and
+# langchain-openai for SOCLAAS, which speaks OpenAI's API. langchain-core is
+# what generate reads partial JSON with; langchain-openai 1.7 needs 1.6.10 or
+# later. ollama and openai are the client libraries underneath, pinned because
+# generate catches their errors. openai sends with httpx2, not httpx, and
+# generate reads the httpx2 error a SOCLAAS failure wraps.
+langchain-core==1.6.12
 langchain-ollama==1.1.0
 langchain-mistralai==1.1.6
+langchain-openai==1.7.2
 ollama==0.6.2
+openai==3.24.0
+httpx2==2.13.0
 
 # The schema an answer is generated against and validated with. Already
 # installed as a dependency of chromadb and langchain-core; pinned here because

@@ -25,6 +25,7 @@ from src.rag.records import Generation, GenerationConfig
 from src.retrieval.base import Retriever
 from src.retrieval.constants import FINAL_K
 from src.retrieval.facts import FACTS_FILE
+from src.retrieval.records import Query
 from .records import BenchmarkQuestion, UNANSWERABLE
 from .quality import (
     JudgeInvalid, LLMJudge, TokenPrices, citation_scores, quality_summary, query_cost, resource_summary,
@@ -205,6 +206,18 @@ class _JudgeStopped(Exception):
         self.row, self.cause = row, cause
 
 
+def benchmark_query(parsed: Any, question: BenchmarkQuestion, *, top_k: int) -> Query:
+    """The query a benchmark question searches with: its parsed query, with the
+    benchmark's own ticker and fiscal year in place of the parsed ones where
+    the question records them. A stack's own scoping is applied after."""
+    query = parsed.to_query(top_k=top_k)
+    if question.ticker is not None:
+        query = replace(query, tickers=(question.ticker,))
+    if question.fiscal_year is not None:
+        query = replace(query, fiscal_years=(question.fiscal_year,))
+    return query
+
+
 def evaluate(
     questions: Iterable[BenchmarkQuestion],
     retriever: Retriever,
@@ -345,11 +358,7 @@ def evaluate(
         timed = _TimedRetriever(retriever)
         generation_calls = _ModelCalls()
         parsed = parse_question(question.question, facts_file=facts_file)
-        query = parsed.to_query(top_k=top_k)
-        if question.ticker is not None:
-            query = replace(query, tickers=(question.ticker,))
-        if question.fiscal_year is not None:
-            query = replace(query, fiscal_years=(question.fiscal_year,))
+        query = benchmark_query(parsed, question, top_k=top_k)
         # The company and year the question is about, which the answer is
         # checked against whatever the row searches.
         asked = parsed.scoped_to(query)

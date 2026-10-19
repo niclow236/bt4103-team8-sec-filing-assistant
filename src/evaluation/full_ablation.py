@@ -68,6 +68,21 @@ MATRIX = {
 }
 
 
+# What a full-matrix run's config.json records as its schema.
+FULL_MATRIX_SCHEMA = "full-matrix-v1"
+
+
+def scored_for(question: BenchmarkQuestion, row: dict) -> BenchmarkQuestion:
+    """The question scored against the gold passages a matrix row recorded for it."""
+    return replace(question, supporting_chunk_ids=tuple(row["scoring_supporting_chunk_ids"]),
+                   hard_negative_chunk_ids=tuple(row["scoring_hard_negative_chunk_ids"]))
+
+
+def query_record(query: Query) -> dict:
+    """A query as a run records it in pairs.jsonl, for comparing with a recorded one."""
+    return json.loads(json.dumps(asdict(query)))
+
+
 def read_rows(path: Path, *, recover: bool = False) -> list[dict]:
     if not path.exists():
         return []
@@ -176,7 +191,7 @@ def reference_rows(
     if [r["question"] for r in rows] != [q.to_dict() for q in questions]:
         raise ValueError("reference must contain the exact complete question sequence")
     for q, row in zip(questions, rows):
-        if row["query"] != json.loads(json.dumps(asdict(_query(q, top_k=FINAL_K, metadata_filter=True)))):
+        if row["query"] != query_record(_query(q, top_k=FINAL_K, metadata_filter=True)):
             raise ValueError("reference query policy differs")
     try:
         verify_rankings(rows, config["top_k"], candidate_k=config["reranker"]["candidate_k"])
@@ -368,7 +383,7 @@ def retrieval(args: argparse.Namespace) -> None:
         args.reference, questions, provenance, hybrid, reranker,
         expected_pairs_sha256=args.reference_pairs_sha256)
     config = {
-        "schema": "full-matrix-v1", "provenance": provenance,
+        "schema": FULL_MATRIX_SCHEMA, "provenance": provenance,
         "matrix": {cid: row.to_dict() for cid, row in MATRIX.items()},
         "reranker": reranker.config.to_dict(), "reference": source,
         "baseline_records_sha256": corpus_records_sha256(baseline),
@@ -457,7 +472,7 @@ class ReplayRetriever:
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         wanted = query.top_k if k is None else k
         for row in [self.row, *self.row.get("sub_results", [])]:
-            if json.loads(json.dumps(asdict(query))) == row["query"]:
+            if query_record(query) == row["query"]:
                 return restored(self.chunks,row["retrieved_chunk_ids"],row["retrieved_scores"],self.name,
                                 row.get("retrieved_sources"))[:wanted]
         raise ValueError("answer query differs from the measured query")
@@ -597,8 +612,7 @@ def answers(args: argparse.Namespace) -> None:
             with path.open("a",encoding="utf-8") as stream:
                 for q in team[len(stored):]:
                     measured = selected[q.question_id]["rows"][cid]
-                    scored = replace(q,supporting_chunk_ids=tuple(measured["scoring_supporting_chunk_ids"]),
-                                     hard_negative_chunk_ids=tuple(measured["scoring_hard_negative_chunk_ids"]))
+                    scored = scored_for(q,measured)
                     if pending.exists():
                         row=finish_pending_judge(pending,scored,judge)
                     else:
@@ -640,8 +654,7 @@ def rescore(args: argparse.Namespace) -> None:
         raise ValueError("cannot rescore an incomplete retrieval matrix")
     for q,t in zip(questions,transactions):
         for row in t["rows"].values():
-            scored=replace(q,supporting_chunk_ids=tuple(row["scoring_supporting_chunk_ids"]),
-                            hard_negative_chunk_ids=tuple(row["scoring_hard_negative_chunk_ids"]))
+            scored=scored_for(q,row)
             result=RunResult(q.question_id,row["retriever"],tuple(row["retrieved_chunk_ids"]),
                              tuple(row["retrieved_scores"]),row["latency_ms"])
             metrics=score_question(scored,result,k=row["config"]["top_k"])
