@@ -1264,3 +1264,22 @@ def test_an_answers_config_whose_generation_is_not_a_config_is_refused_by_name(a
         "provider": "Mistral", "model": "test", "prompt_template_id": "grounded_v4"}}))
     with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
         recorded_answers(directory, chunks=snapshot)
+
+
+def test_the_generation_matrix_s_missing_key_advice_does_not_offer_llm_provider(
+        monkeypatch, tmp_path, capsys):
+    # #183: each G row names its provider, so setting LLM_PROVIDER, which the
+    # provider's general advice offers, changes nothing.
+    import src.evaluation.model_ablation as module
+    import src.stack
+
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    monkeypatch.setattr(src.stack, "build_retriever", lambda *args, **kwargs: _stack(None).retriever)
+    monkeypatch.setenv("MISTRAL_API_KEY", "g2-key")   # so G3's key is the one missing
+    with pytest.raises(SystemExit) as raised:
+        module.main(["generation", "--run-id", "no-key", "--results-root", str(tmp_path)])
+    error = capsys.readouterr().err
+    assert raised.value.code == 2 and "SOCLAAS_API_KEY is not set: make a key" in error
+    assert "LLM_PROVIDER" not in error
+    assert error.rstrip().endswith("so the key is read")
+    assert not (tmp_path / "no-key").exists()

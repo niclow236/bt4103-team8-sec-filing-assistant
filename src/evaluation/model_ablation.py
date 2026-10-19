@@ -746,8 +746,9 @@ def main(argv: list[str] | None = None) -> None:
             )
         except (RunStopped, RunInterrupted) as error:
             raise SystemExit(f"{error}; partial results are under {run_dir}") from None
+        # Each G row names its own provider, so LLM_PROVIDER is no way out (#183).
         except ProviderUnavailable as error:
-            parser.error(str(error))
+            parser.error(without_answer_locally(str(error)))
     print((run_dir / "summary.csv").read_text(encoding="utf-8"), end="")
     print(f"written: {run_dir}")
 
