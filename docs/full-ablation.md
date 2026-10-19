@@ -163,7 +163,27 @@ python -m src.evaluation.full_ablation rescore results/full-matrix-YYYYMMDD
 # Model-free rescore when only C6 answers were measured.
 python -m src.evaluation.full_ablation rescore results/full-matrix-YYYYMMDD \
   --configurations C6
+
+# Fresh paired acceptance run: no C0-C3/C5 measurements or cross-encoder load.
+HF_HUB_OFFLINE=1 python -u -m src.evaluation.full_ablation retrieval \
+  benchmark/questions.jsonl benchmark/generated.jsonl \
+  --configurations C4 C6 --run-id c6-rebase-full-YYYYMMDD \
+  --device mps --workload-note "..."
+
+python -u -m src.evaluation.full_ablation answers results/c6-rebase-full-YYYYMMDD \
+  --provider mistral --model ministral-8b-2512
+
+python -m src.evaluation.full_ablation rescore results/c6-rebase-full-YYYYMMDD
 ```
+
+Retrieval `--configurations` freezes the selected rows in `config.json`; a
+resume cannot add or remove rows. Without the flag all seven rows are measured
+as before. A C4/C6-only run never constructs or warms a cross-encoder. Answer
+and rescore commands default to the rows whose retrieval this run froze, and
+refuse requests for unmeasured rows. Their answer-summary `complete` flag means
+all frozen rows have answers; the explicit configuration list distinguishes a
+complete paired study from a seven-row study. Within either run, answers can
+still be generated for one frozen row at a time and combined on later resumes.
 
 Omit both `--reference` and `--reference-pairs-sha256` to measure C4/C5 again.
 Use `--device cpu` without MPS and

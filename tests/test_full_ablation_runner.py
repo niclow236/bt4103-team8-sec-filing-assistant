@@ -166,6 +166,52 @@ def test_resume_cannot_write_while_another_writer_holds_the_lock(runner):
     assert artifacts(runner.directory)==before
 
 
+@pytest.mark.parametrize('count',[0,1])
+def test_paired_c4_c6_retrieval_never_constructs_a_reranker_and_resumes(runner,monkeypatch,count):
+    runner.args.configurations=('C4','C6')
+    original_reranker=matrix.CrossEncoderReranker
+    def forbidden(*args,**kwargs):
+        pytest.fail('the C4/C6-only acceptance run must not use the cross-encoder')
+    monkeypatch.setattr(matrix,'CrossEncoderReranker',forbidden)
+    runner.fail_after=count
+    with pytest.raises(OSError):matrix.retrieval(runner.args)
+    prefix=matrix.read_rows(runner.directory/'pairs.jsonl')
+    runner.fail_after=None
+    runner.args.resume=True
+    matrix.retrieval(runner.args)
+    pairs=matrix.read_rows(runner.directory/'pairs.jsonl')
+    assert pairs[:count]==prefix
+    assert all(list(t['rows'])==['C4','C6'] for t in pairs)
+    assert len(pairs[0]['rows']['C6']['sub_results'])==2
+    for key in ('retrieved_chunk_ids','retrieved_scores','latency_ms',*matrix.METRICS):
+        assert pairs[1]['rows']['C6'][key]==pairs[1]['rows']['C4'][key]
+    config=json.loads((runner.directory/'config.json').read_text())
+    assert list(config['matrix'])==['C4','C6'] and config['reranker'] is None
+    runtime=json.loads((runner.directory/'runtime.json').read_text())
+    assert runtime['identity']['cross_encoder_device'] is None and not runtime['cross_encoder_warmed']
+    assert not (runner.directory/'C5').exists()
+    summaries=json.loads((runner.directory/'summary.json').read_text())['configurations']
+    assert [s['config']['id'] for s in summaries]==['C4','C6']
+    original=artifacts(runner.directory)
+    matrix.retrieval(runner.args)
+    assert artifacts(runner.directory)==original
+    monkeypatch.setattr(matrix,'CrossEncoderReranker',original_reranker)
+    runner.args.configurations=None
+    with pytest.raises(ValueError,match='identical frozen measurement'):matrix.retrieval(runner.args)
+
+
+def test_paired_retrieval_refuses_a_missing_frozen_row(runner):
+    runner.args.configurations=('C4','C6')
+    matrix.retrieval(runner.args)
+    rows=matrix.read_rows(runner.directory/'pairs.jsonl')
+    del rows[0]['rows']['C6']
+    matrix.write_rows(runner.directory/'pairs.jsonl',rows)
+    before=artifacts(runner.directory)
+    runner.args.resume=True
+    with pytest.raises(ValueError,match='every matrix row'):matrix.retrieval(runner.args)
+    assert artifacts(runner.directory)==before
+
+
 def answer_row(q):
     config=GenerationConfig('mistral','test',PROMPT_TEMPLATE_ID)
     answer=Answer(q.question,'Saved answer.',(),(),False,config,1.0)
@@ -218,6 +264,38 @@ def answer_run(runner,monkeypatch,request):
                                facts_file=facts,provider='mistral',model='test')
     state.runner=runner
     return state
+
+
+def test_paired_retrieval_answers_and_rescore_use_the_frozen_row_selection(answer_run):
+    state=answer_run
+    directory=state.args.run_dir
+    config=json.loads((directory/'config.json').read_text())
+    config['matrix']={cid:config['matrix'][cid] for cid in ('C4','C6')}
+    matrix.dump(directory/'config.json',config)
+    pairs=matrix.read_rows(directory/'pairs.jsonl')
+    for pair in pairs:pair['rows']={cid:pair['rows'][cid] for cid in ('C4','C6')}
+    matrix.write_rows(directory/'pairs.jsonl',pairs)
+    matrix.write_rows(directory/'C4/answers.jsonl',[])
+    matrix.write_rows(directory/'C6/answers.jsonl',[])
+    state.args.configurations=('C6',)
+    matrix.answers(state.args)
+    first=json.loads((directory/'answer-summary.json').read_text())
+    assert not first['complete'] and list(first['configurations'])==['C6']
+    state.args.configurations=None
+    matrix.answers(state.args)
+    assert len(state.generated)==4
+    assert [kw['use_verification'] for _,kw in state.generated]==[True,True,False,False]
+    summary=json.loads((directory/'answer-summary.json').read_text())
+    assert summary['complete'] and list(summary['configurations'])==['C4','C6']
+    matrix.rescore(state.args)
+    rescored=json.loads((directory/'rescored/answer-summary.json').read_text())
+    assert rescored==summary
+    retrieval=json.loads((directory/'rescored/summary.json').read_text())
+    assert [s['config']['id'] for s in retrieval['configurations']]==['C4','C6']
+    state.args.configurations=('C5',)
+    before=artifacts(directory)
+    with pytest.raises(ValueError,match='no frozen retrieval'):matrix.answers(state.args)
+    assert artifacts(directory)==before
 
 
 @pytest.mark.parametrize('cid',['C0','C6'])

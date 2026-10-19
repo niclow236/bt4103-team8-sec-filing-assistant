@@ -73,11 +73,16 @@ FULL_MATRIX_SCHEMA = "full-matrix-v2"
 REPLAYABLE_SCHEMAS = ("full-matrix-v1", FULL_MATRIX_SCHEMA)
 
 
-def selected_configurations(args: argparse.Namespace) -> tuple[str, ...]:
+def selected_configurations(
+    args: argparse.Namespace, *, available: Sequence[str] | None = None,
+) -> tuple[str, ...]:
     """The matrix rows a command works on: every row unless explicitly selected."""
-    ids = tuple(getattr(args, "configurations", None) or MATRIX)
+    available = tuple(MATRIX if available is None else available)
+    ids = tuple(getattr(args, "configurations", None) or available)
     if len(set(ids)) != len(ids) or any(cid not in MATRIX for cid in ids):
         raise ValueError("configurations must be unique matrix row IDs")
+    if any(cid not in available for cid in ids):
+        raise ValueError("requested configuration has no frozen retrieval in this run")
     return ids
 
 
@@ -107,11 +112,14 @@ def write_rows(path: Path, rows: Sequence[dict]) -> None:
     temporary.replace(path)
 
 
-def check_transactions(transactions: Sequence[dict], questions: Sequence[BenchmarkQuestion]) -> None:
+def check_transactions(
+    transactions: Sequence[dict], questions: Sequence[BenchmarkQuestion],
+    configurations: Sequence[str] | None = None,
+) -> None:
     if [t["question"] for t in transactions] != [q.to_dict() for q in questions[:len(transactions)]]:
         raise ValueError("stored matrix is not an exact benchmark prefix")
     for t in transactions:
-        if set(t["rows"]) != set(MATRIX):
+        if set(t["rows"]) != set(MATRIX if configurations is None else configurations):
             raise ValueError("transaction does not contain every matrix row")
         for cid,row in t["rows"].items():
             if row["config"]["id"] != cid or row["question_id"] != t["question"]["question_id"]:
@@ -259,48 +267,57 @@ class CachedPart:
 
 def measure_question(
     question: BenchmarkQuestion, fixed: FixedSizeBM25Retriever, hybrid: Any,
-    reranker: CrossEncoderReranker, chunks: dict, reference: dict | None = None,
+    reranker: CrossEncoderReranker | None, chunks: dict, reference: dict | None = None,
+    *, configurations: Sequence[str] | None = None,
 ) -> dict:
     from src.retrieval.hybrid import HybridRetriever
 
     scoped = _query(question, top_k=FINAL_K, metadata_filter=True)
     raw = MATRIX["C3"].scoped(scoped)
+    requested = set(MATRIX if configurations is None else configurations)
     rows = {}
-    started = perf_counter()
-    naive = fixed.search(raw, k=FINAL_K)
-    elapsed = (perf_counter() - started) * 1000
-    supporting = tuple(fixed.relevant_chunk_ids(question))
-    hard = tuple(fixed.relevant_chunk_ids(question, hard=True))
-    projected = replace(question, supporting_chunk_ids=supporting,
-                        hard_negative_chunk_ids=tuple(cid for cid in hard if cid not in supporting))
-    rows["C0"] = ranking(question, raw, naive, "C0", elapsed, scoring=projected,
+    if "C0" in requested:
+        started = perf_counter()
+        naive = fixed.search(raw, k=FINAL_K)
+        elapsed = (perf_counter() - started) * 1000
+        supporting = tuple(fixed.relevant_chunk_ids(question))
+        hard = tuple(fixed.relevant_chunk_ids(question, hard=True))
+        projected = replace(question, supporting_chunk_ids=supporting,
+                            hard_negative_chunk_ids=tuple(cid for cid in hard if cid not in supporting))
+        rows["C0"] = ranking(question, raw, naive, "C0", elapsed, scoring=projected,
                             projected_label_conflicts=sum(cid in supporting for cid in hard))
     sparse, dense = CachedPart(hybrid.bm25), CachedPart(hybrid.dense)
     components = {}
     for config_id, component in (("C1", sparse), ("C2", dense)):
+        if config_id not in requested and "C3" not in requested:
+            continue
         pool = component.search(raw, k=CANDIDATE_K)
         elapsed = component.entries[(raw, CANDIDATE_K)][1]
         components[config_id] = elapsed
         rows[config_id] = ranking(question, raw, pool[:FINAL_K], config_id, elapsed,
                                     timing_note="Component top-50 search shared with C3; top 16 scored.")
-    started = perf_counter()
-    fused = HybridRetriever(sparse, dense).search(raw, k=FINAL_K)
-    elapsed = (perf_counter() - started) * 1000 + sum(components.values())
-    rows["C3"] = ranking(question, raw, fused, "C3", elapsed,
+    if "C3" in requested:
+        started = perf_counter()
+        fused = HybridRetriever(sparse, dense).search(raw, k=FINAL_K)
+        elapsed = (perf_counter() - started) * 1000 + sum(components.values())
+        rows["C3"] = ranking(question, raw, fused, "C3", elapsed,
                             timing_note="Shared component search times plus measured fusion overhead.")
-    if reference is None:
+    needs_filtered = bool(requested & {"C4", "C5", "C6"})
+    needs_c5 = "C5" in requested or ("C6" in requested and MATRIX["C6"].rerank)
+    if needs_filtered and reference is None:
         started = perf_counter()
         pool = hybrid.search(scoped, k=CANDIDATE_K)
         retrieve_ms = (perf_counter() - started) * 1000
         rows["C4"] = ranking(question, scoped, pool[:FINAL_K], "C4", retrieve_ms)
-        if MATRIX["C5"].rerank:
+        if needs_c5 and MATRIX["C5"].rerank:
+            assert reranker is not None
             ranked = reranker.rerank(scoped, pool)
             rows["C5"] = ranking(question, scoped, ranked.passages, "C5",
                                  retrieve_ms + ranked.diagnostics["latency_ms"],
                                  rerank_diagnostics=ranked.diagnostics)
-        else:
+        elif needs_c5:
             rows["C5"] = ranking(question, scoped, pool[:FINAL_K], "C5", retrieve_ms)
-    else:
+    elif needs_filtered:
         for cid in ("C4", "C5"):
             r = reference[cid]
             metadata={p["chunk_id"]:p for p in reference["rerank"]["candidates"]}
@@ -309,6 +326,8 @@ def measure_question(
                                  [metadata[c]["sources"] for c in r["retrieved_chunk_ids"]])
             rows[cid] = ranking(question, scoped, passages, cid, r["latency_ms"], origin="frozen_reference",
                                  reference_question_id=question.question_id)
+    if "C6" not in requested:
+        return {"question": question.to_dict(), "rows": {cid: rows[cid] for cid in MATRIX if cid in requested}}
     sub_questions = decompose(scoped) if MATRIX["C6"].use_decomposition else ()
     if not sub_questions:
         base = "C5" if MATRIX["C6"].rerank else "C4"
@@ -319,6 +338,8 @@ def measure_question(
         results, saved = [], []
         for sub in sub_questions:
             pool = hybrid.search(sub.query, k=CANDIDATE_K)
+            if MATRIX["C6"].rerank:
+                assert reranker is not None
             ranked = reranker.rerank(sub.query, pool) if MATRIX["C6"].rerank else None
             passages = ranked.passages if ranked is not None else pool[:FINAL_K]
             results.append((sub, passages))
@@ -330,17 +351,18 @@ def measure_question(
         passages, provenance = merge(results, FINAL_K)
         rows["C6"] = ranking(question, scoped, list(passages), "C6", (perf_counter()-started)*1000,
                                 sub_results=saved, sub_question_provenance=provenance)
-    return {"question": question.to_dict(), "rows": rows}
+    return {"question": question.to_dict(), "rows": {cid: rows[cid] for cid in MATRIX if cid in requested}}
 
 
 def export_retrieval(
     run_dir: Path, transactions: Sequence[dict], expected: int, *, run_id: str | None = None,
     config_file: str = "config.json", write_question_outputs: bool = True,
+    configurations: Sequence[str] | None = None,
 ) -> None:
     if len(transactions) != expected:
         raise ValueError("cannot summarize an incomplete retrieval matrix")
     summaries, benchmarks = [], []
-    for cid in MATRIX:
+    for cid in (MATRIX if configurations is None else configurations):
         rows = [t["rows"][cid] for t in transactions]
         directory = run_dir / cid
         directory.mkdir(exist_ok=True)
@@ -375,6 +397,7 @@ def verified_baseline(run_dir: Path, snapshot: Sequence[dict], fixed: FixedSizeB
 
 
 def retrieval(args: argparse.Namespace) -> None:
+    configuration_ids = selected_configurations(args)
     snapshot = list(iter_chunks(processed_dir=args.processed_dir))
     chunks = {chunk["chunk_id"]: chunk for chunk in snapshot}
     questions = [q for path in args.questions for q in load_questions(
@@ -387,14 +410,15 @@ def retrieval(args: argparse.Namespace) -> None:
     hybrid = build_retriever("hybrid", processed_dir=args.processed_dir, parts={})
     if corpus_records_sha256(hybrid.bm25.chunks) != corpus_records_sha256(snapshot):
         raise ValueError("hybrid index differs from the frozen corpus snapshot")
-    reranker = CrossEncoderReranker(RerankConfig(device=args.device))
+    needs_reranker = args.reference is not None or any(MATRIX[cid].rerank for cid in configuration_ids)
+    reranker = CrossEncoderReranker(RerankConfig(device=args.device)) if needs_reranker else None
     references, source = (None, None) if args.reference is None else reference_rows(
         args.reference, questions, provenance, hybrid, reranker,
         expected_pairs_sha256=args.reference_pairs_sha256)
     config = {
         "schema": FULL_MATRIX_SCHEMA, "provenance": provenance,
-        "matrix": {cid: row.to_dict() for cid, row in MATRIX.items()},
-        "reranker": reranker.config.to_dict(), "reference": source,
+        "matrix": {cid: MATRIX[cid].to_dict() for cid in configuration_ids},
+        "reranker": reranker.config.to_dict() if reranker is not None else None, "reference": source,
         "baseline_records_sha256": corpus_records_sha256(baseline),
         "workload_note": args.workload_note,
         "answer_scope": "Complete non-mechanical team benchmark; no facts shortcut or refusal shortcut.",
@@ -409,7 +433,7 @@ def retrieval(args: argparse.Namespace) -> None:
         write_rows(run_dir / "benchmark.jsonl", [q.to_dict() for q in questions])
     with FileLock(run_dir / "retrieval.lock", timeout=0):
         transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
-        check_transactions(transactions, questions)
+        check_transactions(transactions, questions, configuration_ids)
         if args.resume:
             verified_baseline(run_dir, snapshot, fixed)
         else:
@@ -424,15 +448,15 @@ def retrieval(args: argparse.Namespace) -> None:
                 raise ValueError("cannot verify resumed indexes without the original runtime.json")
         if len(transactions) == len(questions):
             write_rows(run_dir / "pairs.jsonl", transactions)
-            export_retrieval(run_dir, transactions, len(questions))
+            export_retrieval(run_dir, transactions, len(questions), configurations=configuration_ids)
             return
         # Warm the encoders on a real nonempty pool, outside measured rows.
         warm_started = perf_counter()
         hybrid.search(MATRIX["C3"].scoped(_query(questions[0], top_k=FINAL_K, metadata_filter=True)),
                       k=CANDIDATE_K)
-        model = reranker.load()
+        model = reranker.load() if reranker is not None else None
         warmup_question = None
-        for question in questions:
+        for question in questions if reranker is not None else ():
             scoped = _query(question, top_k=FINAL_K, metadata_filter=True)
             pool = hybrid.search(scoped, k=CANDIDATE_K)
             if pool:
@@ -440,7 +464,7 @@ def retrieval(args: argparse.Namespace) -> None:
                 warmup_question = question.question_id
                 break
         runtime = {**indexes, "dense": hybrid.dense.runtime_info,
-                   "cross_encoder_device": str(model.device)}
+                   "cross_encoder_device": str(model.device) if model is not None else None}
         if source and source["runtime"]["dense_revision"] != runtime["dense"]["revision"]:
             raise ValueError("loaded dense revision differs from the reference")
         if args.resume and previous is not None and previous != runtime:
@@ -462,13 +486,14 @@ def retrieval(args: argparse.Namespace) -> None:
         with (run_dir / "pairs.jsonl").open("a", encoding="utf-8") as stream:
             for i, question in enumerate(questions[len(transactions):], len(transactions)):
                 transaction = measure_question(question, fixed, hybrid, reranker, chunks,
-                                               None if references is None else references[i])
+                                               None if references is None else references[i],
+                                               configurations=configuration_ids)
                 stream.write(json.dumps(transaction, ensure_ascii=False, allow_nan=False) + "\n")
                 stream.flush()
                 transactions.append(transaction)
                 if (i + 1) % 25 == 0 or i + 1 == len(questions):
-                    print(f"C0–C6: {i + 1}/{len(questions)}", flush=True)
-        export_retrieval(run_dir, transactions, len(questions))
+                    print(f"{'/'.join(configuration_ids)}: {i + 1}/{len(questions)}", flush=True)
+        export_retrieval(run_dir, transactions, len(questions), configurations=configuration_ids)
 
 
 class ReplayRetriever:
@@ -567,14 +592,16 @@ def answers(args: argparse.Namespace) -> None:
     original = json.loads((run_dir / "config.json").read_text())
     questions = [BenchmarkQuestion.from_mapping(r) for r in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(original,questions)
-    if "matrix" in original and original["matrix"] != {
-        cid: config.to_dict() for cid, config in MATRIX.items()
-    }:
+    available = tuple(original.get("matrix", MATRIX))
+    if "matrix" in original and (
+        any(cid not in MATRIX for cid in available)
+        or original["matrix"] != {cid: MATRIX[cid].to_dict() for cid in available}
+    ):
         raise ValueError("answer matrix settings differ from frozen retrieval; use its recorded source")
     team = team_questions(questions)
-    configuration_ids = selected_configurations(args)
+    configuration_ids = selected_configurations(args, available=available)
     transactions = read_rows(run_dir / "pairs.jsonl", recover=True)
-    check_transactions(transactions,questions)
+    check_transactions(transactions,questions,available)
     selected = {t["question"]["question_id"]:t for t in transactions}
     if any(q.question_id not in selected for q in team):
         raise ValueError("complete team retrieval must finish before answers start")
@@ -649,9 +676,9 @@ def answers(args: argparse.Namespace) -> None:
                     if pending.exists():pending.unlink()
                     print(f"{cid} answers: {len(stored)}/{len(team)}",flush=True)
             dump(directory/"answer-summary.json",answer_summary(stored,cid))
-        answered = [cid for cid in MATRIX if (run_dir/cid/"answer-summary.json").exists()]
+        answered = [cid for cid in available if (run_dir/cid/"answer-summary.json").exists()]
         dump(run_dir/"answer-summary.json",{
-            "complete":answered==list(MATRIX), "team_questions":len(team),
+            "complete":answered==list(available), "team_questions":len(team),
             "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text())
                               for cid in answered},
         })
@@ -661,10 +688,11 @@ def rescore(args: argparse.Namespace) -> None:
     """Recompute recorded retrieval and answer aggregates without any model."""
     directory=args.run_dir
     config=json.loads((directory/"config.json").read_text())
+    available = tuple(config.get("matrix", MATRIX))
     questions=[BenchmarkQuestion.from_mapping(q) for q in read_rows(directory/"benchmark.jsonl")]
     validate_snapshot(config,questions)
     transactions=read_rows(directory/"pairs.jsonl")
-    check_transactions(transactions,questions)
+    check_transactions(transactions,questions,available)
     if len(transactions)!=config["provenance"]["questions"]:
         raise ValueError("cannot rescore an incomplete retrieval matrix")
     for q,t in zip(questions,transactions):
@@ -677,16 +705,16 @@ def rescore(args: argparse.Namespace) -> None:
     target=directory/"rescored"
     target.mkdir(exist_ok=True)
     export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
-                     write_question_outputs=False)
+                     write_question_outputs=False,configurations=available)
     team=team_questions(questions)
-    configuration_ids = selected_configurations(args)
+    configuration_ids = selected_configurations(args, available=available)
     summaries={}
     for cid in configuration_ids:
         rows=read_rows(directory/cid/'answers.jsonl')
         if [r['question_id'] for r in rows]!=[q.question_id for q in team]:
             raise ValueError(f"cannot rescore incomplete {cid} team answers")
         summaries[cid]=answer_summary(rows,cid)
-    dump(target/'answer-summary.json',{'complete':set(configuration_ids)==set(MATRIX),
+    dump(target/'answer-summary.json',{'complete':set(configuration_ids)==set(available),
          'team_questions':len(team),'configurations':summaries})
 
 
@@ -705,6 +733,8 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--device",default="mps")
     run.add_argument("--workload-note",required=True)
     run.add_argument("--resume",action="store_true")
+    run.add_argument("--configurations",nargs="+",choices=tuple(MATRIX),
+                     help="Measure only these rows; freeze the selection for this run (default: every row)")
     answer=commands.add_parser("answers")
     answer.add_argument("run_dir",type=Path)
     answer.add_argument("--processed-dir",type=Path,default=PROCESSED_DIR)
