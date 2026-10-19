@@ -1142,9 +1142,14 @@ def test_a_stopped_replay_s_record_does_not_offer_llm_provider(monkeypatch, tmp_
     assert "LLM_PROVIDER" not in (tmp_path / "stopped" / "summary.csv").read_text()
 
 
-def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path, caplog):
+@pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
+def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path, caplog,
+                                                            log_threads):
     # QA of #180: a busy provider's "asking again" notice during a replay
-    # offered LLM_PROVIDER, which a replay row's fixed provider ignores.
+    # offered LLM_PROVIDER, which a replay row's fixed provider ignores. PR
+    # review: with logging.logThreads off, a record names no thread.
+    import logging
+
     import src.evaluation.harness as harness
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
@@ -1167,6 +1172,7 @@ def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_pat
         return {"results": [_recorded_row("q001"), _recorded_row(
             "q002", question_type="unanswerable", abstained=True)]}
 
+    monkeypatch.setattr(logging, "logThreads", log_threads)
     monkeypatch.setattr(harness, "sleep", lambda seconds: None)
     monkeypatch.setattr(module, "evaluate", evaluate)
     recorded = _recorded(tmp_path)

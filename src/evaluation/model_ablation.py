@@ -480,7 +480,9 @@ class _WithoutAnswerLocally(logging.Filter):
         self.thread = threading.get_ident()
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.thread == self.thread:
+        # A filter runs on the thread that logs, and record.thread is None
+        # when logging.logThreads is off.
+        if threading.get_ident() == self.thread:
             record.msg, record.args = without_answer_locally(record.getMessage()), ()
         return True
 
