@@ -726,6 +726,22 @@ def test_recorded_answers_from_a_generator_outside_the_registry_are_their_own_ro
         "recorded", "mistral", "ministral-14b-2512")
 
 
+def test_replaying_the_model_that_wrote_the_recorded_answers_is_its_own_row(monkeypatch, tmp_path):
+    # Decided on #163: any row can be replayed, so a baseline can be repeated,
+    # but a repeat of G2 beside the recorded G2 is named apart from it.
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+
+    monkeypatch.setattr(module, "evaluate", _replaying([]))
+    recorded = _recorded(tmp_path)
+    manifest = run_generation_replay(
+        recorded, [GENERATION_EXPERIMENTS[1], GENERATION_EXPERIMENTS[2]], run_id="repeat",
+        results_root=tmp_path, llm_for=lambda config: None,
+        judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    assert [row["config"]["id"] for row in manifest["configurations"]] == ["G2", "G2-replay", "G3"]
+    assert (tmp_path / "repeat" / "G2-replay" / "report.json").exists()
+
+
 def test_the_replay_is_judged_by_the_model_that_judged_the_recorded_answers(monkeypatch, tmp_path):
     import src.evaluation.model_ablation as module
     import src.evaluation.quality as quality

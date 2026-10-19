@@ -2218,9 +2218,9 @@ Add `--min-score <value>` for a calibrated floor, `--top-k` for retrieval depth,
 `--provider ollama`, `--provider mistral` or `--provider soclaas` to override
 `LLM_PROVIDER`, or `--model` to choose one of that provider's models. A
 `--provider` other than `LLM_PROVIDER` uses its own default model rather than
-`LLM_MODEL`. The JSON
-report records these settings, individual answers and aggregate rates. The
-command needs a populated benchmark and built indexes. Programmatic runs use
+`LLM_MODEL`. The JSON report records these settings, individual answers and
+aggregate rates. The command needs a populated benchmark and built indexes.
+Programmatic runs use
 `src.evaluation.evaluate(questions, retriever, config, run_id="baseline")`,
 which returns the report. A run that stops part-way raises instead:
 `RunStopped`, a `ProviderUnavailable`, when the provider cannot answer, and
@@ -2594,10 +2594,14 @@ python -m src.evaluation.model_ablation replay results/full-matrix-20261017 \
 ```
 
 The run must be complete, over this corpus and its frozen benchmark snapshot;
-anything else is refused before a model is built. Each named row's config is
-the recorded one with only the provider and model changed. The table puts the
-recorded answers first, as the G row that wrote them, and each replayed row
-after, with judged correctness and faithfulness, abstention on unanswerable
+anything else is refused before a model is built, and so is a run whose
+recorded queries this code would no longer build, as a changed facts store or
+company list makes it. Each named row's config is the recorded one with only
+the provider and model changed. Any G row can be replayed, so a baseline can be
+repeated to measure run-to-run noise; a replay of the model that wrote the
+recorded answers is named apart from them, such as `G2-replay`. The table puts
+the recorded answers first, as the G row that wrote them, and each replayed
+row after, with judged correctness and faithfulness, abstention on unanswerable
 and on answerable questions, citation precision, answers with an invalid or
 unresolved citation marker, schema failures, answers cut at
 `MAX_OUTPUT_TOKENS`, judge failures, median and 95th-percentile (nearest-rank)
@@ -2656,10 +2660,10 @@ equally careful about what the filings do not answer, and faster. SOCLAAS
 is a school service for teaching and experiments; its default limits are 90
 requests a minute and $80 a day per user, and the 352 SOCLAAS requests this
 work made cost SoC $0.79, about $0.0022 each, so a full replay is about $0.34.
-Every presenter needs their own key. Keep Mistral one click away in the app as the fallback, and
-Ollama as the offline default, which `LLM_PROVIDER` still selects. Moving the
-hosted default changes `DEFAULT_PROVIDER` or the team's `.env` advice, not
-this measurement, so it is left to the team.
+Every presenter needs their own key. Keep Mistral one click away in the app as
+the fallback, and Ollama as the offline default, which `LLM_PROVIDER` still
+selects. Moving the hosted default changes `DEFAULT_PROVIDER` or the team's
+`.env` advice, not this measurement, so it is left to the team.
 
 ### Chunk-size sweep
 

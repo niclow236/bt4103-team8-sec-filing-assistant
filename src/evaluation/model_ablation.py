@@ -423,8 +423,9 @@ def run_generation_replay(
     """Answer the recorded C4 evidence with each G row, judged as the recorded answers were.
 
     Each row's config is the recorded one with only the provider and model
-    changed. ``llm_for`` builds each chat model, :func:`checked_model` unless
-    given; every one is built, and the judge with them, before the run
+    changed, and a row repeating the recorded answers' own model is named
+    ``<id>-replay``. ``llm_for`` builds each chat model, :func:`checked_model`
+    unless given; every one is built, and the judge with them, before the run
     directory is made, so a missing key stops the run before it writes
     anything. A stopped or interrupted row keeps its answers, as
     :func:`run_generation_ablation` does.
@@ -436,18 +437,21 @@ def run_generation_replay(
     run_dir = available_run_dir(results_root, run_id)
     llm_for = llm_for or checked_model
     judge = judge if judge is not None else LLMJudge(recorded.generation)
-    answering = [(experiment, replace(recorded.generation, provider=experiment.provider,
-                                      model=experiment.model))
+    # A row repeating the model that wrote the recorded answers is named apart
+    # from them, so the table never shows two rows with one id (#163).
+    recorded_model = (recorded.generation.provider, recorded.generation.model)
+    answering = [(replace(experiment, id=f"{experiment.id}-replay")
+                  if (experiment.provider, experiment.model) == recorded_model else experiment,
+                  replace(recorded.generation, provider=experiment.provider, model=experiment.model))
                  for experiment in experiments]
     models = [llm_for(config) for _, config in answering]
     run_dir.mkdir(parents=True)
     stack = MATRIX[REPLAY_ROW]
     origin = f"{recorded.run_dir.name}/{REPLAY_ROW}"
-    recorded_experiment = next((experiment for experiment in GENERATION_EXPERIMENTS
-                  if (experiment.provider, experiment.model)
-                  == (recorded.generation.provider, recorded.generation.model)),
-                 GenerationExperiment("recorded", "Recorded answers", recorded.generation.provider,
-                                      recorded.generation.model))
+    recorded_experiment = next(
+        (experiment for experiment in GENERATION_EXPERIMENTS
+         if (experiment.provider, experiment.model) == recorded_model),
+        GenerationExperiment("recorded", "Recorded answers", *recorded_model))
     summaries = [_replay_summary(recorded_experiment, recorded.rows, judge=judge.config,
                                  origin=origin)]
     question_by_id = {question.question_id: question for question in recorded.questions}
