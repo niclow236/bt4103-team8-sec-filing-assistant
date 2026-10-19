@@ -1,13 +1,13 @@
 """Score a finished chunk-size sweep again at an equal amount of text (#45).
 
-    python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007
-    python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261007 3000 5000
+    python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261008
+    python notebooks/retrieval/chunk_sweep_equal_text.py chunk-sweep-fy2025-20261008 3000 5000
 
 The sweep's second cutoff is a number of passages: as many of a size as are
 sure to fit the prompt the app sends, 24, 16, 12 and 7. BM25's passages fill
 that to about 18,500 characters at every size. Dense and hybrid return
 table passages, which are shorter than the budget, so the same cutoff held
-13,654 characters at 1,200 and 7,232 at 4,000 for hybrid. The larger sizes are
+13,633 characters at 1,200 and 7,183 at 4,000 for hybrid. The larger sizes are
 compared there on less text, and a gap between them is partly that.
 
 This reads the per-question files a run wrote under ``results/<run-id>/``. A
