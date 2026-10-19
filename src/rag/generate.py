@@ -1062,7 +1062,7 @@ def _soclaas_settings(
     if not key:
         lacks = f"{SOCLAAS_API_KEY_ENV} is not set"
         raise ProviderUnavailable(
-            f"the provider is {SOCLAAS!r} but {lacks}: make a key with your NUS account at "
+            f"the provider is {SOCLAAS!r} but {lacks}: make a key with your SoC account at "
             f"{SOCLAAS_PORTAL} and put it in your .env, as 'Setting up SOCLAAS' in the README "
             f"says, then restart the notebook or command so the key is read, or {_ANSWER_LOCALLY}",
             reason=lacks,

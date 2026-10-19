@@ -307,6 +307,9 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     from src.evaluation.quality import RUBRIC_ID
     from src.pipeline.chunk import iter_chunks
 
+    if not run_dir.is_dir():
+        raise ValueError(f"{run_dir} does not exist: replay reads a full-matrix run's folder, "
+                         f"which stays on the machine that ran it, so copy it here first")
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
     config = json.loads((run_dir / "config.json").read_text())

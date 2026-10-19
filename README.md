@@ -56,7 +56,7 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: Mistral's API on its free plan, with a free account and API key of your own, and NUS SoC's SOCLAAS API, with a key from your NUS account, which SoC pays for. Exact versions are pinned in `requirements.txt`.
+Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: Mistral's API on its free plan, with a free account and API key of your own, and NUS SoC's SOCLAAS API, with a key from your SoC account, which SoC pays for. Exact versions are pinned in `requirements.txt`.
 
 | Layer | What it uses |
 |---|---|
@@ -1177,8 +1177,9 @@ Computing runs for teaching and experiments
 (<https://soclaas-api.comp.nus.edu.sg>). It needs no VPN to answer, so a key
 is all a teammate needs.
 
-1. Make an API key with your NUS account at
-   <https://soclaas-portal.comp.nus.edu.sg>; SOCLAAS's
+1. Make an API key at <https://soclaas-portal.comp.nus.edu.sg>, signing in
+   with your School of Computing (SoC) account; activate one at
+   <https://mysoc.nus.edu.sg/~newacct> if you have not. SOCLAAS's
    [getting-started guide](https://dochub.comp.nus.edu.sg/cf/guides/soclaas/start)
    walks through it. On 18 October 2026 neither page loaded from outside the
    NUS network while the API did, so make the key on campus or over the NUS

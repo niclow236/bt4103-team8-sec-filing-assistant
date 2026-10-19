@@ -852,8 +852,13 @@ def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_
     import pytest
     from src.evaluation.model_ablation import recorded_answers
 
-    with pytest.raises(ValueError, match=r"not a full-matrix run: .*config\.json"):
+    # PR #177 review: a folder that is not on this machine, as a run folder
+    # is git-ignored, is called missing rather than the wrong kind of run.
+    with pytest.raises(ValueError, match=r"nope does not exist: .*copy it here"):
         recorded_answers(tmp_path / "nope", chunks=[])
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match=r"not a full-matrix run: .*config\.json"):
+        recorded_answers(tmp_path / "empty", chunks=[])
     # Another kind of run, such as a C5 rerank reference, has a config.json
     # but no answers step to finish.
     other = tmp_path / "c5-reference"

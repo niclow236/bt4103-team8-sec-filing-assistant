@@ -445,7 +445,7 @@ MISTRAL_API_URL = "https://api.mistral.ai/v1"
 # Where a teammate makes their own Mistral key, named in every message that asks
 # for one.
 MISTRAL_CONSOLE = "https://console.mistral.ai"
-# The SOCLAAS key, from the SOCLAAS portal with an NUS account, and where its API
+# The SOCLAAS key, from the SOCLAAS portal with an SoC account, and where its API
 # is. SOCLAAS_BASE_URL is unset for everyone but a test or a proxy: its own
 # address is used then, so a teammate needs only the key.
 SOCLAAS_API_KEY_ENV = "SOCLAAS_API_KEY"
