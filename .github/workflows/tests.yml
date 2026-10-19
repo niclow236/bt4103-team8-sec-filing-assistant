@@ -1,9 +1,5 @@
 # Runs the whole test suite on every pull request and on every push to main.
-#
-# The suite needs no network, no EDGAR identity, no .env and nothing under
-# data/: each test builds its own small corpus, and the embedding model is
-# replaced by a stand-in. One test counts tokens with the real bge tokenizer
-# and is skipped where that cannot be downloaded.
+# What the suite needs is in README.md, under "Getting started".
 name: tests
 
 on:
@@ -31,7 +27,7 @@ jobs:
       # Let the other Python version finish, so one failure does not hide another.
       fail-fast: false
       matrix:
-        # 3.10 is the oldest the README supports, and what most of the team runs.
+        # 3.10 is the oldest the README supports.
         python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4

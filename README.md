@@ -83,6 +83,9 @@ bt4103-team8-sec-filing-assistant/
 ├── .coveragerc              # coverage settings for python -m pytest --cov
 ├── .gitignore
 ├── .env.example             # template for local settings (copy to .env)
+├── .github/
+│   └── workflows/
+│       └── tests.yml        # runs python -m pytest on GitHub for each pull request and push to main
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
@@ -263,11 +266,11 @@ python -m pytest
 ```
 
 That one command runs the whole suite. The tests need no network, no EDGAR
-identity and nothing under `data/`: each builds its own small corpus in a
-temporary directory, the dense-index tests replace the embedding model with a
-deterministic stand-in, and a test of a command replaces the stage the command
-calls. The suite takes a few minutes on a laptop. One test counts tokens with
-the real bge tokenizer and is skipped if that cannot be downloaded.
+identity, no `.env` and nothing under `data/`: each builds its own small
+corpus in a temporary directory, the dense-index tests replace the embedding
+model with a deterministic stand-in, and a test of a command replaces the stage
+the command calls. The suite takes a few minutes on a laptop. One test counts
+tokens with the real bge tokenizer and is skipped if that cannot be downloaded.
 
 What the suite holds in place, and where (#49):
 
