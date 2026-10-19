@@ -6,7 +6,8 @@ import argparse
 import json
 import logging
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
 from pathlib import Path
@@ -200,27 +201,19 @@ def run_generation_ablation(
     run_dir.mkdir(parents=True)
     summaries = []
     stopped = None
-    # The harness's retry notices are the provider's advice too (#183).
-    notices = _WithoutAnswerLocally()
     for experiment, stack in stacks:
-        harness_log.addFilter(notices)
         try:
-            report = evaluate(
-                questions, stack.retriever, stack.generation, run_id=experiment.id,
-                min_score=stack.config.min_score, top_k=stack.config.top_k,
-                llm=stack.llm, use_facts=stack.config.use_facts,
-                use_decomposition=stack.config.use_decomposition,
-                use_refusal=stack.config.use_refusal, stack=stack.config,
-            )
-        except (RunStopped, RunInterrupted) as error:
-            report = error.report
             # The row named the provider, so LLM_PROVIDER is no way out (#183).
-            # Raised afresh, as its message was made from the report before this.
-            report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
-            stopped = type(error)(report)
-            stopped.__cause__ = error.__cause__
-        finally:
-            harness_log.removeFilter(notices)
+            with _provider_fixed():
+                report = evaluate(
+                    questions, stack.retriever, stack.generation, run_id=experiment.id,
+                    min_score=stack.config.min_score, top_k=stack.config.top_k,
+                    llm=stack.llm, use_facts=stack.config.use_facts,
+                    use_decomposition=stack.config.use_decomposition,
+                    use_refusal=stack.config.use_refusal, stack=stack.config,
+                )
+        except (RunStopped, RunInterrupted) as error:
+            report, stopped = error.report, error
         question_by_id = {question.question_id: question for question in questions}
         for row in report.get("results", []):
             question = question_by_id.get(row.get("question_id"))
@@ -501,6 +494,27 @@ class _WithoutAnswerLocally(logging.Filter):
         return True
 
 
+@contextmanager
+def _provider_fixed() -> Iterator[None]:
+    """Evaluate a row whose provider is fixed by something other than
+    ``LLM_PROVIDER``, so that the advice to set it is dropped from the
+    harness's retry notices and from a stop's record and error (#180, #183).
+
+    A stop is raised afresh, as its message was made from the report before
+    this, with the same cause.
+    """
+    notices = _WithoutAnswerLocally()
+    harness_log.addFilter(notices)
+    try:
+        yield
+    except (RunStopped, RunInterrupted) as error:
+        report = error.report
+        report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
+        raise type(error)(report) from error.__cause__
+    finally:
+        harness_log.removeFilter(notices)
+
+
 def run_generation_replay(
     recorded: RecordedAnswers, experiments: Sequence[GenerationExperiment], *, run_id: str,
     results_root: Path = RESULTS_ROOT, llm_for: Callable[[GenerationConfig], Any] | None = None,
@@ -547,27 +561,19 @@ def run_generation_replay(
                                  origin=origin)]
     question_by_id = {question.question_id: question for question in recorded.questions}
     stopped = None
-    # The harness's retry notices are the provider's advice too (#180).
-    notices = _WithoutAnswerLocally()
     for (experiment, config), llm in zip(answering, models):
-        harness_log.addFilter(notices)
         try:
-            report = evaluate(
-                list(recorded.questions), recorded.retriever, config,
-                run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
-                use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
-                use_verification=stack.use_verification, facts_file=facts_file,
-                judge=judge,
-            )
-        except (RunStopped, RunInterrupted) as error:
-            report = error.report
             # The row named the provider, so LLM_PROVIDER is no way out (#180).
-            # Raised afresh, as its message was made from the report before this.
-            report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
-            stopped = type(error)(report)
-            stopped.__cause__ = error.__cause__
-        finally:
-            harness_log.removeFilter(notices)
+            with _provider_fixed():
+                report = evaluate(
+                    list(recorded.questions), recorded.retriever, config,
+                    run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
+                    use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
+                    use_verification=stack.use_verification, facts_file=facts_file,
+                    judge=judge,
+                )
+        except (RunStopped, RunInterrupted) as error:
+            report, stopped = error.report, error
         if recorded.facts is None:
             # The path it parsed with was never written: there was no store.
             report["facts_file"] = None
