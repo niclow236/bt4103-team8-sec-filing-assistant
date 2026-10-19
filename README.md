@@ -83,6 +83,9 @@ bt4103-team8-sec-filing-assistant/
 ├── .coveragerc              # coverage settings for python -m pytest --cov
 ├── .gitignore
 ├── .env.example             # template for local settings (copy to .env)
+├── .github/
+│   └── workflows/
+│       └── tests.yml        # runs python -m pytest on GitHub for each pull request and push to main
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
