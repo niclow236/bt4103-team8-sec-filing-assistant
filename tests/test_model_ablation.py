@@ -1068,3 +1068,24 @@ def test_a_replay_stopped_part_way_does_not_offer_llm_provider(monkeypatch, tmp_
                      "--results-root", str(tmp_path)])
     assert str(raised.value) == (
         f"stopped at q2: {advice}; partial results are under {tmp_path / 'halted'}")
+
+
+def test_a_stopped_replay_s_table_says_which_row_stopped(monkeypatch, tmp_path):
+    # QA of #163 (#180): the table showed a partial row's figures as if it were complete.
+    import src.evaluation.model_ablation as module
+    from src.evaluation.model_ablation import run_generation_replay
+
+    def stops(questions, retriever, config, **kwargs):
+        raise RunStopped({"results": [_recorded_row("q001")],
+                          "stopped": {"question_id": "q002", "error": "rate limit"}})
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    recorded = _recorded(tmp_path)
+    with pytest.raises(RunStopped):
+        run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="stopped",
+                              results_root=tmp_path, llm_for=lambda config: None,
+                              judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
+    with (tmp_path / "stopped" / "summary.csv").open(newline="") as stream:
+        table = {row["config"]: row.get("stopped") for row in csv.DictReader(stream)}
+    # The recorded answers are complete; the replayed row names where it stopped.
+    assert table["G2"] == "" and "q002" in table["G3"]

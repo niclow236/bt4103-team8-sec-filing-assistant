@@ -238,7 +238,7 @@ REPLAY_FIELDS = (
     "unanswerable_abstention", "answerable_abstention", "citation_precision",
     "invalid_citation_answers", "schema_failures", "truncated", "judge_failures",
     "median_generate_ms", "p95_generate_ms", "mean_input_tokens", "mean_output_tokens",
-    "retried_questions",
+    "retried_questions", "stopped",
 )
 
 
