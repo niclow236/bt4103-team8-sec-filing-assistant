@@ -120,7 +120,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
 │   │   ├── prompt.py        #   renders the grounded prompt: numbered sources, the rules, the question
-│   │   ├── generate.py      #   runs the prompt through Ollama or Mistral, streaming
+│   │   ├── generate.py      #   runs the prompt through Ollama, Mistral or SOCLAAS, streaming
 │   │   ├── numeric.py       #   answers a numeric question from the facts store, citing the table
 │   │   ├── decompose.py     #   searches a multi-filing question once per filing, then interleaves
 │   │   ├── citations.py     #   resolves [n] markers back to the passages they were shown as
@@ -1575,8 +1575,8 @@ The model does not write free text. `GroundedAnswer` in `src/rag/records.py` is
 a Pydantic model: whether the sources answer the question at all, then the
 answer as a list of sentences, each with the numbers of the sources it draws on.
 Its JSON schema goes with every request, as Ollama's output format or as
-Mistral's strict JSON-schema response format, and either one restricts the
-model's decoding to that shape. For a prompt with eight sources the schema only
+Mistral's and SOCLAAS's strict JSON-schema response format, and each restricts
+the model's decoding to that shape. For a prompt with eight sources the schema only
 admits the numbers 1 to 8, so the model cannot cite a source it was not shown:
 asked outright to cite source 9 of 3, the model wrote `[2]`. The same Pydantic
 model validates the output afterwards.
@@ -2657,9 +2657,10 @@ are in `docs/evaluation/generators-c4-20261018-summary.json` and
 answers in the demo and for later evaluation runs, in place of
 `ministral-8b-2512`. It is significantly more correct on this benchmark,
 equally careful about what the filings do not answer, and faster. SOCLAAS
-is a school service for teaching and experiments; its default limits are 90
-requests a minute and $80 a day per user, and the 352 SOCLAAS requests this
-work made cost SoC $0.79, about $0.0022 each, so a full replay is about $0.34.
+is a school service for teaching and experiments. Its usage page, read on 19
+October 2026, gave default limits of 90 requests a minute and $80 a day per
+user, and the 352 SOCLAAS requests this work made cost SoC $0.79, as its usage
+record showed: about $0.0022 each, so a full replay is about $0.34.
 Every presenter needs their own key. Keep Mistral one click away in the app as
 the fallback, and Ollama as the offline default, which `LLM_PROVIDER` still
 selects. Moving the hosted default changes `DEFAULT_PROVIDER` or the team's
