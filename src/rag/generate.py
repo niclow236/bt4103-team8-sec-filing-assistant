@@ -440,8 +440,8 @@ def _ollama_settings(
 ) -> dict[str, Any]:
     """What ``ChatOllama`` is built with, on the server :func:`chat_model` describes.
 
-    Named as :func:`_ollama_client` takes them, as Mistral's settings are for
-    its client, so both providers' ``settings`` return one shape.
+    Named as :func:`_ollama_client` takes them, as Mistral's and SOCLAAS's
+    settings are for theirs, so every provider's ``settings`` returns one shape.
     """
     if base_url is None:
         base_url = (env.get(LLM_BASE_URL_ENV) or "").strip() or DEFAULT_OLLAMA_URL
@@ -1117,6 +1117,16 @@ def _soclaas_unavailable(
         status = error.status_code
         detail, _ = _error_detail(error.response)
         said = f"HTTP {status}: {detail}" if detail else f"HTTP {status}"
+        # A rate limit is asked again whatever it is written in: a gateway in
+        # front of SOCLAAS may send its 429 as plain text.
+        if status == 429:
+            retry_after = _retry_after(error.response)
+            wait = f"wait {ceil(retry_after)}s" if retry_after else "wait a minute"
+            return ProviderBusy(
+                f"SOCLAAS's rate limit for {config.model!r} was reached ({said}); {wait} and "
+                f"ask again",
+                retry_after=retry_after,
+            )
         content_type = error.response.headers.get("content-type", "")
         # SOCLAAS refuses in JSON. A page in anything else below 500, such as
         # a web server's 404 or a network's login page, is not SOCLAAS's.
@@ -1132,14 +1142,6 @@ def _soclaas_unavailable(
                 f"{refused}; check {SOCLAAS_API_KEY_ENV} in your .env, or make a new key at "
                 f"{SOCLAAS_PORTAL}, then restart the notebook or command so the new key is read",
                 reason=refused,
-            )
-        if status == 429:
-            retry_after = _retry_after(error.response)
-            wait = f"wait {ceil(retry_after)}s" if retry_after else "wait a minute"
-            return ProviderBusy(
-                f"SOCLAAS's rate limit for {config.model!r} was reached ({said}); {wait} and "
-                f"ask again",
-                retry_after=retry_after,
             )
         # SOCLAAS answers a model it does not serve with a 503, which asking
         # again will never fix.

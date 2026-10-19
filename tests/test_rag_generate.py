@@ -1443,6 +1443,16 @@ def test_a_soclaas_rate_limit_carries_how_long_it_asked_to_be_left():
     assert raised.value.retry_after == 30.0
 
 
+def test_a_soclaas_rate_limit_that_is_not_json_is_still_asked_again():
+    # Review of #163: a gateway's 429 in plain text read as "not SOCLAAS's
+    # answer", so the harness stopped where a wait would have let it go on.
+    llm = _soclaas(lambda request: httpx2.Response(
+        429, text="Too Many Requests", headers={"content-type": "text/plain", "retry-after": "5"}))
+    with pytest.raises(ProviderBusy, match="rate limit .* wait 5s and ask again") as raised:
+        generate(PROMPT, _soclaas_config(), llm=llm)
+    assert raised.value.retry_after == 5.0
+
+
 def test_a_page_that_is_not_soclaas_s_names_the_address_setting():
     # What a wrong SOCLAAS_BASE_URL got on 18 October 2026: the school's web
     # server's HTML 404 page. A network's login page looks the same.
