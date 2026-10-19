@@ -1146,6 +1146,20 @@ def test_a_stopped_replay_s_record_does_not_offer_llm_provider(monkeypatch, tmp_
     assert "LLM_PROVIDER" not in (tmp_path / "stopped" / "summary.csv").read_text()
 
 
+def _busy_once(label, message):
+    """Ask through the harness's retries, which fails once with ``message``."""
+    import src.evaluation.harness as harness
+    from src.rag.generate import ProviderBusy
+
+    failures = iter([ProviderBusy(message)])
+
+    def ask():
+        for failure in failures:
+            raise failure
+        return "answer"
+    return harness.answer_with_retries(label, ask)
+
+
 @pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
 def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path, caplog,
                                                             log_threads):
@@ -1157,22 +1171,12 @@ def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_pat
     import src.evaluation.harness as harness
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
-    from src.rag.generate import ProviderBusy
 
     busy = ("SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask again, or set "
             "LLM_PROVIDER=ollama to answer locally")
 
-    def ask_twice():
-        failures = iter([ProviderBusy(busy)])
-
-        def ask():
-            for failure in failures:
-                raise failure
-            return "answer"
-        return harness.answer_with_retries("q001", ask)
-
     def evaluate(questions, retriever, config, **kwargs):
-        ask_twice()
+        _busy_once("q001", busy)
         return {"results": [_recorded_row("q001"), _recorded_row(
             "q002", question_type="unanswerable", abstained=True)]}
 
@@ -1189,7 +1193,7 @@ def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_pat
                           "again; asking again in 10s")
         # Outside a replay, where LLM_PROVIDER does choose the provider, the advice stays.
         caplog.clear()
-        ask_twice()
+        _busy_once("q001", busy)
         assert "LLM_PROVIDER=ollama" in caplog.messages[0]
 
 
@@ -1203,20 +1207,11 @@ def test_a_replay_leaves_the_advice_in_another_thread_s_retry_notices(monkeypatc
     import src.evaluation.harness as harness
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
-    from src.rag.generate import ProviderBusy
-
-    def busy_once():
-        failures = iter([ProviderBusy("cannot reach SOCLAAS: check the internet connection, "
-                                      "or set LLM_PROVIDER=ollama to answer locally")])
-
-        def ask():
-            for failure in failures:
-                raise failure
-            return "answer"
-        return harness.answer_with_retries("other-run", ask)
 
     def evaluate(questions, retriever, config, **kwargs):
-        other = threading.Thread(target=busy_once)
+        other = threading.Thread(target=_busy_once, args=(
+            "other-run", "cannot reach SOCLAAS: check the internet connection, or set "
+                         "LLM_PROVIDER=ollama to answer locally"))
         other.start()
         other.join()
         return {"results": [_recorded_row("q001"), _recorded_row(
@@ -1340,20 +1335,6 @@ def test_a_stopped_generation_matrix_raises_its_error_without_llm_provider(monke
     assert raised.value.__cause__ is unreachable
     assert raised.value.report["results"] == [{"question_id": "q001", "question_type": "numeric",
                                                "difficulty": "easy", "source": "handwritten"}]
-
-
-def _busy_once(label, message):
-    """Ask through the harness's retries, which fails once with ``message``."""
-    import src.evaluation.harness as harness
-    from src.rag.generate import ProviderBusy
-
-    failures = iter([ProviderBusy(message)])
-
-    def ask():
-        for failure in failures:
-            raise failure
-        return "answer"
-    return harness.answer_with_retries(label, ask)
 
 
 @pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
