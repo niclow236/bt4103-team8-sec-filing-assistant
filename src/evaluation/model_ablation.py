@@ -297,8 +297,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     facts store or company list can change a query; caught here, it stops the
     replay before any model is asked, rather than part-way through. The check
     reads the store from ``facts_file`` once, and the replay parses with what
-    it read.
-    ``chunks`` is the corpus, read from ``processed_dir`` unless given.
+    it read. ``chunks`` is the corpus, read from ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
         FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
@@ -349,7 +348,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     facts = Path(facts_file).read_bytes() if Path(facts_file).is_file() else None
     with TemporaryDirectory(prefix="replay-facts-") as scratch:
         checked = _facts_copy(facts, facts_file, Path(scratch))
-        _check_queries(scored, measured, checked)
+        _check_queries(scored, measured, checked, store=Path(facts_file))
     return RecordedAnswers(
         run_dir=run_dir, questions=scored,
         retriever=_RecordedRankings([measured[q.question_id] for q in team],
@@ -360,19 +359,23 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
 
 
 def _facts_copy(facts: bytes | None, facts_file: Path, directory: Path) -> Path:
-    """The facts store as read, written into ``directory`` under its own name,
-    or ``facts_file`` itself where there was no store to read."""
-    if facts is None:
-        return Path(facts_file)
+    """The facts store as read, written into ``directory`` under its own name.
+
+    Where there was no store to read, the path is returned unwritten, so it is
+    parsed as missing however long the caller runs: a store built at
+    ``facts_file`` in the meantime is not read.
+    """
     copy = directory / Path(facts_file).name
-    copy.write_bytes(facts)
+    if facts is not None:
+        copy.write_bytes(facts)
     return copy
 
 
 def _check_queries(scored: Sequence[BenchmarkQuestion], measured: dict[str, dict],
-                   facts_file: Path) -> None:
+                   facts_file: Path, *, store: Path) -> None:
     """Refuse a run whose recorded C4 query for any question is not the one the
-    harness would build now, with ``facts_file``."""
+    harness would build now, parsing with ``facts_file``, the copy of ``store``
+    that the refusal names."""
     from src.evaluation.full_ablation import MATRIX, query_record
     from src.evaluation.harness import benchmark_query
     from src.rag.query import parse_question
@@ -384,7 +387,7 @@ def _check_queries(scored: Sequence[BenchmarkQuestion], measured: dict[str, dict
         if query_record(query) != measured[question.question_id]["query"]:
             raise ValueError(
                 f"{question.question_id}'s query {query.text!r} differs from the one the run "
-                f"recorded; the facts store or config/companies.txt has changed "
+                f"recorded; the facts store ({store}) or config/companies.txt has changed "
                 f"since the run, so its rankings cannot be replayed")
 
 

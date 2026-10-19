@@ -826,7 +826,8 @@ def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
     pairs[-1]["rows"]["C4"]["query"]["wants_figures"] = not pairs[-1]["rows"]["C4"]["query"][
         "wants_figures"]
     matrix.write_rows(directory / "pairs.jsonl", pairs)
-    with pytest.raises(ValueError, match=r"query .* differs from the one the run recorded"):
+    with pytest.raises(ValueError, match=r"query .* differs from the one the run recorded; "
+                                         r"the facts store \(.*facts\.parquet\)"):
         recorded_answers(directory, chunks=snapshot)
     matrix.write_rows(directory / "pairs.jsonl", original)
 
@@ -880,10 +881,24 @@ def test_the_replay_parses_with_a_snapshot_of_the_facts_store(answer_run, tmp_pa
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     facts = tmp_path / "facts.parquet"
     facts.write_bytes(b"facts as of the check")
+    # What the query check parses with, read while it runs: review of #163
+    # found nothing held it to the snapshot rather than the live store.
+    import src.evaluation.model_ablation as module
+    checked = []
+    check = module._check_queries
+
+    def spy(scored, measured, facts_file, *args, **kwargs):
+        checked.append((facts_file, facts_file.read_bytes() if facts_file.exists() else None))
+        return check(scored, measured, facts_file, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_check_queries", spy)
     recorded = recorded_answers(answer_run.runner.directory, chunks=answer_run.runner.snapshot,
                                 facts_file=facts)
     facts.write_bytes(b"rebuilt part-way through")
     assert recorded.facts == b"facts as of the check"
+    [(path, read)] = checked
+    assert path != facts and read == b"facts as of the check"
+    checked.clear()
     assert list(scratch.iterdir()) == []
 
     # A fresh clone has no store: there is nothing to copy, and the replay
@@ -892,6 +907,9 @@ def test_the_replay_parses_with_a_snapshot_of_the_facts_store(answer_run, tmp_pa
     recorded = recorded_answers(answer_run.runner.directory, chunks=answer_run.runner.snapshot,
                                 facts_file=absent)
     assert (recorded.facts_file, recorded.facts) == (absent, None)
+    # Checked with it missing, not with whatever appears at its path later.
+    [(path, read)] = checked
+    assert path != absent and read is None
 
 
 def test_a_replay_without_a_facts_store_parses_with_it_missing(monkeypatch, tmp_path):
@@ -899,14 +917,18 @@ def test_a_replay_without_a_facts_store_parses_with_it_missing(monkeypatch, tmp_
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
 
+    # Review of #163: it parsed with the live path, so a store built while the
+    # replay ran could still change a later query part-way through.
     seen = []
     monkeypatch.setattr(module, "evaluate", _replaying(seen))
-    recorded = replace(_recorded(tmp_path), facts_file=tmp_path / "absent.parquet", facts=None)
+    live = tmp_path / "absent.parquet"
+    recorded = replace(_recorded(tmp_path), facts_file=live, facts=None)
     run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="no-facts",
                           results_root=tmp_path, llm_for=lambda config: None,
                           judge=SimpleNamespace(config=recorded.generation, to_dict=dict))
-    assert seen[0][3]["facts_file"] == tmp_path / "absent.parquet"
-    assert not (tmp_path / "no-facts" / "absent.parquet").exists()
+    parsed_with = seen[0][3]["facts_file"]
+    assert parsed_with != live and parsed_with.parent == tmp_path / "no-facts"
+    assert not parsed_with.exists()
 
 
 def test_a_run_judged_otherwise_or_short_of_its_team_retrieval_is_refused(answer_run):
