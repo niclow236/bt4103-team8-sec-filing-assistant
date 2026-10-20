@@ -170,7 +170,7 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
             })
         if configurations:
             runs.append({"run_id": run_dir.name, "run_dir": str(run_dir),
-                         "configurations": configurations})
+                         "top_k": manifest.get("top_k"), "configurations": configurations})
     return runs
 
 

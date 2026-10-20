@@ -39,11 +39,11 @@ def _answer_row(question_id, correctness, *, question="What was revenue?"):
             "quality": {"correctness": correctness, "method": "llm_judge"}}
 
 
-def _save_run(root, configurations, *, name="run"):
+def _save_run(root, configurations, *, name="run", **manifest):
     """Write a run folder: ``configurations`` maps an id to its saved rows."""
     run = root / name
     run.mkdir()
-    (run / "summary.json").write_text(json.dumps({"run_id": name, "configurations": [
+    (run / "summary.json").write_text(json.dumps({"run_id": name, **manifest, "configurations": [
         {"config": {"id": config_id, "name": config_id},
          "questions": len(next(iter(files.values())))}
         for config_id, files in configurations.items()]}), encoding="utf-8")
@@ -393,3 +393,21 @@ def test_the_change_colours_follow_the_viewers_theme(tmp_path, monkeypatch):
     dark = _cell_colours(_open(monkeypatch, tmp_path).tabs[0], "Top 10")["q1"]
 
     assert light is not None and dark is not None and light != dark
+
+
+def test_a_run_scored_past_the_top_10_says_its_recall_counts_passages_the_view_does_not(
+        tmp_path, monkeypatch):
+    configurations = {
+        "C0": {"questions": [_retrieval_row("q1", 12)], "answers": [_answer_row("q1", 0.5)]},
+        "C4": {"questions": [_retrieval_row("q1", 2)], "answers": [_answer_row("q1", 1.0)]}}
+    _save_run(tmp_path, configurations, name="at-16", top_k=16)
+    _save_run(tmp_path, configurations, name="at-10", top_k=10)
+    app = _open(monkeypatch, tmp_path)
+
+    def says_why(app):
+        return [caption.value for caption in app.tabs[0].caption if "Recall" in caption.value]
+
+    app.selectbox[0].select("at-16").run()
+    assert len(says_why(app)) == 1 and "11 to 16" in says_why(app)[0]
+    app.selectbox[0].select("at-10").run()
+    assert says_why(app) == []

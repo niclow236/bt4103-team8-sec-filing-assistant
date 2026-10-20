@@ -154,10 +154,11 @@ class _Measure(NamedTuple):
     unscored: str       # why a question both answered was not counted on it
 
 
+_TOP_10 = _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
+                   # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
+                   "rank", attrgetter("rank"), "Int64", _found, "had no right passage to find")
 _MEASURES = (
-    _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
-             # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
-             "rank", attrgetter("rank"), "Int64", _found, "had no right passage to find"),
+    _TOP_10,
     # Scored by the LLM judge, or for an abstention by whether abstaining was
     # right, so not "judged" correctness alone.
     _Measure("Answer correctness", "Correctness", "correctness", attrgetter("correctness"),
@@ -227,8 +228,14 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
         return
+    scored_at = run.get("top_k")
     for measure, changes in counts:
         _render_change_counts(measure, changes, answered)
+        if measure is _TOP_10 and isinstance(scored_at, int) and scored_at > _FOUND_WITHIN:
+            # The cutoff stays the issue's top 10, and this says why the
+            # counts can disagree with the scores above them (#169).
+            st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
+                       f"ranked {_FOUND_WITHIN + 1} to {scored_at} counts there but not here.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in ("improved", "worse")}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
