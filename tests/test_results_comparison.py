@@ -363,10 +363,10 @@ def test_each_question_is_coloured_by_whether_it_improved_or_got_worse(tmp_path,
     })
     app = _open(monkeypatch, tmp_path)
     colours = _cell_colours(app.tabs[0], "Top 10")
+    # The light theme's green and red, the shades its :green[] and :red[] use.
+    green, red = "#158237", "#bd4043"
 
-    assert colours["q3"] is None
-    assert colours["q1"] == colours["q4"] is not None
-    assert colours["q2"] is not None and colours["q2"] != colours["q1"]
+    assert colours == {"q1": green, "q2": red, "q3": None, "q4": green}
 
 
 def test_the_table_shows_a_missing_rank_as_blank_and_scores_to_two_places(tmp_path, monkeypatch):
