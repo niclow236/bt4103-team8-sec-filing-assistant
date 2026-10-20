@@ -202,7 +202,8 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]
     held by ``result_runs`` for every configuration of every run.
     """
     outcomes: dict[str, dict[str, Any]] = {}
-    for row in _read_result_rows(Path(run_dir) / config_id / "questions.jsonl"):
+    folder = Path(run_dir) / config_id
+    for row in _read_result_rows(folder / "questions.jsonl"):
         question_id = row.get("question_id")
         if not question_id:
             continue
@@ -210,7 +211,23 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]
         query = row.get("query")
         outcomes[str(question_id)] = {
             "question": query.get("text", "") if isinstance(query, dict) else "",
-            "benchmark": benchmark_kind(row), "scored": scored, "rank": rank}
+            "benchmark": benchmark_kind(row), "scored": scored, "rank": rank,
+            "correctness": None}
+    answers = (_read_result_rows(folder / "answers.jsonl")
+               or _read_result_rows(folder / "report.json"))
+    for row in answers:
+        question_id = row.get("question_id")
+        quality = row.get("quality")
+        if not question_id or not isinstance(quality, dict):
+            continue
+        correctness = quality.get("correctness")
+        if not isinstance(correctness, (int, float)):
+            continue
+        answer = row.get("answer")
+        outcome = outcomes.setdefault(str(question_id), {
+            "question": answer.get("question", "") if isinstance(answer, dict) else "",
+            "benchmark": benchmark_kind(row), "scored": False, "rank": None})
+        outcome["correctness"] = correctness
     return outcomes
 
 

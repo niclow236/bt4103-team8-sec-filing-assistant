@@ -85,12 +85,13 @@ def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -
 
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
                               configurations: list[dict[str, Any]],
-                              benchmark: str) -> None:
+                              benchmark: str) -> bool:
+    """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
     model_table = _results_model_table(configurations, benchmark)
     if not retrieval and model_table.empty:
         st.info("No saved results for this benchmark.")
-        return
+        return False
     if retrieval:
         st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
     chart_rows = result_chart_rows(retrieval, benchmark)
@@ -101,6 +102,7 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not model_table.empty:
         st.subheader("Answer-model ablation")
         st.dataframe(model_table, width="stretch", hide_index=True)
+    return True
 
 
 def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
@@ -124,11 +126,24 @@ _FOUND_WITHIN = 10
 _DEFAULT_BASELINE = "C0"
 
 
-def _found(outcome: Mapping[str, Any]) -> bool:
+def _found(outcome: Mapping[str, Any]) -> bool | None:
+    """Whether the right passage ranked in the top 10, or None for an unscored question."""
+    if not outcome["scored"]:
+        return None
     return outcome["rank"] is not None and outcome["rank"] <= _FOUND_WITHIN
 
 
-def _change(before: bool, after: bool) -> str:
+def _correctness(outcome: Mapping[str, Any]) -> float | None:
+    return outcome.get("correctness")
+
+
+# What the view counts changes on: a title, and how one question's outcome
+# scores on it (None where the configuration was not scored on it).
+_MEASURES = ((f"Found the right passage in the top {_FOUND_WITHIN}", _found),
+             ("Judged correctness", _correctness))
+
+
+def _change(before: float, after: float) -> str:
     return "improved" if after > before else "worse" if after < before else "unchanged"
 
 
@@ -146,12 +161,18 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                                 format_func=str)
     before = outcomes(run["run_dir"], baseline)
     after = outcomes(run["run_dir"], compared)
-    changes = Counter(
-        _change(_found(before[question_id]), _found(outcome))
-        for question_id, outcome in after.items()
-        if question_id in before and outcome["benchmark"] == benchmark
-        and outcome["scored"] and before[question_id]["scored"])
-    _render_change_counts(f"Found the right passage in the top {_FOUND_WITHIN}", changes)
+    shared = [(before[question_id], outcome) for question_id, outcome in after.items()
+              if question_id in before and outcome["benchmark"] == benchmark]
+    measured = False
+    for title, score in _MEASURES:
+        changes = Counter(_change(score(old), score(new)) for old, new in shared
+                          if score(old) is not None and score(new) is not None)
+        if changes:
+            _render_change_counts(title, changes)
+            measured = True
+    if not measured:
+        st.info(f"{baseline} and {compared} have no saved question in common "
+                "that was scored the same way on this benchmark.")
 
 
 def _render_change_counts(title: str, changes: Counter) -> None:
@@ -199,8 +220,8 @@ def render_results(runs: list[dict[str, Any]], *,
                                 _RESULT_BENCHMARKS):
         with tab:
             matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
-            _render_results_benchmark(title, matching, selected["configurations"], kind)
-            if outcomes is not None:
+            saved = _render_results_benchmark(title, matching, selected["configurations"], kind)
+            if saved and outcomes is not None:
                 _render_question_changes(selected, kind, outcomes)
 
 

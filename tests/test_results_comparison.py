@@ -20,9 +20,19 @@ def _retrieval_row(question_id, rank, *, question="What was revenue?", **fields)
     supporting = [] if rank == "unscored" else [f"{question_id}-gold"]
     if isinstance(rank, int):
         retrieved[rank - 1] = f"{question_id}-gold"
+    # Scored at 10, as the full matrix scores them.
+    found = isinstance(rank, int) and rank <= 10
+    score = None if rank == "unscored" else float(found)
     return {"question_id": question_id, "difficulty": "medium", "source": None,
             "query": {"text": question}, "retrieved_chunk_ids": retrieved,
-            "scoring_supporting_chunk_ids": supporting, **fields}
+            "scoring_supporting_chunk_ids": supporting, "recall": score,
+            "mrr": None if score is None else (1 / rank if found else 0.0), **fields}
+
+
+def _answer_row(question_id, correctness, *, question="What was revenue?"):
+    """A saved answer row the judge gave ``correctness``."""
+    return {"question_id": question_id, "source": None, "answer": {"question": question},
+            "quality": {"correctness": correctness, "method": "llm_judge"}}
 
 
 def _save_run(root, configurations, *, name="run"):
@@ -30,7 +40,8 @@ def _save_run(root, configurations, *, name="run"):
     run = root / name
     run.mkdir()
     (run / "summary.json").write_text(json.dumps({"run_id": name, "configurations": [
-        {"config": {"id": config_id, "name": config_id}, "questions": len(files["questions"])}
+        {"config": {"id": config_id, "name": config_id},
+         "questions": len(next(iter(files.values())))}
         for config_id, files in configurations.items()]}), encoding="utf-8")
     for config_id, files in configurations.items():
         (run / config_id).mkdir()
@@ -147,3 +158,63 @@ def test_reload_rereads_the_questions_a_comparison_counts(tmp_path, monkeypatch)
     app.button[0].click().run()
     assert not app.exception
     assert _counts(app.tabs[0])[0] == (":green[Improved]", "1")
+
+
+def test_judged_correctness_is_counted_too_when_the_run_has_it(tmp_path, monkeypatch):
+    retrieval = [_retrieval_row(question_id, 1) for question_id in ("q1", "q2", "q3", "q4")]
+    _save_run(tmp_path, {
+        "C0": {"questions": retrieval, "answers": [
+            _answer_row("q1", 0.5), _answer_row("q2", 1.0), _answer_row("q3", 0.75),
+            _answer_row("q4", None)]},
+        "C4": {"questions": retrieval, "answers": [
+            _answer_row("q1", 1.0), _answer_row("q2", 0.8), _answer_row("q3", 0.75),
+            _answer_row("q4", 1.0)]},
+    })
+    app = _open(monkeypatch, tmp_path)
+    team = app.tabs[0]
+
+    assert _counts(team)[3:] == [
+        (":green[Improved]", "1"), (":red[Worse]", "1"), ("Unchanged", "1")]
+    assert any("3 questions both configurations answered" in caption.value
+               for caption in team.caption)
+
+
+def test_answer_model_configurations_are_compared_on_judged_correctness_alone(
+        tmp_path, monkeypatch):
+    run = tmp_path / "generators"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": config_id, "provider": "ollama"}, "questions": 2}
+        for config_id in ("G1", "G3")]}), encoding="utf-8")
+    for config_id, scores in (("G1", (0.5, 1.0)), ("G3", (1.0, 1.0))):
+        (run / config_id).mkdir()
+        (run / config_id / "report.json").write_text(json.dumps({"results": [
+            {**_answer_row(question_id, score), "route": "ollama",
+             "answer": {"question": "What was revenue?", "abstained": False, "latency_ms": 1}}
+            for question_id, score in zip(("q1", "q2"), scores)]}), encoding="utf-8")
+    app = _open(monkeypatch, tmp_path)
+
+    assert _counts(app.tabs[0]) == [
+        (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]
+    assert not any("top 10" in markdown.value for markdown in app.tabs[0].markdown)
+
+
+def test_a_benchmark_with_no_saved_results_offers_no_comparison(tmp_path, monkeypatch):
+    rows = [_retrieval_row("q1", 1)]
+    _save_run(tmp_path, {"C0": {"questions": rows}, "C4": {"questions": rows}})
+    app = _open(monkeypatch, tmp_path)
+    team, mechanical = app.tabs
+
+    assert len(team.selectbox) == 2
+    assert not mechanical.selectbox and not mechanical.metric
+
+
+def test_two_configurations_with_no_question_in_common_say_so_instead_of_counting(
+        tmp_path, monkeypatch):
+    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", 1)]},
+                         "C4": {"questions": [_retrieval_row("q2", 1)]}})
+    app = _open(monkeypatch, tmp_path)
+    team = app.tabs[0]
+
+    assert not team.metric
+    assert any("C0 and C4" in info.value for info in team.info)
