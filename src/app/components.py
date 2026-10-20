@@ -26,6 +26,7 @@ import streamlit as st
 import pandas as pd
 
 from src.config import read_tickers
+from src.evaluation import report
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
 from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
@@ -52,35 +53,15 @@ _ITEM_MENTION = re.compile(
 )
 
 
-_RESULT_METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
-                         "hard_negative_accuracy": "Hard Negative Accuracy"}
-_RESULT_BENCHMARKS = (("Team benchmark", "handwritten"),
-                      ("Mechanical XBRL benchmark", "mechanical"))
+result_chart_rows = report.chart_rows
 
 
 def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
-    rows = []
-    for item in configurations:
-        saved = item["benchmark_metrics"].get(benchmark, {})
-        rows.append({"Configuration": item["config_id"], "Name": item["name"],
-                     "Questions": saved.get("questions", item["questions"]),
-                     **{label: saved.get(metric)
-                        for metric, label in _RESULT_METRIC_LABELS.items()}})
-    return pd.DataFrame(rows).dropna(axis=1, how="all")
+    return pd.DataFrame(report.retrieval_table(configurations, benchmark))
 
 
 def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
-    rows = []
-    for item in configurations:
-        saved = item["benchmark_metrics"].get(benchmark, {})
-        if saved.get("abstention_rate") is None:
-            continue
-        rows.append({"Configuration": item["config_id"], "Name": item["name"],
-                     "Questions": saved.get("questions"),
-                     "Abstention rate": saved.get("abstention_rate"),
-                     "Median latency (ms)": saved.get("median_latency_ms"),
-                     "LLM questions": saved.get("llm_questions")})
-    return pd.DataFrame(rows).dropna(axis=1, how="all")
+    return pd.DataFrame(report.model_table(configurations, benchmark))
 
 
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
@@ -101,20 +82,6 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not model_table.empty:
         st.subheader("Answer-model ablation")
         st.dataframe(model_table, width="stretch", hide_index=True)
-
-
-def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
-    """Return only the four retrieval metrics; counts are not scores."""
-    rows = []
-    for item in configurations:
-        saved = item["benchmark_metrics"].get(benchmark, {})
-        for metric, label in _RESULT_METRIC_LABELS.items():
-            value = saved.get(metric)
-            if value is not None:
-                rows.append({"Configuration": item["config_id"],
-                             "Metric": label,
-                             "Value": float(value)})
-    return rows
 
 
 def render_results(runs: list[dict[str, Any]]) -> None:
@@ -138,12 +105,9 @@ def render_results(runs: list[dict[str, Any]]) -> None:
     if incomplete:
         st.warning("Incomplete results: " + ", ".join(incomplete)
                    + ". These scores are partial and are not comparable to a complete run.")
-    retrieval = [item for item in selected["configurations"]
-                 if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
-                            for metric in _RESULT_METRIC_LABELS)
-                        for _, kind in _RESULT_BENCHMARKS)]
-    for tab, (title, kind) in zip(st.tabs([title for title, _ in _RESULT_BENCHMARKS]),
-                                _RESULT_BENCHMARKS):
+    retrieval = report.retrieval_configurations(selected["configurations"])
+    for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
+                                report.BENCHMARKS):
         with tab:
             matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
             _render_results_benchmark(title, matching, selected["configurations"], kind)

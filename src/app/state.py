@@ -19,13 +19,11 @@ no page holds a cache of its own:
 
 from __future__ import annotations
 
-import json
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
 from pathlib import Path
-from statistics import mean, median
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import streamlit as st
@@ -53,123 +51,16 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
 
-from src.evaluation.metrics import RETRIEVAL_METRICS
-
-RESULT_METRICS = RETRIEVAL_METRICS
-
-
-def benchmark_kind(row: dict[str, Any]) -> str:
-    """Classify a saved row once, consistently for every Results view."""
-    source = str(row.get("source", "")).lower()
-    difficulty = str(row.get("difficulty", "")).lower()
-    if difficulty == "mechanical" or source == "xbrl":
-        return "mechanical"
-    if str(row.get("question_id", "")).lower().startswith("xbrl-"):
-        return "mechanical"
-    return "handwritten"
-
-
-def _read_result_rows(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    try:
-        if path.name == "report.json":
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            rows = loaded.get("results", []) if isinstance(loaded, dict) else []
-            return [row for row in rows if isinstance(row, dict)]
-        rows = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-        return rows
-    except (OSError, ValueError):
-        return []
-
-
-def _saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = None) -> dict[str, dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        grouped.setdefault(benchmark_kind(row), []).append(row)
-    output: dict[str, dict[str, Any]] = {}
-    for kind, items in grouped.items():
-        values: dict[str, Any] = {"questions": len(items)}
-        for metric in RESULT_METRICS:
-            measured = [row[metric] for row in items if row.get(metric) is not None]
-            values[metric] = mean(measured) if measured else None
-        answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
-        if answers:
-            latencies = [answer["latency_ms"] for answer in answers
-                         if answer.get("latency_ms") is not None]
-            values.update({
-                "abstention_rate": mean(answer.get("abstained", False) for answer in answers),
-                "median_latency_ms": median(latencies) if latencies else None,
-                "llm_questions": sum(provider is not None and row.get("route") == provider for row in items),
-            })
-        output[kind] = values
-    return output
-
-
-def _incomplete(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
-    """Describe partial results without treating a summary-only run as truncated."""
-    stopped = summary.get("stopped")
-    if stopped:
-        where = stopped.get("question_id") if isinstance(stopped, dict) else None
-        return f"stopped at {where}" if where else "stopped part-way"
-    expected = summary.get("questions")
-    if rows and isinstance(expected, int) and len(rows) < expected:
-        return f"{len(rows)} of {expected} question rows could be read"
-    return None
+# benchmark_kind and _read_result_rows stay importable from here for older callers.
+from src.evaluation.report import (
+    benchmark_kind, read_result_rows as _read_result_rows, read_runs,
+)
 
 
 @st.cache_data(show_spinner=False)
 def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
     """Read saved evaluation runs, including older files, without rerunning them."""
-    if not results_root.is_dir():
-        return []
-    runs: list[dict[str, Any]] = []
-    for run_dir in sorted((path for path in results_root.iterdir() if path.is_dir()),
-                          key=lambda path: path.stat().st_mtime, reverse=True):
-        try:
-            manifest = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(manifest, dict):
-            continue
-        configurations = []
-        for summary in manifest.get("configurations", ()):
-            if not isinstance(summary, dict):
-                continue
-            config = summary.get("config") or {}
-            if not isinstance(config, dict):
-                continue
-            config_id = str(config.get("id") or "")
-            # Saved IDs name one child directory, never a path or a Windows drive.
-            if not config_id or config_id in {".", ".."} or any(
-                    character in config_id for character in ("/", "\\", ":")):
-                continue
-            config_dir = run_dir / config_id
-            if config_dir.resolve().parent != run_dir.resolve():
-                continue
-            rows = _read_result_rows(config_dir / "questions.jsonl")
-            if not rows:
-                rows = _read_result_rows(config_dir / "report.json")
-            configurations.append({
-                "run_id": run_dir.name,
-                "config_id": config_id,
-                "name": str(config.get("name") or config_id),
-                "questions": int(summary.get("questions") or len(rows)),
-                "incomplete": _incomplete(summary, rows),
-                "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
-                                      if rows else summary.get("by_benchmark") or {}),
-            })
-        if configurations:
-            runs.append({"run_id": run_dir.name,
-                         "configurations": configurations})
-    return runs
+    return read_runs(results_root)
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
