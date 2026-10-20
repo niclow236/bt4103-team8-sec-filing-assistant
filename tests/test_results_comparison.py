@@ -463,3 +463,13 @@ def test_a_question_whose_rows_kept_no_text_is_shown_with_the_benchmarks(tmp_pat
 
     assert _questions_table(app.tabs[0]).set_index("Question").loc["q1", "Asked"] == (
         "Who audits Apple?")
+
+
+def test_a_run_scored_at_11_names_the_one_rank_the_view_leaves_out(tmp_path, monkeypatch):
+    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", 11)]},
+                         "C4": {"questions": [_retrieval_row("q1", 2)]}}, top_k=11)
+    app = _open(monkeypatch, tmp_path)
+
+    assert [caption.value for caption in app.tabs[0].caption if "Recall" in caption.value] == [
+        "This run scores Recall and MRR at 11, so a right passage ranked 11 counts there "
+        "but not here."]

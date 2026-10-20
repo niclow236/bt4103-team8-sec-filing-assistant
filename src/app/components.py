@@ -245,8 +245,10 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         if measure is _TOP_10 and isinstance(scored_at, int) and scored_at > _FOUND_WITHIN:
             # The cutoff stays the issue's top 10, and this says why the
             # counts can disagree with the scores above them (#169).
+            ranks = (f"{_FOUND_WITHIN + 1}" if scored_at == _FOUND_WITHIN + 1
+                     else f"{_FOUND_WITHIN + 1} to {scored_at}")
             st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
-                       f"ranked {_FOUND_WITHIN + 1} to {scored_at} counts there but not here.")
+                       f"ranked {ranks} counts there but not here.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in (_IMPROVED, _WORSE)}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
