@@ -174,6 +174,16 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
     return runs
 
 
+class QuestionOutcome(NamedTuple):
+    """How one configuration of a saved run did on one question (#169)."""
+
+    question: str                     # its text, where the saved row kept it
+    benchmark: str                    # as ``benchmark_kind`` classifies the row
+    scored: bool = False              # whether it was scored on retrieval at all
+    rank: int | None = None           # of its first right passage, None if none was retrieved
+    correctness: float | None = None  # what its answer was scored, where it was
+
+
 def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     """Whether ``row`` was scored on retrieval, and where its first right passage ranked.
 
@@ -194,16 +204,13 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
 
 
 @st.cache_data(show_spinner=False)
-def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]:
+def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome]:
     """How one configuration of a saved run did on each question, by question id (#169).
 
-    Each outcome holds the question's text and benchmark, whether it was
-    scored on retrieval and the rank of its first right passage, and the
-    judge's correctness where the configuration's answers were judged.
     Read on demand for the two configurations a comparison names, rather than
     held by ``result_runs`` for every configuration of every run.
     """
-    outcomes: dict[str, dict[str, Any]] = {}
+    outcomes: dict[str, QuestionOutcome] = {}
     folder = Path(run_dir) / config_id
     for row in _read_result_rows(folder / "questions.jsonl"):
         question_id = row.get("question_id")
@@ -211,9 +218,9 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]
             continue
         scored, rank = _first_right_rank(row)
         query = row.get("query")
-        outcomes[str(question_id)] = {
-            "question": query.get("text", "") if isinstance(query, dict) else "",
-            "benchmark": benchmark_kind(row), "scored": scored, "rank": rank}
+        outcomes[str(question_id)] = QuestionOutcome(
+            query.get("text", "") if isinstance(query, dict) else "",
+            benchmark_kind(row), scored, rank)
     answers = (_read_result_rows(folder / "answers.jsonl")
                or _read_result_rows(folder / "report.json"))
     for row in answers:
@@ -222,10 +229,9 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]
         if not question_id or not isinstance(quality, dict):
             continue
         answer = row.get("answer")
-        outcome = outcomes.setdefault(str(question_id), {
-            "question": answer.get("question", "") if isinstance(answer, dict) else "",
-            "benchmark": benchmark_kind(row), "scored": False, "rank": None})
-        outcome["correctness"] = quality.get("correctness")
+        outcome = outcomes.get(str(question_id)) or QuestionOutcome(
+            answer.get("question", "") if isinstance(answer, dict) else "", benchmark_kind(row))
+        outcomes[str(question_id)] = outcome._replace(correctness=quality.get("correctness"))
     return outcomes
 
 

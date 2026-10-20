@@ -17,6 +17,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, replace
 from hashlib import sha256
+from operator import attrgetter
 from html import escape
 import re
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
@@ -38,7 +39,7 @@ from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
 if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
-    from src.app.state import AnswerModels
+    from src.app.state import AnswerModels, QuestionOutcome
     from src.rag.generate import ProviderUnavailable
 
 
@@ -126,15 +127,11 @@ _FOUND_WITHIN = 10
 _DEFAULT_BASELINE = "C0"
 
 
-def _found(outcome: Mapping[str, Any]) -> bool | None:
+def _found(outcome: QuestionOutcome) -> bool | None:
     """Whether the right passage ranked in the top 10, or None for an unscored question."""
-    if not outcome["scored"]:
+    if not outcome.scored:
         return None
-    return outcome["rank"] is not None and outcome["rank"] <= _FOUND_WITHIN
-
-
-def _correctness(outcome: Mapping[str, Any]) -> float | None:
-    return outcome.get("correctness")
+    return outcome.rank is not None and outcome.rank <= _FOUND_WITHIN
 
 
 class _Measure(NamedTuple):
@@ -142,15 +139,20 @@ class _Measure(NamedTuple):
 
     title: str
     column: str         # the table column that says how a question changed on it
-    shown: str          # the outcome each configuration's own column shows
+    shown: str          # what each configuration's own column is headed with
+    # What that column shows of a question's outcome, and the column's type.
+    value: Callable[[QuestionOutcome], Any]
+    dtype: str | None
     # How one question's outcome scores on it, None where it was not scored.
-    score: Callable[[Mapping[str, Any]], float | None]
+    score: Callable[[QuestionOutcome], float | None]
 
 
 _MEASURES = (
     _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
-             "rank", _found),
-    _Measure("Judged correctness", "Correctness", "correctness", _correctness),
+             # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
+             "rank", attrgetter("rank"), "Int64", _found),
+    _Measure("Judged correctness", "Correctness", "correctness", attrgetter("correctness"),
+             None, attrgetter("correctness")),
 )
 _SHOW_ALL = "All questions"
 
@@ -160,7 +162,7 @@ def _change(before: float, after: float) -> str:
 
 
 def _render_question_changes(run: Mapping[str, Any], benchmark: str,
-                             outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]]) -> None:
+                             outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
     config_ids = [item["config_id"] for item in run["configurations"]]
     if len(config_ids) < 2:
@@ -175,7 +177,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     after = outcomes(run["run_dir"], compared)
     shared = {question_id: (before[question_id], outcome)
               for question_id, outcome in after.items()
-              if question_id in before and outcome["benchmark"] == benchmark}
+              if question_id in before and outcome.benchmark == benchmark}
     counted = []
     for measure in _MEASURES:
         changes = Counter(_change(measure.score(old), measure.score(new))
@@ -190,18 +192,17 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         return
     rows = []
     for question_id, (old, new) in shared.items():
-        row = {"Question": question_id, "Asked": old["question"]}
+        row = {"Question": question_id, "Asked": old.question}
         for measure in counted:
             scores = measure.score(old), measure.score(new)
             for config_id, outcome in ((baseline, old), (compared, new)):
-                row[f"{config_id} {measure.shown}"] = outcome.get(measure.shown)
+                row[f"{config_id} {measure.shown}"] = measure.value(outcome)
             row[measure.column] = None if None in scores else _change(*scores)
         if any(row[measure.column] for measure in counted):
             rows.append(row)
-    table = pd.DataFrame(rows)
-    for column in table.columns:
-        if column.endswith(" rank"):
-            table[column] = table[column].astype("Int64")
+    table = pd.DataFrame(rows).astype({
+        f"{config_id} {measure.shown}": measure.dtype
+        for measure in counted if measure.dtype for config_id in (baseline, compared)})
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure in counted for change in ("improved", "worse")}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
@@ -222,7 +223,7 @@ def _render_change_counts(title: str, changes: Counter) -> None:
 
 
 def render_results(runs: list[dict[str, Any]], *,
-                   outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]]) -> None:
+                   outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
 
     ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
