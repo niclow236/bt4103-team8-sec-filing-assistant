@@ -292,3 +292,28 @@ def test_a_filter_the_new_pair_cannot_offer_falls_back_to_every_question(tmp_pat
     assert not app.exception
     assert next(box for box in app.tabs[0].selectbox if box.label == "Show").value == "All questions"
     assert sorted(_questions_table(app.tabs[0])["Question"]) == ["q1", "q2"]
+
+
+def test_embedding_configurations_are_compared_on_the_retrieval_rows_their_report_saved(
+        tmp_path, monkeypatch):
+    # How src.evaluation.model_ablation saves an E row: in report.json, with
+    # its scores and retrieved ids and no right passage ids.
+    def row(question_id, mrr):
+        return {"question_id": question_id, "question_type": "factual", "difficulty": "easy",
+                "source": "handwritten", "k": 10, "recall": mrr, "ndcg": mrr, "mrr": mrr,
+                "hard_negative_accuracy": None, "retrieved_chunk_ids": ["a", "b"]}
+
+    run = tmp_path / "embeddings"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": config_id}, "questions": 2} for config_id in ("E1-dense", "E2-dense")]}),
+        encoding="utf-8")
+    for config_id, scores in (("E1-dense", (0.0, 1.0)), ("E2-dense", (0.5, 1.0))):
+        (run / config_id).mkdir()
+        (run / config_id / "report.json").write_text(json.dumps({"results": [
+            row(question_id, score) for question_id, score in zip(("q1", "q2"), scores)]}),
+            encoding="utf-8")
+    app = _open(monkeypatch, tmp_path)
+
+    assert _counts(app.tabs[0]) == [
+        (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]

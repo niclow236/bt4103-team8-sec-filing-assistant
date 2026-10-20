@@ -203,6 +203,15 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     return True, first_relevant_rank(row.get("retrieved_chunk_ids", ()), supporting)
 
 
+def _question_text(row: dict[str, Any]) -> str:
+    """The question a saved row asked: a retrieval row keeps it in its query, an answer row in its answer."""
+    for field, key in (("query", "text"), ("answer", "question")):
+        held = row.get(field)
+        if isinstance(held, dict):
+            return str(held.get(key, ""))
+    return ""
+
+
 @st.cache_data(show_spinner=False)
 def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome]:
     """How one configuration of a saved run did on each question, by question id (#169).
@@ -212,15 +221,17 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
     """
     outcomes: dict[str, QuestionOutcome] = {}
     folder = Path(run_dir) / config_id
-    for row in _read_result_rows(folder / "questions.jsonl"):
+    # An embedding ablation saves its retrieval rows in report.json, as
+    # ``result_runs`` reads them too.
+    retrieval = (_read_result_rows(folder / "questions.jsonl")
+                 or _read_result_rows(folder / "report.json"))
+    for row in retrieval:
         question_id = row.get("question_id")
         if not question_id:
             continue
         scored, rank = _first_right_rank(row)
-        query = row.get("query")
         outcomes[str(question_id)] = QuestionOutcome(
-            query.get("text", "") if isinstance(query, dict) else "",
-            benchmark_kind(row), scored, rank)
+            _question_text(row), benchmark_kind(row), scored, rank)
     answers = (_read_result_rows(folder / "answers.jsonl")
                or _read_result_rows(folder / "report.json"))
     for row in answers:
@@ -228,9 +239,8 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         quality = row.get("quality")
         if not question_id or not isinstance(quality, dict):
             continue
-        answer = row.get("answer")
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
-            answer.get("question", "") if isinstance(answer, dict) else "", benchmark_kind(row))
+            _question_text(row), benchmark_kind(row))
         outcomes[str(question_id)] = outcome._replace(correctness=quality.get("correctness"))
     return outcomes
 
