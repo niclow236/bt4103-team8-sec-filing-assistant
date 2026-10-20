@@ -14,7 +14,7 @@ an index or asking a model.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, replace
 from hashlib import sha256
 from html import escape
@@ -117,8 +117,61 @@ def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> l
     return rows
 
 
-def render_results(runs: list[dict[str, Any]]) -> None:
-    """Draw the saved Results page; loading and caching remain in state.py."""
+# The cutoff "found the right passage" is judged at, the one the metrics score.
+_FOUND_WITHIN = 10
+# What a configuration is compared against until another baseline is picked:
+# naive BM25, the configuration every design choice is measured from.
+_DEFAULT_BASELINE = "C0"
+
+
+def _found(outcome: Mapping[str, Any]) -> bool:
+    return outcome["rank"] is not None and outcome["rank"] <= _FOUND_WITHIN
+
+
+def _change(before: bool, after: bool) -> str:
+    return "improved" if after > before else "worse" if after < before else "unchanged"
+
+
+def _render_question_changes(run: Mapping[str, Any], benchmark: str,
+                             outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]]) -> None:
+    """Question by question, what one configuration changed against a baseline (#169)."""
+    config_ids = [item["config_id"] for item in run["configurations"]]
+    if len(config_ids) < 2 or "run_dir" not in run:
+        return
+    st.subheader("Before and after")
+    baseline = _existing_choice("Baseline", config_ids, key=f"results_baseline_{benchmark}",
+                                format_func=str, default=_DEFAULT_BASELINE)
+    others = [config_id for config_id in config_ids if config_id != baseline]
+    compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
+                                format_func=str)
+    before = outcomes(run["run_dir"], baseline)
+    after = outcomes(run["run_dir"], compared)
+    changes = Counter(
+        _change(_found(before[question_id]), _found(outcome))
+        for question_id, outcome in after.items()
+        if question_id in before and outcome["benchmark"] == benchmark
+        and outcome["scored"] and before[question_id]["scored"])
+    _render_change_counts(f"Found the right passage in the top {_FOUND_WITHIN}", changes)
+
+
+def _render_change_counts(title: str, changes: Counter) -> None:
+    """One measure's counts, which add up to the questions both configurations answered."""
+    st.markdown(f"**{title}**")
+    st.caption(f"Out of the {_plural(changes.total(), 'question')} both configurations answered.")
+    improved, worse, unchanged = st.columns(3)
+    improved.metric(":green[Improved]", changes["improved"])
+    worse.metric(":red[Worse]", changes["worse"])
+    unchanged.metric("Unchanged", changes["unchanged"])
+
+
+def render_results(runs: list[dict[str, Any]], *,
+                   outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]] | None = None,
+                   ) -> None:
+    """Draw the saved Results page; loading and caching remain in state.py.
+
+    ``outcomes`` reads one configuration's saved questions for the before and
+    after view; without it the page shows the run's scores alone.
+    """
     if not runs:
         st.info("No completed benchmark runs were found under results/.")
         return
@@ -147,6 +200,8 @@ def render_results(runs: list[dict[str, Any]]) -> None:
         with tab:
             matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
             _render_results_benchmark(title, matching, selected["configurations"], kind)
+            if outcomes is not None:
+                _render_question_changes(selected, kind, outcomes)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
@@ -188,12 +243,17 @@ def _item_order(item: str) -> tuple[int, str]:
     return (_ITEMS.index(item), "") if item in _ITEMS else (len(_ITEMS), item)
 
 
-def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None):
-    """Draw a required selectbox and discard a stale dependent selection."""
+def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None,
+                     default: Any = None):
+    """Draw a required selectbox and discard a stale dependent selection.
+
+    A selection that is not one of ``options`` falls back to ``default``, or to
+    the first option when ``default`` is not one either.
+    """
     if not options:
         raise ValueError(f"{label} has no options")
     if st.session_state.get(key) not in options:
-        st.session_state[key] = options[0]
+        st.session_state[key] = default if default in options else options[0]
     return st.selectbox(label, options, key=key, format_func=format_func)
 
 

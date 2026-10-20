@@ -167,9 +167,51 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
                                       if rows else summary.get("by_benchmark") or {}),
             })
         if configurations:
-            runs.append({"run_id": run_dir.name,
+            runs.append({"run_id": run_dir.name, "run_dir": str(run_dir),
                          "configurations": configurations})
     return runs
+
+
+def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
+    """Whether ``row`` was scored on retrieval, and where its first right passage ranked.
+
+    The rank is None when no right passage was retrieved at all. A row that
+    does not name its right passages, as ``src.evaluation.run`` saves one, is
+    ranked by its reciprocal rank, which is None for an unscored question and
+    0 when no right passage made the cutoff it was scored at.
+    """
+    supporting = row.get("scoring_supporting_chunk_ids")
+    retrieved = row.get("retrieved_chunk_ids")
+    if not isinstance(supporting, list) or not isinstance(retrieved, list):
+        reciprocal = row.get("mrr")
+        if not isinstance(reciprocal, (int, float)):
+            return False, None
+        return True, round(1 / reciprocal) if reciprocal > 0 else None
+    if not supporting:
+        return False, None
+    right = set(supporting)
+    return True, next((rank for rank, chunk_id in enumerate(retrieved, start=1)
+                       if chunk_id in right), None)
+
+
+@st.cache_data(show_spinner=False)
+def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]:
+    """How one configuration of a saved run did on each question, by question id (#169).
+
+    Read on demand for the two configurations a comparison names, rather than
+    held by ``result_runs`` for every configuration of every run.
+    """
+    outcomes: dict[str, dict[str, Any]] = {}
+    for row in _read_result_rows(Path(run_dir) / config_id / "questions.jsonl"):
+        question_id = row.get("question_id")
+        if not question_id:
+            continue
+        scored, rank = _first_right_rank(row)
+        query = row.get("query")
+        outcomes[str(question_id)] = {
+            "question": query.get("text", "") if isinstance(query, dict) else "",
+            "benchmark": benchmark_kind(row), "scored": scored, "rank": rank}
+    return outcomes
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
