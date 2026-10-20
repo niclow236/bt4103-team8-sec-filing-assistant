@@ -90,7 +90,8 @@ def test_two_identical_configurations_leave_every_question_both_answered_unchang
 
     assert _counts(app.tabs[0]) == [
         (":green[Improved]", "0"), (":red[Worse]", "0"), ("Unchanged", "3")]
-    assert any("3 questions both configurations answered" in caption.value
+    # q4 has no right passage to find, so it is answered but not counted.
+    assert any("3 of the 4 questions both configurations answered" in caption.value
                for caption in app.tabs[0].caption)
 
 
@@ -176,7 +177,8 @@ def test_judged_correctness_is_counted_too_when_the_run_has_it(tmp_path, monkeyp
 
     assert _counts(team)[3:] == [
         (":green[Improved]", "1"), (":red[Worse]", "1"), ("Unchanged", "1")]
-    assert any("3 questions both configurations answered" in caption.value
+    # q4's baseline answer was never scored, so it is answered but not counted.
+    assert any("3 of the 4 questions both configurations answered" in caption.value
                for caption in team.caption)
 
 
@@ -198,6 +200,8 @@ def test_answer_model_configurations_are_compared_on_judged_correctness_alone(
     team, mechanical = app.tabs
 
     assert _counts(team) == [(":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]
+    assert [caption.value for caption in team.caption] == [
+        "Out of the 2 questions both configurations answered."]
     assert not any("top 10" in markdown.value for markdown in team.markdown)
     assert _questions_table(team).set_index("Question").loc["q1", "Asked"] == "Asked q1?"
     assert _counts(mechanical) == [

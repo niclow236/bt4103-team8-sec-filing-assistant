@@ -148,14 +148,15 @@ class _Measure(NamedTuple):
     dtype: str | None
     # How one question's outcome scores on it, None where it was not scored.
     score: Callable[[QuestionOutcome], float | None]
+    unscored: str       # why a question both answered was not counted on it
 
 
 _MEASURES = (
     _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
              # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
-             "rank", attrgetter("rank"), "Int64", _found),
+             "rank", attrgetter("rank"), "Int64", _found, "had no right passage to find"),
     _Measure("Judged correctness", "Correctness", "correctness", attrgetter("correctness"),
-             None, attrgetter("correctness")),
+             None, attrgetter("correctness"), "had no scored answer from both"),
 )
 _SHOW_ALL = "All questions"
 
@@ -166,12 +167,12 @@ def _change(before: float, after: float) -> str:
 
 def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str, QuestionOutcome],
                       benchmark: str, names: tuple[str, str],
-                      ) -> tuple[list[tuple[_Measure, Counter]], pd.DataFrame]:
+                      ) -> tuple[int, list[tuple[_Measure, Counter]], pd.DataFrame]:
     """What changed from ``before`` to ``after`` on one benchmark's questions.
 
-    Returns each measure both were scored on with its counts, and one row per
-    question with each configuration's own value, headed by ``names``, and how
-    it changed.
+    Returns how many of its questions both answered, each measure both were
+    scored on with its counts, and one row per question with each
+    configuration's own value, headed by ``names``, and how it changed.
     """
     shared = {question_id: (before[question_id], outcome)
               for question_id, outcome in after.items()
@@ -196,7 +197,7 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
     table = pd.DataFrame(rows).astype({
         f"{name} {measure.shown}": measure.dtype
         for measure, _ in counts if measure.dtype for name in names})
-    return counts, table
+    return len(shared), counts, table
 
 
 def _render_question_changes(run: Mapping[str, Any], benchmark: str,
@@ -211,7 +212,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     others = [config_id for config_id in config_ids if config_id != baseline]
     compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
                                 format_func=str)
-    counts, table = _question_changes(outcomes(run["run_dir"], baseline),
+    answered, counts, table = _question_changes(outcomes(run["run_dir"], baseline),
                                       outcomes(run["run_dir"], compared),
                                       benchmark, (baseline, compared))
     if not counts:
@@ -219,7 +220,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                 "that was scored the same way on this benchmark.")
         return
     for measure, changes in counts:
-        _render_change_counts(measure.title, changes)
+        _render_change_counts(measure, changes, answered)
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in ("improved", "worse")}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
@@ -229,10 +230,15 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     st.dataframe(table, width="stretch", hide_index=True)
 
 
-def _render_change_counts(title: str, changes: Counter) -> None:
-    """One measure's counts, which add up to the questions both configurations answered."""
-    st.markdown(f"**{title}**")
-    st.caption(f"Out of the {_plural(changes.total(), 'question')} both configurations answered.")
+def _render_change_counts(measure: _Measure, changes: Counter, answered: int) -> None:
+    """One measure's counts, and how many of the questions both answered they cover."""
+    st.markdown(f"**{measure.title}**")
+    counted = changes.total()
+    if counted == answered:
+        st.caption(f"Out of the {_plural(answered, 'question')} both configurations answered.")
+    else:
+        st.caption(f"Out of {counted} of the {answered} questions both configurations answered; "
+                   f"the other {answered - counted} {measure.unscored}.")
     improved, worse, unchanged = st.columns(3)
     improved.metric(":green[Improved]", changes["improved"])
     worse.metric(":red[Worse]", changes["worse"])
