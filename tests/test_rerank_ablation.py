@@ -2,6 +2,7 @@ import gzip
 import json
 from copy import deepcopy
 from collections import Counter
+from dataclasses import replace
 
 import pytest
 
@@ -11,7 +12,7 @@ from src.evaluation.rerank_ablation import (
     POLICY, _clusters, main, paired_metric, read_pairs, run_pairs, summarize,
 )
 from src.retrieval.constants import CANDIDATE_K
-from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
+from src.retrieval.rerank import CrossEncoderReranker, RerankConfig, RerankResult
 from conftest import RerankInner as Inner, RerankModel as Model, rerank_passage as passage
 
 
@@ -48,68 +49,178 @@ def fixture_policy(rows, **overrides):
     } | overrides
 
 
-@pytest.mark.parametrize('action', ['rescore','table-boost-sensitivity'])
-@pytest.mark.parametrize('damage', ['c4_order','c4_score','c5_order','c5_score','c5_short','both_short','score_short'])
+def rewrite_pairs(out, rows):
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.writelines(json.dumps(r) + "\n" for r in rows)
+
+
+def run_files(out):
+    return {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()}
+
+
+@pytest.mark.parametrize("action", ["rescore", "table-boost-sensitivity"])
+@pytest.mark.parametrize("damage", ["c4_order", "c4_score", "c5_order", "c5_score", "c5_short",
+                                    "both_short", "score_short"])
 def test_cli_refuses_rankings_not_reproduced_by_the_saved_model_outputs(tmp_path, capsys, action, damage):
-    out=completed_run(tmp_path)[-1]
-    rows=read_pairs(out/'pairs.jsonl.gz'); r=rows[0]
-    if damage.endswith('order'):
-        r[damage[:2].upper()]['retrieved_chunk_ids'].reverse()
-    elif damage in ('c4_score','c5_score'):
-        r[damage[:2].upper()]['retrieved_scores'][0]+=1
-    elif damage=='score_short':
-        r['C5']['retrieved_scores'].pop()
+    out = completed_run(tmp_path)[-1]
+    rows = read_pairs(out / "pairs.jsonl.gz")
+    r = rows[0]
+    if damage.endswith("order"):
+        r[damage[:2].upper()]["retrieved_chunk_ids"].reverse()
+    elif damage in ("c4_score", "c5_score"):
+        r[damage[:2].upper()]["retrieved_scores"][0] += 1
+    elif damage == "score_short":
+        r["C5"]["retrieved_scores"].pop()
     else:
-        for cid in (('C4','C5') if damage=='both_short' else ('C5',)):
-            r[cid]['retrieved_chunk_ids'].pop();r[cid]['retrieved_scores'].pop()
-    with gzip.open(out/'pairs.jsonl.gz','wt') as stream:
-        stream.writelines(json.dumps(r)+'\n' for r in rows)
-    before={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+        for config in (("C4", "C5") if damage == "both_short" else ("C5",)):
+            r[config]["retrieved_chunk_ids"].pop()
+            r[config]["retrieved_scores"].pop()
+    rewrite_pairs(out, rows)
+    before = run_files(out)
     with pytest.raises(SystemExit) as error:
-        main([action,str(out)])
-    assert error.value.code==2
-    assert 'ranking' in capsys.readouterr().err
-    assert before=={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+        main([action, str(out)])
+    assert error.value.code == 2
+    assert "ranking" in capsys.readouterr().err
+    assert run_files(out) == before
 
 
-def test_sensitivity_cutoff_does_not_hide_corruption_below_that_cutoff(tmp_path):
-    out=completed_run(tmp_path)[-1];rows=read_pairs(out/'pairs.jsonl.gz')
-    rows[0]['C5']['retrieved_scores'][1]=999
-    with gzip.open(out/'pairs.jsonl.gz','wt') as stream:
-        stream.writelines(json.dumps(r)+'\n' for r in rows)
-    with pytest.raises(SystemExit):main(['rescore',str(out),'--top-k','1'])
-    assert not (out/'rescored-k1.json').exists()
+def _below_every_score(candidates, **changes):
+    # A prose candidate (no table boost) scored under the whole pool, so the
+    # recorded C4 and C5 rankings still reproduce and only the pool check can
+    # refuse it.
+    prose = next(p for p in candidates if p["content_type"] == "prose")
+    return {**prose, "hybrid_score": -100.0, "raw_logit": -100.0, **changes}
+
+
+def _set_logit_true(candidates):
+    # True reads as 1.0, so the C5 ranking still reproduces from it.
+    next(p for p in candidates if p["raw_logit"] == 1)["raw_logit"] = True
+
+
+POOL_DAMAGE = {
+    # A deeper pool than the run filled, so the duplicate keeps it within depth.
+    "duplicate_id": ({"candidate_k": 3}, lambda c: c.append(_below_every_score(c)),
+                     "duplicate IDs or exceeds the ranking depth"),
+    "oversized_pool": ({}, lambda c: c.append(_below_every_score(c, chunk_id="z")),
+                       "duplicate IDs or exceeds the ranking depth"),
+    # Below the stored cutoff, where the C4 ranking check does not look.
+    "nan_hybrid_score": ({"top_k": 1}, lambda c: c[1].update(hybrid_score=float("nan")),
+                         "non-finite or invalid ranking scores"),
+    "string_hybrid_score": ({"top_k": 1}, lambda c: c[1].update(hybrid_score="3.0"),
+                            "non-finite or invalid ranking scores"),
+    "bool_logit": ({}, _set_logit_true, "non-finite or invalid ranking scores"),
+}
+
+
+@pytest.mark.parametrize("action", ["rescore", "table-boost-sensitivity"])
+@pytest.mark.parametrize("damage", sorted(POOL_DAMAGE))
+def test_cli_refuses_a_saved_candidate_pool_that_cannot_be_ranked(tmp_path, capsys, action, damage):
+    run, change, message = POOL_DAMAGE[damage]
+    out = completed_run(tmp_path, **run)[-1]
+    rows = read_pairs(out / "pairs.jsonl.gz")
+    change(rows[0]["rerank"]["candidates"])
+    rewrite_pairs(out, rows)
+    before = run_files(out)
+    with pytest.raises(SystemExit) as error:
+        main([action, str(out)])
+    assert error.value.code == 2
+    assert message in capsys.readouterr().err
+    assert run_files(out) == before
+
+
+SMALLER_CUTOFF = [("rescore", "rescored-k1.json"),
+                  ("table-boost-sensitivity", "table-boost-sensitivity-k1.json")]
+
+
+@pytest.mark.parametrize("action, output", SMALLER_CUTOFF)
+def test_a_smaller_cutoff_reads_a_valid_run(tmp_path, action, output):
+    out = completed_run(tmp_path)[-1]
+    main([action, str(out), "--top-k", "1"])
+    assert json.loads((out / output).read_text())["top_k"] == 1
+
+
+@pytest.mark.parametrize("action, output", SMALLER_CUTOFF)
+def test_a_smaller_cutoff_does_not_hide_corruption_below_that_cutoff(tmp_path, capsys, action, output):
+    out = completed_run(tmp_path)[-1]
+    rows = read_pairs(out / "pairs.jsonl.gz")
+    rows[0]["C5"]["retrieved_scores"][1] = 999
+    rewrite_pairs(out, rows)
+    with pytest.raises(SystemExit) as error:
+        main([action, str(out), "--top-k", "1"])
+    assert error.value.code == 2
+    assert "do not reproduce the recorded C5 ranking" in capsys.readouterr().err
+    assert not (out / output).exists()
+
+
+def test_a_run_whose_rankings_disagree_with_its_logits_writes_no_summary(tmp_path):
+    class Reversed(CrossEncoderReranker):
+        # Ranks its passages against the logits it reports. A run records
+        # passages by rank, so the ranks are what has to be reversed.
+        def rerank(self, query, candidates, *, k=None):
+            ranked = super().rerank(query, candidates, k=k)
+            passages = [replace(p, rank=i) for i, p in enumerate(reversed(ranked.passages), 1)]
+            return RerankResult(passages, ranked.diagnostics)
+
+    qs = [question("h"), question("m", "xbrl")]
+    pool = [passage("b"), passage("a", content_type="table")]
+    chunks = [{"chunk_id": p.chunk_id, "accession_no": "f", "content_type": p.content_type,
+               "ticker": p.ticker, "fiscal_year": p.fiscal_year} for p in pool]
+    reranker = Reversed(RerankConfig(candidate_k=2), model=Model([1, 2]))
+    out = tmp_path / "run"
+    with pytest.raises(ValueError, match="do not reproduce the recorded C5 ranking"):
+        run_pairs(qs, Inner(pool), reranker, output_dir=out, chunks=chunks, top_k=2,
+                  provenance={"questions": 2})
+    assert not (out / "summary.json").exists()
+    assert len(read_pairs(out / "pairs.jsonl.gz")) == 2
 
 
 def test_declared_depth_and_k_do_not_make_a_four_question_sample_adoptable():
-    decision=summarize(passing_rows(),16)['decision']
-    assert decision['advance_to_answer_evaluation'] is None
-    assert any('cohort' in reason for reason in decision['reasons'])
+    decision = summarize(passing_rows(), 16)["decision"]
+    assert decision["advance_to_answer_evaluation"] is None
+    assert any("cohort" in reason for reason in decision["reasons"])
+
+
+COHORT_REASON = ("exploratory benchmark cohort; adoption requires the declared complete "
+                 "benchmark counts and question digest")
 
 
 def test_cohort_guard_checks_the_question_digest_as_well_as_counts():
-    rows=passing_rows();policy=fixture_policy(rows,decision_top_k=16)
-    assert summarize(rows,16,policy)['decision']['advance_to_answer_evaluation'] is True
-    changed=deepcopy(rows);changed[0]['question']['question']='Different question, same count'
-    report=summarize(changed,16,policy)
-    assert report['decision']['advance_to_answer_evaluation'] is None
-    assert 'cohort' in report['decision']['reasons'][0]
-    assert 'advance_to_answer_evaluation' not in report.get('quality_gate_reasons',[])
+    rows = passing_rows()
+    policy = fixture_policy(rows, decision_top_k=16)
+    assert summarize(rows, 16, policy)["decision"]["advance_to_answer_evaluation"] is True
+    changed = deepcopy(rows)
+    changed[0]["question"]["question"] = "Different question, same count"
+    report = summarize(changed, 16, policy)
+    assert report["decision"]["advance_to_answer_evaluation"] is None
+    assert report["decision"]["reasons"] == [COHORT_REASON]
+    assert report["quality_gate_reasons"] == []
 
 
-@pytest.mark.parametrize('prefix_only',[False,True])
-def test_resume_refuses_corrupted_rankings_before_any_repair_or_runtime_write(tmp_path,prefix_only):
-    qs,pool,chunks,reranker,out=completed_run(tmp_path)
-    rows=read_pairs(out/'pairs.jsonl.gz')
-    if prefix_only:rows=rows[:1]
-    rows[0]['C4']['retrieved_scores'][0]+=1
-    with gzip.open(out/'pairs.jsonl.gz','wt') as stream:
-        stream.writelines(json.dumps(r)+'\n' for r in rows)
-    before={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
-    with pytest.raises(ValueError,match='C4 ranking'):
-        run_pairs(qs,Inner(pool),reranker,output_dir=out,provenance={'questions':2},
-                  chunks=chunks,top_k=2,resume=True)
-    assert before=={p.name:p.read_bytes() for p in out.iterdir() if p.is_file()}
+def test_an_exploratory_cohort_keeps_the_quality_gates_it_failed():
+    rows = passing_rows()
+    policy = fixture_policy(rows)
+    for r in rows:
+        r["rerank"]["latency_ms"] = 1500
+    rows[0]["question"]["question"] = "Different question, same count"
+    report = summarize(rows, 2, policy)
+    assert report["decision"]["reasons"] == [COHORT_REASON]
+    assert report["quality_gate_reasons"] == ["reranking median latency criterion not met",
+                                              "reranking p95 latency criterion not met"]
+
+
+@pytest.mark.parametrize("prefix_only", [False, True])
+def test_resume_refuses_corrupted_rankings_before_any_repair_or_runtime_write(tmp_path, prefix_only):
+    qs, pool, chunks, reranker, out = completed_run(tmp_path)
+    rows = read_pairs(out / "pairs.jsonl.gz")
+    if prefix_only:
+        rows = rows[:1]
+    rows[0]["C4"]["retrieved_scores"][0] += 1
+    rewrite_pairs(out, rows)
+    before = run_files(out)
+    with pytest.raises(ValueError, match="C4 ranking"):
+        run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance={"questions": 2},
+                  chunks=chunks, top_k=2, resume=True)
+    assert run_files(out) == before
 
 
 def test_paired_metric_denominators_and_bootstrap():
@@ -466,14 +577,14 @@ def test_gold_filing_diagnostics_count_other_years():
     assert summarize(rows, 2)["top_k_diagnostics"]["C4"]["outside_gold_years"] is None
 
 
-def completed_run(tmp_path, provenance=None):
+def completed_run(tmp_path, provenance=None, *, top_k=2, candidate_k=2):
     qs = [question("h"), question("m", "xbrl")]
     pool = [passage("b"), passage("a", content_type="table")]
     chunks = [{"chunk_id": p.chunk_id, "accession_no": "f", "content_type": p.content_type,
                "ticker": p.ticker, "fiscal_year": p.fiscal_year} for p in pool]
-    reranker = CrossEncoderReranker(RerankConfig(candidate_k=2), model=Model([1, 2]))
+    reranker = CrossEncoderReranker(RerankConfig(candidate_k=candidate_k), model=Model([1, 2]))
     out = tmp_path / "run"
-    run_pairs(qs, Inner(pool), reranker, output_dir=out, chunks=chunks, top_k=2,
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, chunks=chunks, top_k=top_k,
               provenance=provenance or {"questions": 2})
     return qs, pool, chunks, reranker, out
 
