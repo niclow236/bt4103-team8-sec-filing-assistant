@@ -850,6 +850,80 @@ def test_recorded_answers_reads_a_complete_matrix_run_s_c4_answers(answer_run):
         recorded_answers(directory, chunks=snapshot)
 
 
+def _freeze_matrix_rows(directory, rows):
+    from src.evaluation import full_ablation as matrix
+
+    config = json.loads((directory / "config.json").read_text())
+    config["matrix"] = {cid: config["matrix"][cid] for cid in rows}
+    matrix.dump(directory / "config.json", config)
+    transactions = matrix.read_rows(directory / "pairs.jsonl")
+    for transaction in transactions:
+        transaction["rows"] = {cid: transaction["rows"][cid] for cid in rows}
+    matrix.write_rows(directory / "pairs.jsonl", transactions)
+
+
+def test_replay_reads_a_complete_c4_c6_run_and_tables_its_c4_answers_as_g1(
+        answer_run, monkeypatch, tmp_path):
+    import src.evaluation.model_ablation as module
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers, run_generation_replay
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    _freeze_matrix_rows(directory, ("C4", "C6"))
+    answered = json.loads((directory / "answers-config.json").read_text())
+    g1 = GENERATION_EXPERIMENTS[0]
+    answered["generation"] = GenerationConfig(
+        g1.provider, g1.model, answered["generation"]["prompt_template_id"]
+    ).to_dict()
+    (directory / "answers-config.json").write_text(json.dumps(answered))
+    team = matrix.team_questions(answer_run.runner.questions)
+    matrix.write_rows(directory / "C4" / "answers.jsonl", [
+        _recorded_row(question.question_id, question_type=question.question_type)
+        for question in team
+    ])
+
+    recorded = recorded_answers(directory, chunks=snapshot)
+    assert [row["question_id"] for row in recorded.rows] == [
+        question.question_id for question in team
+    ]
+
+    monkeypatch.setattr(module, "evaluate", _replaying([]))
+    judge = SimpleNamespace(config=recorded.generation, to_dict=lambda: {"judge": "recorded"})
+    manifest = run_generation_replay(
+        recorded, [GENERATION_EXPERIMENTS[2]], run_id="c4-c6-replay",
+        results_root=tmp_path, llm_for=lambda config: None, judge=judge,
+    )
+    baseline = manifest["configurations"][0]
+    assert baseline["config"]["id"] == "G1"
+    assert baseline["config"]["origin"] == f"{directory.name}/C4"
+    assert baseline["questions"] == len(recorded.rows)
+
+
+def test_replay_refuses_a_run_frozen_without_c4_and_names_its_rows(answer_run):
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    _freeze_matrix_rows(directory, ("C6",))
+    with pytest.raises(ValueError, match=r"frozen rows do not include C4; it has: C6"):
+        recorded_answers(directory, chunks=snapshot)
+
+
+def test_replay_still_refuses_a_seven_row_run_with_an_incomplete_transaction(answer_run):
+    from src.evaluation import full_ablation as matrix
+    from src.evaluation.model_ablation import recorded_answers
+
+    matrix.answers(answer_run.args)
+    directory, snapshot = answer_run.runner.directory, answer_run.runner.snapshot
+    transactions = matrix.read_rows(directory / "pairs.jsonl")
+    del transactions[0]["rows"]["C6"]
+    matrix.write_rows(directory / "pairs.jsonl", transactions)
+    with pytest.raises(ValueError, match="transaction does not contain every matrix row"):
+        recorded_answers(directory, chunks=snapshot)
+
+
 def test_a_run_that_is_missing_or_unfinished_is_refused_by_name(answer_run, tmp_path):
     # QA of #163: these raised FileNotFoundError, a traceback rather than a
     # refusal, for a mistyped path or a run whose answers never started.

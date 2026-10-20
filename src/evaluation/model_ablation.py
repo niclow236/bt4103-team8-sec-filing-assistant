@@ -331,6 +331,10 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
                          f"{run_dir / 'answers-config.json'}; finish its `answers` step first")
     questions = [BenchmarkQuestion.from_mapping(row) for row in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(config, questions)
+    frozen_rows = tuple(config.get("matrix", MATRIX))
+    if REPLAY_ROW not in frozen_rows:
+        rows = ", ".join(frozen_rows) or "none"
+        raise ValueError(f"the run's frozen rows do not include {REPLAY_ROW}; it has: {rows}")
     # A setting the matrix gained after the run, such as rerank after
     # full-matrix-20261017, was not recorded and ran at its default.
     defaults = {field.name: field.default for field in fields(MatrixConfig)
@@ -342,7 +346,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
         raise ValueError(f"{REPLAY_ROW}'s settings differ from the run's; use its recorded source")
     team = team_questions(questions)
     transactions = read_rows(run_dir / "pairs.jsonl")
-    check_transactions(transactions, questions)
+    check_transactions(transactions, questions, frozen_rows)
     measured = {t["question"]["question_id"]: t["rows"][REPLAY_ROW] for t in transactions}
     if any(question.question_id not in measured for question in team):
         raise ValueError("the run's team retrieval is incomplete")
