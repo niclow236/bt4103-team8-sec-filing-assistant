@@ -156,7 +156,9 @@ class _Measure(NamedTuple):
 
 _TOP_10 = _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
                    # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
-                   "rank", attrgetter("rank"), "Int64", _found, "had no right passage to find")
+                   "rank", attrgetter("rank"), "Int64", _found,
+                   # No right passage to find, or a row that could not be read.
+                   "were not scored on retrieval by both")
 _MEASURES = (
     _TOP_10,
     # Scored by the LLM judge, or for an abstention by whether abstaining was

@@ -339,6 +339,10 @@ def test_a_row_whose_retrieved_passages_are_unreadable_is_left_unscored(tmp_path
 
     assert _counts(app.tabs[0]) == [
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]
+    # q2 has a right passage, so the caption must not say it had none.
+    assert [caption.value for caption in app.tabs[0].caption] == [
+        "Out of 1 of the 2 questions both configurations answered; "
+        "the other 1 were not scored on retrieval by both."]
 
 
 def _cell_colours(tab, column):
