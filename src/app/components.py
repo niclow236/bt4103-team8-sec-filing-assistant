@@ -236,19 +236,22 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
     return len(shared), counts, table
 
 
+def _keyed_as_tabs(item: Mapping[str, Any]) -> bool:
+    """Whether a configuration's benchmark scores are keyed as the tabs are,
+    so they say which of the tabs' benchmarks it ran."""
+    return any(kind in item["benchmark_metrics"] for _, kind in _RESULT_BENCHMARKS)
+
+
 def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                              outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
     # Only a configuration whose questions on this benchmark were read can be
     # compared. A summary's own by-benchmark scores do not make it one.
-    # Its rows, or a summary keyed as the tabs are, say whether it ran this
-    # benchmark's questions; with neither, there is no telling.
-    def ran_tabs(item: Mapping[str, Any]) -> bool:
-        return item.get("questions_read") or any(
-            kind in item["benchmark_metrics"] for _, kind in _RESULT_BENCHMARKS)
-
+    # Its rows, or a summary keyed as the tabs are, tell which benchmarks it
+    # ran; with neither, there is no telling.
     elsewhere = [item["config_id"] for item in run["configurations"]
-                 if ran_tabs(item) and benchmark not in item["benchmark_metrics"]]
+                 if (item.get("questions_read") or _keyed_as_tabs(item))
+                 and benchmark not in item["benchmark_metrics"]]
     unread = [item["config_id"] for item in run["configurations"]
               if not item.get("questions_read") and item["config_id"] not in elsewhere]
     config_ids = [item["config_id"] for item in run["configurations"]
@@ -344,7 +347,7 @@ def render_results(runs: list[dict[str, Any]], *,
     # A summary's by-benchmark scores split only as the tabs do when they
     # are keyed as the tabs are; the full matrix keys them "team" and "xbrl".
     unsplit = [item["config_id"] for item in selected["configurations"]
-               if not any(kind in item["benchmark_metrics"] for _, kind in _RESULT_BENCHMARKS)]
+               if not _keyed_as_tabs(item)]
     if unsplit:
         st.warning(
             f"{len(unsplit)} of this run's {len(selected['configurations'])} configurations "
