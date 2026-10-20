@@ -5,6 +5,7 @@ import re
 
 import pandas as pd
 import pyarrow as pa
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from src.config import PROJECT_ROOT
@@ -415,3 +416,20 @@ def test_a_run_scored_past_the_top_10_says_its_recall_counts_passages_the_view_d
     assert len(says_why(app)) == 1 and "11 to 16" in says_why(app)[0]
     app.selectbox[0].select("at-10").run()
     assert says_why(app) == []
+
+
+@pytest.mark.parametrize(("field", "unchanged"), [
+    # Its retrieved passages cannot be read, so it is not scored at all.
+    ("retrieved_chunk_ids", "0"),
+    # Its right passages cannot be read, so it is ranked by its saved MRR.
+    ("scoring_supporting_chunk_ids", "1"),
+])
+def test_a_row_whose_passage_ids_are_not_text_does_not_stop_the_page(
+        tmp_path, monkeypatch, field, unchanged):
+    garbled = {**_retrieval_row("q2", 1), field: [{"id": "q2-gold"}]}
+    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None), _retrieval_row("q2", 1)]},
+                         "C4": {"questions": [_retrieval_row("q1", 1), garbled]}})
+    app = _open(monkeypatch, tmp_path)
+
+    assert _counts(app.tabs[0]) == [
+        (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", unchanged)]

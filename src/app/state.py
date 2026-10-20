@@ -188,6 +188,13 @@ class QuestionOutcome(NamedTuple):
     correctness: float | None = None  # what its answer was scored, where it was
 
 
+def _chunk_ids(value: Any) -> list[str] | None:
+    """``value`` if it is a saved list of chunk ids, and None if it is anything else."""
+    if isinstance(value, list) and all(isinstance(chunk_id, str) for chunk_id in value):
+        return value
+    return None
+
+
 def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     """Whether ``row`` was scored on retrieval, and where its first right passage ranked.
 
@@ -197,14 +204,14 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     ranked by its reciprocal rank, which is None for an unscored question and
     0 when no right passage made the cutoff it was scored at.
     """
-    supporting = row.get("scoring_supporting_chunk_ids")
-    if not isinstance(supporting, list):
+    supporting = _chunk_ids(row.get("scoring_supporting_chunk_ids"))
+    if supporting is None:
         reciprocal = row.get("mrr")
         if not isinstance(reciprocal, (int, float)):
             return False, None
         return True, round(1 / reciprocal) if reciprocal > 0 else None
-    retrieved = row.get("retrieved_chunk_ids")
-    if not supporting or not isinstance(retrieved, list):
+    retrieved = _chunk_ids(row.get("retrieved_chunk_ids"))
+    if not supporting or retrieved is None:
         return False, None
     return True, first_relevant_rank(retrieved, supporting)
 
