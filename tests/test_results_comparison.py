@@ -380,7 +380,7 @@ def test_each_question_is_coloured_by_whether_it_improved_or_got_worse(tmp_path,
     assert colours == {"q1": green, "q2": red, "q3": None, "q4": green}
 
 
-def test_the_table_shows_a_missing_rank_as_blank_and_scores_to_two_places(tmp_path, monkeypatch):
+def test_the_table_shows_scores_to_two_places(tmp_path, monkeypatch):
     retrieval = [_retrieval_row("q1", None)]
     _save_run(tmp_path, {
         "C0": {"questions": retrieval, "answers": [_answer_row("q1", 0.5)]},
@@ -390,7 +390,7 @@ def test_the_table_shows_a_missing_rank_as_blank_and_scores_to_two_places(tmp_pa
     styler = app.tabs[0].dataframe[-1].proto.arrow_data.styler
     shown = pa.ipc.open_stream(styler.display_values).read_pandas().iloc[0]
 
-    assert (shown["C0 rank"], shown["C4 rank"]) == ("", "3")
+    assert shown["C4 rank"] == "3"
     assert (shown["C0 correctness"], shown["C4 correctness"]) == ("0.50", "0.33")
 
 

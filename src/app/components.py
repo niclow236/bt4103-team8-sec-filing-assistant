@@ -260,9 +260,10 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         return f"color: {shades[dark]}" if shades else ""
 
     styled = table.style.map(colour, subset=[measure.column for measure, _ in counts])
-    # A styled table is shown as the styler formats it, so say how: no "<NA>"
-    # for a question a configuration did not find, and scores to two places.
-    st.dataframe(styled.format(precision=2, na_rep=""), width="stretch", hide_index=True)
+    # A styled table is shown as the styler formats it, so say how: scores to
+    # two places. A missing value is drawn by the grid itself, as "None",
+    # whatever the styler says.
+    st.dataframe(styled.format(precision=2), width="stretch", hide_index=True)
 
 
 def _render_change_counts(measure: _Measure, changes: Counter, answered: int) -> None:
