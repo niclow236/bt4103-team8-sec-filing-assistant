@@ -224,12 +224,17 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                              outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
     # Only a configuration whose questions on this benchmark were read can be
-    # compared; one with a summary alone is named in the warning above.
+    # compared. A summary's own by-benchmark scores do not make it one.
     config_ids = [item["config_id"] for item in run["configurations"]
-                  if benchmark in item["benchmark_metrics"]]
+                  if item.get("questions_read") and benchmark in item["benchmark_metrics"]]
     if len(config_ids) < 2:
         return
     st.subheader("Before and after")
+    left_out = [item["config_id"] for item in run["configurations"]
+                if item["config_id"] not in config_ids]
+    if left_out:
+        st.caption("Not offered, since none of their questions on this benchmark were read "
+                   "on this machine: " + ", ".join(left_out))
     baseline = _existing_choice("Baseline", config_ids, key=f"results_baseline_{benchmark}",
                                 format_func=str, default=_DEFAULT_BASELINE)
     others = [config_id for config_id in config_ids if config_id != baseline]
@@ -299,8 +304,10 @@ def render_results(runs: list[dict[str, Any]], *,
     run_id = _existing_choice("Run", [run["run_id"] for run in runs],
                               key="results_run", format_func=str)
     selected = next(run for run in runs if run["run_id"] == run_id)
+    # A summary's by-benchmark scores split only as the tabs do when they
+    # are keyed as the tabs are; the full matrix keys them "team" and "xbrl".
     unsplit = [item["config_id"] for item in selected["configurations"]
-               if not item["benchmark_metrics"]]
+               if not any(kind in item["benchmark_metrics"] for _, kind in _RESULT_BENCHMARKS)]
     if unsplit:
         st.warning(
             f"{len(unsplit)} of this run's {len(selected['configurations'])} configurations "

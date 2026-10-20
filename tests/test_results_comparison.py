@@ -479,14 +479,32 @@ def test_a_correctness_saved_as_text_is_not_counted(tmp_path, monkeypatch):
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]
 
 
-def test_only_configurations_that_saved_their_questions_are_offered(tmp_path, monkeypatch):
-    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None)]},
-                         "C4": {"questions": [_retrieval_row("q1", 1)]},
-                         "C5": {"questions": [_retrieval_row("q1", 1)]}})
+@pytest.mark.parametrize(("by_benchmark", "scores_shown"), [
+    (None, False),
+    # As the full matrix saves a summary: its keys are not the tabs'.
+    ({"team": {"recall": 0.2}, "xbrl": {"recall": 0.1}}, False),
+    # As the writers before 0b49c77 saved one, keyed as the page's tabs are.
+    ({"handwritten": {"recall": 0.2}, "mechanical": {"recall": 0.1}}, True),
+])
+def test_only_configurations_that_saved_their_questions_are_offered(
+        tmp_path, monkeypatch, by_benchmark, scores_shown):
+    run = _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None)]},
+                               "C4": {"questions": [_retrieval_row("q1", 1)]},
+                               "C5": {"questions": [_retrieval_row("q1", 1)]}})
     # C0 saved a summary but its question rows never reached this machine.
-    (tmp_path / "run" / "C0" / "questions.jsonl").unlink()
+    (run / "C0" / "questions.jsonl").unlink()
+    if by_benchmark:
+        manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+        manifest["configurations"][0]["by_benchmark"] = by_benchmark
+        (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
     app = _open(monkeypatch, tmp_path)
     team = app.tabs[0]
 
     assert team.selectbox[0].options == ["C4", "C5"]
     assert _counts(team) == [(":green[Improved]", "0"), (":red[Worse]", "0"), ("Unchanged", "1")]
+    # Whichever shape its summary has, the page says beside the pickers why C0
+    # is not offered, and the run's warning names it when its scores are not
+    # shown at all.
+    assert any("Not offered" in caption.value and "C0" in caption.value
+               for caption in team.caption)
+    assert any("C0" in warning.value for warning in app.warning) is not scores_shown

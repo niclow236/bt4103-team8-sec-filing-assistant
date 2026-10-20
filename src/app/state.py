@@ -177,6 +177,9 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
                 "incomplete": _incomplete(summary, rows),
                 "benchmark_metrics": (_saved_benchmark_metrics(rows, config.get("provider"))
                                       if rows else summary.get("by_benchmark") or {}),
+                # Whether its per-question rows were read, so its benchmark
+                # metrics are theirs and it can be compared question by question.
+                "questions_read": bool(rows),
             })
         if configurations:
             runs.append({"run_id": run_dir.name, "run_dir": str(run_dir),
