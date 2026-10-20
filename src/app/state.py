@@ -55,7 +55,13 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
 
+from src.evaluation.benchmark import DEFAULT_GENERATED_QUESTIONS_PATH, DEFAULT_QUESTIONS_PATH
 from src.evaluation.metrics import RETRIEVAL_METRICS, first_relevant_rank
+
+# Where a question's text is looked up when the rows a run saved for it kept
+# none, as an embedding ablation's do: the team's questions and, where it has
+# been generated on this machine, the XBRL benchmark.
+BENCHMARK_FILES = (DEFAULT_QUESTIONS_PATH, DEFAULT_GENERATED_QUESTIONS_PATH)
 
 RESULT_METRICS = RETRIEVAL_METRICS
 
@@ -251,6 +257,12 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
             _question_text(row), benchmark_kind(row))
         outcomes[str(question_id)] = outcome._replace(correctness=quality.get("correctness"))
+    if any(not outcome.question for outcome in outcomes.values()):
+        texts = {str(row.get("question_id")): str(row.get("question") or "")
+                 for path in BENCHMARK_FILES for row in _read_result_rows(path)}
+        outcomes = {question_id: outcome if outcome.question
+                    else outcome._replace(question=texts.get(question_id, ""))
+                    for question_id, outcome in outcomes.items()}
     return outcomes
 
 

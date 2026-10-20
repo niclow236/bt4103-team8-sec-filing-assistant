@@ -307,10 +307,16 @@ def test_a_filter_the_new_pair_cannot_offer_falls_back_to_every_question(tmp_pat
     assert sorted(_questions_table(app.tabs[0])["Question"]) == ["q1", "q2"]
 
 
+def _embedding_row(question_id, mrr):
+    """How src.evaluation.model_ablation saves an E row: in report.json, with
+    its scores and retrieved ids, and neither right passage ids nor its text."""
+    return {"question_id": question_id, "question_type": "factual", "difficulty": "easy",
+            "source": "handwritten", "k": 10, "recall": mrr, "ndcg": mrr, "mrr": mrr,
+            "hard_negative_accuracy": None, "retrieved_chunk_ids": ["a", "b"]}
+
+
 def test_embedding_configurations_are_compared_on_the_retrieval_rows_their_report_saved(
         tmp_path, monkeypatch):
-    # How src.evaluation.model_ablation saves an E row: in report.json, with
-    # its scores and retrieved ids and no right passage ids.
     def row(question_id, mrr):
         return {"question_id": question_id, "question_type": "factual", "difficulty": "easy",
                 "source": "handwritten", "k": 10, "recall": mrr, "ndcg": mrr, "mrr": mrr,
@@ -433,3 +439,27 @@ def test_a_row_whose_passage_ids_are_not_text_does_not_stop_the_page(
 
     assert _counts(app.tabs[0]) == [
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", unchanged)]
+
+
+def test_a_question_whose_rows_kept_no_text_is_shown_with_the_benchmarks(tmp_path, monkeypatch):
+    from src.app import state
+
+    benchmark = tmp_path / "questions.jsonl"
+    benchmark.write_text(json.dumps({"question_id": "q1", "question": "Who audits Apple?"}) + "\n",
+                         encoding="utf-8")
+    monkeypatch.setattr(state, "BENCHMARK_FILES", (benchmark,))
+    results = tmp_path / "results"
+    results.mkdir()
+    run = results / "embeddings"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": config_id}, "questions": 1} for config_id in ("E1", "E2")]}),
+        encoding="utf-8")
+    for config_id, score in (("E1", 0.0), ("E2", 1.0)):
+        (run / config_id).mkdir()
+        (run / config_id / "report.json").write_text(
+            json.dumps({"results": [_embedding_row("q1", score)]}), encoding="utf-8")
+    app = _open(monkeypatch, results)
+
+    assert _questions_table(app.tabs[0]).set_index("Question").loc["q1", "Asked"] == (
+        "Who audits Apple?")
