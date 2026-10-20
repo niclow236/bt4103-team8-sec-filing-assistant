@@ -167,11 +167,19 @@ _MEASURES = (
 _SHOW_ALL = "All questions"
 # The text colour of a change in the table, matching the green and red of the
 # counts above it in each theme: (light, dark).
-_CHANGE_COLOURS = {"improved": ("#158237", "#5ce488"), "worse": ("#bd4043", "#ff6c6c")}
+_IMPROVED, _WORSE, _UNCHANGED = "improved", "worse", "unchanged"
+_CHANGE_COLOURS = {_IMPROVED: ("#158237", "#5ce488"), _WORSE: ("#bd4043", "#ff6c6c")}
 
 
 def _change(before: float, after: float) -> str:
-    return "improved" if after > before else "worse" if after < before else "unchanged"
+    return _IMPROVED if after > before else _WORSE if after < before else _UNCHANGED
+
+
+def _measured_change(measure: _Measure, before: QuestionOutcome,
+                     after: QuestionOutcome) -> str | None:
+    """How one question changed on ``measure``, None unless both were scored on it."""
+    scores = measure.score(before), measure.score(after)
+    return None if None in scores else _change(*scores)
 
 
 def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str, QuestionOutcome],
@@ -186,21 +194,22 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
     shared = {question_id: (before[question_id], outcome)
               for question_id, outcome in after.items()
               if question_id in before and outcome.benchmark == benchmark}
+    changed = {question_id: {measure.column: _measured_change(measure, old, new)
+                             for measure in _MEASURES}
+               for question_id, (old, new) in shared.items()}
     counts = []
     for measure in _MEASURES:
-        changes = Counter(_change(measure.score(old), measure.score(new))
-                          for old, new in shared.values()
-                          if measure.score(old) is not None and measure.score(new) is not None)
+        changes = Counter(change[measure.column] for change in changed.values()
+                          if change[measure.column] is not None)
         if changes:
             counts.append((measure, changes))
     rows = []
     for question_id, (old, new) in shared.items():
         row = {"Question": question_id, "Asked": old.question}
         for measure, _ in counts:
-            scores = measure.score(old), measure.score(new)
             for name, outcome in zip(names, (old, new)):
                 row[f"{name} {measure.shown}"] = measure.value(outcome)
-            row[measure.column] = None if None in scores else _change(*scores)
+            row[measure.column] = changed[question_id][measure.column]
         if any(row[measure.column] for measure, _ in counts):
             rows.append(row)
     table = pd.DataFrame(rows).astype({
@@ -237,7 +246,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
             st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
                        f"ranked {_FOUND_WITHIN + 1} to {scored_at} counts there but not here.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
-               for measure, _ in counts for change in ("improved", "worse")}
+               for measure, _ in counts for change in (_IMPROVED, _WORSE)}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
     if show in filters:
         column, change = filters[show]
@@ -264,9 +273,9 @@ def _render_change_counts(measure: _Measure, changes: Counter, answered: int) ->
         st.caption(f"Out of {counted} of the {answered} questions both configurations answered; "
                    f"the other {answered - counted} {measure.unscored}.")
     improved, worse, unchanged = st.columns(3)
-    improved.metric(":green[Improved]", changes["improved"])
-    worse.metric(":red[Worse]", changes["worse"])
-    unchanged.metric("Unchanged", changes["unchanged"])
+    improved.metric(":green[Improved]", changes[_IMPROVED])
+    worse.metric(":red[Worse]", changes[_WORSE])
+    unchanged.metric("Unchanged", changes[_UNCHANGED])
 
 
 def render_results(runs: list[dict[str, Any]], *,
