@@ -55,7 +55,7 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
 
-from src.evaluation.metrics import RETRIEVAL_METRICS
+from src.evaluation.metrics import RETRIEVAL_METRICS, first_relevant_rank
 
 RESULT_METRICS = RETRIEVAL_METRICS
 
@@ -190,10 +190,7 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
         return True, round(1 / reciprocal) if reciprocal > 0 else None
     if not supporting:
         return False, None
-    right = set(supporting)
-    retrieved = row.get("retrieved_chunk_ids", ())
-    return True, next((rank for rank, chunk_id in enumerate(retrieved, start=1)
-                       if chunk_id in right), None)
+    return True, first_relevant_rank(row.get("retrieved_chunk_ids", ()), supporting)
 
 
 @st.cache_data(show_spinner=False)
