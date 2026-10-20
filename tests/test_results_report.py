@@ -267,3 +267,40 @@ def test_a_pipe_in_a_configuration_name_does_not_split_its_table_cell(tmp_path):
     report.main([str(run), "--out", str(out)])
 
     assert "| C4 | BM25 \\| dense | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+def _answer_row(question_id, correctness, *, abstained=False):
+    """One row of a matrix configuration's answers.jsonl, as answers and rescore read it."""
+    return {"question_id": question_id,
+            "quality": {"faithfulness": None if abstained else 1.0, "correctness": correctness,
+                        "answerability_correct": 1.0, "citation_precision": None,
+                        "citation_recall": None},
+            "answer": {"abstained": abstained, "verification": None}}
+
+
+def test_answer_quality_follows_the_saved_answers_not_a_stale_summary(tmp_path):
+    """A rescore leaves answer-summary.json behind; the per-question answers are current."""
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 2, "quality": {"correctness": _quality(0.9, 2, 2)}})
+    (run / "C4" / "answers.jsonl").write_text(
+        json.dumps(_answer_row("q1", 1.0)) + "\n"
+        + json.dumps(_answer_row("q2", 0.0, abstained=True)) + "\n", encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert ("| C4 | row C4 | 2 | 0.5000 | 2 | 1.0000 | 1 | 1.0000 | 2 "
+            "| — | 0 | — | 0 | not_run 1 |") in (
+        out / "ablation.md").read_text(encoding="utf-8")
+
+
+def test_answers_that_cannot_be_scored_fall_back_to_the_saved_summary(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 150, "quality": {"correctness": _quality(0.9, 150)}})
+    (run / "C4" / "answers.jsonl").write_text(json.dumps({"question_id": "q1"}) + "\n",
+                                              encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | row C4 | 150 | 0.9000 | 150 |" in (out / "ablation.md").read_text(encoding="utf-8")

@@ -16,7 +16,9 @@ from statistics import mean, median
 from typing import Any
 
 from src.config import PROJECT_ROOT
+from src.evaluation.harness import _checks
 from src.evaluation.metrics import RETRIEVAL_METRICS
+from src.evaluation.quality import quality_summary
 
 RESULT_METRICS = RETRIEVAL_METRICS
 METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
@@ -149,8 +151,29 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         })
     if not configurations:
         return None
+    # The saved summary is only for a run whose per-question answers are not here:
+    # rescore writes its fresh one elsewhere, so the top-level one can be stale.
+    saved_quality = _answer_quality(run_dir / "answer-summary.json")
+    answer_quality = {}
+    for item in configurations:
+        config_id = item["config_id"]
+        quality = (_answered(run_dir / config_id / "answers.jsonl")
+                   or saved_quality.get(config_id))
+        if quality is not None:
+            answer_quality[config_id] = quality
     return {"run_id": run_dir.name, "configurations": configurations,
-            "answer_quality": _answer_quality(run_dir / "answer-summary.json")}
+            "answer_quality": answer_quality}
+
+
+def _answered(path: Path) -> dict[str, Any] | None:
+    """Recompute answer quality from saved per-question answers, as rescore does."""
+    rows = read_result_rows(path)
+    if not rows:
+        return None
+    try:
+        return {"questions": len(rows), "quality": quality_summary(rows), "checks": _checks(rows)}
+    except (KeyError, TypeError):
+        return None
 
 
 def _answer_quality(path: Path) -> dict[str, dict[str, Any]]:
@@ -175,9 +198,12 @@ def read_runs(results_root: Path) -> list[dict[str, Any]]:
     return [run for run in runs if run is not None]
 
 
-def _without_empty_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _without_empty_columns(rows: list[dict[str, Any]],
+                           paired: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Drop columns no row fills; a column in ``paired`` stays while its partner is filled."""
     filled = {key for row in rows for key, value in row.items()
               if value is not None and not (isinstance(value, float) and isnan(value))}
+    filled |= {key for key, partner in (paired or {}).items() if partner in filled}
     return [{key: value for key, value in row.items() if key in filled} for row in rows]
 
 
@@ -230,7 +256,9 @@ def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, 
         row["Claim checks"] = ", ".join(f"{status} {count}"
                                         for status, count in sorted(checks.items())) or None
         rows.append(row)
-    return _without_empty_columns(rows)
+    # A mean over no scored outputs is shown as a dash beside its 0, not dropped.
+    return _without_empty_columns(rows, {label: f"{label} scored"
+                                         for label in QUALITY_LABELS.values()})
 
 
 def chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
