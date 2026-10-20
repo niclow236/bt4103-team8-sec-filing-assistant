@@ -155,7 +155,9 @@ _MEASURES = (
     _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
              # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
              "rank", attrgetter("rank"), "Int64", _found, "had no right passage to find"),
-    _Measure("Judged correctness", "Correctness", "correctness", attrgetter("correctness"),
+    # Scored by the LLM judge, or for an abstention by whether abstaining was
+    # right, so not "judged" correctness alone.
+    _Measure("Answer correctness", "Correctness", "correctness", attrgetter("correctness"),
              None, attrgetter("correctness"), "had no scored answer from both"),
 )
 _SHOW_ALL = "All questions"

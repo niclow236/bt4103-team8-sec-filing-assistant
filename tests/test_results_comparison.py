@@ -164,11 +164,13 @@ def test_reload_rereads_the_questions_a_comparison_counts(tmp_path, monkeypatch)
     assert _counts(app.tabs[0])[0] == (":green[Improved]", "1")
 
 
-def test_judged_correctness_is_counted_too_when_the_run_has_it(tmp_path, monkeypatch):
+def test_answer_correctness_is_counted_too_when_the_run_has_it(tmp_path, monkeypatch):
     retrieval = [_retrieval_row(question_id, 1) for question_id in ("q1", "q2", "q3", "q4")]
+    abstained = {**_answer_row("q3", 0.75),
+                 "quality": {"correctness": 0.75, "method": "abstention"}}
     _save_run(tmp_path, {
         "C0": {"questions": retrieval, "answers": [
-            _answer_row("q1", 0.5), _answer_row("q2", 1.0), _answer_row("q3", 0.75),
+            _answer_row("q1", 0.5), _answer_row("q2", 1.0), abstained,
             _answer_row("q4", None)]},
         "C4": {"questions": retrieval, "answers": [
             _answer_row("q1", 1.0), _answer_row("q2", 0.8), _answer_row("q3", 0.75),
@@ -182,6 +184,9 @@ def test_judged_correctness_is_counted_too_when_the_run_has_it(tmp_path, monkeyp
     # q4's baseline answer was never scored, so it is answered but not counted.
     assert any("3 of the 4 questions both configurations answered" in caption.value
                for caption in team.caption)
+    # q3's baseline answer was scored by the abstention rule, not the judge,
+    # so the heading claims no more than the answer's correctness.
+    assert [markdown.value for markdown in team.markdown][-1] == "**Answer correctness**"
 
 
 def test_answer_model_configurations_are_compared_on_judged_correctness_alone(
