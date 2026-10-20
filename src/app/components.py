@@ -240,9 +240,9 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     others = [config_id for config_id in config_ids if config_id != baseline]
     compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
                                 format_func=str)
-    answered, counts, table = _question_changes(outcomes(run["run_dir"], baseline),
-                                      outcomes(run["run_dir"], compared),
-                                      benchmark, (baseline, compared))
+    before = outcomes(run["run_dir"], baseline)
+    answered, counts, table = _question_changes(before, outcomes(run["run_dir"], compared),
+                                                benchmark, (baseline, compared))
     if not counts:
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
@@ -257,6 +257,10 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                      else f"{_FOUND_WITHIN + 1} to {scored_at}")
             st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
                        f"ranked {ranks} counts there but not here.")
+    reworded = sum(before[question_id].current_text for question_id in table["Question"])
+    if reworded:
+        st.caption(f"The text of {_plural(reworded, 'question')} is from the benchmark as it "
+                   "stands now, since this run kept none, and may not be how the run asked it.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in (_IMPROVED, _WORSE)}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")

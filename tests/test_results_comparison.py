@@ -455,6 +455,30 @@ def test_a_question_whose_rows_kept_no_text_is_shown_with_the_benchmarks(tmp_pat
 
     assert _questions_table(app.tabs[0]).set_index("Question").loc["q1", "Asked"] == (
         "Who audits Apple?")
+    # The run froze no benchmark of its own, so the page says whose wording it is.
+    assert any("1 question" in caption.value and "as it stands now" in caption.value
+               for caption in app.tabs[0].caption)
+
+
+def test_a_run_that_froze_its_benchmark_is_shown_with_its_own_wording(tmp_path, monkeypatch):
+    from src.app import state
+
+    current = tmp_path / "questions.jsonl"
+    current.write_text(json.dumps({"question_id": "q1", "question": "Who audits Apple now?"})
+                       + "\n", encoding="utf-8")
+    monkeypatch.setattr(state, "BENCHMARK_FILES", (current,))
+    results = tmp_path / "results"
+    results.mkdir()
+    run = _save_report_run(results, "embeddings", {"E1": [_embedding_row("q1", 0.0)],
+                                                   "E2": [_embedding_row("q1", 1.0)]})
+    (run / "benchmark.jsonl").write_text(
+        json.dumps({"question_id": "q1", "question": "Who audits Apple?"}) + "\n",
+        encoding="utf-8")
+    app = _open(monkeypatch, results)
+
+    assert _questions_table(app.tabs[0]).set_index("Question").loc["q1", "Asked"] == (
+        "Who audits Apple?")
+    assert not any("as it stands now" in caption.value for caption in app.tabs[0].caption)
 
 
 def test_a_run_scored_at_11_names_the_one_rank_the_view_leaves_out(tmp_path, monkeypatch):

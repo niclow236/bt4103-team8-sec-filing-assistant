@@ -195,6 +195,9 @@ class QuestionOutcome(NamedTuple):
     scored: bool = False              # whether it was scored on retrieval at all
     rank: int | None = None           # of its first right passage, None if none was retrieved
     correctness: float | None = None  # what its answer was scored, where it was
+    # Whether its text was looked up in the benchmark as it stands now, which
+    # may word it differently from what the run asked.
+    current_text: bool = False
 
 
 def _chunk_ids(value: Any) -> list[str] | None:
@@ -234,6 +237,12 @@ def _question_text(row: dict[str, Any]) -> str:
     return ""
 
 
+def _benchmark_texts(paths: tuple[Path, ...]) -> dict[str, str]:
+    """Each question's text, by id, as the benchmark files at ``paths`` word it."""
+    return {str(row.get("question_id")): str(row.get("question") or "")
+            for path in paths for row in _read_result_rows(path)}
+
+
 @st.cache_data(show_spinner=False)
 def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome]:
     """How one configuration of a saved run did on each question, by question id (#169).
@@ -263,11 +272,18 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         # Only a number is compared: text there is a malformed row, not a score.
         outcomes[str(question_id)] = outcome._replace(
             correctness=correctness if isinstance(correctness, (int, float)) else None)
-    texts = {str(row.get("question_id")): str(row.get("question") or "")
-             for path in BENCHMARK_FILES for row in _read_result_rows(path)}
-    return {question_id: outcome if outcome.question
-            else outcome._replace(question=texts.get(question_id, ""))
-            for question_id, outcome in outcomes.items()}
+    # The benchmark the run froze, where it froze one, is what it asked.
+    frozen = _benchmark_texts((Path(run_dir) / "benchmark.jsonl",))
+    current = _benchmark_texts(BENCHMARK_FILES)
+    for question_id, outcome in outcomes.items():
+        if outcome.question:
+            continue
+        if frozen.get(question_id):
+            outcomes[question_id] = outcome._replace(question=frozen[question_id])
+        elif current.get(question_id):
+            outcomes[question_id] = outcome._replace(question=current[question_id],
+                                                     current_text=True)
+    return outcomes
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
