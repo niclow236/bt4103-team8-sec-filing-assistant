@@ -7,7 +7,9 @@ no page holds a cache of its own:
 - for the process, with ``st.cache_resource``: the indexes and the embedding
   model (``_indexes``), each built configuration (``load_stack``), and the
   local passages shown by the Browse page (``corpus_passages``), and with
-  ``st.cache_data`` the runs under ``results/`` (``measured``);
+  ``st.cache_data`` the runs under ``results/`` (``measured``,
+  ``result_runs``) and one configuration's saved questions
+  (``question_outcomes``);
 - from ``.env``, read on every rerun: the providers a page can offer, the one
   it opens on, and what any of them lacks (``answer_models``);
 - for the process, per configuration: the answer a repeated question was
@@ -181,8 +183,7 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     0 when no right passage made the cutoff it was scored at.
     """
     supporting = row.get("scoring_supporting_chunk_ids")
-    retrieved = row.get("retrieved_chunk_ids")
-    if not isinstance(supporting, list) or not isinstance(retrieved, list):
+    if not isinstance(supporting, list):
         reciprocal = row.get("mrr")
         if not isinstance(reciprocal, (int, float)):
             return False, None
@@ -190,6 +191,7 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     if not supporting:
         return False, None
     right = set(supporting)
+    retrieved = row.get("retrieved_chunk_ids", ())
     return True, next((rank for rank, chunk_id in enumerate(retrieved, start=1)
                        if chunk_id in right), None)
 
@@ -198,6 +200,9 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
 def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]:
     """How one configuration of a saved run did on each question, by question id (#169).
 
+    Each outcome holds the question's text and benchmark, whether it was
+    scored on retrieval and the rank of its first right passage, and the
+    judge's correctness where the configuration's answers were judged.
     Read on demand for the two configurations a comparison names, rather than
     held by ``result_runs`` for every configuration of every run.
     """
@@ -211,8 +216,7 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]
         query = row.get("query")
         outcomes[str(question_id)] = {
             "question": query.get("text", "") if isinstance(query, dict) else "",
-            "benchmark": benchmark_kind(row), "scored": scored, "rank": rank,
-            "correctness": None}
+            "benchmark": benchmark_kind(row), "scored": scored, "rank": rank}
     answers = (_read_result_rows(folder / "answers.jsonl")
                or _read_result_rows(folder / "report.json"))
     for row in answers:
@@ -220,14 +224,11 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, dict[str, Any]]
         quality = row.get("quality")
         if not question_id or not isinstance(quality, dict):
             continue
-        correctness = quality.get("correctness")
-        if not isinstance(correctness, (int, float)):
-            continue
         answer = row.get("answer")
         outcome = outcomes.setdefault(str(question_id), {
             "question": answer.get("question", "") if isinstance(answer, dict) else "",
             "benchmark": benchmark_kind(row), "scored": False, "rank": None})
-        outcome["correctness"] = correctness
+        outcome["correctness"] = quality.get("correctness")
     return outcomes
 
 

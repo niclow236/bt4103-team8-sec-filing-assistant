@@ -2,6 +2,7 @@
 
 import json
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from src.config import PROJECT_ROOT
@@ -69,15 +70,15 @@ def test_counts_which_questions_found_the_right_passage_in_the_top_10_against_c0
         "C0": {"questions": [
             _retrieval_row("q1", None), _retrieval_row("q2", 1), _retrieval_row("q3", 3),
             _retrieval_row("q4", 12), _retrieval_row("q5", "unscored"),
-            _retrieval_row("q6", 1)]},
+            _retrieval_row("q6", 1), _retrieval_row("q7", 10)]},
         "C4": {"questions": [
             _retrieval_row("q1", 2), _retrieval_row("q2", None), _retrieval_row("q3", 1),
-            _retrieval_row("q4", 5), _retrieval_row("q5", "unscored")]},
+            _retrieval_row("q4", 5), _retrieval_row("q5", "unscored"), _retrieval_row("q7", 11)]},
     })
     app = _open(monkeypatch, tmp_path)
 
     assert _counts(app.tabs[0]) == [
-        (":green[Improved]", "2"), (":red[Worse]", "1"), ("Unchanged", "1")]
+        (":green[Improved]", "2"), (":red[Worse]", "2"), ("Unchanged", "1")]
 
 
 def test_two_identical_configurations_leave_every_question_both_answered_unchanged(
@@ -186,17 +187,21 @@ def test_answer_model_configurations_are_compared_on_judged_correctness_alone(
     (run / "summary.json").write_text(json.dumps({"configurations": [
         {"config": {"id": config_id, "provider": "ollama"}, "questions": 2}
         for config_id in ("G1", "G3")]}), encoding="utf-8")
-    for config_id, scores in (("G1", (0.5, 1.0)), ("G3", (1.0, 1.0))):
+    for config_id, scores in (("G1", (0.5, 1.0, 1.0)), ("G3", (1.0, 1.0, 0.0))):
         (run / config_id).mkdir()
         (run / config_id / "report.json").write_text(json.dumps({"results": [
             {**_answer_row(question_id, score), "route": "ollama",
-             "answer": {"question": "What was revenue?", "abstained": False, "latency_ms": 1}}
-            for question_id, score in zip(("q1", "q2"), scores)]}), encoding="utf-8")
+             "answer": {"question": f"Asked {question_id}?", "abstained": False,
+                        "latency_ms": 1}}
+            for question_id, score in zip(("q1", "q2", "xbrl-a"), scores)]}), encoding="utf-8")
     app = _open(monkeypatch, tmp_path)
+    team, mechanical = app.tabs
 
-    assert _counts(app.tabs[0]) == [
-        (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]
-    assert not any("top 10" in markdown.value for markdown in app.tabs[0].markdown)
+    assert _counts(team) == [(":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]
+    assert not any("top 10" in markdown.value for markdown in team.markdown)
+    assert _questions_table(team).set_index("Question").loc["q1", "Asked"] == "Asked q1?"
+    assert _counts(mechanical) == [
+        (":green[Improved]", "0"), (":red[Worse]", "1"), ("Unchanged", "0")]
 
 
 def test_a_benchmark_with_no_saved_results_offers_no_comparison(tmp_path, monkeypatch):
@@ -205,7 +210,7 @@ def test_a_benchmark_with_no_saved_results_offers_no_comparison(tmp_path, monkey
     app = _open(monkeypatch, tmp_path)
     team, mechanical = app.tabs
 
-    assert len(team.selectbox) == 2
+    assert team.metric
     assert not mechanical.selectbox and not mechanical.metric
 
 
@@ -218,3 +223,72 @@ def test_two_configurations_with_no_question_in_common_say_so_instead_of_countin
 
     assert not team.metric
     assert any("C0 and C4" in info.value for info in team.info)
+
+
+def _questions_table(tab):
+    """The comparison's table: the last one in the tab, after the run's scores."""
+    return tab.dataframe[-1].value
+
+
+def test_each_question_shows_both_configurations_rank_and_can_be_filtered_to_the_worse(
+        tmp_path, monkeypatch):
+    _save_run(tmp_path, {
+        "C0": {"questions": [
+            _retrieval_row("q1", None, question="Who audits Apple?"), _retrieval_row("q2", 1),
+            _retrieval_row("q3", 3), _retrieval_row("q4", 12)]},
+        "C4": {"questions": [
+            _retrieval_row("q1", 2, question="Who audits Apple?"), _retrieval_row("q2", None),
+            _retrieval_row("q3", 1), _retrieval_row("q4", 5)]},
+    })
+    app = _open(monkeypatch, tmp_path)
+    table = _questions_table(app.tabs[0])
+
+    ranks = {row["Question"]: (row["C0 rank"], row["C4 rank"]) for _, row in table.iterrows()}
+    assert {question: tuple(None if pd.isna(rank) else rank for rank in pair)
+            for question, pair in ranks.items()} == {
+        "q1": (None, 2), "q2": (1, None), "q3": (3, 1), "q4": (12, 5)}
+    assert table.set_index("Question").loc["q1", "Asked"] == "Who audits Apple?"
+    # A rank is a whole number, shown as 2 and not 2.0, even beside a missing one.
+    assert str(table["C4 rank"].dtype) == "Int64"
+
+    show = next(box for box in app.tabs[0].selectbox if box.label == "Show")
+    show.select("Worse: top 10").run()
+    assert not app.exception
+    assert _questions_table(app.tabs[0])["Question"].tolist() == ["q2"]
+
+
+def test_questions_can_be_filtered_to_those_whose_judged_correctness_improved(
+        tmp_path, monkeypatch):
+    retrieval = [_retrieval_row("q1", 1), _retrieval_row("q2", 1), _retrieval_row("q3", "unscored")]
+    _save_run(tmp_path, {
+        "C0": {"questions": retrieval, "answers": [_answer_row("q1", 0.5), _answer_row("q2", 1.0)]},
+        "C4": {"questions": retrieval, "answers": [_answer_row("q1", 0.9), _answer_row("q2", 0.4)]},
+    })
+    app = _open(monkeypatch, tmp_path)
+    table = _questions_table(app.tabs[0]).set_index("Question")
+
+    assert sorted(table.index) == ["q1", "q2"]
+    assert (table.loc["q1", "C0 correctness"], table.loc["q1", "C4 correctness"]) == (0.5, 0.9)
+    assert table.loc["q2", "Correctness"] == "worse"
+
+    show = next(box for box in app.tabs[0].selectbox if box.label == "Show")
+    show.select("Improved: correctness").run()
+    assert not app.exception
+    assert _questions_table(app.tabs[0])["Question"].tolist() == ["q1"]
+
+
+def test_a_filter_the_new_pair_cannot_offer_falls_back_to_every_question(tmp_path, monkeypatch):
+    retrieval = [_retrieval_row("q1", 1), _retrieval_row("q2", None)]
+    _save_run(tmp_path, {
+        "C0": {"questions": retrieval, "answers": [_answer_row("q1", 0.5), _answer_row("q2", 1.0)]},
+        "C4": {"questions": retrieval, "answers": [_answer_row("q1", 0.9), _answer_row("q2", 1.0)]},
+        "C2": {"questions": retrieval},
+    })
+    app = _open(monkeypatch, tmp_path)
+    next(box for box in app.tabs[0].selectbox if box.label == "Show").select(
+        "Improved: correctness").run()
+    app.tabs[0].selectbox[1].select("C2").run()
+
+    assert not app.exception
+    assert next(box for box in app.tabs[0].selectbox if box.label == "Show").value == "All questions"
+    assert sorted(_questions_table(app.tabs[0])["Question"]) == ["q1", "q2"]

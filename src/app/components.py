@@ -137,10 +137,22 @@ def _correctness(outcome: Mapping[str, Any]) -> float | None:
     return outcome.get("correctness")
 
 
-# What the view counts changes on: a title, and how one question's outcome
-# scores on it (None where the configuration was not scored on it).
-_MEASURES = ((f"Found the right passage in the top {_FOUND_WITHIN}", _found),
-             ("Judged correctness", _correctness))
+class _Measure(NamedTuple):
+    """What the before and after view counts changes on."""
+
+    title: str
+    column: str         # the table column that says how a question changed on it
+    shown: str          # the outcome each configuration's own column shows
+    # How one question's outcome scores on it, None where it was not scored.
+    score: Callable[[Mapping[str, Any]], float | None]
+
+
+_MEASURES = (
+    _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
+             "rank", _found),
+    _Measure("Judged correctness", "Correctness", "correctness", _correctness),
+)
+_SHOW_ALL = "All questions"
 
 
 def _change(before: float, after: float) -> str:
@@ -151,7 +163,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                              outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
     config_ids = [item["config_id"] for item in run["configurations"]]
-    if len(config_ids) < 2 or "run_dir" not in run:
+    if len(config_ids) < 2:
         return
     st.subheader("Before and after")
     baseline = _existing_choice("Baseline", config_ids, key=f"results_baseline_{benchmark}",
@@ -161,18 +173,42 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                                 format_func=str)
     before = outcomes(run["run_dir"], baseline)
     after = outcomes(run["run_dir"], compared)
-    shared = [(before[question_id], outcome) for question_id, outcome in after.items()
-              if question_id in before and outcome["benchmark"] == benchmark]
-    measured = False
-    for title, score in _MEASURES:
-        changes = Counter(_change(score(old), score(new)) for old, new in shared
-                          if score(old) is not None and score(new) is not None)
+    shared = {question_id: (before[question_id], outcome)
+              for question_id, outcome in after.items()
+              if question_id in before and outcome["benchmark"] == benchmark}
+    counted = []
+    for measure in _MEASURES:
+        changes = Counter(_change(measure.score(old), measure.score(new))
+                          for old, new in shared.values()
+                          if measure.score(old) is not None and measure.score(new) is not None)
         if changes:
-            _render_change_counts(title, changes)
-            measured = True
-    if not measured:
+            _render_change_counts(measure.title, changes)
+            counted.append(measure)
+    if not counted:
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
+        return
+    rows = []
+    for question_id, (old, new) in shared.items():
+        row = {"Question": question_id, "Asked": old["question"]}
+        for measure in counted:
+            scores = measure.score(old), measure.score(new)
+            for config_id, outcome in ((baseline, old), (compared, new)):
+                row[f"{config_id} {measure.shown}"] = outcome.get(measure.shown)
+            row[measure.column] = None if None in scores else _change(*scores)
+        if any(row[measure.column] for measure in counted):
+            rows.append(row)
+    table = pd.DataFrame(rows)
+    for column in table.columns:
+        if column.endswith(" rank"):
+            table[column] = table[column].astype("Int64")
+    filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
+               for measure in counted for change in ("improved", "worse")}
+    show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
+    if show in filters:
+        column, change = filters[show]
+        table = table[table[column] == change]
+    st.dataframe(table, width="stretch", hide_index=True)
 
 
 def _render_change_counts(title: str, changes: Counter) -> None:
@@ -186,12 +222,11 @@ def _render_change_counts(title: str, changes: Counter) -> None:
 
 
 def render_results(runs: list[dict[str, Any]], *,
-                   outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]] | None = None,
-                   ) -> None:
+                   outcomes: Callable[[str, str], Mapping[str, Mapping[str, Any]]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
 
-    ``outcomes`` reads one configuration's saved questions for the before and
-    after view; without it the page shows the run's scores alone.
+    ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
+    for the before and after view.
     """
     if not runs:
         st.info("No completed benchmark runs were found under results/.")
@@ -221,7 +256,7 @@ def render_results(runs: list[dict[str, Any]], *,
         with tab:
             matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
             saved = _render_results_benchmark(title, matching, selected["configurations"], kind)
-            if saved and outcomes is not None:
+            if saved:
                 _render_question_changes(selected, kind, outcomes)
 
 
