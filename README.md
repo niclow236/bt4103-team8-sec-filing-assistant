@@ -1913,9 +1913,13 @@ or updated runs, keeps the selected run when it still exists, and clears only
 the Results cache, not the caches used by other pages.
 The cache keeps aggregate scores rather than full question rows, and the chart
 shows retrieval metrics as separate bars rather than adding their scores.
-A matrix run's `answer-summary.json` adds an Answer quality table to the Team
-tab: each judged mean beside the number of outputs it scored, and the claim
-check counts. The page and `python -m src.evaluation.report` build every table
+A matrix run's saved answers add an Answer quality table to the Team tab: each
+judged mean beside the number of outputs it scored, and the claim check
+counts. They are recomputed from each configuration's `answers.jsonl`, the way
+`full_ablation rescore` does, so a rescore shows without anything else to
+update; `answer-summary.json` is used only where those rows are missing or
+unreadable. A configuration answered for fewer team questions than it
+retrieved for is labelled incomplete. The page and `python -m src.evaluation.report` build every table
 and chart through `src/evaluation/report.py`, so the page and a generated
 report cannot disagree.
 

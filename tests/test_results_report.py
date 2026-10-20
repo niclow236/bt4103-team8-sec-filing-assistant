@@ -306,11 +306,14 @@ def test_answer_quality_follows_the_saved_answers_not_a_stale_summary(tmp_path):
         out / "ablation.md").read_text(encoding="utf-8")
 
 
-def test_answers_that_cannot_be_scored_fall_back_to_the_saved_summary(tmp_path):
+@pytest.mark.parametrize("answer", [
+    {"question_id": "q1"},
+    {**_answer_row("q1", 1.0), "answer": {"abstained": False, "verification": {"checks": ["x"]}}},
+], ids=["no quality", "checks not objects"])
+def test_answers_that_cannot_be_scored_fall_back_to_the_saved_summary(tmp_path, answer):
     run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
     _save_answers(run, C4={"questions": 150, "quality": {"correctness": _quality(0.9, 150)}})
-    (run / "C4" / "answers.jsonl").write_text(json.dumps({"question_id": "q1"}) + "\n",
-                                              encoding="utf-8")
+    (run / "C4" / "answers.jsonl").write_text(json.dumps(answer) + "\n", encoding="utf-8")
     out = tmp_path / "report"
 
     report.main([str(run), "--out", str(out)])
@@ -348,3 +351,37 @@ def test_a_run_path_that_does_not_exist_says_so(tmp_path, capsys):
 
     assert stopped.value.code == 2
     assert "does not exist" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("where", ["under a file", "a broken link"])
+def test_an_out_folder_that_cannot_be_made_is_a_usage_error(tmp_path, capsys, where):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    (tmp_path / "a-file").write_text("mine", encoding="utf-8")
+    if where == "under a file":
+        out = tmp_path / "a-file" / "report"
+    else:
+        out = tmp_path / "link"
+        out.symlink_to(tmp_path / "gone")
+
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(run), "--out", str(out)])
+
+    assert stopped.value.code == 2
+    assert "cannot write" in capsys.readouterr().err
+
+
+def test_answers_for_fewer_team_questions_than_were_retrieved_are_marked_partial(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {
+        "C3": [{"question_id": "q1", "recall": 1.0}, {"question_id": "q2", "recall": 1.0}],
+        "C4": [{"question_id": "q1", "recall": 1.0}, {"question_id": "q2", "recall": 1.0}]})
+    for config_id, answered in (("C3", 2), ("C4", 1)):
+        (run / config_id / "answers.jsonl").write_text("".join(
+            json.dumps(_answer_row(f"q{n}", 1.0)) + "\n" for n in range(1, answered + 1)),
+            encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "Incomplete answers: C4 (1 of 2 team questions answered)." in table
+    assert "C3 (" not in table

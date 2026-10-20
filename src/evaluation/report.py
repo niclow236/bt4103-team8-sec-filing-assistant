@@ -173,7 +173,9 @@ def _answered(path: Path) -> dict[str, Any] | None:
         return None
     try:
         return {"questions": len(rows), "quality": quality_summary(rows), "checks": _checks(rows)}
-    except (KeyError, TypeError):
+    # A row of the wrong shape anywhere in it, a missing key or a check that is
+    # not a record, falls back rather than taking the Results page down.
+    except (KeyError, TypeError, AttributeError):
         return None
 
 
@@ -300,6 +302,15 @@ def run_warnings(run: dict[str, Any]) -> list[str]:
     if partial:
         warnings.append("Incomplete results: " + ", ".join(partial)
                         + ". These scores are partial and are not comparable to a complete run.")
+    unanswered = []
+    for item in run["configurations"]:
+        answered = run.get("answer_quality", {}).get(item["config_id"], {}).get("questions")
+        retrieved = item["benchmark_metrics"].get("handwritten", {}).get("questions")
+        if isinstance(answered, int) and isinstance(retrieved, int) and answered < retrieved:
+            unanswered.append(f"{item['config_id']} ({answered} of {retrieved} team questions answered)")
+    if unanswered:
+        warnings.append("Incomplete answers: " + ", ".join(unanswered)
+                        + ". Their answer quality is partial and is not comparable to a complete run.")
     return warnings
 
 
@@ -433,7 +444,10 @@ def main(argv: list[str] | None = None) -> None:
     out = args.out or REPORT_ROOT / run["run_id"]
     if out.exists() and not out.is_dir():
         parser.error(f"--out {out} is not a folder")
-    write_report(run, out)
+    try:
+        write_report(run, out)
+    except OSError as error:
+        parser.error(f"cannot write the report to {out}: {error.strerror or error}")
 
 
 if __name__ == "__main__":
