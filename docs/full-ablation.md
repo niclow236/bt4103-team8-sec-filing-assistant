@@ -254,6 +254,10 @@ python -u -m src.evaluation.full_ablation answers results/c6-rebase-full-YYYYMMD
   --provider mistral --model ministral-8b-2512
 
 python -m src.evaluation.full_ablation rescore results/c6-rebase-full-YYYYMMDD
+
+# Tables and charts for the report, the same ones the app's Results page shows,
+# written to docs/evaluation/<run-id>/. Rerun after any re-run or rescore.
+python -m src.evaluation.report results/full-matrix-YYYYMMDD
 ```
 
 Retrieval `--configurations` freezes the selected rows in `config.json`; a

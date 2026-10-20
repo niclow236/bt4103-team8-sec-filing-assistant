@@ -373,3 +373,46 @@ def test_reload_falls_back_when_the_selected_run_is_removed(tmp_path, monkeypatc
     app.button[0].click().run()
     assert not app.exception
     assert app.selectbox[0].value == "newer"
+
+
+def test_matrix_answer_quality_shows_on_the_team_tab(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    run = tmp_path / "matrix"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4", "name": "filtered hybrid"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1", "recall": 1.0}) + "\n", encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "checks": {"not_run": 145},
+        "quality": {"correctness": {"mean": 0.8182, "scored": 150, "total": 150}}}}}),
+        encoding="utf-8")
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    team, mechanical = app.tabs
+    assert "Answer quality" in [header.value for header in team.subheader]
+    quality = team.dataframe[1].value
+    assert quality["Correctness"].tolist() == [0.8182]
+    assert quality["Correctness scored"].tolist() == [150]
+    assert quality["Claim checks"].tolist() == ["not_run 145"]
+    assert "Answer quality" not in [header.value for header in mechanical.subheader]
+
+
+def test_a_run_with_answer_quality_but_no_retrieval_scores_still_shows_it(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    run = tmp_path / "answers-only"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1"}) + "\n", encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "quality": {"correctness": {"mean": 0.5, "scored": 150}}}}}),
+        encoding="utf-8")
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    team = app.tabs[0]
+    assert not team.info
+    assert team.dataframe[0].value["Correctness"].tolist() == [0.5]

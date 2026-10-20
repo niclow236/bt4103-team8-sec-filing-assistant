@@ -65,11 +65,11 @@ def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -
 
 
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
-                              configurations: list[dict[str, Any]],
-                              benchmark: str) -> None:
+                              run: dict[str, Any], benchmark: str) -> None:
     st.subheader(title)
-    model_table = _results_model_table(configurations, benchmark)
-    if not retrieval and model_table.empty:
+    model_table = _results_model_table(run["configurations"], benchmark)
+    quality = pd.DataFrame(report.answer_quality_table(run, benchmark))
+    if not retrieval and model_table.empty and quality.empty:
         st.info("No saved results for this benchmark.")
         return
     if retrieval:
@@ -82,6 +82,9 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not model_table.empty:
         st.subheader("Answer-model ablation")
         st.dataframe(model_table, width="stretch", hide_index=True)
+    if not quality.empty:
+        st.subheader("Answer quality")
+        st.dataframe(quality, width="stretch", hide_index=True)
 
 
 def render_results(runs: list[dict[str, Any]]) -> None:
@@ -92,25 +95,14 @@ def render_results(runs: list[dict[str, Any]]) -> None:
     run_id = _existing_choice("Run", [run["run_id"] for run in runs],
                               key="results_run", format_func=str)
     selected = next(run for run in runs if run["run_id"] == run_id)
-    unsplit = [item["config_id"] for item in selected["configurations"]
-               if not item["benchmark_metrics"]]
-    if unsplit:
-        st.warning(
-            f"{len(unsplit)} of this run's {len(selected['configurations'])} configurations "
-            "have a summary but no usable per-question results on this machine "
-            f"(results/{run_id}/<configuration>/questions.jsonl or report.json), so their "
-            "scores cannot be split by benchmark and are not shown: " + ", ".join(unsplit))
-    incomplete = [f"{item['config_id']} ({item['incomplete']})"
-                  for item in selected["configurations"] if item.get("incomplete")]
-    if incomplete:
-        st.warning("Incomplete results: " + ", ".join(incomplete)
-                   + ". These scores are partial and are not comparable to a complete run.")
+    for warning in report.run_warnings(selected):
+        st.warning(warning)
     retrieval = report.retrieval_configurations(selected["configurations"])
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:
             matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
-            _render_results_benchmark(title, matching, selected["configurations"], kind)
+            _render_results_benchmark(title, matching, selected, kind)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
