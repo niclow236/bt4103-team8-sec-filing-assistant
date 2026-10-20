@@ -123,7 +123,10 @@ def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> l
     return rows
 
 
-# The cutoff "found the right passage" is judged at, the one the metrics score.
+# The cutoff "found the right passage" is judged at, the top 10 the issue
+# asks for (#169). It is not the run's own: the full matrix scores its Recall
+# and MRR at 16 (FINAL_K), so a right passage ranked 11 to 16 counts there
+# and not here. Ranks are worked out from the saved passages, not from MRR.
 _FOUND_WITHIN = 10
 # What a configuration is compared against until another baseline is picked:
 # naive BM25, the configuration every design choice is measured from.

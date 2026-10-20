@@ -23,13 +23,14 @@ def _retrieval_row(question_id, rank, *, question="What was revenue?", **fields)
     supporting = [] if rank == "unscored" else [f"{question_id}-gold"]
     if isinstance(rank, int):
         retrieved[rank - 1] = f"{question_id}-gold"
-    # Scored at 10, as the full matrix scores them.
-    found = isinstance(rank, int) and rank <= 10
-    score = None if rank == "unscored" else float(found)
+    # Scored at 16, as the full matrix scores them, so a right passage ranked
+    # 11 to 16 counts in recall and MRR though it is outside the top 10.
+    retrieved_at_all = isinstance(rank, int)
+    score = None if rank == "unscored" else float(retrieved_at_all)
     return {"question_id": question_id, "difficulty": "medium", "source": None,
             "query": {"text": question}, "retrieved_chunk_ids": retrieved,
             "scoring_supporting_chunk_ids": supporting, "recall": score,
-            "mrr": None if score is None else (1 / rank if found else 0.0), **fields}
+            "mrr": None if score is None else (1 / rank if retrieved_at_all else 0.0), **fields}
 
 
 def _answer_row(question_id, correctness, *, question="What was revenue?"):
