@@ -317,3 +317,13 @@ def test_embedding_configurations_are_compared_on_the_retrieval_rows_their_repor
 
     assert _counts(app.tabs[0]) == [
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]
+
+
+def test_a_row_whose_retrieved_passages_are_unreadable_is_left_unscored(tmp_path, monkeypatch):
+    broken = {**_retrieval_row("q2", 1), "retrieved_chunk_ids": None}
+    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None), _retrieval_row("q2", 1)]},
+                         "C4": {"questions": [_retrieval_row("q1", 1), broken]}})
+    app = _open(monkeypatch, tmp_path)
+
+    assert _counts(app.tabs[0]) == [
+        (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]

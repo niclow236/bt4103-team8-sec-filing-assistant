@@ -187,7 +187,8 @@ class QuestionOutcome(NamedTuple):
 def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
     """Whether ``row`` was scored on retrieval, and where its first right passage ranked.
 
-    The rank is None when no right passage was retrieved at all. A row that
+    The rank is None when no right passage was retrieved at all, and a row
+    whose retrieved passages cannot be read is left unscored. A row that
     does not name its right passages, as ``src.evaluation.run`` saves one, is
     ranked by its reciprocal rank, which is None for an unscored question and
     0 when no right passage made the cutoff it was scored at.
@@ -198,9 +199,10 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
         if not isinstance(reciprocal, (int, float)):
             return False, None
         return True, round(1 / reciprocal) if reciprocal > 0 else None
-    if not supporting:
+    retrieved = row.get("retrieved_chunk_ids")
+    if not supporting or not isinstance(retrieved, list):
         return False, None
-    return True, first_relevant_rank(row.get("retrieved_chunk_ids", ()), supporting)
+    return True, first_relevant_rank(retrieved, supporting)
 
 
 def _question_text(row: dict[str, Any]) -> str:
