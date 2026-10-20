@@ -92,6 +92,12 @@ def _read_result_rows(path: Path) -> list[dict[str, Any]]:
         return []
 
 
+def _question_rows(folder: Path) -> list[dict[str, Any]]:
+    """A configuration's per-question rows: questions.jsonl, or the report.json
+    an answer-model or embedding ablation saves them in."""
+    return _read_result_rows(folder / "questions.jsonl") or _read_result_rows(folder / "report.json")
+
+
 def _saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = None) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -156,9 +162,7 @@ def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
             config_dir = run_dir / config_id
             if config_dir.resolve().parent != run_dir.resolve():
                 continue
-            rows = _read_result_rows(config_dir / "questions.jsonl")
-            if not rows:
-                rows = _read_result_rows(config_dir / "report.json")
+            rows = _question_rows(config_dir)
             configurations.append({
                 "run_id": run_dir.name,
                 "config_id": config_id,
@@ -223,11 +227,7 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
     """
     outcomes: dict[str, QuestionOutcome] = {}
     folder = Path(run_dir) / config_id
-    # An embedding ablation saves its retrieval rows in report.json, as
-    # ``result_runs`` reads them too.
-    retrieval = (_read_result_rows(folder / "questions.jsonl")
-                 or _read_result_rows(folder / "report.json"))
-    for row in retrieval:
+    for row in _question_rows(folder):
         question_id = row.get("question_id")
         if not question_id:
             continue
