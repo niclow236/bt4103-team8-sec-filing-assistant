@@ -159,6 +159,9 @@ _MEASURES = (
              None, attrgetter("correctness"), "had no scored answer from both"),
 )
 _SHOW_ALL = "All questions"
+# The text colour of a change in the table, matching the green and red of the
+# counts above it in each theme: (light, dark).
+_CHANGE_COLOURS = {"improved": ("#158237", "#5ce488"), "worse": ("#bd4043", "#ff6c6c")}
 
 
 def _change(before: float, after: float) -> str:
@@ -227,7 +230,16 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     if show in filters:
         column, change = filters[show]
         table = table[table[column] == change]
-    st.dataframe(table, width="stretch", hide_index=True)
+    dark = _dark_theme()
+
+    def colour(change: str | None) -> str:
+        shades = _CHANGE_COLOURS.get(change)
+        return f"color: {shades[dark]}" if shades else ""
+
+    styled = table.style.map(colour, subset=[measure.column for measure, _ in counts])
+    # A styled table is shown as the styler formats it, so say how: no "<NA>"
+    # for a question a configuration did not find, and scores to two places.
+    st.dataframe(styled.format(precision=2, na_rep=""), width="stretch", hide_index=True)
 
 
 def _render_change_counts(measure: _Measure, changes: Counter, answered: int) -> None:

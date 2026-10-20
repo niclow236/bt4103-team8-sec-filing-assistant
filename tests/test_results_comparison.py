@@ -1,8 +1,10 @@
 """The Results page's before and after view of two configurations (#169)."""
 
 import json
+import re
 
 import pandas as pd
+import pyarrow as pa
 from streamlit.testing.v1 import AppTest
 
 from src.config import PROJECT_ROOT
@@ -331,3 +333,57 @@ def test_a_row_whose_retrieved_passages_are_unreadable_is_left_unscored(tmp_path
 
     assert _counts(app.tabs[0]) == [
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]
+
+
+def _cell_colours(tab, column):
+    """Each question's text colour in ``column`` of the comparison's table, None where plain."""
+    element = tab.dataframe[-1]
+    styles = element.proto.arrow_data.styler.styles
+    position = list(element.value.columns).index(column)
+    colours = {}
+    # One rule per style, its selector listing every cell that has it.
+    for selectors, colour in re.findall(r"([^{}]+)\{\s*color:\s*([^;}\s]+)", styles):
+        for row in re.findall(rf"row(\d+)_col{position}\b", selectors):
+            colours[int(row)] = colour
+    return {question: colours.get(row) for row, question in enumerate(element.value["Question"])}
+
+
+def test_each_question_is_coloured_by_whether_it_improved_or_got_worse(tmp_path, monkeypatch):
+    _save_run(tmp_path, {
+        "C0": {"questions": [_retrieval_row("q1", None), _retrieval_row("q2", 1),
+                             _retrieval_row("q3", 3), _retrieval_row("q4", 12)]},
+        "C4": {"questions": [_retrieval_row("q1", 2), _retrieval_row("q2", None),
+                             _retrieval_row("q3", 1), _retrieval_row("q4", 5)]},
+    })
+    app = _open(monkeypatch, tmp_path)
+    colours = _cell_colours(app.tabs[0], "Top 10")
+
+    assert colours["q3"] is None
+    assert colours["q1"] == colours["q4"] is not None
+    assert colours["q2"] is not None and colours["q2"] != colours["q1"]
+
+
+def test_the_table_shows_a_missing_rank_as_blank_and_scores_to_two_places(tmp_path, monkeypatch):
+    retrieval = [_retrieval_row("q1", None)]
+    _save_run(tmp_path, {
+        "C0": {"questions": retrieval, "answers": [_answer_row("q1", 0.5)]},
+        "C4": {"questions": [_retrieval_row("q1", 3)], "answers": [_answer_row("q1", 1 / 3)]},
+    })
+    app = _open(monkeypatch, tmp_path)
+    styler = app.tabs[0].dataframe[-1].proto.arrow_data.styler
+    shown = pa.ipc.open_stream(styler.display_values).read_pandas().iloc[0]
+
+    assert (shown["C0 rank"], shown["C4 rank"]) == ("", "3")
+    assert (shown["C0 correctness"], shown["C4 correctness"]) == ("0.50", "0.33")
+
+
+def test_the_change_colours_follow_the_viewers_theme(tmp_path, monkeypatch):
+    from src.app import components
+
+    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None)]},
+                         "C4": {"questions": [_retrieval_row("q1", 1)]}})
+    light = _cell_colours(_open(monkeypatch, tmp_path).tabs[0], "Top 10")["q1"]
+    monkeypatch.setattr(components, "_dark_theme", lambda: True)
+    dark = _cell_colours(_open(monkeypatch, tmp_path).tabs[0], "Top 10")["q1"]
+
+    assert light is not None and dark is not None and light != dark
