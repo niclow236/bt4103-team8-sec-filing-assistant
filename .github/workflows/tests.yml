@@ -1,5 +1,10 @@
 # Runs the whole test suite on every pull request and on every push to main.
 # What the suite needs is in README.md, under "Getting started".
+#
+# One test reaches the network: it downloads the bge tokenizer from the Hugging
+# Face Hub, unauthenticated, to check the table budget against the real encoder
+# (#64). A runner that cannot download it fails that test rather than skipping
+# it, so a Hub outage shows up as a red check rather than as 1 skipped.
 name: tests
 
 on:
