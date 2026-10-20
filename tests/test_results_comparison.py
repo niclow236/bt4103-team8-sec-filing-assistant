@@ -56,6 +56,29 @@ def _save_run(root, configurations, *, name="run", **manifest):
     return run
 
 
+def _save_report_run(root, name, configurations, **config):
+    """Write a run whose configurations saved their rows in report.json, as an
+    answer-model or embedding ablation does: ``configurations`` maps an id to its rows."""
+    run = root / name
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": config_id, **config}, "questions": len(rows)}
+        for config_id, rows in configurations.items()]}), encoding="utf-8")
+    for config_id, rows in configurations.items():
+        (run / config_id).mkdir()
+        (run / config_id / "report.json").write_text(json.dumps({"results": rows}),
+                                                     encoding="utf-8")
+    return run
+
+
+def _embedding_row(question_id, mrr):
+    """How src.evaluation.model_ablation saves an E row: in report.json, with
+    its scores and retrieved ids, and neither right passage ids nor its text."""
+    return {"question_id": question_id, "question_type": "factual", "difficulty": "easy",
+            "source": "handwritten", "k": 10, "recall": mrr, "ndcg": mrr, "mrr": mrr,
+            "hard_negative_accuracy": None, "retrieved_chunk_ids": ["a", "b"]}
+
+
 def _open(monkeypatch, root):
     _read_results_from(monkeypatch, root)
     app = AppTest.from_file(RESULTS_PAGE, default_timeout=30).run()
@@ -193,18 +216,14 @@ def test_answer_correctness_is_counted_too_when_the_run_has_it(tmp_path, monkeyp
 
 def test_answer_model_configurations_are_compared_on_judged_correctness_alone(
         tmp_path, monkeypatch):
-    run = tmp_path / "generators"
-    run.mkdir()
-    (run / "summary.json").write_text(json.dumps({"configurations": [
-        {"config": {"id": config_id, "provider": "ollama"}, "questions": 2}
-        for config_id in ("G1", "G3")]}), encoding="utf-8")
-    for config_id, scores in (("G1", (0.5, 1.0, 1.0)), ("G3", (1.0, 1.0, 0.0))):
-        (run / config_id).mkdir()
-        (run / config_id / "report.json").write_text(json.dumps({"results": [
-            {**_answer_row(question_id, score), "route": "ollama",
-             "answer": {"question": f"Asked {question_id}?", "abstained": False,
-                        "latency_ms": 1}}
-            for question_id, score in zip(("q1", "q2", "xbrl-a"), scores)]}), encoding="utf-8")
+    def rows(scores):
+        return [{**_answer_row(question_id, score), "route": "ollama",
+                 "answer": {"question": f"Asked {question_id}?", "abstained": False,
+                            "latency_ms": 1}}
+                for question_id, score in zip(("q1", "q2", "xbrl-a"), scores)]
+
+    _save_report_run(tmp_path, "generators", {"G1": rows((0.5, 1.0, 1.0)),
+                                              "G3": rows((1.0, 1.0, 0.0))}, provider="ollama")
     app = _open(monkeypatch, tmp_path)
     team, mechanical = app.tabs
 
@@ -307,31 +326,11 @@ def test_a_filter_the_new_pair_cannot_offer_falls_back_to_every_question(tmp_pat
     assert sorted(_questions_table(app.tabs[0])["Question"]) == ["q1", "q2"]
 
 
-def _embedding_row(question_id, mrr):
-    """How src.evaluation.model_ablation saves an E row: in report.json, with
-    its scores and retrieved ids, and neither right passage ids nor its text."""
-    return {"question_id": question_id, "question_type": "factual", "difficulty": "easy",
-            "source": "handwritten", "k": 10, "recall": mrr, "ndcg": mrr, "mrr": mrr,
-            "hard_negative_accuracy": None, "retrieved_chunk_ids": ["a", "b"]}
-
-
 def test_embedding_configurations_are_compared_on_the_retrieval_rows_their_report_saved(
         tmp_path, monkeypatch):
-    def row(question_id, mrr):
-        return {"question_id": question_id, "question_type": "factual", "difficulty": "easy",
-                "source": "handwritten", "k": 10, "recall": mrr, "ndcg": mrr, "mrr": mrr,
-                "hard_negative_accuracy": None, "retrieved_chunk_ids": ["a", "b"]}
-
-    run = tmp_path / "embeddings"
-    run.mkdir()
-    (run / "summary.json").write_text(json.dumps({"configurations": [
-        {"config": {"id": config_id}, "questions": 2} for config_id in ("E1-dense", "E2-dense")]}),
-        encoding="utf-8")
-    for config_id, scores in (("E1-dense", (0.0, 1.0)), ("E2-dense", (0.5, 1.0))):
-        (run / config_id).mkdir()
-        (run / config_id / "report.json").write_text(json.dumps({"results": [
-            row(question_id, score) for question_id, score in zip(("q1", "q2"), scores)]}),
-            encoding="utf-8")
+    _save_report_run(tmp_path, "embeddings", {
+        "E1-dense": [_embedding_row("q1", 0.0), _embedding_row("q2", 1.0)],
+        "E2-dense": [_embedding_row("q1", 0.5), _embedding_row("q2", 1.0)]})
     app = _open(monkeypatch, tmp_path)
 
     assert _counts(app.tabs[0]) == [
@@ -450,15 +449,8 @@ def test_a_question_whose_rows_kept_no_text_is_shown_with_the_benchmarks(tmp_pat
     monkeypatch.setattr(state, "BENCHMARK_FILES", (benchmark,))
     results = tmp_path / "results"
     results.mkdir()
-    run = results / "embeddings"
-    run.mkdir()
-    (run / "summary.json").write_text(json.dumps({"configurations": [
-        {"config": {"id": config_id}, "questions": 1} for config_id in ("E1", "E2")]}),
-        encoding="utf-8")
-    for config_id, score in (("E1", 0.0), ("E2", 1.0)):
-        (run / config_id).mkdir()
-        (run / config_id / "report.json").write_text(
-            json.dumps({"results": [_embedding_row("q1", score)]}), encoding="utf-8")
+    _save_report_run(results, "embeddings", {"E1": [_embedding_row("q1", 0.0)],
+                                             "E2": [_embedding_row("q1", 1.0)]})
     app = _open(monkeypatch, results)
 
     assert _questions_table(app.tabs[0]).set_index("Question").loc["q1", "Asked"] == (
