@@ -223,7 +223,10 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
 def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                              outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
-    config_ids = [item["config_id"] for item in run["configurations"]]
+    # Only a configuration whose questions on this benchmark were read can be
+    # compared; one with a summary alone is named in the warning above.
+    config_ids = [item["config_id"] for item in run["configurations"]
+                  if benchmark in item["benchmark_metrics"]]
     if len(config_ids) < 2:
         return
     st.subheader("Before and after")

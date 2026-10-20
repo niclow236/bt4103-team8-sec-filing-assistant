@@ -485,3 +485,16 @@ def test_a_correctness_saved_as_text_is_not_counted(tmp_path, monkeypatch):
 
     assert _counts(app.tabs[0])[3:] == [
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]
+
+
+def test_only_configurations_that_saved_their_questions_are_offered(tmp_path, monkeypatch):
+    _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None)]},
+                         "C4": {"questions": [_retrieval_row("q1", 1)]},
+                         "C5": {"questions": [_retrieval_row("q1", 1)]}})
+    # C0 saved a summary but its question rows never reached this machine.
+    (tmp_path / "run" / "C0" / "questions.jsonl").unlink()
+    app = _open(monkeypatch, tmp_path)
+    team = app.tabs[0]
+
+    assert team.selectbox[0].options == ["C4", "C5"]
+    assert _counts(team) == [(":green[Improved]", "0"), (":red[Worse]", "0"), ("Unchanged", "1")]
