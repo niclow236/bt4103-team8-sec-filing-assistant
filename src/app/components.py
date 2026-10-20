@@ -177,7 +177,12 @@ def _change(before: float, after: float) -> str:
     return _IMPROVED if after > before else _WORSE if after < before else _UNCHANGED
 
 
-def _asked(before: QuestionOutcome, after: QuestionOutcome) -> QuestionOutcome:
+# The table's own column saying a question's text is today's benchmark's,
+# counted for the caption and dropped before the table is drawn.
+_FROM_CURRENT = "_from_current_benchmark"
+
+
+def _worded_by(before: QuestionOutcome, after: QuestionOutcome) -> QuestionOutcome:
     """The outcome whose text the table shows: the baseline's, unless only the
     other configuration kept the run's own wording."""
     if after.question and not after.current_text and (before.current_text or not before.question):
@@ -199,7 +204,8 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
 
     Returns how many of its questions both answered, each measure both were
     scored on with its counts, and one row per question with each
-    configuration's own value, headed by ``names``, and how it changed.
+    configuration's own value, headed by ``names``, how it changed, and
+    whether its text is today's benchmark's (``_FROM_CURRENT``).
     """
     shared = {question_id: (before[question_id], outcome)
               for question_id, outcome in after.items()
@@ -215,7 +221,9 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
             counts.append((measure, changes))
     rows = []
     for question_id, (old, new) in shared.items():
-        row = {"Question": question_id, "Asked": _asked(old, new).question}
+        worded = _worded_by(old, new)
+        row = {"Question": question_id, "Asked": worded.question,
+               _FROM_CURRENT: worded.current_text}
         for measure, _ in counts:
             for name, outcome in zip(names, (old, new)):
                 row[f"{name} {measure.shown}"] = measure.value(outcome)
@@ -257,8 +265,9 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     others = [config_id for config_id in config_ids if config_id != baseline]
     compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
                                 format_func=str)
-    before, after = outcomes(run["run_dir"], baseline), outcomes(run["run_dir"], compared)
-    answered, counts, table = _question_changes(before, after, benchmark, (baseline, compared))
+    answered, counts, table = _question_changes(outcomes(run["run_dir"], baseline),
+                                                outcomes(run["run_dir"], compared),
+                                                benchmark, (baseline, compared))
     if not counts:
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
@@ -279,8 +288,8 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     if show in filters:
         column, change = filters[show]
         table = table[table[column] == change]
-    from_current_benchmark = sum(_asked(before[question_id], after[question_id]).current_text
-                                 for question_id in table["Question"])
+    from_current_benchmark = int(table[_FROM_CURRENT].sum())
+    table = table.drop(columns=_FROM_CURRENT)
     if from_current_benchmark:
         st.caption(f"The text of {_plural(from_current_benchmark, 'question')} is from the "
                    "benchmark as it stands now, since this run kept none, and may not be how "
