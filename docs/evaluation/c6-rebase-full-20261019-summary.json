@@ -1,0 +1,880 @@
+{
+  "run_id": "c6-rebase-full-20261019",
+  "schema": "full-matrix-v2",
+  "configurations_measured": [
+    "C4",
+    "C6"
+  ],
+  "retrieval_questions_per_row": 12729,
+  "by_benchmark": {
+    "team": 150,
+    "xbrl": 12579
+  },
+  "team_answers_per_row": 150,
+  "decomposition_questions": 10,
+  "decomposition_question_ids": [
+    "anqi-10",
+    "jarren-16",
+    "jarren-17",
+    "jarren-18",
+    "jarren-19",
+    "jarren-20",
+    "tingyi-03",
+    "tingyi-10",
+    "tingyi-15",
+    "tingyi-22"
+  ],
+  "C6_identical_to_C4_without_decomposition": {
+    "team": 140,
+    "xbrl": 12579
+  },
+  "retrieval": {
+    "run_id": "c6-rebase-full-20261019",
+    "top_k": 16,
+    "configurations": [
+      {
+        "config": {
+          "id": "C4",
+          "name": "hybrid retrieval with metadata filters",
+          "retriever": "hybrid",
+          "chunking": "section-aware",
+          "metadata_filter": true,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.6536476751800917,
+        "ndcg": 0.4733777420614461,
+        "mrr": 0.47703292832467686,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 161.30620904732496,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.8184931506849316,
+            "ndcg": 0.5975243055002812,
+            "mrr": 0.5484698520657425,
+            "hard_negative_accuracy": 0.9629629629629629,
+            "median_latency_ms": 194.4702704786323
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.6517343721016509,
+            "ndcg": 0.47193681684783056,
+            "mrr": 0.4762037852396784,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 161.20541701093316
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.75,
+            "ndcg": 0.5191651833815294,
+            "mrr": 0.6011904761904762,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 247.89779196726158
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.9545454545454546,
+            "ndcg": 0.7557924867129094,
+            "mrr": 0.7112193362193362,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 171.56358301872388
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.6527328228204521,
+            "ndcg": 0.4725167628617664,
+            "mrr": 0.47634031286731215,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 161.276958999224
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.45,
+            "ndcg": 0.3030402413012514,
+            "mrr": 0.2742857142857143,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 218.96535449195653
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.75,
+            "median_latency_ms": 182.16977149131708
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C6",
+          "name": "C4 + filing decomposition and verification",
+          "retriever": "hybrid",
+          "chunking": "section-aware",
+          "metadata_filter": true,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": true,
+          "use_refusal": false,
+          "use_verification": true,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.6537655533726261,
+        "ndcg": 0.4733753788950903,
+        "mrr": 0.4769484489533605,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 161.308792012278,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.8287671232876712,
+            "ndcg": 0.597318337747695,
+            "mrr": 0.5411068383671124,
+            "hard_negative_accuracy": 0.9629629629629629,
+            "median_latency_ms": 199.0567919856403
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.6517343721016509,
+            "ndcg": 0.47193681684783056,
+            "mrr": 0.4762037852396784,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 161.20541701093316
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.75,
+            "ndcg": 0.3817584134003925,
+            "mrr": 0.2583333333333333,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 269.1053125017788
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.9545454545454546,
+            "ndcg": 0.7557924867129094,
+            "mrr": 0.7112193362193362,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 171.56358301872388
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.6527328228204521,
+            "ndcg": 0.4725167628617664,
+            "mrr": 0.47634031286731215,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 161.276958999224
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.6,
+            "ndcg": 0.35499582010594666,
+            "mrr": 0.30392857142857144,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 273.81500002229586
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.75,
+            "median_latency_ms": 182.16977149131708
+          }
+        }
+      }
+    ],
+    "phase": "retrieval",
+    "complete": true,
+    "config_file": "config.json",
+    "evaluation_only": true
+  },
+  "retrieval_effect_relative_to_C4": {
+    "team": {
+      "C4": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.8184931506849316,
+        "ndcg": 0.5975243055002812,
+        "mrr": 0.5484698520657425,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 194.4702704786323
+      },
+      "C6": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.8287671232876712,
+        "ndcg": 0.597318337747695,
+        "mrr": 0.5411068383671124,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 199.0567919856403
+      },
+      "C6_minus_C4": {
+        "recall": 0.010273972602739656,
+        "ndcg": -0.00020596775258618916,
+        "mrr": -0.0073630136986301276,
+        "hard_negative_accuracy": 0.0
+      }
+    },
+    "xbrl": {
+      "C4": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.6517343721016509,
+        "ndcg": 0.47193681684783056,
+        "mrr": 0.4762037852396784,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 161.20541701093316
+      },
+      "C6": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.6517343721016509,
+        "ndcg": 0.47193681684783056,
+        "mrr": 0.4762037852396784,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 161.20541701093316
+      },
+      "C6_minus_C4": {
+        "recall": 0.0,
+        "ndcg": 0.0,
+        "mrr": 0.0,
+        "hard_negative_accuracy": null
+      }
+    },
+    "decomposed_team": {
+      "C4": {
+        "questions": 10,
+        "metric_denominators": {
+          "recall": 10,
+          "ndcg": 10,
+          "mrr": 10,
+          "hard_negative_accuracy": 5
+        },
+        "recall": 0.35,
+        "ndcg": 0.20701079574324915,
+        "mrr": 0.23142857142857143,
+        "hard_negative_accuracy": 1.0,
+        "median_latency_ms": 271.41789597226307
+      },
+      "C6": {
+        "questions": 10,
+        "metric_denominators": {
+          "recall": 10,
+          "ndcg": 10,
+          "mrr": 10,
+          "hard_negative_accuracy": 5
+        },
+        "recall": 0.5,
+        "ndcg": 0.20400366655548968,
+        "mrr": 0.12392857142857143,
+        "hard_negative_accuracy": 1.0,
+        "median_latency_ms": 281.1379380291328
+      },
+      "C6_minus_C4": {
+        "recall": 0.15000000000000002,
+        "ndcg": -0.003007129187759472,
+        "mrr": -0.1075,
+        "hard_negative_accuracy": 0.0
+      }
+    }
+  },
+  "answers": {
+    "complete": true,
+    "team_questions": 150,
+    "configurations": {
+      "C4": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.9151034482758621,
+            "scored": 145,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.80242222222,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.9933333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.429879584017515,
+            "scored": 145,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.7705479452054794,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.16497635670627156,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 2084.7774832874225,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.002146970946341753,
+              "queries": 150
+            },
+            "other": {
+              "mean": 1.4193594816606492,
+              "queries": 150
+            },
+            "total": {
+              "mean": 2086.363966096736,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 1,
+            "unknown_queries": 149,
+            "mean": 0.0
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 3032.7910769319474,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 0.0019608395329366126,
+                "queries": 150
+              },
+              "total": {
+                "mean": 3032.79303777148,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 5,
+              "unknown_queries": 145,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 145
+        },
+        "verification_enabled": false
+      },
+      "C6": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.9099310344827586,
+            "scored": 145,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.8066666666666666,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.9933333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.43450738916256154,
+            "scored": 145,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.8013698630136986,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.14536502965105078,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 2253.321729406016,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.0029755414774020514,
+              "queries": 150
+            },
+            "other": {
+              "mean": 16.701574790058658,
+              "queries": 150
+            },
+            "total": {
+              "mean": 2270.171644767203,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 1,
+            "unknown_queries": 149,
+            "mean": 0.0
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 3682.663280003859,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 0.0020610859307150045,
+                "queries": 150
+              },
+              "total": {
+                "mean": 3682.66534108979,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 5,
+              "unknown_queries": 145,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "mismatch": 38,
+          "supported": 40,
+          "unchecked": 26,
+          "unverified": 41
+        },
+        "verification_enabled": true
+      }
+    }
+  },
+  "answer_effect_relative_to_C4": {
+    "all_team": {
+      "questions": 150,
+      "C4": {
+        "faithfulness": {
+          "mean": 0.9151034482758621,
+          "scored": 145,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.80242222222,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.9933333333333333,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.429879584017515,
+          "scored": 145,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.7705479452054794,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "C6": {
+        "faithfulness": {
+          "mean": 0.9099310344827586,
+          "scored": 145,
+          "total": 150
+        },
+        "correctness": {
+          "mean": 0.8066666666666666,
+          "scored": 150,
+          "total": 150
+        },
+        "answerability_correct": {
+          "mean": 0.9933333333333333,
+          "scored": 150,
+          "total": 150
+        },
+        "citation_precision": {
+          "mean": 0.43450738916256154,
+          "scored": 145,
+          "total": 150
+        },
+        "citation_recall": {
+          "mean": 0.8013698630136986,
+          "scored": 146,
+          "total": 150
+        }
+      },
+      "C6_minus_C4_paired": {
+        "correctness": {
+          "paired_scored": 150,
+          "mean_delta": 0.004244444446666665
+        },
+        "faithfulness": {
+          "paired_scored": 145,
+          "mean_delta": -0.005172413793103448
+        },
+        "answerability_correct": {
+          "paired_scored": 150,
+          "mean_delta": 0.0
+        },
+        "citation_precision": {
+          "paired_scored": 145,
+          "mean_delta": 0.004627805145046524
+        },
+        "citation_recall": {
+          "paired_scored": 146,
+          "mean_delta": 0.030821917808219176
+        }
+      }
+    },
+    "decomposed_team": {
+      "questions": 10,
+      "C4": {
+        "faithfulness": {
+          "mean": 0.79,
+          "scored": 10,
+          "total": 10
+        },
+        "correctness": {
+          "mean": 0.545,
+          "scored": 10,
+          "total": 10
+        },
+        "answerability_correct": {
+          "mean": 1.0,
+          "scored": 10,
+          "total": 10
+        },
+        "citation_precision": {
+          "mean": 0.09940476190476191,
+          "scored": 10,
+          "total": 10
+        },
+        "citation_recall": {
+          "mean": 0.3,
+          "scored": 10,
+          "total": 10
+        }
+      },
+      "C6": {
+        "faithfulness": {
+          "mean": 0.697,
+          "scored": 10,
+          "total": 10
+        },
+        "correctness": {
+          "mean": 0.5900000000000001,
+          "scored": 10,
+          "total": 10
+        },
+        "answerability_correct": {
+          "mean": 1.0,
+          "scored": 10,
+          "total": 10
+        },
+        "citation_precision": {
+          "mean": 0.15595238095238095,
+          "scored": 10,
+          "total": 10
+        },
+        "citation_recall": {
+          "mean": 0.45,
+          "scored": 10,
+          "total": 10
+        }
+      },
+      "C6_minus_C4_paired": {
+        "correctness": {
+          "paired_scored": 10,
+          "mean_delta": 0.045
+        },
+        "faithfulness": {
+          "paired_scored": 10,
+          "mean_delta": -0.093
+        },
+        "answerability_correct": {
+          "paired_scored": 10,
+          "mean_delta": 0.0
+        },
+        "citation_precision": {
+          "paired_scored": 10,
+          "mean_delta": 0.05654761904761905
+        },
+        "citation_recall": {
+          "paired_scored": 10,
+          "mean_delta": 0.15
+        }
+      }
+    },
+    "unsplit_team": {
+      "questions": 140,
+      "C4": {
+        "faithfulness": {
+          "mean": 0.9243703703703704,
+          "scored": 135,
+          "total": 140
+        },
+        "correctness": {
+          "mean": 0.8208095238071428,
+          "scored": 140,
+          "total": 140
+        },
+        "answerability_correct": {
+          "mean": 0.9928571428571429,
+          "scored": 140,
+          "total": 140
+        },
+        "citation_precision": {
+          "mean": 0.4543592004703116,
+          "scored": 135,
+          "total": 140
+        },
+        "citation_recall": {
+          "mean": 0.8051470588235294,
+          "scored": 136,
+          "total": 140
+        }
+      },
+      "C6": {
+        "faithfulness": {
+          "mean": 0.9257037037037037,
+          "scored": 135,
+          "total": 140
+        },
+        "correctness": {
+          "mean": 0.8221428571428571,
+          "scored": 140,
+          "total": 140
+        },
+        "answerability_correct": {
+          "mean": 0.9928571428571429,
+          "scored": 140,
+          "total": 140
+        },
+        "citation_precision": {
+          "mean": 0.45514109347442677,
+          "scored": 135,
+          "total": 140
+        },
+        "citation_recall": {
+          "mean": 0.8272058823529411,
+          "scored": 136,
+          "total": 140
+        }
+      },
+      "C6_minus_C4_paired": {
+        "correctness": {
+          "paired_scored": 140,
+          "mean_delta": 0.0013333333357142833
+        },
+        "faithfulness": {
+          "paired_scored": 135,
+          "mean_delta": 0.0013333333333333337
+        },
+        "answerability_correct": {
+          "paired_scored": 140,
+          "mean_delta": 0.0
+        },
+        "citation_precision": {
+          "paired_scored": 135,
+          "mean_delta": 0.0007818930041152264
+        },
+        "citation_recall": {
+          "paired_scored": 136,
+          "mean_delta": 0.022058823529411766
+        }
+      }
+    }
+  },
+  "evaluation_methods": {
+    "C4": {
+      "llm_judge": 145,
+      "abstention": 5
+    },
+    "C6": {
+      "llm_judge": 145,
+      "abstention": 5
+    }
+  },
+  "verification_outputs": {
+    "C4": 0,
+    "C6": 150
+  },
+  "verification_claim_status_counts": {
+    "C4": {},
+    "C6": {
+      "unverified": 563,
+      "mismatch": 69,
+      "supported": 99,
+      "not_applicable": 5
+    }
+  },
+  "limitations": [
+    "This is a fresh paired C4/C6 study, not a replacement measurement of all seven matrix rows.",
+    "The archived C5-based C6 and this C4-based C6 use distinct definitions and remain separately identified.",
+    "Mechanical labels are facts-derived relevance proxies; mechanical answer quality is not measured.",
+    "Hosted generation and self-judging are nondeterministic; verification annotates claims and does not rewrite answers.",
+    "Answer differences on identical retrieval evidence cannot be attributed to decomposition or verification alone.",
+    "Timing is a recorded M1 laptop workload with overlapping hosted answer preparation, not isolated throughput."
+  ],
+  "C4_consistency_with_accepted_C5_study": {
+    "questions": 12729,
+    "identical_ranked_ids": 12727,
+    "identical_scores": 12726,
+    "pairs_sha256": "876ee63a56254bd6a80b18c9ccc0a353ef7c1173344093aad849e1412b67e501",
+    "maximum_absolute_score_delta_when_ids_match": 0.00011687704534829244,
+    "note": "Post-run diagnostic only; no reference rankings or timings imported into the fresh paired measurements."
+  }
+}

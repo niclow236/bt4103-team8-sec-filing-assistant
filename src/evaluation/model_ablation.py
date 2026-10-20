@@ -310,7 +310,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     it read. ``chunks`` is the corpus, read from ``processed_dir`` unless given.
     """
     from src.evaluation.full_ablation import (
-        FULL_MATRIX_SCHEMA, MATRIX, MatrixConfig, check_transactions, read_rows, scored_for,
+        MATRIX, REPLAYABLE_SCHEMAS, MatrixConfig, check_transactions, read_rows, scored_for,
         team_questions, validate_snapshot,
     )
     from src.evaluation.provenance import corpus_records_sha256
@@ -323,9 +323,9 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
     config = json.loads((run_dir / "config.json").read_text())
-    if not isinstance(config, dict) or config.get("schema") != FULL_MATRIX_SCHEMA:
+    if not isinstance(config, dict) or config.get("schema") not in REPLAYABLE_SCHEMAS:
         raise ValueError(f"{run_dir} is not a full-matrix run: its config.json does not record "
-                         f"the schema {FULL_MATRIX_SCHEMA!r}")
+                         f"one of the schemas {REPLAYABLE_SCHEMAS!r}")
     if not (run_dir / "answers-config.json").is_file():
         raise ValueError(f"{run_dir} has no answers yet: it has no "
                          f"{run_dir / 'answers-config.json'}; finish its `answers` step first")

@@ -2366,9 +2366,11 @@ run.
 
 Issue #44 adds an evaluation-only [complete matrix](docs/full-ablation.md), with
 all retrieval questions and the complete team answer benchmark, frozen
-provenance, restartable per-question outputs and model-free rescoring. C5/C6
-remain experimental; the app default remains C4. The measured run (#161), over
-the 150 team questions and 1,884 XBRL questions:
+provenance, restartable per-question outputs and model-free rescoring. C5 remains
+experimental; C6 is now based on the app-default C4, with decomposition and
+post-answer claim verification enabled and reranking disabled. The archived
+measured run (#161), over the 150 team questions and 1,884 XBRL questions, used
+the older C5-based C6 definition:
 
 | Row | Team nDCG@16 (146) | Mechanical nDCG@16 (1,884) | Team judged correctness (150/150) |
 | --- | ---: | ---: | ---: |
@@ -2378,10 +2380,22 @@ the 150 team questions and 1,884 XBRL questions:
 | C3 | 0.2612 | 0.1926 | 0.5969 |
 | C4 | 0.5978 | 0.5504 | 0.8182 |
 | C5 | 0.5195 | 0.5426 | 0.7782 |
-| C6 | 0.5160 | 0.5426 | 0.7619 |
+| C6 (archived, C5-based) | 0.5160 | 0.5426 | 0.7619 |
 
 C0 is scored against gold labels projected onto its fixed windows. Correctness
 is a hosted model's judgement, from one run.
+
+Issue #173 rebases the current C6 definition on C4 and disables reranking. The
+fresh paired acceptance study covers **150 team + all 12,579 frozen XBRL
+questions per row**, plus **150 team answer evaluations per row**. Team C4 → C6
+Recall@16 is **0.8185 → 0.8288** and nDCG@16
+**0.5975 → 0.5973**; all XBRL rankings are exactly C4.
+Decomposition activates on 10 team questions. The
+[paired report](docs/full-ablation.md#complete-paired-acceptance-study) records
+answer scores, conditional denominators, frozen identities and limitations.
+Its measurements remain separate from the archived C5-based row above and the
+earlier team-only diagnostic. Verification annotates claims; hosted judge-score
+differences do not establish that it corrects answer text.
 
 ### Embedding and generation ablations
 
