@@ -4,6 +4,9 @@ Each component draws what it is handed. None builds a stack, asks a model or
 caches anything: a page reads the question, loads through ``state.py``, asks,
 and passes the results here, so a second page that shows an answer shows it
 the same way. The sidebar's own selections are the only thing one holds.
+The Results page's before and after view is handed the reader of one
+configuration's saved questions rather than the questions, since which two it
+reads turns on the pickers it draws; the reader is still ``state.py``'s.
 
 The sidebar returns the Query to pass to ``answer_question(query=...)``.
 Render completed Answer records; citation numbers always refer to prompt order.
@@ -161,6 +164,41 @@ def _change(before: float, after: float) -> str:
     return "improved" if after > before else "worse" if after < before else "unchanged"
 
 
+def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str, QuestionOutcome],
+                      benchmark: str, names: tuple[str, str],
+                      ) -> tuple[list[tuple[_Measure, Counter]], pd.DataFrame]:
+    """What changed from ``before`` to ``after`` on one benchmark's questions.
+
+    Returns each measure both were scored on with its counts, and one row per
+    question with each configuration's own value, headed by ``names``, and how
+    it changed.
+    """
+    shared = {question_id: (before[question_id], outcome)
+              for question_id, outcome in after.items()
+              if question_id in before and outcome.benchmark == benchmark}
+    counts = []
+    for measure in _MEASURES:
+        changes = Counter(_change(measure.score(old), measure.score(new))
+                          for old, new in shared.values()
+                          if measure.score(old) is not None and measure.score(new) is not None)
+        if changes:
+            counts.append((measure, changes))
+    rows = []
+    for question_id, (old, new) in shared.items():
+        row = {"Question": question_id, "Asked": old.question}
+        for measure, _ in counts:
+            scores = measure.score(old), measure.score(new)
+            for name, outcome in zip(names, (old, new)):
+                row[f"{name} {measure.shown}"] = measure.value(outcome)
+            row[measure.column] = None if None in scores else _change(*scores)
+        if any(row[measure.column] for measure, _ in counts):
+            rows.append(row)
+    table = pd.DataFrame(rows).astype({
+        f"{name} {measure.shown}": measure.dtype
+        for measure, _ in counts if measure.dtype for name in names})
+    return counts, table
+
+
 def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                              outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
@@ -173,38 +211,17 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     others = [config_id for config_id in config_ids if config_id != baseline]
     compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
                                 format_func=str)
-    before = outcomes(run["run_dir"], baseline)
-    after = outcomes(run["run_dir"], compared)
-    shared = {question_id: (before[question_id], outcome)
-              for question_id, outcome in after.items()
-              if question_id in before and outcome.benchmark == benchmark}
-    counted = []
-    for measure in _MEASURES:
-        changes = Counter(_change(measure.score(old), measure.score(new))
-                          for old, new in shared.values()
-                          if measure.score(old) is not None and measure.score(new) is not None)
-        if changes:
-            _render_change_counts(measure.title, changes)
-            counted.append(measure)
-    if not counted:
+    counts, table = _question_changes(outcomes(run["run_dir"], baseline),
+                                      outcomes(run["run_dir"], compared),
+                                      benchmark, (baseline, compared))
+    if not counts:
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
         return
-    rows = []
-    for question_id, (old, new) in shared.items():
-        row = {"Question": question_id, "Asked": old.question}
-        for measure in counted:
-            scores = measure.score(old), measure.score(new)
-            for config_id, outcome in ((baseline, old), (compared, new)):
-                row[f"{config_id} {measure.shown}"] = measure.value(outcome)
-            row[measure.column] = None if None in scores else _change(*scores)
-        if any(row[measure.column] for measure in counted):
-            rows.append(row)
-    table = pd.DataFrame(rows).astype({
-        f"{config_id} {measure.shown}": measure.dtype
-        for measure in counted if measure.dtype for config_id in (baseline, compared)})
+    for measure, changes in counts:
+        _render_change_counts(measure.title, changes)
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
-               for measure in counted for change in ("improved", "worse")}
+               for measure, _ in counts for change in ("improved", "worse")}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
     if show in filters:
         column, change = filters[show]
