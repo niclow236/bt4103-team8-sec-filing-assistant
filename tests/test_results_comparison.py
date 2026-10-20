@@ -629,3 +629,39 @@ def test_a_summary_that_names_only_the_other_benchmark_is_not_said_to_be_missing
         "Not offered, since their per-question results were not found on this machine: C0"]
     assert not_offered(mechanical) == [
         "Not offered, since they saved no question on this benchmark: C0"]
+
+
+def test_a_baseline_with_no_text_anywhere_asks_in_the_other_configurations_words(
+        tmp_path, monkeypatch):
+    from src.app import state
+
+    # Neither the run nor the checkout has the question's text.
+    monkeypatch.setattr(state, "BENCHMARK_FILES", (tmp_path / "missing.jsonl",))
+    results = tmp_path / "results"
+    results.mkdir()
+    run = _save_report_run(results, "mixed", {"E1": [_embedding_row("q1", 0.0)]})
+    (run / "C4").mkdir()
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps(_retrieval_row("q1", 1, question="Who audits Apple?")) + "\n", encoding="utf-8")
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    manifest["configurations"].append({"config": {"id": "C4"}, "questions": 1})
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    app = _open(monkeypatch, results)
+
+    assert app.tabs[0].selectbox[0].value == "E1"
+    assert _questions_table(app.tabs[0]).set_index("Question").loc["q1", "Asked"] == (
+        "Who audits Apple?")
+
+
+def test_a_lone_configuration_without_its_rows_draws_no_comparison(tmp_path, monkeypatch):
+    run = _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", 1)]}})
+    (run / "C0" / "questions.jsonl").unlink()
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    # Its summary's scores are shown, so only the comparison is in question.
+    manifest["configurations"][0]["by_benchmark"] = {"handwritten": {"recall": 0.2}}
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    app = _open(monkeypatch, tmp_path)
+    assert app.tabs[0].dataframe[0].value["Recall"].tolist() == [0.2]
+
+    assert not any(header.value == "Before and after"
+                   for tab in app.tabs for header in tab.subheader)
