@@ -256,7 +256,10 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
             continue
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
             _question_text(row), benchmark_kind(row))
-        outcomes[str(question_id)] = outcome._replace(correctness=quality.get("correctness"))
+        correctness = quality.get("correctness")
+        # Only a number is compared: text there is a malformed row, not a score.
+        outcomes[str(question_id)] = outcome._replace(
+            correctness=correctness if isinstance(correctness, (int, float)) else None)
     texts = {str(row.get("question_id")): str(row.get("question") or "")
              for path in BENCHMARK_FILES for row in _read_result_rows(path)}
     return {question_id: outcome if outcome.question

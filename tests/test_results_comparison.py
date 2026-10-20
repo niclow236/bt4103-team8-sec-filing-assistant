@@ -473,3 +473,15 @@ def test_a_run_scored_at_11_names_the_one_rank_the_view_leaves_out(tmp_path, mon
     assert [caption.value for caption in app.tabs[0].caption if "Recall" in caption.value] == [
         "This run scores Recall and MRR at 11, so a right passage ranked 11 counts there "
         "but not here."]
+
+
+def test_a_correctness_saved_as_text_is_not_counted(tmp_path, monkeypatch):
+    retrieval = [_retrieval_row("q1", 1), _retrieval_row("q2", 1)]
+    _save_run(tmp_path, {
+        "C0": {"questions": retrieval, "answers": [_answer_row("q1", "0.5"), _answer_row("q2", 0.5)]},
+        "C4": {"questions": retrieval, "answers": [_answer_row("q1", 1.0), _answer_row("q2", 1.0)]},
+    })
+    app = _open(monkeypatch, tmp_path)
+
+    assert _counts(app.tabs[0])[3:] == [
+        (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]
