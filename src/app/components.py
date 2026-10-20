@@ -177,6 +177,14 @@ def _change(before: float, after: float) -> str:
     return _IMPROVED if after > before else _WORSE if after < before else _UNCHANGED
 
 
+def _asked(before: QuestionOutcome, after: QuestionOutcome) -> QuestionOutcome:
+    """The outcome whose text the table shows: the baseline's, unless only the
+    other configuration kept the run's own wording."""
+    if after.question and not after.current_text and (before.current_text or not before.question):
+        return after
+    return before
+
+
 def _measured_change(measure: _Measure, before: QuestionOutcome,
                      after: QuestionOutcome) -> str | None:
     """How one question changed on ``measure``, None unless both were scored on it."""
@@ -207,7 +215,7 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
             counts.append((measure, changes))
     rows = []
     for question_id, (old, new) in shared.items():
-        row = {"Question": question_id, "Asked": old.question}
+        row = {"Question": question_id, "Asked": _asked(old, new).question}
         for measure, _ in counts:
             for name, outcome in zip(names, (old, new)):
                 row[f"{name} {measure.shown}"] = measure.value(outcome)
@@ -225,24 +233,32 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     """Question by question, what one configuration changed against a baseline (#169)."""
     # Only a configuration whose questions on this benchmark were read can be
     # compared. A summary's own by-benchmark scores do not make it one.
+    unread = [item["config_id"] for item in run["configurations"]
+              if not item.get("questions_read")]
+    elsewhere = [item["config_id"] for item in run["configurations"]
+                 if item.get("questions_read") and benchmark not in item["benchmark_metrics"]]
     config_ids = [item["config_id"] for item in run["configurations"]
-                  if item.get("questions_read") and benchmark in item["benchmark_metrics"]]
-    if len(config_ids) < 2:
+                  if item["config_id"] not in unread + elsewhere]
+    # With fewer than two to compare, the section still says which were left
+    # out for want of their files; one that ran no question here needs no word.
+    if len(config_ids) < 2 and not (unread and len(run["configurations"]) > 1):
         return
     st.subheader("Before and after")
-    left_out = [item["config_id"] for item in run["configurations"]
-                if item["config_id"] not in config_ids]
-    if left_out:
-        st.caption("Not offered, since none of their questions on this benchmark were read "
-                   "on this machine: " + ", ".join(left_out))
+    if unread:
+        st.caption("Not offered, since their per-question results were not found on this "
+                   "machine: " + ", ".join(unread))
+    if elsewhere:
+        st.caption("Not offered, since they saved no question on this benchmark: "
+                   + ", ".join(elsewhere))
+    if len(config_ids) < 2:
+        return
     baseline = _existing_choice("Baseline", config_ids, key=f"results_baseline_{benchmark}",
                                 format_func=str, default=_DEFAULT_BASELINE)
     others = [config_id for config_id in config_ids if config_id != baseline]
     compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
                                 format_func=str)
-    before = outcomes(run["run_dir"], baseline)
-    answered, counts, table = _question_changes(before, outcomes(run["run_dir"], compared),
-                                                benchmark, (baseline, compared))
+    before, after = outcomes(run["run_dir"], baseline), outcomes(run["run_dir"], compared)
+    answered, counts, table = _question_changes(before, after, benchmark, (baseline, compared))
     if not counts:
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
@@ -257,16 +273,18 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                      else f"{_FOUND_WITHIN + 1} to {scored_at}")
             st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
                        f"ranked {ranks} counts there but not here.")
-    reworded = sum(before[question_id].current_text for question_id in table["Question"])
-    if reworded:
-        st.caption(f"The text of {_plural(reworded, 'question')} is from the benchmark as it "
-                   "stands now, since this run kept none, and may not be how the run asked it.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in (_IMPROVED, _WORSE)}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
     if show in filters:
         column, change = filters[show]
         table = table[table[column] == change]
+    from_current_benchmark = sum(_asked(before[question_id], after[question_id]).current_text
+                                 for question_id in table["Question"])
+    if from_current_benchmark:
+        st.caption(f"The text of {_plural(from_current_benchmark, 'question')} is from the "
+                   "benchmark as it stands now, since this run kept none, and may not be how "
+                   "the run asked it.")
     dark = _dark_theme()
 
     def colour(change: str | None) -> str:

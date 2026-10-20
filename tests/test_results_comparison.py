@@ -532,3 +532,78 @@ def test_only_configurations_that_saved_their_questions_are_offered(
     assert any("Not offered" in caption.value and "C0" in caption.value
                for caption in team.caption)
     assert any("C0" in warning.value for warning in app.warning) is not scores_shown
+
+
+def test_a_configuration_with_no_question_on_a_benchmark_is_not_said_to_be_missing_files(
+        tmp_path, monkeypatch):
+    both = [_retrieval_row("q1", 1), _retrieval_row("xbrl-a", 1)]
+    # C5 stopped before it reached the mechanical questions: its rows were read.
+    _save_run(tmp_path, {"C0": {"questions": both}, "C4": {"questions": both},
+                         "C5": {"questions": [_retrieval_row("q1", 1)]}})
+    app = _open(monkeypatch, tmp_path)
+    mechanical = app.tabs[1]
+
+    assert mechanical.selectbox[0].options == ["C0", "C4"]
+    assert [caption.value for caption in mechanical.caption if "Not offered" in caption.value] == [
+        "Not offered, since they saved no question on this benchmark: C5"]
+
+
+def test_a_lone_readable_configuration_still_says_why_the_other_is_not_offered(
+        tmp_path, monkeypatch):
+    run = _save_run(tmp_path, {"C0": {"questions": [_retrieval_row("q1", None)]},
+                               "C4": {"questions": [_retrieval_row("q1", 1)]}})
+    (run / "C0" / "questions.jsonl").unlink()
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    # As writers before 0b49c77 saved a summary, keyed as the page's tabs are.
+    manifest["configurations"][0]["by_benchmark"] = {"handwritten": {"recall": 0.2}}
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    app = _open(monkeypatch, tmp_path)
+    team = app.tabs[0]
+
+    assert not team.selectbox and not team.metric
+    assert any("Not offered" in caption.value and "C0" in caption.value
+               for caption in team.caption)
+
+
+def test_the_table_asks_in_the_words_a_configuration_of_the_run_kept(tmp_path, monkeypatch):
+    from src.app import state
+
+    current = tmp_path / "questions.jsonl"
+    current.write_text(json.dumps({"question_id": "q1", "question": "Who audits Apple now?"})
+                       + "\n", encoding="utf-8")
+    monkeypatch.setattr(state, "BENCHMARK_FILES", (current,))
+    results = tmp_path / "results"
+    results.mkdir()
+    run = _save_report_run(results, "mixed", {"E1": [_embedding_row("q1", 0.0)]})
+    # C4 saved its rows with their text, E1 without.
+    (run / "C4").mkdir()
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps(_retrieval_row("q1", 1, question="Who audits Apple?")) + "\n", encoding="utf-8")
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    manifest["configurations"].append({"config": {"id": "C4"}, "questions": 1})
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    app = _open(monkeypatch, results)
+    team = app.tabs[0]
+
+    assert team.selectbox[0].value == "E1"
+    assert _questions_table(team).set_index("Question").loc["q1", "Asked"] == "Who audits Apple?"
+    assert not any("as it stands now" in caption.value for caption in team.caption)
+
+
+def test_the_text_caption_counts_only_the_questions_shown(tmp_path, monkeypatch):
+    from src.app import state
+
+    current = tmp_path / "questions.jsonl"
+    current.write_text("".join(json.dumps({"question_id": question_id, "question": "Asked?"}) + "\n"
+                               for question_id in ("q1", "q2")), encoding="utf-8")
+    monkeypatch.setattr(state, "BENCHMARK_FILES", (current,))
+    results = tmp_path / "results"
+    results.mkdir()
+    _save_report_run(results, "embeddings", {
+        "E1": [_embedding_row("q1", 0.0), _embedding_row("q2", 1.0)],
+        "E2": [_embedding_row("q1", 1.0), _embedding_row("q2", 1.0)]})
+    app = _open(monkeypatch, results)
+    next(box for box in app.tabs[0].selectbox if box.label == "Show").select(
+        "Improved: top 10").run()
+
+    assert any("The text of 1 question " in caption.value for caption in app.tabs[0].caption)
