@@ -241,10 +241,16 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     """Question by question, what one configuration changed against a baseline (#169)."""
     # Only a configuration whose questions on this benchmark were read can be
     # compared. A summary's own by-benchmark scores do not make it one.
-    unread = [item["config_id"] for item in run["configurations"]
-              if not item.get("questions_read")]
+    # Its rows, or a summary keyed as the tabs are, say whether it ran this
+    # benchmark's questions; with neither, there is no telling.
+    def ran_tabs(item: Mapping[str, Any]) -> bool:
+        return item.get("questions_read") or any(
+            kind in item["benchmark_metrics"] for _, kind in _RESULT_BENCHMARKS)
+
     elsewhere = [item["config_id"] for item in run["configurations"]
-                 if item.get("questions_read") and benchmark not in item["benchmark_metrics"]]
+                 if ran_tabs(item) and benchmark not in item["benchmark_metrics"]]
+    unread = [item["config_id"] for item in run["configurations"]
+              if not item.get("questions_read") and item["config_id"] not in elsewhere]
     config_ids = [item["config_id"] for item in run["configurations"]
                   if item["config_id"] not in unread + elsewhere]
     # With fewer than two to compare, the section still says which were left

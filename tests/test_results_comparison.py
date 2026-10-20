@@ -607,3 +607,25 @@ def test_the_text_caption_counts_only_the_questions_shown(tmp_path, monkeypatch)
         "Improved: top 10").run()
 
     assert any("The text of 1 question " in caption.value for caption in app.tabs[0].caption)
+
+
+def test_a_summary_that_names_only_the_other_benchmark_is_not_said_to_be_missing_files(
+        tmp_path, monkeypatch):
+    both = [_retrieval_row("q1", 1), _retrieval_row("xbrl-a", 1)]
+    run = _save_run(tmp_path, {"C0": {"questions": both}, "C4": {"questions": both},
+                               "C5": {"questions": both}})
+    (run / "C0" / "questions.jsonl").unlink()
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    # As writers before 0b49c77 saved a summary: C0 ran the team questions only.
+    manifest["configurations"][0]["by_benchmark"] = {"handwritten": {"recall": 0.2}}
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    app = _open(monkeypatch, tmp_path)
+    team, mechanical = app.tabs
+
+    def not_offered(tab):
+        return [caption.value for caption in tab.caption if "Not offered" in caption.value]
+
+    assert not_offered(team) == [
+        "Not offered, since their per-question results were not found on this machine: C0"]
+    assert not_offered(mechanical) == [
+        "Not offered, since they saved no question on this benchmark: C0"]
