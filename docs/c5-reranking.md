@@ -42,11 +42,17 @@ also blocks advancement; missing labels are not evidence that it passed.
 Adoption additionally requires the declared complete cohort: 150 team and
 12,579 XBRL questions, with canonical question-record SHA-256
 `84763df25b8c320ef5f1a60ab8e554db35b4e959eff975bdf81fc898bfc90339`.
-Counts and digest are frozen in `POLICY` before the full run. A sample,
-different question revision, or legacy policy without this declaration records
-`advance_to_answer_evaluation: null`; quality failures remain diagnostic
-`quality_gate_reasons`, not an adoption decision. A new accepted benchmark
-requires an explicit policy update and fresh measurement.
+Counts and digest are frozen in `POLICY` before the full run. The digest
+covers the questions in the order they were run, so the question files are
+part of the declaration in the order the `run` command below gives them
+(`benchmark/questions.jsonl` then `benchmark/generated.jsonl`). The same 12,729
+questions read in the other order are a different cohort. A sample, different
+question revision, different order, or legacy policy without this declaration
+records `advance_to_answer_evaluation: null`, with a reason that says which
+part differs: the benchmark counts, the digest, or a missing declaration.
+Quality failures remain diagnostic `quality_gate_reasons`, not an adoption
+decision. A new accepted benchmark requires an explicit policy update and
+fresh measurement.
 
 The team benchmark is the 150-question `benchmark/questions.jsonl`. Its
 questions carry no `source` tag (#162), so they are reported as one `team`

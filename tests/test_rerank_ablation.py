@@ -9,7 +9,7 @@ import pytest
 from src.evaluation.provenance import question_records_sha256
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.rerank_ablation import (
-    POLICY, _clusters, main, paired_metric, read_pairs, run_pairs, summarize,
+    POLICY, _clusters, main, paired_metric, question_digest, read_pairs, run_pairs, summarize,
 )
 from src.retrieval.constants import CANDIDATE_K
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig, RerankResult
@@ -44,8 +44,7 @@ def fixture_policy(rows, **overrides):
     from src.evaluation.records import benchmark_of
     return GATE_POLICY | {
         "decision_benchmark_counts": dict(Counter(benchmark_of(r['question'].get('source')) for r in rows)),
-        "decision_question_records_sha256": question_records_sha256([
-            BenchmarkQuestion.from_mapping(r['question']) for r in rows]),
+        "decision_question_records_sha256": question_digest(rows),
     } | overrides
 
 
@@ -177,11 +176,13 @@ def test_a_run_whose_rankings_disagree_with_its_logits_writes_no_summary(tmp_pat
 def test_declared_depth_and_k_do_not_make_a_four_question_sample_adoptable():
     decision = summarize(passing_rows(), 16)["decision"]
     assert decision["advance_to_answer_evaluation"] is None
-    assert any("cohort" in reason for reason in decision["reasons"])
+    assert decision["reasons"] == [
+        "exploratory benchmark cohort; adoption requires the declared benchmark counts "
+        "{'team': 150, 'xbrl': 12579}, not {'team': 2, 'xbrl': 2}"]
 
 
-COHORT_REASON = ("exploratory benchmark cohort; adoption requires the declared complete "
-                 "benchmark counts and question digest")
+DIGEST_REASON = ("exploratory benchmark cohort; the benchmark counts match the declaration but "
+                 "the question digest does not, so the questions or their order differ")
 
 
 def test_cohort_guard_checks_the_question_digest_as_well_as_counts():
@@ -192,8 +193,30 @@ def test_cohort_guard_checks_the_question_digest_as_well_as_counts():
     changed[0]["question"]["question"] = "Different question, same count"
     report = summarize(changed, 16, policy)
     assert report["decision"]["advance_to_answer_evaluation"] is None
-    assert report["decision"]["reasons"] == [COHORT_REASON]
+    assert report["decision"]["reasons"] == [DIGEST_REASON]
     assert report["quality_gate_reasons"] == []
+
+
+def test_the_same_questions_in_another_order_are_not_the_declared_cohort():
+    # As when the benchmark files are passed in the other order (#189).
+    rows = passing_rows()
+    policy = fixture_policy(rows, decision_top_k=16)
+    report = summarize(rows[::-1], 16, policy)
+    assert report["decision"]["advance_to_answer_evaluation"] is None
+    assert report["decision"]["reasons"] == [DIGEST_REASON]
+
+
+@pytest.mark.parametrize("undeclared, reason", [
+    ("decision_benchmark_counts", "the policy declares no benchmark counts"),
+    ("decision_question_records_sha256", "the policy declares no question digest"),
+])
+def test_a_policy_without_a_cohort_declaration_carries_no_decision(undeclared, reason):
+    rows = passing_rows()
+    policy = fixture_policy(rows, decision_top_k=16)
+    del policy[undeclared]
+    decision = summarize(rows, 16, policy)["decision"]
+    assert decision["advance_to_answer_evaluation"] is None
+    assert decision["reasons"] == ["exploratory benchmark cohort; " + reason]
 
 
 def test_an_exploratory_cohort_keeps_the_quality_gates_it_failed():
@@ -203,7 +226,7 @@ def test_an_exploratory_cohort_keeps_the_quality_gates_it_failed():
         r["rerank"]["latency_ms"] = 1500
     rows[0]["question"]["question"] = "Different question, same count"
     report = summarize(rows, 2, policy)
-    assert report["decision"]["reasons"] == [COHORT_REASON]
+    assert report["decision"]["reasons"] == [DIGEST_REASON]
     assert report["quality_gate_reasons"] == ["reranking median latency criterion not met",
                                               "reranking p95 latency criterion not met"]
 
