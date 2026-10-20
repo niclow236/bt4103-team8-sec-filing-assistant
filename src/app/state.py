@@ -257,13 +257,11 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
             _question_text(row), benchmark_kind(row))
         outcomes[str(question_id)] = outcome._replace(correctness=quality.get("correctness"))
-    if any(not outcome.question for outcome in outcomes.values()):
-        texts = {str(row.get("question_id")): str(row.get("question") or "")
-                 for path in BENCHMARK_FILES for row in _read_result_rows(path)}
-        outcomes = {question_id: outcome if outcome.question
-                    else outcome._replace(question=texts.get(question_id, ""))
-                    for question_id, outcome in outcomes.items()}
-    return outcomes
+    texts = {str(row.get("question_id")): str(row.get("question") or "")
+             for path in BENCHMARK_FILES for row in _read_result_rows(path)}
+    return {question_id: outcome if outcome.question
+            else outcome._replace(question=texts.get(question_id, ""))
+            for question_id, outcome in outcomes.items()}
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)
