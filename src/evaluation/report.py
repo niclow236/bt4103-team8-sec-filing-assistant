@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from html import escape
 from math import isnan
 from pathlib import Path
@@ -307,7 +308,8 @@ def _cell(value: Any) -> str:
         return "—"
     if isinstance(value, float):
         return f"{value:.4f}"
-    return str(value).replace("|", "\\|")
+    # One table row per line: line breaks become spaces, and a pipe is escaped.
+    return " ".join(str(value).split()).replace("|", "\\|")
 
 
 def markdown_table(rows: list[dict[str, Any]]) -> str:
@@ -421,10 +423,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path,
                         help="where to write the report (default: docs/evaluation/<run-id>/)")
     args = parser.parse_args(argv)
-    run = read_run(args.run_dir)
+    # Normalised, not resolved: "results/x/C4/.." is run x, and a symlinked
+    # run keeps the name it is listed under.
+    if not args.run_dir.is_dir():
+        parser.error(f"{args.run_dir} does not exist or is not a folder")
+    run = read_run(Path(os.path.abspath(args.run_dir)))
     if run is None:
         parser.error(f"{args.run_dir} holds no summary.json with a readable configuration")
-    write_report(run, args.out or REPORT_ROOT / run["run_id"])
+    out = args.out or REPORT_ROOT / run["run_id"]
+    if out.exists() and not out.is_dir():
+        parser.error(f"--out {out} is not a folder")
+    write_report(run, out)
 
 
 if __name__ == "__main__":

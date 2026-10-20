@@ -269,6 +269,18 @@ def test_a_pipe_in_a_configuration_name_does_not_split_its_table_cell(tmp_path):
     assert "| C4 | BM25 \\| dense | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
 
 
+def test_a_line_break_in_a_name_stays_inside_its_table_row(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    summary["configurations"][0]["config"]["name"] = "BM25\r\ndense"
+    (run / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | BM25 dense | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+
+
 def _answer_row(question_id, correctness, *, abstained=False):
     """One row of a matrix configuration's answers.jsonl, as answers and rescore read it."""
     return {"question_id": question_id,
@@ -304,3 +316,35 @@ def test_answers_that_cannot_be_scored_fall_back_to_the_saved_summary(tmp_path):
     report.main([str(run), "--out", str(out)])
 
     assert "| C4 | row C4 | 150 | 0.9000 | 150 |" in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+def test_the_run_id_is_the_run_folder_however_its_path_is_spelled(tmp_path, monkeypatch):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    monkeypatch.setattr(report, "REPORT_ROOT", tmp_path / "docs" / "evaluation")
+
+    report.main([str(run / "C4" / "..")])
+
+    written = tmp_path / "docs" / "evaluation" / "matrix" / "ablation.md"
+    assert written.is_file()
+    assert written.read_text(encoding="utf-8").startswith("# Results: matrix\n")
+
+
+def test_an_out_path_that_is_a_file_is_refused_with_a_usage_error(tmp_path, capsys):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    out = tmp_path / "report.md"
+    out.write_text("mine", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(run), "--out", str(out)])
+
+    assert stopped.value.code == 2
+    assert "is not a folder" in capsys.readouterr().err
+    assert out.read_text(encoding="utf-8") == "mine"
+
+
+def test_a_run_path_that_does_not_exist_says_so(tmp_path, capsys):
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(tmp_path / "missing"), "--out", str(tmp_path / "report")])
+
+    assert stopped.value.code == 2
+    assert "does not exist" in capsys.readouterr().err
