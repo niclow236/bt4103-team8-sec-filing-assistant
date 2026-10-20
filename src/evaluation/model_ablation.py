@@ -6,7 +6,8 @@ import argparse
 import json
 import logging
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields, replace
 from math import ceil
 from pathlib import Path
@@ -86,6 +87,8 @@ MODEL_FIELDS = (
     "max_tokens", "n_indexed", "n_truncated", "truncation_rate", "build_ms",
     "median_latency_ms", "retried_questions", "llm_questions", "llm_abstention_rate",
 )
+# A G row can stop part-way, so its table says where (#183); an E row cannot.
+GENERATION_FIELDS = (*MODEL_FIELDS, "stopped")
 
 
 def _write_report(run_dir: Path, config_id: str, report: dict[str, Any]) -> None:
@@ -200,13 +203,15 @@ def run_generation_ablation(
     stopped = None
     for experiment, stack in stacks:
         try:
-            report = evaluate(
-                questions, stack.retriever, stack.generation, run_id=experiment.id,
-                min_score=stack.config.min_score, top_k=stack.config.top_k,
-                llm=stack.llm, use_facts=stack.config.use_facts,
-                use_decomposition=stack.config.use_decomposition,
-                use_refusal=stack.config.use_refusal, stack=stack.config,
-            )
+            # The row named the provider, so LLM_PROVIDER is no way out (#183).
+            with _provider_fixed():
+                report = evaluate(
+                    questions, stack.retriever, stack.generation, run_id=experiment.id,
+                    min_score=stack.config.min_score, top_k=stack.config.top_k,
+                    llm=stack.llm, use_facts=stack.config.use_facts,
+                    use_decomposition=stack.config.use_decomposition,
+                    use_refusal=stack.config.use_refusal, stack=stack.config,
+                )
         except (RunStopped, RunInterrupted) as error:
             report, stopped = error.report, error
         question_by_id = {question.question_id: question for question in questions}
@@ -219,7 +224,7 @@ def run_generation_ablation(
         if stopped is not None:
             break
     manifest = write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
-                                extra_fields=MODEL_FIELDS, matrix="generation")
+                                extra_fields=GENERATION_FIELDS, matrix="generation")
     if stopped is not None:
         raise stopped
     return manifest
@@ -489,6 +494,27 @@ class _WithoutAnswerLocally(logging.Filter):
         return True
 
 
+@contextmanager
+def _provider_fixed() -> Iterator[None]:
+    """Evaluate a row whose provider is fixed by something other than
+    ``LLM_PROVIDER``, so that the advice to set it is dropped from the
+    harness's retry notices and from a stop's record and error (#180, #183).
+
+    A stop is raised afresh, as its message was made from the report before
+    this, with the same cause.
+    """
+    notices = _WithoutAnswerLocally()
+    harness_log.addFilter(notices)
+    try:
+        yield
+    except (RunStopped, RunInterrupted) as error:
+        report = error.report
+        report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
+        raise type(error)(report) from error.__cause__
+    finally:
+        harness_log.removeFilter(notices)
+
+
 def run_generation_replay(
     recorded: RecordedAnswers, experiments: Sequence[GenerationExperiment], *, run_id: str,
     results_root: Path = RESULTS_ROOT, llm_for: Callable[[GenerationConfig], Any] | None = None,
@@ -535,27 +561,19 @@ def run_generation_replay(
                                  origin=origin)]
     question_by_id = {question.question_id: question for question in recorded.questions}
     stopped = None
-    # The harness's retry notices are the provider's advice too (#180).
-    notices = _WithoutAnswerLocally()
     for (experiment, config), llm in zip(answering, models):
-        harness_log.addFilter(notices)
         try:
-            report = evaluate(
-                list(recorded.questions), recorded.retriever, config,
-                run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
-                use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
-                use_verification=stack.use_verification, facts_file=facts_file,
-                judge=judge,
-            )
-        except (RunStopped, RunInterrupted) as error:
-            report = error.report
             # The row named the provider, so LLM_PROVIDER is no way out (#180).
-            # Raised afresh, as its message was made from the report before this.
-            report["stopped"]["error"] = without_answer_locally(report["stopped"]["error"])
-            stopped = type(error)(report)
-            stopped.__cause__ = error.__cause__
-        finally:
-            harness_log.removeFilter(notices)
+            with _provider_fixed():
+                report = evaluate(
+                    list(recorded.questions), recorded.retriever, config,
+                    run_id=f"{run_id}-{experiment.id}", llm=llm, top_k=stack.top_k, stack=stack,
+                    use_facts=False, use_refusal=False, use_decomposition=stack.use_decomposition,
+                    use_verification=stack.use_verification, facts_file=facts_file,
+                    judge=judge,
+                )
+        except (RunStopped, RunInterrupted) as error:
+            report, stopped = error.report, error
         if recorded.facts is None:
             # The path it parsed with was never written: there was no store.
             report["facts_file"] = None
@@ -746,8 +764,9 @@ def main(argv: list[str] | None = None) -> None:
             )
         except (RunStopped, RunInterrupted) as error:
             raise SystemExit(f"{error}; partial results are under {run_dir}") from None
+        # Each G row names its own provider, so LLM_PROVIDER is no way out (#183).
         except ProviderUnavailable as error:
-            parser.error(str(error))
+            parser.error(without_answer_locally(str(error)))
     print((run_dir / "summary.csv").read_text(encoding="utf-8"), end="")
     print(f"written: {run_dir}")
 

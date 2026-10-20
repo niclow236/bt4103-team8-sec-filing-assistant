@@ -1146,6 +1146,20 @@ def test_a_stopped_replay_s_record_does_not_offer_llm_provider(monkeypatch, tmp_
     assert "LLM_PROVIDER" not in (tmp_path / "stopped" / "summary.csv").read_text()
 
 
+def _busy_once(label, message):
+    """Ask through the harness's retries, which fails once with ``message``."""
+    import src.evaluation.harness as harness
+    from src.rag.generate import ProviderBusy
+
+    failures = iter([ProviderBusy(message)])
+
+    def ask():
+        for failure in failures:
+            raise failure
+        return "answer"
+    return harness.answer_with_retries(label, ask)
+
+
 @pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
 def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path, caplog,
                                                             log_threads):
@@ -1157,22 +1171,12 @@ def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_pat
     import src.evaluation.harness as harness
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
-    from src.rag.generate import ProviderBusy
 
     busy = ("SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask again, or set "
             "LLM_PROVIDER=ollama to answer locally")
 
-    def ask_twice():
-        failures = iter([ProviderBusy(busy)])
-
-        def ask():
-            for failure in failures:
-                raise failure
-            return "answer"
-        return harness.answer_with_retries("q001", ask)
-
     def evaluate(questions, retriever, config, **kwargs):
-        ask_twice()
+        _busy_once("q001", busy)
         return {"results": [_recorded_row("q001"), _recorded_row(
             "q002", question_type="unanswerable", abstained=True)]}
 
@@ -1189,7 +1193,7 @@ def test_a_replay_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_pat
                           "again; asking again in 10s")
         # Outside a replay, where LLM_PROVIDER does choose the provider, the advice stays.
         caplog.clear()
-        ask_twice()
+        _busy_once("q001", busy)
         assert "LLM_PROVIDER=ollama" in caplog.messages[0]
 
 
@@ -1203,20 +1207,11 @@ def test_a_replay_leaves_the_advice_in_another_thread_s_retry_notices(monkeypatc
     import src.evaluation.harness as harness
     import src.evaluation.model_ablation as module
     from src.evaluation.model_ablation import run_generation_replay
-    from src.rag.generate import ProviderBusy
-
-    def busy_once():
-        failures = iter([ProviderBusy("cannot reach SOCLAAS: check the internet connection, "
-                                      "or set LLM_PROVIDER=ollama to answer locally")])
-
-        def ask():
-            for failure in failures:
-                raise failure
-            return "answer"
-        return harness.answer_with_retries("other-run", ask)
 
     def evaluate(questions, retriever, config, **kwargs):
-        other = threading.Thread(target=busy_once)
+        other = threading.Thread(target=_busy_once, args=(
+            "other-run", "cannot reach SOCLAAS: check the internet connection, or set "
+                         "LLM_PROVIDER=ollama to answer locally"))
         other.start()
         other.join()
         return {"results": [_recorded_row("q001"), _recorded_row(
@@ -1264,3 +1259,168 @@ def test_an_answers_config_whose_generation_is_not_a_config_is_refused_by_name(a
         "provider": "Mistral", "model": "test", "prompt_template_id": "grounded_v4"}}))
     with pytest.raises(ValueError, match=r"'generation' is not a generation config"):
         recorded_answers(directory, chunks=snapshot)
+
+
+def test_the_generation_matrix_s_missing_key_advice_does_not_offer_llm_provider(
+        monkeypatch, tmp_path, capsys):
+    # #183: each G row names its provider, so setting LLM_PROVIDER, which the
+    # provider's general advice offers, changes nothing.
+    import src.evaluation.model_ablation as module
+    import src.stack
+
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    monkeypatch.setattr(src.stack, "build_retriever", lambda *args, **kwargs: _stack(None).retriever)
+    monkeypatch.setenv("MISTRAL_API_KEY", "g2-key")   # so G3's key is the one missing
+    with pytest.raises(SystemExit) as raised:
+        module.main(["generation", "--run-id", "no-key", "--results-root", str(tmp_path)])
+    error = capsys.readouterr().err
+    assert raised.value.code == 2 and "SOCLAAS_API_KEY is not set: make a key" in error
+    assert "LLM_PROVIDER" not in error
+    assert error.rstrip().endswith("so the key is read")
+    assert not (tmp_path / "no-key").exists()
+
+
+def test_a_stopped_generation_matrix_does_not_offer_llm_provider(monkeypatch, tmp_path):
+    # #183: the stop the matrix records and reports kept the provider's general advice.
+    import src.evaluation.model_ablation as module
+    from src.rag.generate import ProviderBusy
+
+    unreachable = ProviderBusy("cannot reach SOCLAAS")
+
+    def stops_on_soclaas(questions, retriever, config, **kwargs):
+        report = _fake_evaluate(questions, retriever, config)
+        if config.provider == "soclaas":
+            report["stopped"] = {
+                "question_id": "q002", "error": "ProviderBusy: cannot reach SOCLAAS: try another "
+                                                "network, or set LLM_PROVIDER=ollama to answer locally"}
+            raise RunStopped(report) from unreachable
+        return report
+
+    monkeypatch.setattr(module, "load_questions", lambda *args, **kwargs: [_question()])
+    monkeypatch.setattr(module, "_default_generation_stack",
+                        lambda experiment, **kwargs: _stack(experiment))
+    monkeypatch.setattr(module, "evaluate", stops_on_soclaas)
+    with pytest.raises(SystemExit) as raised:
+        module.main(["generation", "--run-id", "stopped", "--results-root", str(tmp_path)])
+    advice = "ProviderBusy: cannot reach SOCLAAS: try another network"
+    run_dir = tmp_path / "stopped"
+    assert str(raised.value) == f"stopped at q002: {advice}; partial results are under {run_dir}"
+    # The completed answers stay, with a stop record that names only the provider's problem.
+    report = json.loads((run_dir / "G3" / "report.json").read_text())
+    assert [row["question_id"] for row in report["results"]] == ["q001"]
+    assert report["stopped"] == {"question_id": "q002", "error": advice}
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["configurations"][2]["stopped"] == {"question_id": "q002", "error": advice}
+    assert "LLM_PROVIDER" not in (run_dir / "summary.csv").read_text()
+
+
+def test_a_stopped_generation_matrix_raises_its_error_without_llm_provider(monkeypatch, tmp_path):
+    # #183: a caller other than the command, such as a notebook, reads the
+    # error it is raised rather than the files.
+    import src.evaluation.model_ablation as module
+    from src.rag.generate import ProviderBusy
+
+    unreachable = ProviderBusy("cannot reach Mistral")
+
+    def stops(questions, retriever, config, **kwargs):
+        raise RunStopped({**_fake_evaluate(questions, retriever, config), "stopped": {
+            "question_id": "q001", "error": "ProviderBusy: Mistral failed (HTTP 503): ask again, "
+                                            "or set LLM_PROVIDER=ollama to answer locally"}}
+                         ) from unreachable
+
+    monkeypatch.setattr(module, "evaluate", stops)
+    with pytest.raises(RunStopped) as raised:
+        run_generation_ablation([_question()], _stack, run_id="stopped", results_root=tmp_path)
+    assert str(raised.value) == "stopped at q001: ProviderBusy: Mistral failed (HTTP 503): ask again"
+    assert raised.value.__cause__ is unreachable
+    assert raised.value.report["results"] == [{"question_id": "q001", "question_type": "numeric",
+                                               "difficulty": "easy", "source": "handwritten"}]
+
+
+@pytest.mark.parametrize("log_threads", [True, False], ids=["threads-logged", "threads-not-logged"])
+def test_the_generation_matrix_s_retry_notices_do_not_offer_llm_provider(monkeypatch, tmp_path,
+                                                                         caplog, log_threads):
+    # #183: a busy provider's "asking again" notice during a G row offered
+    # LLM_PROVIDER, which the row's fixed provider ignores.
+    import logging
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+
+    busy = ("SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask again, or set "
+            "LLM_PROVIDER=ollama to answer locally")
+
+    def evaluate(questions, retriever, config, **kwargs):
+        if config.provider == "soclaas":
+            _busy_once("q001", busy)
+        return _fake_evaluate(questions, retriever, config)
+
+    monkeypatch.setattr(logging, "logThreads", log_threads)
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_ablation([_question()], _stack, run_id="busy", results_root=tmp_path)
+        [notice] = caplog.messages
+        assert notice == ("q001: SOCLAAS failed while running 'qwen3.6:35b' (HTTP 503): ask "
+                          "again; asking again in 10s")
+        # Outside the matrix, where LLM_PROVIDER does choose the provider, the advice stays.
+        caplog.clear()
+        _busy_once("q001", busy)
+        assert "LLM_PROVIDER=ollama" in caplog.messages[0]
+
+
+def test_the_generation_matrix_leaves_the_advice_in_another_thread_s_retry_notices(
+        monkeypatch, tmp_path, caplog):
+    # #183: the filter sits on the harness's shared logger, so an evaluation on
+    # another thread, whose provider LLM_PROVIDER does choose, must keep its advice.
+    import threading
+
+    import src.evaluation.harness as harness
+    import src.evaluation.model_ablation as module
+
+    def evaluate(questions, retriever, config, **kwargs):
+        if config.provider == "soclaas":
+            other = threading.Thread(target=_busy_once, args=(
+                "other-run", "cannot reach SOCLAAS: check the internet connection, or set "
+                             "LLM_PROVIDER=ollama to answer locally"))
+            other.start()
+            other.join()
+        return _fake_evaluate(questions, retriever, config)
+
+    monkeypatch.setattr(harness, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module, "evaluate", evaluate)
+    with caplog.at_level("WARNING", logger=harness.__name__):
+        run_generation_ablation([_question()], _stack, run_id="threaded", results_root=tmp_path)
+    [notice] = caplog.messages
+    assert notice.startswith("other-run:") and "or set LLM_PROVIDER=ollama" in notice
+
+
+def test_a_stopped_generation_matrix_s_table_says_which_row_stopped(monkeypatch, tmp_path):
+    # #183: summary.csv showed a stopped row's partial figures as if they were complete.
+    import src.evaluation.model_ablation as module
+
+    def stops_on_mistral(questions, retriever, config, **kwargs):
+        report = _fake_evaluate(questions, retriever, config)
+        if config.provider == "mistral":
+            report["stopped"] = {"question_id": "q002", "error": "rate limit"}
+            raise RunStopped(report)
+        return report
+
+    monkeypatch.setattr(module, "evaluate", stops_on_mistral)
+    with pytest.raises(RunStopped):
+        run_generation_ablation([_question()], _stack, run_id="stopped", results_root=tmp_path)
+    with (tmp_path / "stopped" / "summary.csv").open(newline="") as stream:
+        table = {row["config"]: row.get("stopped") for row in csv.DictReader(stream)}
+    # G1 finished; G2 names where it stopped and why.
+    assert table == {"G1": "", "G2": "q002: rate limit"}
+    # The app reads the structured record from the JSON.
+    summary = json.loads((tmp_path / "stopped" / "summary.json").read_text())
+    assert [row["stopped"] for row in summary["configurations"]] == [
+        None, {"question_id": "q002", "error": "rate limit"}]
+
+
+def test_the_embedding_matrix_s_table_has_no_stop_column(tmp_path):
+    # #183: only a G row can stop part-way, so the E table is left as it was.
+    run_embedding_ablation([_question()], _stack, run_id="embedding", results_root=tmp_path)
+    with (tmp_path / "embedding" / "summary.csv").open(newline="") as stream:
+        assert "stopped" not in csv.DictReader(stream).fieldnames
