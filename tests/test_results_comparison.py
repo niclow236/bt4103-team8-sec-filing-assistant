@@ -529,8 +529,10 @@ def test_only_configurations_that_saved_their_questions_are_offered(
     # Whichever shape its summary has, the page says beside the pickers why C0
     # is not offered, and the run's warning names it when its scores are not
     # shown at all.
-    assert any("Not offered" in caption.value and "C0" in caption.value
-               for caption in team.caption)
+    # C0's files are missing whatever its summary is keyed by: none of the three
+    # shapes says it never ran the team questions.
+    assert [caption.value for caption in team.caption if "Not offered" in caption.value] == [
+        "Not offered, since their per-question results were not found on this machine: C0"]
     assert any("C0" in warning.value for warning in app.warning) is not scores_shown
 
 
