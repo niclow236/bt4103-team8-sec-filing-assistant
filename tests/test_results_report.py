@@ -548,6 +548,22 @@ def test_answer_quality_gets_its_own_chart(tmp_path):
     assert not (out / "handwritten-answer-quality.svg").exists()
 
 
+def test_a_one_configuration_chart_is_wide_enough_for_its_legend(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 150, "quality": {
+        metric: _quality(0.5, 150) for metric in report.QUALITY_LABELS}})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    chart = ElementTree.parse(out / "handwritten-answer-quality.svg").getroot()
+    legend = [text for text in chart.iter(SVG + "text") if text.get("y") == "39"]
+    assert [text.text for text in legend] == list(report.QUALITY_LABELS.values())
+    # The chart sizes legend labels at 7 pixels a character.
+    assert all(float(text.get("x")) + 7 * len(text.text) <= float(chart.get("width"))
+               for text in legend)
+
+
 @pytest.mark.parametrize("row, absent", [
     ({"question_id": "q1", "recall": 1.0}, "Hard negatives"),
     ({"question_id": "q1", "hard_negative_accuracy": 1.0}, "Relevance-scored"),

@@ -454,7 +454,10 @@ def svg_chart(rows: list[dict[str, Any]], title: str) -> str:
     configurations = list(dict.fromkeys(row["Configuration"] for row in rows))
     metrics = [label for label in METRIC_COLOURS if any(row["Metric"] == label for row in rows)]
     left, top, plot_height, group_width = 48, 56, 240, max(24 * len(metrics) + 24, 72)
-    width = left + group_width * len(configurations) + 16
+    # The legend runs along the top, so a run with few configurations is widened
+    # to fit it rather than cutting labels off.
+    legend_width = sum(14 + 7 * len(label) + 16 for label in metrics)
+    width = max(left + group_width * len(configurations) + 16, left + legend_width)
     height = top + plot_height + 40
     bar_width = (group_width - 24) / len(metrics)
     parts = [
