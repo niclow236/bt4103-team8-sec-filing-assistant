@@ -896,9 +896,9 @@ _PROVIDERS = {
 }
 
 
-# The rows whose figure questions the facts store can answer with no model:
-# the lookup needs the company and year the metadata filter applies (#156).
-_FACTS_ROWS = " or ".join(key for key in SELECTABLE if STACKS[key].metadata_filter)
+# The rows whose figure questions the facts store can answer with no model
+# (#156).
+_FACTS_ROWS = tuple(key for key in SELECTABLE if STACKS[key].answers_figures_from_facts)
 
 
 def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
@@ -933,7 +933,8 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
             # off the screen.
             st.warning(f"{label} cannot write an answer yet: {unready[provider]}. "
                        f"{_fix_in_app(provider, available)} "
-                       f"On {_FACTS_ROWS}, a figure the facts store holds is still answered.")
+                       f"On {' or '.join(_FACTS_ROWS)}, a figure the facts store holds "
+                       "is still answered.")
         if available.problem:
             st.warning(available.problem)
     return provider
