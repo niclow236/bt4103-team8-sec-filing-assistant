@@ -713,7 +713,7 @@ def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypat
     assert [warning.value for warning in ui.sidebar.warning] == [
         "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Update it in your "
         "environment or `.env` (README, Setting up Mistral), then restart the app, or pick "
-        "Ollama. A figure the facts store holds is still answered."]
+        "Ollama. On C4, a figure the facts store holds is still answered."]
     # A key set in the process is seen on the next rerun.
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     ui.run()
@@ -725,7 +725,7 @@ def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypat
     assert ui.sidebar.warning[0].value == (
         "Mistral cannot write an answer yet: MISTRAL_API_KEY is not set. Update it in your "
         "environment or `.env` (README, Setting up Mistral), then restart the app. "
-        "A figure the facts store holds is still answered.")
+        "On C4, a figure the facts store holds is still answered.")
 
 
 # --- Streamlit's file watcher and a library's lazy modules ----------------------
