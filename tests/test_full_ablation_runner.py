@@ -283,6 +283,7 @@ def answer_run(runner,monkeypatch,request):
     harness=importlib.import_module('src.evaluation.harness')
     generation=GenerationConfig('mistral','test',PROMPT_TEMPLATE_ID)
     monkeypatch.setattr(generate,'config_from_env',lambda **kwargs:generation)
+    monkeypatch.setattr(generate,'check_provider',lambda config:None)
     monkeypatch.setattr(generate,'checked_model',lambda *args:object())
     state=SimpleNamespace(generated=[],judged=[],stop=None)
     class Judge:
@@ -378,7 +379,8 @@ def test_answer_loop_clears_a_stale_checkpoint_even_when_the_row_is_already_comp
     assert not pending.exists() and not state.generated and not state.judged
 
 
-def test_soclaas_answers_can_use_a_separate_frozen_mistral_judge(answer_run,monkeypatch):
+@pytest.fixture
+def mixed_provider_answer_run(answer_run,monkeypatch):
     state=answer_run
     generation_module=importlib.import_module('src.rag.generate')
     quality=importlib.import_module('src.evaluation.quality')
@@ -394,6 +396,10 @@ def test_soclaas_answers_can_use_a_separate_frozen_mistral_judge(answer_run,monk
         def __init__(self,config,*,llm):
             self.config=config
             assert config==configs['mistral'] and llm is clients['mistral']
+        def __call__(self,q,answer):
+            state.judged.append(q.question_id)
+            return {'faithfulness':1.0,'correctness':.5,'faithfulness_reason':'supported',
+                    'correctness_reason':'partial','input_tokens':10,'output_tokens':3}
     monkeypatch.setattr(quality,'LLMJudge',Judge)
     state.args.provider='soclaas'
     state.args.model='qwen3.6:35b'
@@ -401,10 +407,18 @@ def test_soclaas_answers_can_use_a_separate_frozen_mistral_judge(answer_run,monk
     state.args.judge_model='ministral-8b-2512'
     state.args.configurations=('C4',)
     matrix.write_rows(state.args.run_dir/'C4/answers.jsonl',[])
+    state.configs=configs
+    state.clients=clients
+    return state
+
+
+def test_soclaas_answers_can_use_a_separate_frozen_mistral_judge(mixed_provider_answer_run):
+    state=mixed_provider_answer_run
+    configs,clients=state.configs,state.clients
     matrix.answers(state.args)
     config=json.loads((state.args.run_dir/'answers-config.json').read_text())
     assert config['generation']==configs['soclaas'].to_dict()
-    assert config['judge_generation']==configs['mistral'].to_dict()
+    assert config['judge_generation']==replace(configs['mistral'],prompt_template_id='answer-quality-v1').to_dict()
     assert all(kw['llm'] is clients['soclaas'] and kw['judge'].config==configs['mistral']
                for _,kw in state.generated)
     before=artifacts(state.args.run_dir)
@@ -414,10 +428,66 @@ def test_soclaas_answers_can_use_a_separate_frozen_mistral_judge(answer_run,monk
     assert artifacts(state.args.run_dir)==before
 
 
+@pytest.mark.parametrize('missing',['SOCLAAS_API_KEY','MISTRAL_API_KEY'])
+def test_missing_provider_key_is_refused_before_clients_or_manifest_writes(mixed_provider_answer_run,monkeypatch,missing):
+    state=mixed_provider_answer_run
+    generate=importlib.import_module('src.rag.generate')
+    # Use the real provider validators with fake test credentials; no .env reads.
+    from src.rag.generate import _PROVIDERS
+    env={'SOCLAAS_API_KEY':'test-soclaas-key','MISTRAL_API_KEY':'test-mistral-key'}
+    env.pop(missing)
+    monkeypatch.setattr(generate,'check_provider',lambda config:_PROVIDERS[config.provider].settings(config,None,env))
+    monkeypatch.setattr(generate,'checked_model',lambda *a,**kw:pytest.fail('client constructed before both keys were validated'))
+    before=artifacts(state.args.run_dir)
+    with pytest.raises(generate.ProviderUnavailable,match=missing+' is not set'):
+        matrix.answers(state.args)
+    assert artifacts(state.args.run_dir)==before and not state.generated
+
+
+@pytest.mark.parametrize('phase,change',[
+    ('judge_generation','provider'),('judge_generation','model'),('judge_generation','rubric'),
+    ('generation','provider'),('generation','model')])
+def test_answer_resume_rejects_changed_generator_or_judge_identity(mixed_provider_answer_run,phase,change):
+    state=mixed_provider_answer_run
+    matrix.answers(state.args)
+    path=state.args.run_dir/'answers-config.json'
+    config=json.loads(path.read_text())
+    if change=='rubric':config['judge_rubric']='other-rubric'
+    else:config[phase][change]='other-model'
+    matrix.dump(path,config)
+    before=artifacts(state.args.run_dir)
+    with pytest.raises(ValueError,match='identical settings/source/facts'):
+        matrix.answers(state.args)
+    assert artifacts(state.args.run_dir)==before
+
+
+def test_judge_only_retry_uses_the_configured_mistral_judge(mixed_provider_answer_run,monkeypatch):
+    state=mixed_provider_answer_run
+    state.stop=RunStopped
+    with pytest.raises(RunStopped):matrix.answers(state.args)
+    pending=json.loads((state.args.run_dir/'C4/pending-judge.json').read_text())
+    state.stop=None
+    quality=importlib.import_module('src.evaluation.quality')
+    real_cost=quality.query_cost
+    billed=[]
+    def cost(provider,*args,**kwargs):
+        billed.append(provider)
+        return real_cost(provider,*args,**kwargs)
+    monkeypatch.setattr(quality,'query_cost',cost)
+    matrix.answers(state.args)
+    rows=matrix.read_rows(state.args.run_dir/'C4/answers.jsonl')
+    assert rows[0]['answer']==pending['answer'] and rows[0]['judge_resumed']
+    assert state.judged==['q1'] and billed==['mistral']
+    assert [qid for qid,_ in state.generated]==['q1','q2']
+    assert rows[0]['judge_overhead']['cost']['model_calls']==2
+
+
 def test_answers_default_judge_remains_the_generator(answer_run):
     matrix.answers(answer_run.args)
     config=json.loads((answer_run.args.run_dir/'answers-config.json').read_text())
-    assert config['generation']==config['judge_generation']
+    assert all(config['generation'][key]==config['judge_generation'][key]
+               for key in ('provider','model','temperature'))
+    assert config['judge_generation']['prompt_template_id']==config['judge_rubric']=='answer-quality-v1'
 
 
 def test_answer_loop_can_measure_only_the_rebased_c6_row(answer_run):

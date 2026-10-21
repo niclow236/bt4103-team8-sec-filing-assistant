@@ -717,6 +717,24 @@ def test_unknown_empty_and_known_zero_cost_totals_are_distinct():
     assert local["resources"]["judge_overhead"]["api_cost_usd"]["known_total"] == 0
 
 
+def test_soclaas_generation_and_mistral_judging_are_billed_to_their_own_providers(monkeypatch):
+    harness=import_module('src.evaluation.harness')
+    real_cost=harness.query_cost
+    providers=[]
+    def cost(provider,*args,**kwargs):
+        providers.append(provider)
+        return real_cost(provider,*args,**kwargs)
+    monkeypatch.setattr(harness,'query_cost',cost)
+    report=evaluate([question()],Retriever(),replace(CONFIG,provider='soclaas'),
+                    run_id='mixed-providers',llm=Model(),judge=judge(provider='mistral'),
+                    token_prices=TokenPrices(1,2),judge_token_prices=TokenPrices(3,4))
+    row=report['results'][0]
+    assert providers==['soclaas','mistral']
+    assert row['cost']['usd']==pytest.approx((100*1+20*2)/1_000_000)
+    assert row['judge_overhead']['cost']['usd']==pytest.approx((200*3+30*4)/1_000_000)
+    assert row['cost']['model_calls']==row['judge_overhead']['cost']['model_calls']==1
+
+
 def test_answer_and_judge_retry_waits_have_separate_aggregate_stages(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr("src.evaluation.harness.perf_counter", lambda: clock[0])

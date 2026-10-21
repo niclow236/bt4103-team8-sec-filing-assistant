@@ -612,8 +612,8 @@ def finish_pending_judge(path: Path, question: BenchmarkQuestion, judge: Any) ->
 
 def answers(args: argparse.Namespace) -> None:
     from src.evaluation.harness import evaluate, RunStopped, RunInterrupted
-    from src.evaluation.quality import LLMJudge
-    from src.rag.generate import config_from_env, checked_model
+    from src.evaluation.quality import LLMJudge, RUBRIC_ID
+    from src.rag.generate import config_from_env, checked_model, check_provider
 
     run_dir = args.run_dir
     original = json.loads((run_dir / "config.json").read_text())
@@ -642,9 +642,13 @@ def answers(args: argparse.Namespace) -> None:
     judge_model = getattr(args, "judge_model", None)
     judging = (config_from_env(provider=judge_provider or generation.provider, model=judge_model)
                if judge_provider or judge_model else generation)
+    # Refuse either missing key before creating clients, manifests or checkpoints.
+    check_provider(generation)
+    check_provider(judging)
     configuration = {"retrieval_config_sha256":sha256(run_dir/"config.json"),
-                     "generation":generation.to_dict(), "judge_generation":judging.to_dict(),
-                     "judge_rubric":"answer-quality-v1",
+                     "generation":generation.to_dict(),
+                     "judge_generation":replace(judging,prompt_template_id=RUBRIC_ID).to_dict(),
+                     "judge_rubric":RUBRIC_ID,
                      "facts_sha256":sha256(args.facts_file),
                      "questions":[q.to_dict() for q in team],
                      "source":record_provenance([],team,args.processed_dir,chunks=chunks),
