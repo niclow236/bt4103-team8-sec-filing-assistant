@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="904" height="336" viewBox="0 0 904 336" font-family="sans-serif" font-size="12" role="img" aria-label="Team benchmark: retrieval metrics">
+<rect width="904" height="336" fill="#ffffff"/>
+<text x="48" y="20" font-size="14" font-weight="bold" fill="#1f1f1f">Team benchmark: retrieval metrics</text>
+<rect x="48" y="30" width="10" height="10" fill="#4269d0"/>
+<text x="62" y="39" fill="#1f1f1f">Recall</text>
+<rect x="120" y="30" width="10" height="10" fill="#efb118"/>
+<text x="134" y="39" fill="#1f1f1f">nDCG</text>
+<rect x="178" y="30" width="10" height="10" fill="#ff725c"/>
+<text x="192" y="39" fill="#1f1f1f">MRR</text>
+<rect x="229" y="30" width="10" height="10" fill="#6cc5b0"/>
+<text x="243" y="39" fill="#1f1f1f">Hard Negative Accuracy</text>
+<line x1="48" x2="888" y1="296" y2="296" stroke="#d9d9d9"/>
+<text x="42" y="300" text-anchor="end" fill="#555555">0</text>
+<line x1="48" x2="888" y1="236" y2="236" stroke="#d9d9d9"/>
+<text x="42" y="240" text-anchor="end" fill="#555555">0.25</text>
+<line x1="48" x2="888" y1="176" y2="176" stroke="#d9d9d9"/>
+<text x="42" y="180" text-anchor="end" fill="#555555">0.5</text>
+<line x1="48" x2="888" y1="116" y2="116" stroke="#d9d9d9"/>
+<text x="42" y="120" text-anchor="end" fill="#555555">0.75</text>
+<line x1="48" x2="888" y1="56" y2="56" stroke="#d9d9d9"/>
+<text x="42" y="60" text-anchor="end" fill="#555555">1</text>
+<rect x="60" y="254.658" width="22" height="41.3425" fill="#4269d0"><title>C0 Recall: 0.1723</title></rect>
+<rect x="84" y="271.893" width="22" height="24.1068" fill="#efb118"><title>C0 nDCG: 0.1004</title></rect>
+<rect x="108" y="269.34" width="22" height="26.6599" fill="#ff725c"><title>C0 MRR: 0.1111</title></rect>
+<rect x="132" y="70.8148" width="22" height="225.185" fill="#6cc5b0"><title>C0 Hard Negative Accuracy: 0.9383</title></rect>
+<text x="108" y="314" text-anchor="middle" fill="#1f1f1f">C0</text>
+<rect x="180" y="223.397" width="22" height="72.6027" fill="#4269d0"><title>C1 Recall: 0.3025</title></rect>
+<rect x="204" y="260.623" width="22" height="35.3771" fill="#efb118"><title>C1 nDCG: 0.1474</title></rect>
+<rect x="228" y="269.489" width="22" height="26.5105" fill="#ff725c"><title>C1 MRR: 0.1105</title></rect>
+<rect x="252" y="78.2222" width="22" height="217.778" fill="#6cc5b0"><title>C1 Hard Negative Accuracy: 0.9074</title></rect>
+<text x="228" y="314" text-anchor="middle" fill="#1f1f1f">C1</text>
+<rect x="300" y="196.822" width="22" height="99.1781" fill="#4269d0"><title>C2 Recall: 0.4132</title></rect>
+<rect x="324" y="233.367" width="22" height="62.6335" fill="#efb118"><title>C2 nDCG: 0.2610</title></rect>
+<rect x="348" y="241.055" width="22" height="54.945" fill="#ff725c"><title>C2 MRR: 0.2289</title></rect>
+<rect x="372" y="87.1111" width="22" height="208.889" fill="#6cc5b0"><title>C2 Hard Negative Accuracy: 0.8704</title></rect>
+<text x="348" y="314" text-anchor="middle" fill="#1f1f1f">C2</text>
+<rect x="420" y="183.397" width="22" height="112.603" fill="#4269d0"><title>C3 Recall: 0.4692</title></rect>
+<rect x="444" y="233.321" width="22" height="62.6787" fill="#efb118"><title>C3 nDCG: 0.2612</title></rect>
+<rect x="468" y="245.293" width="22" height="50.7065" fill="#ff725c"><title>C3 MRR: 0.2113</title></rect>
+<rect x="492" y="82.6667" width="22" height="213.333" fill="#6cc5b0"><title>C3 Hard Negative Accuracy: 0.8889</title></rect>
+<text x="468" y="314" text-anchor="middle" fill="#1f1f1f">C3</text>
+<rect x="540" y="99.5616" width="22" height="196.438" fill="#4269d0"><title>C4 Recall: 0.8185</title></rect>
+<rect x="564" y="152.536" width="22" height="143.464" fill="#efb118"><title>C4 nDCG: 0.5978</title></rect>
+<rect x="588" y="164.382" width="22" height="131.618" fill="#ff725c"><title>C4 MRR: 0.5484</title></rect>
+<rect x="612" y="64.8889" width="22" height="231.111" fill="#6cc5b0"><title>C4 Hard Negative Accuracy: 0.9630</title></rect>
+<text x="588" y="314" text-anchor="middle" fill="#1f1f1f">C4</text>
+<rect x="660" y="101.753" width="22" height="194.247" fill="#4269d0"><title>C5 Recall: 0.8094</title></rect>
+<rect x="684" y="171.32" width="22" height="124.68" fill="#efb118"><title>C5 nDCG: 0.5195</title></rect>
+<rect x="708" y="188.527" width="22" height="107.473" fill="#ff725c"><title>C5 MRR: 0.4478</title></rect>
+<rect x="732" y="64.8889" width="22" height="231.111" fill="#6cc5b0"><title>C5 Hard Negative Accuracy: 0.9630</title></rect>
+<text x="708" y="314" text-anchor="middle" fill="#1f1f1f">C5</text>
+<rect x="780" y="100.932" width="22" height="195.068" fill="#4269d0"><title>C6 Recall: 0.8128</title></rect>
+<rect x="804" y="172.154" width="22" height="123.846" fill="#efb118"><title>C6 nDCG: 0.5160</title></rect>
+<rect x="828" y="190.148" width="22" height="105.852" fill="#ff725c"><title>C6 MRR: 0.4411</title></rect>
+<rect x="852" y="64.8889" width="22" height="231.111" fill="#6cc5b0"><title>C6 Hard Negative Accuracy: 0.9630</title></rect>
+<text x="828" y="314" text-anchor="middle" fill="#1f1f1f">C6</text>
+</svg>

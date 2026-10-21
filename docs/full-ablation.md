@@ -330,6 +330,12 @@ and XBRL set. Its resume refuses a changed input file, so this run was measured
 from scratch (#161); the figures below replace its tables rather than amend
 them.
 
+The [generated report](evaluation/full-matrix-20261017/ablation.md) holds these
+tables with their charts, as the app's Results page shows them, written from
+the native run by `python -m src.evaluation.report results/full-matrix-20261017`
+(#48). Every figure in the two tables below equals it. After a re-run or
+rescore, regenerate that report rather than editing figures here.
+
 | Benchmark | Row | Relevance-scored | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | Team | C0 | 146 | 0.1723 | 0.1004 | 0.1111 | 0.9383 (27) |
