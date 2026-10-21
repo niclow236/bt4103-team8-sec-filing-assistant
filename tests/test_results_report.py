@@ -1,6 +1,7 @@
 """The results report command: one run directory in, tables and charts out (#48)."""
 
 import json
+import os
 import subprocess
 import sys
 from xml.etree import ElementTree
@@ -544,8 +545,10 @@ def test_a_count_column_goes_with_the_scores_it_counts(tmp_path, row, absent):
     assert absent not in table
 
 
-@pytest.mark.parametrize("mean", ["high", [0.5], {"value": 0.5}, True, float("nan"), float("inf")],
-                         ids=["text", "list", "record", "true", "nan", "infinity"])
+@pytest.mark.parametrize("mean", ["high", [0.5], {"value": 0.5}, True, float("nan"), float("inf"),
+                                  10 ** 400, -0.5, 5],
+                         ids=["text", "list", "record", "true", "nan", "infinity",
+                              "huge integer", "below zero", "above one"])
 def test_a_saved_mean_that_is_not_a_number_is_left_blank(tmp_path, mean):
     run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
     _save_answers(run, C4={"questions": 150, "quality": {
@@ -586,3 +589,31 @@ def test_a_case_variant_spelling_of_the_run_is_still_inside_it(tmp_path, capsys)
     assert stopped.value.code == 2
     assert "inside the run" in capsys.readouterr().err
     assert not (run / "report").exists()
+
+
+def test_an_empty_out_is_a_usage_error(tmp_path, capsys, monkeypatch):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(run), "--out", ""])
+
+    assert stopped.value.code == 2
+    assert "--out" in capsys.readouterr().err
+    assert not (tmp_path / "ablation.md").exists()
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs a folder the user cannot read")
+def test_an_out_under_an_unreadable_folder_is_a_usage_error(tmp_path, capsys):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        with pytest.raises(SystemExit) as stopped:
+            report.main([str(run), "--out", str(locked / "report")])
+    finally:
+        locked.chmod(0o755)
+
+    assert stopped.value.code == 2
+    assert "cannot write" in capsys.readouterr().err

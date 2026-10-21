@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 from html import escape
-from math import isfinite, isnan
+from math import isnan
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -276,8 +276,13 @@ def _record(value: Any) -> dict[str, Any]:
 
 
 def _score(value: Any) -> float | None:
-    """A saved score as a number, or None for anything else: text, true, NaN."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value):
+    """A saved score as a number, or None for anything else: text, true, NaN.
+
+    Every score here is a proportion, so one outside 0-1 is not a score either.
+    The comparison rejects NaN and infinities, and never converts an integer
+    too large for a float.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1:
         return float(value)
     return None
 
@@ -495,6 +500,13 @@ def write_report(run: dict[str, Any], out_dir: Path) -> None:
         (out_dir / name).write_text(text, encoding="utf-8")
 
 
+def _out_folder(value: str) -> Path:
+    # Path("") is the current folder, which a forgotten value should not mean.
+    if not value:
+        raise argparse.ArgumentTypeError("--out needs a folder")
+    return Path(value)
+
+
 def _inside(path: Path, folder: Path) -> bool:
     """Whether ``path`` is ``folder`` or under it, by file identity, so neither a
     symlink nor a case-insensitive filesystem's other spelling gets past."""
@@ -508,7 +520,7 @@ def main(argv: list[str] | None = None) -> None:
         prog="python -m src.evaluation.report",
         description="Turn one saved run directory into its ablation tables and metric charts.")
     parser.add_argument("run_dir", type=Path, help="a run under results/, e.g. results/full-matrix-20261017")
-    parser.add_argument("--out", type=Path,
+    parser.add_argument("--out", type=_out_folder,
                         help="where to write the report (default: docs/evaluation/<run-id>/)")
     args = parser.parse_args(argv)
     # Normalised, not resolved: "results/x/C4/.." is run x, and a symlinked
@@ -519,13 +531,13 @@ def main(argv: list[str] | None = None) -> None:
     if run is None:
         parser.error(f"{args.run_dir} holds no summary.json with a readable configuration")
     out = args.out or REPORT_ROOT / run["run_id"]
-    if out.exists() and not out.is_dir():
-        parser.error(f"--out {out} is not a folder")
-    # The run's own files are hashed by the tools that publish it, so a report
-    # beside them would change what they check.
-    if _inside(out, args.run_dir):
-        parser.error(f"--out {out} is inside the run it reads; write the report elsewhere")
     try:
+        if out.exists() and not out.is_dir():
+            parser.error(f"--out {out} is not a folder")
+        # The run's own files are hashed by the tools that publish it, so a
+        # report beside them would change what they check.
+        if _inside(out, args.run_dir):
+            parser.error(f"--out {out} is inside the run it reads; write the report elsewhere")
         write_report(run, out)
     except OSError as error:
         parser.error(f"cannot write the report to {out}: {error.strerror or error}")
