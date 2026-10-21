@@ -1983,13 +1983,17 @@ in `.env`. Before this box the provider was `.env`'s alone to choose, so a
 `.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
 model, minutes at a time, with nothing on the page to say so.
 
-A figure question the facts store answers needs no provider, whichever is
-picked: the chat model is built when an answer first needs one, not when
-the configuration is loaded. So Mistral with no key still answers "What was
-Apple's total revenue in FY2024?", and a question that does need the model
-fails with what the provider lacks. The box does not wait for that. As
-soon as a provider that cannot answer is picked, it says under it what the
-provider lacks and what to do about it.
+On C4, a figure question the facts store answers needs no provider,
+whichever is picked: the chat model is built when an answer first needs one,
+not when the configuration is loaded. So C4 with Mistral and no key still
+answers "What was Apple's total revenue in FY2024?", and a question that does
+need the model fails with what the provider lacks. C1 to C3 send figure
+questions to the model instead. The facts store looks a figure up by the
+company and year the metadata filter applies, and those rows search without
+it, so on them the same question fails when the provider cannot answer
+(#156). The box does not wait for that. As soon as a provider that cannot
+answer is picked, it says under it what the provider lacks and what to do
+about it.
 
 An explicit Item filter is enforced for numeric questions too. When the
 question, the filters, the configuration or the answer model change, the app
@@ -2322,14 +2326,15 @@ against itself.
 `--config` selects a named configuration, `C1` to `C4` as `src/stack.py`
 defines them and `python -m src.evaluation.run` measures them, and sets the
 retriever and the metadata filter from it: a row measured without the filter is
-answered from a search of the whole corpus. `--retriever` and the switches
-below override what the configuration says, and the report records the
-configuration it answered with, including any override, under `stack`. The
-app's sidebar offers the same configurations and builds them through the same
-function, so the system on screen is the system a number in `results/`
-describes; a row a run has measured is labelled there with the run that
-measured it. `C0`, the fixed-size baseline, is built by the ablation runner
-only and cannot be selected.
+answered from a search of the whole corpus, and its figure questions go to the
+model, since the facts lookup needs the company and year the filter applies.
+`--retriever` and the switches below override what the configuration says, and
+the report records the configuration it answered with, including any override,
+under `stack`. The app's sidebar offers the same configurations and builds
+them through the same function, so the system on screen is the system a number
+in `results/` describes; a row a run has measured is labelled there with the
+run that measured it. `C0`, the fixed-size baseline, is built by the ablation
+runner only and cannot be selected.
 
 `--no-refusal` searches and asks a model about every question, instead of
 refusing one the parser reads as asking for advice or a prediction, or for a
