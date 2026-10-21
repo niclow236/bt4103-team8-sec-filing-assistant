@@ -1983,19 +1983,20 @@ in `.env`. Before this box the provider was `.env`'s alone to choose, so a
 `.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
 model, minutes at a time, with nothing on the page to say so.
 
-On C4, a figure question the facts store answers needs no provider,
-whichever is picked: the chat model is built when an answer first needs one,
-not when the configuration is loaded. So C4 with Mistral and no key still
-answers "What was Apple's total revenue in FY2024?", and a question that does
-need the model fails with what the provider lacks. C1 to C3 send figure
-questions to the model instead. The facts store looks a figure up by the
-company and year the metadata filter applies, and those rows search without
-it, so on them the same question fails when the provider cannot answer
-(#156). The box does not wait for that. As soon as a provider that cannot
-answer is picked, it says under it what the provider lacks and what to do
-about it.
+On C4 with no Item filter, a figure question the facts store answers needs
+no provider, whichever is picked: the chat model is built when an answer first
+needs one, not when the configuration is loaded. So C4 with Mistral and no
+key still answers "What was Apple's total revenue in FY2024?", and a question
+that does need the model fails with what the provider lacks. C1 to C3 send
+figure questions to the model instead. The facts store looks a figure up by
+the company and year the metadata filter applies, and those rows search
+without it, so on them the same question fails when the provider cannot
+answer (#156). The box does not wait for that. As soon as a provider that
+cannot answer is picked, it says under it what the provider lacks and what to
+do about it.
 
-An explicit Item filter is enforced for numeric questions too. When the
+An explicit Item filter is enforced for numeric questions too, so with one a
+figure question goes to the model rather than the facts store. When the
 question, the filters, the configuration or the answer model change, the app
 hides the prior answer until Ask is pressed again. While a model is answering,
 its prose is written to the page as it arrives, and the checked answer card

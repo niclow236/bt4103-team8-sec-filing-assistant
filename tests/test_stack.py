@@ -382,6 +382,11 @@ def test_only_a_row_with_the_metadata_filter_answers_a_figure_from_the_facts_sto
     assert "391,035,000,000" in answered.text
     with pytest.raises(ModelAsked):
         stack("C1").answer(QUESTION, facts_file=facts_file)
+    # Nor does C4 with an Item filter: the route cannot honour one, so the
+    # question is searched within it and given to the model.
+    within_item = Query(QUESTION, tickers=("AAPL",), fiscal_years=(2024,), items=("8",))
+    with pytest.raises(ModelAsked):
+        stack("C4").answer(QUESTION, query=within_item, facts_file=facts_file)
 
 
 # --- the configurations results/ has measured ------------------------------------------
