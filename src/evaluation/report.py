@@ -35,7 +35,8 @@ TEAM, MECHANICAL = "handwritten", "mechanical"
 BENCHMARKS = (("Team benchmark", TEAM),
               ("Mechanical XBRL benchmark", MECHANICAL))
 # Every name a report can write; a regenerated report removes those it no longer has.
-GENERATED = ("ablation.md", *(f"{kind}-retrieval.svg" for _, kind in BENCHMARKS))
+GENERATED = ("ablation.md", *(f"{kind}-{chart}.svg" for _, kind in BENCHMARKS
+                               for chart in ("retrieval", "answer-quality")))
 
 
 def benchmark_kind(row: dict[str, Any]) -> str:
@@ -76,10 +77,11 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
         grouped.setdefault(benchmark_kind(row), []).append(row)
     output: dict[str, dict[str, Any]] = {}
     for kind, items in grouped.items():
-        values: dict[str, Any] = {"questions": len(items)}
+        values: dict[str, Any] = {"questions": len(items), "metric_denominators": {}}
         for metric in RETRIEVAL_METRICS:
             measured = [row[metric] for row in items if row.get(metric) is not None]
             values[metric] = mean(measured) if measured else None
+            values["metric_denominators"][metric] = len(measured)
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
         if answers:
             latencies = [answer["latency_ms"] for answer in answers
@@ -115,6 +117,22 @@ def _saved_split(by_benchmark: Any) -> dict[str, dict[str, Any]]:
     return {SAVED_SPLIT_NAMES.get(name, name): metrics for name, metrics in by_benchmark.items()}
 
 
+def _rescored_splits(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """Each configuration's benchmark split from full_ablation rescore's summary."""
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    splits = {}
+    for summary in manifest.get("configurations", ()) if isinstance(manifest, dict) else ():
+        config = summary.get("config") if isinstance(summary, dict) else None
+        if isinstance(config, dict):
+            splits[str(config.get("id"))] = {
+                kind: metrics for kind, metrics in _saved_split(summary.get("by_benchmark")).items()
+                if isinstance(metrics, dict)}
+    return splits
+
+
 def read_run(run_dir: Path) -> dict[str, Any] | None:
     """One saved run, or None when its folder holds no readable configurations."""
     try:
@@ -123,6 +141,7 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(manifest, dict):
         return None
+    rescored = _rescored_splits(run_dir / "rescored" / "summary.json")
     configurations = []
     for summary in manifest.get("configurations", ()):
         if not isinstance(summary, dict):
@@ -141,29 +160,37 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         rows = read_result_rows(config_dir / "questions.jsonl")
         if not rows:
             rows = read_result_rows(config_dir / "report.json")
+        metrics = (saved_benchmark_metrics(rows, config.get("provider"))
+                   if rows else _saved_split(summary.get("by_benchmark")))
+        # rescore recomputes retrieval under rescored/ and leaves the rows as
+        # they were, so its figures replace theirs.
+        for kind, rescored_metrics in rescored.get(config_id, {}).items():
+            metrics[kind] = {**metrics.get(kind, {}), **rescored_metrics}
         configurations.append({
             "run_id": run_dir.name,
             "config_id": config_id,
             "name": str(config.get("name") or config_id),
             "questions": int(summary.get("questions") or len(rows)),
             "incomplete": incomplete(summary, rows),
-            "benchmark_metrics": (saved_benchmark_metrics(rows, config.get("provider"))
-                                  if rows else _saved_split(summary.get("by_benchmark"))),
+            "benchmark_metrics": metrics,
         })
     if not configurations:
         return None
     # The saved summary is only for a run whose per-question answers are not here:
     # rescore writes its fresh one elsewhere, so the top-level one can be stale.
     saved_quality = _answer_quality(run_dir / "answer-summary.json")
-    answer_quality = {}
+    answer_quality, unscored = {}, []
     for item in configurations:
         config_id = item["config_id"]
-        quality = (_answered(run_dir / config_id / "answers.jsonl")
-                   or saved_quality.get(config_id))
+        answers = run_dir / config_id / "answers.jsonl"
+        answered = _answered(answers)
+        if answered is None and answers.is_file():
+            unscored.append(config_id)
+        quality = answered or saved_quality.get(config_id)
         if quality is not None:
             answer_quality[config_id] = quality
     return {"run_id": run_dir.name, "configurations": configurations,
-            "answer_quality": answer_quality}
+            "answer_quality": answer_quality, "unscored_answers": unscored}
 
 
 def _answered(path: Path) -> dict[str, Any] | None:
@@ -214,10 +241,18 @@ def retrieval_table(configurations: list[dict[str, Any]], benchmark: str) -> lis
     rows = []
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
+        counts = _record(saved.get("metric_denominators"))
+        relevance = any(saved.get(metric) is not None for metric in ("recall", "ndcg", "mrr"))
+        hard_negatives = saved.get("hard_negative_accuracy") is not None
+        # Recall, nDCG and MRR score the same questions: those with a gold passage.
         rows.append({"Configuration": item["config_id"], "Name": item["name"],
                      "Questions": saved.get("questions", item["questions"]),
-                     **{label: saved.get(metric)
-                        for metric, label in METRIC_LABELS.items()}})
+                     "Relevance-scored": counts.get("recall") if relevance else None,
+                     **{label: saved.get(metric) for metric, label in METRIC_LABELS.items()
+                        if metric != "hard_negative_accuracy"},
+                     "Hard negatives": (counts.get("hard_negative_accuracy")
+                                        if hard_negatives else None),
+                     METRIC_LABELS["hard_negative_accuracy"]: saved.get("hard_negative_accuracy")})
     return _without_empty_columns(rows)
 
 
@@ -235,6 +270,10 @@ def model_table(configurations: list[dict[str, Any]], benchmark: str) -> list[di
     return _without_empty_columns(rows)
 
 
+def _record(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, Any]]:
     """Judged answer quality per configuration, each mean beside how many outputs it scored.
 
@@ -250,12 +289,13 @@ def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, 
             continue
         row = {"Configuration": item["config_id"], "Name": item["name"],
                "Outputs": saved.get("questions")}
-        quality = saved.get("quality") or {}
+        # A saved summary is read as it is found: a part of the wrong shape is left blank.
+        quality = _record(saved.get("quality"))
         for metric, label in QUALITY_LABELS.items():
-            measured = quality.get(metric) or {}
+            measured = _record(quality.get(metric))
             row[label] = measured.get("mean")
             row[f"{label} scored"] = measured.get("scored")
-        checks = saved.get("checks") or {}
+        checks = _record(saved.get("checks"))
         row["Claim checks"] = ", ".join(f"{status} {count}"
                                         for status, count in sorted(checks.items())) or None
         rows.append(row)
@@ -276,6 +316,13 @@ def chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dic
                              "Metric": label,
                              "Value": float(value)})
     return rows
+
+
+def quality_chart_rows(run: dict[str, Any], benchmark: str) -> list[dict[str, Any]]:
+    """The judged answer-quality means of ``answer_quality_table``, one row per bar."""
+    return [{"Configuration": row["Configuration"], "Metric": label, "Value": float(row[label])}
+            for row in answer_quality_table(run, benchmark)
+            for label in QUALITY_LABELS.values() if row.get(label) is not None]
 
 
 def retrieval_configurations(configurations: list[dict[str, Any]],
@@ -311,6 +358,12 @@ def run_warnings(run: dict[str, Any]) -> list[str]:
         retrieved = item["benchmark_metrics"].get(TEAM, {}).get("questions")
         if isinstance(answered, int) and isinstance(retrieved, int) and answered < retrieved:
             unanswered.append(f"{item['config_id']} ({answered} of {retrieved} team questions answered)")
+    unscored = run.get("unscored_answers", [])
+    if unscored:
+        warnings.append("Unscored answers: " + ", ".join(unscored)
+                        + ". Their answers.jsonl could not be read or scored, so their answer "
+                        "quality is the saved answer-summary.json, which may be out of date, "
+                        "or is not shown.")
     if unanswered:
         warnings.append("Incomplete answers: " + ", ".join(unanswered)
                         + ". Their answer quality is partial and is not comparable to a complete run.")
@@ -339,14 +392,15 @@ def markdown_table(rows: list[dict[str, Any]]) -> str:
 # One colour per metric, from a palette that stays distinct under the common
 # colour-vision deficiencies, on a white plate so it reads in a dark viewer too.
 METRIC_COLOURS = {"Recall": "#4269d0", "nDCG": "#efb118", "MRR": "#ff725c",
-                  "Hard Negative Accuracy": "#6cc5b0"}
+                  "Hard Negative Accuracy": "#6cc5b0", "Correctness": "#3ca951",
+                  "Faithfulness": "#ff8ab7", "Answerability": "#a463f2",
+                  "Citation precision": "#97bbf5", "Citation recall": "#9c6b4e"}
 
 
 def svg_chart(rows: list[dict[str, Any]], title: str) -> str:
     """A grouped bar chart of ``chart_rows`` on a 0-1 axis: one group per configuration."""
     configurations = list(dict.fromkeys(row["Configuration"] for row in rows))
-    metrics = [label for label in METRIC_LABELS.values()
-               if any(row["Metric"] == label for row in rows)]
+    metrics = [label for label in METRIC_COLOURS if any(row["Metric"] == label for row in rows)]
     left, top, plot_height, group_width = 48, 56, 240, max(24 * len(metrics) + 24, 72)
     width = left + group_width * len(configurations) + 16
     height = top + plot_height + 40
@@ -413,6 +467,11 @@ def report_files(run: dict[str, Any]) -> dict[str, str]:
             section += "\n### Answer-model ablation\n\n" + markdown_table(models)
         if quality:
             section += "\n### Answer quality\n\n" + markdown_table(quality)
+        quality_chart = quality_chart_rows(run, kind)
+        if quality_chart:
+            name = f"{kind}-answer-quality.svg"
+            files[name] = svg_chart(quality_chart, f"{title}: answer quality")
+            section += f"\n![Answer quality]({name})\n"
         sections.append(section)
     files["ablation.md"] = "\n".join(sections)
     return files
@@ -446,6 +505,11 @@ def main(argv: list[str] | None = None) -> None:
     out = args.out or REPORT_ROOT / run["run_id"]
     if out.exists() and not out.is_dir():
         parser.error(f"--out {out} is not a folder")
+    # The run's own files are hashed by the tools that publish it, so a report
+    # beside them would change what they check. Symlinks are followed here.
+    run_real, out_real = Path(os.path.realpath(args.run_dir)), Path(os.path.realpath(out))
+    if out_real == run_real or run_real in out_real.parents:
+        parser.error(f"--out {out} is inside the run it reads; write the report elsewhere")
     try:
         write_report(run, out)
     except OSError as error:

@@ -41,8 +41,8 @@ def test_the_command_writes_the_team_ablation_table_from_a_run_directory(tmp_pat
 
     table = (out / "ablation.md").read_text(encoding="utf-8")
     assert "| --- | --- | ---: | ---: | ---: |" in table
-    assert "| C1 | row C1 | 2 | 0.5000 | 0.3750 |" in table
-    assert "| C4 | row C4 | 2 | 1.0000 | 0.7500 |" in table
+    assert "| C1 | row C1 | 2 | 2 | 0.5000 | 0.3750 |" in table
+    assert "| C4 | row C4 | 2 | 2 | 1.0000 | 0.7500 |" in table
 
 
 def test_a_score_one_configuration_lacks_shows_as_a_dash_and_draws_no_bar(tmp_path):
@@ -54,7 +54,7 @@ def test_a_score_one_configuration_lacks_shows_as_a_dash_and_draws_no_bar(tmp_pa
 
     report.main([str(run), "--out", str(out)])
 
-    assert "| C4 | row C4 | 1 | 1.0000 | — |" in (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 1 | 1 | 1.0000 | — |" in (out / "ablation.md").read_text(encoding="utf-8")
     assert set(_bars(out / "handwritten-retrieval.svg")) == {
         "C1 Recall: 0.5000", "C1 nDCG: 0.5000", "C4 Recall: 1.0000"}
 
@@ -67,7 +67,7 @@ def test_without_out_the_report_lands_beside_the_committed_evaluation_summaries(
 
     written = tmp_path / "docs" / "evaluation" / "matrix" / "ablation.md"
     assert written.is_file()
-    assert "| C4 | row C4 | 1 | 1.0000 |" in written.read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 1 | 1 | 1.0000 |" in written.read_text(encoding="utf-8")
 
 
 def test_a_folder_without_a_saved_run_is_refused_without_writing_anything(tmp_path, capsys):
@@ -131,7 +131,7 @@ def test_regenerating_after_a_rerun_replaces_the_report_with_no_stale_chart(tmp_
     report.main([str(run), "--out", str(out)])
 
     table = (out / "ablation.md").read_text(encoding="utf-8")
-    assert "| C4 | row C4 | 1 | 0.7500 |" in table
+    assert "| C4 | row C4 | 1 | 1 | 0.7500 |" in table
     assert "Mechanical XBRL benchmark" not in table
     assert not (out / "mechanical-retrieval.svg").exists()
     assert (out / "notes.txt").read_text(encoding="utf-8") == "kept"
@@ -253,7 +253,7 @@ def test_an_unreadable_answer_summary_leaves_the_retrieval_report_intact(tmp_pat
     report.main([str(run), "--out", str(out)])
 
     table = (out / "ablation.md").read_text(encoding="utf-8")
-    assert "| C4 | row C4 | 1 | 1.0000 |" in table
+    assert "| C4 | row C4 | 1 | 1 | 1.0000 |" in table
     assert "Answer quality" not in table
 
 
@@ -266,7 +266,7 @@ def test_a_pipe_in_a_configuration_name_does_not_split_its_table_cell(tmp_path):
 
     report.main([str(run), "--out", str(out)])
 
-    assert "| C4 | BM25 \\| dense | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | BM25 \\| dense | 1 | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
 
 
 def test_a_line_break_in_a_name_stays_inside_its_table_row(tmp_path):
@@ -278,7 +278,7 @@ def test_a_line_break_in_a_name_stays_inside_its_table_row(tmp_path):
 
     report.main([str(run), "--out", str(out)])
 
-    assert "| C4 | BM25 dense | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | BM25 dense | 1 | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
 
 
 def _answer_row(question_id, correctness, *, abstained=False):
@@ -385,3 +385,160 @@ def test_answers_for_fewer_team_questions_than_were_retrieved_are_marked_partial
     table = (out / "ablation.md").read_text(encoding="utf-8")
     assert "Incomplete answers: C4 (1 of 2 team questions answered)." in table
     assert "C3 (" not in table
+
+
+def test_a_rescored_runs_retrieval_figures_reach_the_report(tmp_path):
+    """rescore writes recomputed retrieval under rescored/, leaving questions.jsonl as it was."""
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 1.0}, {"question_id": "xbrl-q2", "recall": 1.0}]})
+    (run / "rescored").mkdir()
+    (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [{
+        "config": {"id": "C4"}, "by_benchmark": {"team": {"questions": 1, "recall": 0.25},
+                                                  "xbrl": {"questions": 1, "recall": 0.5}}}]}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    team, mechanical = table.split("## Mechanical XBRL benchmark")
+    assert "| C4 | row C4 | 1 | 1 | 0.2500 |" in team
+    assert "| C4 | row C4 | 1 | 1 | 0.5000 |" in mechanical
+    assert set(_bars(out / "handwritten-retrieval.svg")) == {"C4 Recall: 0.2500"}
+
+
+@pytest.mark.parametrize("saved", [
+    "not json", "[]", '{"configurations": ["broken"]}', '{"configurations": [{"config": "C4"}]}',
+    '{"configurations": [{"config": {"id": "C4"}, "by_benchmark": {"team": 0.25}}]}'])
+def test_an_unreadable_rescore_summary_leaves_the_saved_rows_in_charge(tmp_path, saved):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    (run / "rescored").mkdir()
+    (run / "rescored" / "summary.json").write_text(saved, encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | row C4 | 1 | 1 | 1.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("saved_summary", [True, False], ids=["saved summary", "no summary"])
+@pytest.mark.parametrize("answers", ["", '{"question_id": "q1", "qual', '{"question_id": "q1"}\n'],
+                         ids=["empty", "unfinished line", "unscorable row"])
+def test_answers_that_exist_but_cannot_be_scored_are_flagged(tmp_path, answers, saved_summary):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    if saved_summary:
+        _save_answers(run, C4={"questions": 1, "quality": {"correctness": _quality(0.9, 1, 1)}})
+    (run / "C4" / "answers.jsonl").write_text(answers, encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "Unscored answers: C4." in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+def test_a_configuration_without_an_answers_file_is_not_flagged(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 1, "quality": {"correctness": _quality(0.9, 1, 1)}})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "Unscored answers" not in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("summary", [
+    {"questions": 150, "quality": "corrupt"},
+    {"questions": 150, "quality": {"correctness": 0.8}},
+    {"questions": 150, "quality": {"correctness": _quality(0.8, 150)}, "checks": ["not_run"]},
+], ids=["quality not a record", "metric not a record", "checks not a record"])
+def test_an_oddly_shaped_answer_summary_does_not_stop_the_report(tmp_path, summary):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4=summary)
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 1 | 1 | 1.0000 |" in table
+    assert "| C4 | row C4 | 150 |" in table
+
+
+@pytest.mark.parametrize("inside", [".", "report", "C4/../report"])
+def test_the_report_is_never_written_inside_the_run_it_reads(tmp_path, capsys, inside):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    before = sorted(path.relative_to(run) for path in run.rglob("*"))
+
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(run), "--out", str(run / inside)])
+
+    assert stopped.value.code == 2
+    assert "inside the run" in capsys.readouterr().err
+    assert sorted(path.relative_to(run) for path in run.rglob("*")) == before
+
+
+def test_the_retrieval_table_says_how_many_questions_each_mean_covers(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 1.0, "ndcg": 1.0, "hard_negative_accuracy": 1.0},
+        {"question_id": "q2", "recall": 0.0, "ndcg": 0.5},
+        {"question_id": "q3"}]})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert ("| Configuration | Name | Questions | Relevance-scored | Recall | nDCG "
+            "| Hard negatives | Hard Negative Accuracy |") in table
+    assert "| C4 | row C4 | 3 | 2 | 0.5000 | 0.7500 | 1 | 1.0000 |" in table
+
+
+def test_a_summary_only_run_reports_its_saved_denominators(tmp_path):
+    run = tmp_path / "results" / "matrix"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [{
+        "config": {"id": "C4", "name": "filtered hybrid"}, "questions": 150,
+        "by_benchmark": {"xbrl": {"questions": 1884, "recall": 0.7627,
+                                  "hard_negative_accuracy": None,
+                                  "metric_denominators": {"recall": 1884,
+                                                          "hard_negative_accuracy": 0}}}}]}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| Configuration | Name | Questions | Relevance-scored | Recall |" in table
+    assert "| C4 | filtered hybrid | 1884 | 1884 | 0.7627 |" in table
+
+
+def test_answer_quality_gets_its_own_chart(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 150, "quality": {"correctness": _quality(0.8, 150),
+                                                         "faithfulness": _quality(0.4, 145)}})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "![Answer quality](handwritten-answer-quality.svg)" in (
+        out / "ablation.md").read_text(encoding="utf-8")
+    bars = _bars(out / "handwritten-answer-quality.svg")
+    assert set(bars) == {"C4 Correctness: 0.8000", "C4 Faithfulness: 0.4000"}
+    assert bars["C4 Correctness: 0.8000"] == 2 * bars["C4 Faithfulness: 0.4000"]
+
+    _save_answers(run)
+    report.main([str(run), "--out", str(out)])
+    assert not (out / "handwritten-answer-quality.svg").exists()
+
+
+@pytest.mark.parametrize("row, absent", [
+    ({"question_id": "q1", "recall": 1.0}, "Hard negatives"),
+    ({"question_id": "q1", "hard_negative_accuracy": 1.0}, "Relevance-scored"),
+])
+def test_a_count_column_goes_with_the_scores_it_counts(tmp_path, row, absent):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [row]})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 1 | 1 | 1.0000 |" in table
+    assert absent not in table

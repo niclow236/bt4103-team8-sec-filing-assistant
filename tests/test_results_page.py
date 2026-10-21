@@ -120,7 +120,8 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert manual.dataframe[0].value["Recall"].tolist() == [1.0]
     assert mechanical.dataframe[0].value["Recall"].tolist() == [0.0]
     assert list(manual.dataframe[0].value.columns) == [
-        "Configuration", "Name", "Questions", "Recall", "Hard Negative Accuracy"]
+        "Configuration", "Name", "Questions", "Relevance-scored", "Recall",
+        "Hard negatives", "Hard Negative Accuracy"]
     charts = app.get("vega_lite_chart")
     assert len(charts) == 2
     for chart in charts:
@@ -417,3 +418,23 @@ def test_a_run_with_answer_quality_but_no_retrieval_scores_still_shows_it(tmp_pa
     team = app.tabs[0]
     assert not team.info
     assert team.dataframe[0].value["Correctness"].tolist() == [0.5]
+
+
+def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    run = tmp_path / "matrix"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1", "recall": 1.0}) + "\n", encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "quality": {"correctness": {"mean": 0.8, "scored": 150}}}}}),
+        encoding="utf-8")
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    charts = app.tabs[0].get("vega_lite_chart")
+    assert len(charts) == 2
+    values = json.dumps(json.loads(charts[1].proto.spec).get("datasets", {})) + charts[1].proto.spec
+    assert "Correctness" in values

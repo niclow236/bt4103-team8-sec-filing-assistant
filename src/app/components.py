@@ -85,6 +85,10 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not quality.empty:
         st.subheader("Answer quality")
         st.dataframe(quality, width="stretch", hide_index=True)
+        quality_chart = report.quality_chart_rows(run, benchmark)
+        if quality_chart:
+            st.bar_chart(pd.DataFrame(quality_chart).pivot(
+                index="Configuration", columns="Metric", values="Value"), stack=False)
 
 
 def render_results(runs: list[dict[str, Any]]) -> None:
