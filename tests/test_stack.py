@@ -389,6 +389,14 @@ def test_only_a_row_with_the_metadata_filter_answers_a_figure_from_the_facts_sto
         stack("C4").answer(QUESTION, query=within_item, facts_file=facts_file)
 
 
+def test_a_row_answers_figures_unaided_only_with_the_route_and_the_filter():
+    # What the app's provider warning names (#156): C4, and not a row like it
+    # with the route turned off.
+    assert STACKS["C4"].answers_figures_from_facts is True
+    assert STACKS["C1"].answers_figures_from_facts is False
+    assert replace(STACKS["C4"], use_facts=False).answers_figures_from_facts is False
+
+
 # --- the configurations results/ has measured ------------------------------------------
 
 def _write_run(root, run_id, *config_ids, questions=48):
