@@ -197,9 +197,11 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         })
     if not configurations:
         return None
-    # The saved summary is only for a run whose per-question answers are not here:
-    # rescore writes its fresh one elsewhere, so the top-level one can be stale.
-    saved_quality = _answer_quality(run_dir / "answer-summary.json")
+    # The saved summary is only for a run whose per-question answers are not here.
+    # rescore writes a fresh one under rescored/ for the configurations it
+    # rescored, so it wins over the top-level one, which can be stale.
+    saved_quality = {**_answer_quality(run_dir / "answer-summary.json"),
+                     **_answer_quality(run_dir / "rescored" / "answer-summary.json")}
     answer_quality, unscored = {}, []
     for item in configurations:
         config_id = item["config_id"]

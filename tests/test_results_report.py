@@ -408,6 +408,22 @@ def test_a_rescored_runs_retrieval_figures_reach_the_report(tmp_path):
     assert set(_bars(out / "handwritten-retrieval.svg")) == {"C4 Recall: 0.2500"}
 
 
+def test_without_saved_answers_the_rescored_answer_summary_wins(tmp_path):
+    """rescore writes fresh answer quality under rescored/ and leaves the top-level one."""
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 150, "quality": {"correctness": _quality(0.1, 150)}})
+    (run / "rescored").mkdir()
+    (run / "rescored" / "answer-summary.json").write_text(json.dumps({"configurations": {
+        "C4": {"questions": 150, "quality": {"correctness": _quality(0.9, 150)}}}}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 150 | 0.9000 | 150 |" in table
+
+
 @pytest.mark.parametrize("saved", [
     "not json", "[]", '{"configurations": null}', '{"configurations": 5}',
     '{"configurations": ["broken"]}',
