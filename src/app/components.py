@@ -4,6 +4,9 @@ Each component draws what it is handed. None builds a stack, asks a model or
 caches anything: a page reads the question, loads through ``state.py``, asks,
 and passes the results here, so a second page that shows an answer shows it
 the same way. The sidebar's own selections are the only thing one holds.
+The Results page's before and after view is handed the reader of one
+configuration's saved questions rather than the questions, since which two it
+reads turns on the pickers it draws; the reader is still ``state.py``'s.
 
 The sidebar returns the Query to pass to ``answer_question(query=...)``.
 Render completed Answer records; citation numbers always refer to prompt order.
@@ -14,9 +17,10 @@ an index or asking a model.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, replace
 from hashlib import sha256
+from operator import attrgetter
 from html import escape
 import re
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
@@ -39,7 +43,7 @@ from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
 if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
-    from src.app.state import AnswerModels
+    from src.app.state import AnswerModels, QuestionOutcome
     from src.rag.generate import ProviderUnavailable
 
 
@@ -65,13 +69,14 @@ def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -
 
 
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
-                              run: dict[str, Any], benchmark: str) -> None:
+                              run: dict[str, Any], benchmark: str) -> bool:
+    """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
     model_table = _results_model_table(run["configurations"], benchmark)
     quality = pd.DataFrame(report.answer_quality_table(run, benchmark))
     if not retrieval and model_table.empty and quality.empty:
         st.info("No saved results for this benchmark.")
-        return
+        return False
     if retrieval:
         st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
     chart_rows = result_chart_rows(retrieval, benchmark)
@@ -89,10 +94,218 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
         if quality_chart:
             st.bar_chart(pd.DataFrame(quality_chart).pivot(
                 index="Configuration", columns="Metric", values="Value"), stack=False)
+    return True
 
 
-def render_results(runs: list[dict[str, Any]]) -> None:
-    """Draw the saved Results page; loading and caching remain in state.py."""
+# The cutoff "found the right passage" is judged at, the top 10 the issue
+# asks for (#169). It is not the run's own: the full matrix scores its Recall
+# and MRR at 16 (FINAL_K), so a right passage ranked 11 to 16 counts there
+# and not here. Ranks are worked out from the saved passages, not from MRR.
+_FOUND_WITHIN = 10
+# What a configuration is compared against until another baseline is picked:
+# naive BM25, the configuration every design choice is measured from.
+_DEFAULT_BASELINE = "C0"
+
+
+def _found(outcome: QuestionOutcome) -> bool | None:
+    """Whether the right passage ranked in the top 10, or None for an unscored question."""
+    if not outcome.scored:
+        return None
+    return outcome.rank is not None and outcome.rank <= _FOUND_WITHIN
+
+
+class _Measure(NamedTuple):
+    """What the before and after view counts changes on."""
+
+    title: str
+    column: str         # the table column that says how a question changed on it
+    shown: str          # what each configuration's own column is headed with
+    # What that column shows of a question's outcome, and the column's type.
+    value: Callable[[QuestionOutcome], Any]
+    dtype: str | None
+    # How one question's outcome scores on it, None where it was not scored.
+    score: Callable[[QuestionOutcome], float | None]
+    unscored: str       # why a question both answered was not counted on it
+
+
+_TOP_10 = _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
+                   # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
+                   "rank", attrgetter("rank"), "Int64", _found,
+                   # No right passage to find, or a row that could not be read.
+                   "were not scored on retrieval by both")
+_MEASURES = (
+    _TOP_10,
+    # Scored by the LLM judge, or for an abstention by whether abstaining was
+    # right, so not "judged" correctness alone.
+    _Measure("Answer correctness", "Correctness", "correctness", attrgetter("correctness"),
+             None, attrgetter("correctness"), "had no scored answer from both"),
+)
+_SHOW_ALL = "All questions"
+# The text colour of a change in the table, matching the green and red of the
+# counts above it in each theme: (light, dark).
+_IMPROVED, _WORSE, _UNCHANGED = "improved", "worse", "unchanged"
+_CHANGE_COLOURS = {_IMPROVED: ("#158237", "#5ce488"), _WORSE: ("#bd4043", "#ff6c6c")}
+
+
+def _change(before: float, after: float) -> str:
+    return _IMPROVED if after > before else _WORSE if after < before else _UNCHANGED
+
+
+# The table's own column saying a question's text is today's benchmark's,
+# counted for the caption and dropped before the table is drawn.
+_FROM_CURRENT = "_from_current_benchmark"
+
+
+def _worded_by(before: QuestionOutcome, after: QuestionOutcome) -> QuestionOutcome:
+    """The outcome whose text the table shows: the baseline's, unless only the
+    other configuration kept the run's own wording."""
+    if after.question and not after.current_text and (before.current_text or not before.question):
+        return after
+    return before
+
+
+def _measured_change(measure: _Measure, before: QuestionOutcome,
+                     after: QuestionOutcome) -> str | None:
+    """How one question changed on ``measure``, None unless both were scored on it."""
+    scores = measure.score(before), measure.score(after)
+    return None if None in scores else _change(*scores)
+
+
+def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str, QuestionOutcome],
+                      benchmark: str, names: tuple[str, str],
+                      ) -> tuple[int, list[tuple[_Measure, Counter]], pd.DataFrame]:
+    """What changed from ``before`` to ``after`` on one benchmark's questions.
+
+    Returns how many of its questions both answered, each measure both were
+    scored on with its counts, and one row per question with each
+    configuration's own value, headed by ``names``, how it changed, and
+    whether its text is today's benchmark's (``_FROM_CURRENT``).
+    """
+    shared = {question_id: (before[question_id], outcome)
+              for question_id, outcome in after.items()
+              if question_id in before and outcome.benchmark == benchmark}
+    changed = {question_id: {measure.column: _measured_change(measure, old, new)
+                             for measure in _MEASURES}
+               for question_id, (old, new) in shared.items()}
+    counts = []
+    for measure in _MEASURES:
+        changes = Counter(change[measure.column] for change in changed.values()
+                          if change[measure.column] is not None)
+        if changes:
+            counts.append((measure, changes))
+    rows = []
+    for question_id, (old, new) in shared.items():
+        worded = _worded_by(old, new)
+        row = {"Question": question_id, "Asked": worded.question,
+               _FROM_CURRENT: worded.current_text}
+        for measure, _ in counts:
+            for name, outcome in zip(names, (old, new)):
+                row[f"{name} {measure.shown}"] = measure.value(outcome)
+            row[measure.column] = changed[question_id][measure.column]
+        if any(row[measure.column] for measure, _ in counts):
+            rows.append(row)
+    table = pd.DataFrame(rows).astype({
+        f"{name} {measure.shown}": measure.dtype
+        for measure, _ in counts if measure.dtype for name in names})
+    return len(shared), counts, table
+
+
+def _render_question_changes(run: Mapping[str, Any], benchmark: str,
+                             outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
+    """Question by question, what one configuration changed against a baseline (#169)."""
+    # Only a configuration whose questions on this benchmark were read can be
+    # compared. A summary's own by-benchmark scores do not make it one.
+    # Its rows, or a summary keyed as the tabs are, tell which benchmarks it
+    # ran; with neither, there is no telling.
+    elsewhere = [item["config_id"] for item in run["configurations"]
+                 if (item.get("questions_read") or report.keyed_as_tabs(item))
+                 and benchmark not in item["benchmark_metrics"]]
+    unread = [item["config_id"] for item in run["configurations"]
+              if not item.get("questions_read") and item["config_id"] not in elsewhere]
+    config_ids = [item["config_id"] for item in run["configurations"]
+                  if item["config_id"] not in unread + elsewhere]
+    # With fewer than two to compare, the section still says which were left
+    # out for want of their files; one that ran no question here needs no word.
+    if len(config_ids) < 2 and not (unread and len(run["configurations"]) > 1):
+        return
+    st.subheader("Before and after")
+    if unread:
+        st.caption("Not offered, since their per-question results were not found on this "
+                   "machine: " + ", ".join(unread))
+    if elsewhere:
+        st.caption("Not offered, since they saved no question on this benchmark: "
+                   + ", ".join(elsewhere))
+    if len(config_ids) < 2:
+        return
+    baseline = _existing_choice("Baseline", config_ids, key=f"results_baseline_{benchmark}",
+                                format_func=str, default=_DEFAULT_BASELINE)
+    others = [config_id for config_id in config_ids if config_id != baseline]
+    compared = _existing_choice("Configuration", others, key=f"results_compared_{benchmark}",
+                                format_func=str)
+    answered, counts, table = _question_changes(outcomes(run["run_dir"], baseline),
+                                                outcomes(run["run_dir"], compared),
+                                                benchmark, (baseline, compared))
+    if not counts:
+        st.info(f"{baseline} and {compared} have no saved question in common "
+                "that was scored the same way on this benchmark.")
+        return
+    scored_at = run.get("top_k")
+    for measure, changes in counts:
+        _render_change_counts(measure, changes, answered)
+        if measure is _TOP_10 and isinstance(scored_at, int) and scored_at > _FOUND_WITHIN:
+            # The cutoff stays the issue's top 10, and this says why the
+            # counts can disagree with the scores above them (#169).
+            ranks = (f"{_FOUND_WITHIN + 1}" if scored_at == _FOUND_WITHIN + 1
+                     else f"{_FOUND_WITHIN + 1} to {scored_at}")
+            st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
+                       f"ranked {ranks} counts there but not here.")
+    filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
+               for measure, _ in counts for change in (_IMPROVED, _WORSE)}
+    show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
+    if show in filters:
+        column, change = filters[show]
+        table = table[table[column] == change]
+    from_current_benchmark = int(table[_FROM_CURRENT].sum())
+    table = table.drop(columns=_FROM_CURRENT)
+    if from_current_benchmark:
+        st.caption(f"The text of {_plural(from_current_benchmark, 'question')} is from the "
+                   "benchmark as it stands now, since this run kept none, and may not be how "
+                   "the run asked it.")
+    dark = _dark_theme()
+
+    def colour(change: str | None) -> str:
+        shades = _CHANGE_COLOURS.get(change)
+        return f"color: {shades[dark]}" if shades else ""
+
+    styled = table.style.map(colour, subset=[measure.column for measure, _ in counts])
+    # A styled table is shown as the styler formats it, so say how: scores to
+    # two places. A missing value is drawn by the grid itself, as "None",
+    # whatever the styler says.
+    st.dataframe(styled.format(precision=2), width="stretch", hide_index=True)
+
+
+def _render_change_counts(measure: _Measure, changes: Counter, answered: int) -> None:
+    """One measure's counts, and how many of the questions both answered they cover."""
+    st.markdown(f"**{measure.title}**")
+    counted = changes.total()
+    if counted == answered:
+        st.caption(f"Out of the {_plural(answered, 'question')} both configurations answered.")
+    else:
+        st.caption(f"Out of {counted} of the {answered} questions both configurations answered; "
+                   f"the other {answered - counted} {measure.unscored}.")
+    improved, worse, unchanged = st.columns(3)
+    improved.metric(":green[Improved]", changes[_IMPROVED])
+    worse.metric(":red[Worse]", changes[_WORSE])
+    unchanged.metric("Unchanged", changes[_UNCHANGED])
+
+
+def render_results(runs: list[dict[str, Any]], *,
+                   outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
+    """Draw the saved Results page; loading and caching remain in state.py.
+
+    ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
+    for the before and after view.
+    """
     if not runs:
         st.info("No completed benchmark runs were found under results/.")
         return
@@ -105,7 +318,9 @@ def render_results(runs: list[dict[str, Any]]) -> None:
                                 report.BENCHMARKS):
         with tab:
             matching = report.retrieval_configurations(selected["configurations"], kind)
-            _render_results_benchmark(title, matching, selected, kind)
+            saved = _render_results_benchmark(title, matching, selected, kind)
+            if saved:
+                _render_question_changes(selected, kind, outcomes)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
@@ -147,12 +362,17 @@ def _item_order(item: str) -> tuple[int, str]:
     return (_ITEMS.index(item), "") if item in _ITEMS else (len(_ITEMS), item)
 
 
-def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None):
-    """Draw a required selectbox and discard a stale dependent selection."""
+def _existing_choice(label: str, options: Sequence, *, key: str, format_func=None,
+                     default: Any = None):
+    """Draw a required selectbox and discard a stale dependent selection.
+
+    A selection that is not one of ``options`` falls back to ``default``, or to
+    the first option when ``default`` is not one either.
+    """
     if not options:
         raise ValueError(f"{label} has no options")
     if st.session_state.get(key) not in options:
-        st.session_state[key] = options[0]
+        st.session_state[key] = default if default in options else options[0]
     return st.selectbox(label, options, key=key, format_func=format_func)
 
 

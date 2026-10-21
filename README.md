@@ -39,7 +39,56 @@ The download therefore searches EDGAR over filing years, which is how EDGAR inde
 
 The corpus is rectangular: fiscal years 2021 to 2025, all 15 companies in each, 75 filings with no gaps and nothing outside the scope. `FilingRecord.fiscal_year` gives the year directly, and `iter_chunks(fiscal_years=...)` filters on it.
 
-Filings stay out of version control (see `.gitignore`), so each person runs the pipeline once to build their own local copy.
+Large data stays outside version control (see `.gitignore`). Teammates can use
+the shared frozen snapshot below for evaluation, or run the pipeline to build
+a new corpus.
+
+### Shared frozen evaluation dataset
+
+The [evaluation data v1 release](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/releases/tag/data/evaluation-v1)
+shares the exact inputs used by #155 and #182: **150 team questions, 12,579 XBRL
+questions, 28,289 processed passages from 75 filings, and 41,710 XBRL facts**.
+Download the **`sec-eval-150-12579-v1.tar.gz`** asset (about 9.2 MB).
+The generated questions and their matching corpus travel together because
+question evidence refers to specific chunk IDs. Pulling Git alone does not
+download these ignored files.
+
+Use a fresh evaluation clone to keep this snapshot separate from an existing
+local corpus. The recorded code commit provides a compatible starting point:
+
+```bash
+git clone https://github.com/niclow236/bt4103-team8-sec-filing-assistant.git sec-filing-eval-v1
+cd sec-filing-eval-v1
+git checkout 0a205d0c8c5fc6dfc4d6cafce1db6acf12ff8e4b
+gh release download data/evaluation-v1 --repo niclow236/bt4103-team8-sec-filing-assistant --dir downloads/evaluation-v1
+tar -xzf downloads/evaluation-v1/sec-eval-150-12579-v1.tar.gz --strip-components=1
+python verify_data_snapshot.py
+```
+
+Browser download and checksum instructions are also on the release page and
+in the archive's `DATA_SNAPSHOT_README.md`. The verifier uses only Python's
+standard library; it checks file hashes, question/passage counts and IDs,
+evidence membership, and unexpected processed JSON files.
+
+Follow [Getting started](#getting-started) for the Python environment, then
+build the machine's search indexes once:
+
+```bash
+python -m src.retrieval bm25
+python -m src.retrieval embed
+python -m src.retrieval check
+```
+
+The processed filings, frozen questions and facts store are already supplied.
+Keep them unchanged when reproducing this dataset; rebuilding the pipeline or
+regenerating the benchmark creates a new data identity. Each teammate configures
+their own answer provider/key and uses a new run ID with their own indexes.
+The repository copy of the verifier is
+[tools/verify_data_snapshot.py](tools/verify_data_snapshot.py).
+
+Published v1 assets stay frozen. A changed corpus or question set gets a new
+snapshot/release version and updated hashes, so everyone can name exactly
+which dataset their results use.
 
 ## Approach
 

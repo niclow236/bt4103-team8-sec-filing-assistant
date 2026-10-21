@@ -9,6 +9,7 @@ st.header("Results")
 st.caption("Saved benchmark results are read from results/<run-id>/; no evaluation is rerun.")
 if st.button("Reload saved results"):
     state.result_runs.clear()
+    state.question_outcomes.clear()
     st.rerun()
 
-render_results(state.result_runs())
+render_results(state.result_runs(), outcomes=state.question_outcomes)

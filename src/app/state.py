@@ -7,7 +7,9 @@ no page holds a cache of its own:
 - for the process, with ``st.cache_resource``: the indexes and the embedding
   model (``_indexes``), each built configuration (``load_stack``), and the
   local passages shown by the Browse page (``corpus_passages``), and with
-  ``st.cache_data`` the runs under ``results/`` (``measured``);
+  ``st.cache_data`` the runs under ``results/`` (``measured``,
+  ``result_runs``) and one configuration's saved questions
+  (``question_outcomes``);
 - from ``.env``, read on every rerun: the providers a page can offer, the one
   it opens on, and what any of them lacks (``answer_models``);
 - for the process, per configuration: the answer a repeated question was
@@ -51,13 +53,119 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
 
-from src.evaluation.report import read_runs
+from src.evaluation.benchmark import DEFAULT_GENERATED_QUESTIONS_PATH, DEFAULT_QUESTIONS_PATH
+from src.evaluation.metrics import first_relevant_rank
+from src.evaluation.report import benchmark_kind, question_rows, read_result_rows, read_runs
+
+# Where a question's text is looked up when the rows a run saved for it kept
+# none, as an embedding ablation's do: the team's questions and, where it has
+# been generated on this machine, the XBRL benchmark.
+BENCHMARK_FILES = (DEFAULT_QUESTIONS_PATH, DEFAULT_GENERATED_QUESTIONS_PATH)
 
 
 @st.cache_data(show_spinner=False)
 def result_runs(results_root: Path = RESULTS_ROOT) -> list[dict[str, Any]]:
     """Read saved evaluation runs, including older files, without rerunning them."""
     return read_runs(results_root)
+
+
+class QuestionOutcome(NamedTuple):
+    """How one configuration of a saved run did on one question (#169)."""
+
+    question: str                     # its text, where the saved row kept it
+    benchmark: str                    # as ``benchmark_kind`` classifies the row
+    scored: bool = False              # whether it was scored on retrieval at all
+    rank: int | None = None           # of its first right passage, None if none was retrieved
+    correctness: float | None = None  # what its answer was scored, where it was
+    # Whether its text was looked up in the benchmark as it stands now, which
+    # may word it differently from what the run asked.
+    current_text: bool = False
+
+
+def _chunk_ids(value: Any) -> list[str] | None:
+    """``value`` if it is a saved list of chunk ids, and None if it is anything else."""
+    if isinstance(value, list) and all(isinstance(chunk_id, str) for chunk_id in value):
+        return value
+    return None
+
+
+def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
+    """Whether ``row`` was scored on retrieval, and where its first right passage ranked.
+
+    The rank is None when no right passage was retrieved at all, and a row
+    whose retrieved passages cannot be read is left unscored. A row that
+    does not name its right passages, as ``src.evaluation.run`` saves one, is
+    ranked by its reciprocal rank, which is None for an unscored question and
+    0 when no right passage made the cutoff it was scored at.
+    """
+    supporting = _chunk_ids(row.get("scoring_supporting_chunk_ids"))
+    if supporting is None:
+        reciprocal = row.get("mrr")
+        if not isinstance(reciprocal, (int, float)):
+            return False, None
+        return True, round(1 / reciprocal) if reciprocal > 0 else None
+    retrieved = _chunk_ids(row.get("retrieved_chunk_ids"))
+    if not supporting or retrieved is None:
+        return False, None
+    return True, first_relevant_rank(retrieved, supporting)
+
+
+def _question_text(row: dict[str, Any]) -> str:
+    """The question a saved row asked: a retrieval row keeps it in its query, an answer row in its answer."""
+    for field, key in (("query", "text"), ("answer", "question")):
+        held = row.get(field)
+        if isinstance(held, dict):
+            return str(held.get(key, ""))
+    return ""
+
+
+def _benchmark_texts(paths: tuple[Path, ...]) -> dict[str, str]:
+    """Each question's text, by id, as the benchmark files at ``paths`` word it."""
+    return {str(row.get("question_id")): str(row.get("question") or "")
+            for path in paths for row in read_result_rows(path)}
+
+
+@st.cache_data(show_spinner=False)
+def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome]:
+    """How one configuration of a saved run did on each question, by question id (#169).
+
+    Read on demand for the two configurations a comparison names, rather than
+    held by ``result_runs`` for every configuration of every run.
+    """
+    outcomes: dict[str, QuestionOutcome] = {}
+    folder = Path(run_dir) / config_id
+    for row in question_rows(folder):
+        question_id = row.get("question_id")
+        if not question_id:
+            continue
+        scored, rank = _first_right_rank(row)
+        outcomes[str(question_id)] = QuestionOutcome(
+            _question_text(row), benchmark_kind(row), scored, rank)
+    answers = (read_result_rows(folder / "answers.jsonl")
+               or read_result_rows(folder / "report.json"))
+    for row in answers:
+        question_id = row.get("question_id")
+        quality = row.get("quality")
+        if not question_id or not isinstance(quality, dict):
+            continue
+        outcome = outcomes.get(str(question_id)) or QuestionOutcome(
+            _question_text(row), benchmark_kind(row))
+        correctness = quality.get("correctness")
+        # Only a number is compared: text there is a malformed row, not a score.
+        outcomes[str(question_id)] = outcome._replace(
+            correctness=correctness if isinstance(correctness, (int, float)) else None)
+    # The benchmark the run froze, where it froze one, is what it asked.
+    frozen = _benchmark_texts((Path(run_dir) / "benchmark.jsonl",))
+    current = _benchmark_texts(BENCHMARK_FILES)
+    for question_id, outcome in outcomes.items():
+        if outcome.question:
+            continue
+        if frozen.get(question_id):
+            outcomes[question_id] = outcome._replace(question=frozen[question_id])
+        elif current.get(question_id):
+            outcomes[question_id] = outcome._replace(question=current[question_id],
+                                                     current_text=True)
+    return outcomes
 
 
 @st.cache_resource(show_spinner="Reading the local filing corpus…", validate=bool)

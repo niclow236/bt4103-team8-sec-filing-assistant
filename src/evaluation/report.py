@@ -75,6 +75,12 @@ def read_result_rows(path: Path) -> list[dict[str, Any]]:
         return []
 
 
+def question_rows(folder: Path) -> list[dict[str, Any]]:
+    """A configuration's per-question rows: questions.jsonl, or the report.json
+    an answer-model or embedding ablation saves them in."""
+    return read_result_rows(folder / "questions.jsonl") or read_result_rows(folder / "report.json")
+
+
 def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = None) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -171,9 +177,7 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         config_dir = run_dir / config_id
         if config_dir.resolve().parent != run_dir.resolve():
             continue
-        rows = read_result_rows(config_dir / "questions.jsonl")
-        if not rows:
-            rows = read_result_rows(config_dir / "report.json")
+        rows = question_rows(config_dir)
         metrics = (saved_benchmark_metrics(rows, config.get("provider"))
                    if rows else _saved_split(summary.get("by_benchmark")))
         # rescore recomputes retrieval under rescored/ and leaves the rows as
@@ -187,6 +191,9 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
             "questions": int(summary.get("questions") or len(rows)),
             "incomplete": incomplete(summary, rows),
             "benchmark_metrics": metrics,
+            # Whether its per-question rows were read, so its benchmark
+            # metrics are theirs and it can be compared question by question.
+            "questions_read": bool(rows),
         })
     if not configurations:
         return None
@@ -203,7 +210,8 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         quality = answered or saved_quality.get(config_id)
         if quality is not None:
             answer_quality[config_id] = quality
-    return {"run_id": run_dir.name, "configurations": configurations,
+    return {"run_id": run_dir.name, "run_dir": str(run_dir), "top_k": manifest.get("top_k"),
+            "configurations": configurations,
             "answer_quality": answer_quality, "unscored_answers": unscored}
 
 
@@ -371,11 +379,17 @@ def retrieval_configurations(configurations: list[dict[str, Any]],
                     for _, kind in BENCHMARKS)]
 
 
+def keyed_as_tabs(item: dict[str, Any]) -> bool:
+    """Whether a configuration's benchmark scores are keyed as the tabs are,
+    so they say which of the tabs' benchmarks it ran."""
+    return any(kind in item["benchmark_metrics"] for _, kind in BENCHMARKS)
+
+
 def run_warnings(run: dict[str, Any]) -> list[str]:
     """What a reader must know before trusting a run's tables, page and report alike."""
     warnings = []
     unsplit = [item["config_id"] for item in run["configurations"]
-               if not item["benchmark_metrics"]]
+               if not keyed_as_tabs(item)]
     if unsplit:
         warnings.append(
             f"{len(unsplit)} of this run's {len(run['configurations'])} configurations "
