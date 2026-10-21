@@ -82,12 +82,14 @@ def _cohort_reason(rows: Sequence[dict], report: dict, policy: dict) -> str | No
     """
     counts = {name: group["questions"] for name, group in report["by_benchmark"].items()}
     declared = policy.get("decision_benchmark_counts")
+    digest = policy.get("decision_question_records_sha256")
     prefix = "exploratory benchmark cohort; "
+    if declared is None and digest is None:
+        return prefix + "the policy declares neither benchmark counts nor a question digest"
     if declared is None:
         return prefix + "the policy declares no benchmark counts"
     if counts != declared:
         return prefix + f"adoption requires the declared benchmark counts {declared}, not {counts}"
-    digest = policy.get("decision_question_records_sha256")
     if digest is None:
         return prefix + "the policy declares no question digest"
     if question_digest(rows) != digest:

@@ -247,7 +247,8 @@ the same company or generated from the same template.
 75-filing corpus, from frozen source `a9f9159`. This is new retrieval and
 cross-encoder inference for every nonempty pool, with no historical ranking
 reuse. The frozen generated question file was not regenerated or relabelled
-between measurement and reporting. Its ordered question digest matches the
+between measurement and reporting. Its ordered question digest, over
+`benchmark/questions.jsonl` then `benchmark/generated.jsonl`, matches the
 complete cohort declared in `POLICY` before the run.
 
 This full study supersedes the partial 1,884-XBRL reference from #172 below

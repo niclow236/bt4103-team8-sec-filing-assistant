@@ -44,7 +44,8 @@ def fixture_policy(rows, **overrides):
     from src.evaluation.records import benchmark_of
     return GATE_POLICY | {
         "decision_benchmark_counts": dict(Counter(benchmark_of(r['question'].get('source')) for r in rows)),
-        "decision_question_records_sha256": question_digest(rows),
+        "decision_question_records_sha256": question_records_sha256([
+            BenchmarkQuestion.from_mapping(r['question']) for r in rows]),
     } | overrides
 
 
@@ -206,14 +207,25 @@ def test_the_same_questions_in_another_order_are_not_the_declared_cohort():
     assert report["decision"]["reasons"] == [DIGEST_REASON]
 
 
+def test_question_digest_is_the_canonical_digest_in_run_order():
+    rows = passing_rows()
+    expected = question_records_sha256([
+        BenchmarkQuestion.from_mapping(r["question"]) for r in rows])
+    assert question_digest(rows) == expected
+    assert question_digest(rows[::-1]) != expected
+
+
 @pytest.mark.parametrize("undeclared, reason", [
-    ("decision_benchmark_counts", "the policy declares no benchmark counts"),
-    ("decision_question_records_sha256", "the policy declares no question digest"),
+    (("decision_benchmark_counts",), "the policy declares no benchmark counts"),
+    (("decision_question_records_sha256",), "the policy declares no question digest"),
+    (("decision_benchmark_counts", "decision_question_records_sha256"),
+     "the policy declares neither benchmark counts nor a question digest"),
 ])
 def test_a_policy_without_a_cohort_declaration_carries_no_decision(undeclared, reason):
     rows = passing_rows()
     policy = fixture_policy(rows, decision_top_k=16)
-    del policy[undeclared]
+    for key in undeclared:
+        del policy[key]
     decision = summarize(rows, 16, policy)["decision"]
     assert decision["advance_to_answer_evaluation"] is None
     assert decision["reasons"] == ["exploratory benchmark cohort; " + reason]
