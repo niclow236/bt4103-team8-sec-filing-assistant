@@ -95,7 +95,9 @@ class StackConfig:
     def answers_figures_from_facts(self) -> bool:
         """Whether a figure question can be answered from the facts store, with
         no model: the route has to be on, and it needs the company and year the
-        metadata filter applies (see ``scoped``)."""
+        metadata filter applies (see ``scoped``). A question searched within an
+        Item still goes to the model, since the route cannot honour an Item
+        filter (``answer_question``); that is per question, so not decided here."""
         return self.use_facts and self.metadata_filter
 
     def scoped(self, query: Query) -> Query:
