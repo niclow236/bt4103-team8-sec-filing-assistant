@@ -17,11 +17,9 @@ from statistics import mean, median
 from typing import Any
 
 from src.config import PROJECT_ROOT
-from src.evaluation.harness import _checks
+from src.evaluation.harness import answer_scores
 from src.evaluation.metrics import RETRIEVAL_METRICS
-from src.evaluation.quality import quality_summary
 
-RESULT_METRICS = RETRIEVAL_METRICS
 METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
                  "hard_negative_accuracy": "Hard Negative Accuracy"}
 # Answer quality as full_ablation's answer-summary.json records it, team questions only.
@@ -32,8 +30,10 @@ QUALITY_LABELS = {"correctness": "Correctness", "faithfulness": "Faithfulness",
 # Generated reports sit beside the hand-curated summaries the docs link to.
 REPORT_ROOT = PROJECT_ROOT / "docs" / "evaluation"
 TEXT_COLUMNS = ("Configuration", "Name", "Claim checks")
-BENCHMARKS = (("Team benchmark", "handwritten"),
-              ("Mechanical XBRL benchmark", "mechanical"))
+# The two benchmark kinds a saved question row is classified into.
+TEAM, MECHANICAL = "handwritten", "mechanical"
+BENCHMARKS = (("Team benchmark", TEAM),
+              ("Mechanical XBRL benchmark", MECHANICAL))
 # Every name a report can write; a regenerated report removes those it no longer has.
 GENERATED = ("ablation.md", *(f"{kind}-retrieval.svg" for _, kind in BENCHMARKS))
 
@@ -43,10 +43,10 @@ def benchmark_kind(row: dict[str, Any]) -> str:
     source = str(row.get("source", "")).lower()
     difficulty = str(row.get("difficulty", "")).lower()
     if difficulty == "mechanical" or source == "xbrl":
-        return "mechanical"
+        return MECHANICAL
     if str(row.get("question_id", "")).lower().startswith("xbrl-"):
-        return "mechanical"
-    return "handwritten"
+        return MECHANICAL
+    return TEAM
 
 
 def read_result_rows(path: Path) -> list[dict[str, Any]]:
@@ -77,7 +77,7 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
     output: dict[str, dict[str, Any]] = {}
     for kind, items in grouped.items():
         values: dict[str, Any] = {"questions": len(items)}
-        for metric in RESULT_METRICS:
+        for metric in RETRIEVAL_METRICS:
             measured = [row[metric] for row in items if row.get(metric) is not None]
             values[metric] = mean(measured) if measured else None
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
@@ -106,7 +106,7 @@ def incomplete(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str | Non
 
 
 # full_ablation names its saved split by benchmark source; rows are classified by kind.
-SAVED_SPLIT_NAMES = {"team": "handwritten", "xbrl": "mechanical"}
+SAVED_SPLIT_NAMES = {"team": TEAM, "xbrl": MECHANICAL}
 
 
 def _saved_split(by_benchmark: Any) -> dict[str, dict[str, Any]]:
@@ -172,7 +172,7 @@ def _answered(path: Path) -> dict[str, Any] | None:
     if not rows:
         return None
     try:
-        return {"questions": len(rows), "quality": quality_summary(rows), "checks": _checks(rows)}
+        return answer_scores(rows)
     # A row of the wrong shape anywhere in it, a missing key or a check that is
     # not a record, falls back rather than taking the Results page down.
     except (KeyError, TypeError, AttributeError):
@@ -241,7 +241,7 @@ def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, 
     The matrix judges answers to team questions only, so the mechanical
     benchmark has none.
     """
-    if benchmark != "handwritten":
+    if benchmark != TEAM:
         return []
     rows = []
     for item in run["configurations"]:
@@ -278,12 +278,15 @@ def chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dic
     return rows
 
 
-def retrieval_configurations(configurations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The configurations with at least one retrieval score on either benchmark."""
+def retrieval_configurations(configurations: list[dict[str, Any]],
+                             benchmark: str) -> list[dict[str, Any]]:
+    """The configurations a benchmark's retrieval table lists: those saved for
+    it, with at least one retrieval score on either benchmark."""
     return [item for item in configurations
-            if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
-                       for metric in METRIC_LABELS)
-                   for _, kind in BENCHMARKS)]
+            if benchmark in item["benchmark_metrics"]
+            and any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
+                        for metric in METRIC_LABELS)
+                    for _, kind in BENCHMARKS)]
 
 
 def run_warnings(run: dict[str, Any]) -> list[str]:
@@ -305,7 +308,7 @@ def run_warnings(run: dict[str, Any]) -> list[str]:
     unanswered = []
     for item in run["configurations"]:
         answered = run.get("answer_quality", {}).get(item["config_id"], {}).get("questions")
-        retrieved = item["benchmark_metrics"].get("handwritten", {}).get("questions")
+        retrieved = item["benchmark_metrics"].get(TEAM, {}).get("questions")
         if isinstance(answered, int) and isinstance(retrieved, int) and answered < retrieved:
             unanswered.append(f"{item['config_id']} ({answered} of {retrieved} team questions answered)")
     if unanswered:
@@ -392,9 +395,8 @@ def report_files(run: dict[str, Any]) -> dict[str, str]:
     files: dict[str, str] = {}
     sections = [f"# Results: {run['run_id']}\n",
                 *(f"> **Warning:** {warning}\n" for warning in run_warnings(run))]
-    retrieval = retrieval_configurations(run["configurations"])
     for title, kind in BENCHMARKS:
-        matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
+        matching = retrieval_configurations(run["configurations"], kind)
         models = model_table(run["configurations"], kind)
         quality = answer_quality_table(run, kind)
         if not matching and not models and not quality:

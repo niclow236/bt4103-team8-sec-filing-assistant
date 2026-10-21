@@ -3,7 +3,8 @@ import os
 import pytest
 from src.config import PROJECT_ROOT
 
-from src.app.state import benchmark_kind, result_runs
+from src.app.state import result_runs
+from src.evaluation.report import benchmark_kind
 from src.app.components import result_chart_rows
 
 
@@ -56,9 +57,9 @@ def test_results_page_reads_saved_runs_and_keeps_question_rows_separate(tmp_path
 def test_results_page_reads_model_report_rows(tmp_path):
     report = tmp_path / "report.json"
     report.write_text(json.dumps({"results": [{"question_id": "q1"}]}), encoding="utf-8")
-    from src.app.state import _read_result_rows
+    from src.evaluation.report import read_result_rows
 
-    assert _read_result_rows(report) == [{"question_id": "q1"}]
+    assert read_result_rows(report) == [{"question_id": "q1"}]
 
 
 def test_old_run_metrics_are_read_from_saved_question_rows(tmp_path):

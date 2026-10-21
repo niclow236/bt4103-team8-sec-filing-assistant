@@ -97,11 +97,10 @@ def render_results(runs: list[dict[str, Any]]) -> None:
     selected = next(run for run in runs if run["run_id"] == run_id)
     for warning in report.run_warnings(selected):
         st.warning(warning)
-    retrieval = report.retrieval_configurations(selected["configurations"])
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:
-            matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
+            matching = report.retrieval_configurations(selected["configurations"], kind)
             _render_results_benchmark(title, matching, selected, kind)
 
 

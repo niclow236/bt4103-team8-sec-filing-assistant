@@ -51,10 +51,7 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 # asked for longest ago is dropped, and asking it again asks the model again.
 ANSWERS_KEPT = 128
 
-# benchmark_kind and _read_result_rows stay importable from here for older callers.
-from src.evaluation.report import (
-    benchmark_kind, read_result_rows as _read_result_rows, read_runs,
-)
+from src.evaluation.report import read_runs
 
 
 @st.cache_data(show_spinner=False)

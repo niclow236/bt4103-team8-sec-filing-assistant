@@ -520,11 +520,12 @@ def team_questions(questions: Sequence[BenchmarkQuestion]) -> list[BenchmarkQues
 
 
 def answer_summary(rows: Sequence[dict], cid: str) -> dict:
-    from .harness import _checks
-    from .quality import quality_summary, resource_summary
+    from .harness import answer_scores
+    from .quality import resource_summary
 
-    return {"questions":len(rows),"quality":quality_summary(rows),"resources":resource_summary(rows),
-            "checks":_checks(rows),"verification_enabled":MATRIX[cid].use_verification}
+    scores = answer_scores(list(rows))
+    return {"questions":scores["questions"],"quality":scores["quality"],"resources":resource_summary(rows),
+            "checks":scores["checks"],"verification_enabled":MATRIX[cid].use_verification}
 
 
 def saved_answer(data: dict) -> Answer:
