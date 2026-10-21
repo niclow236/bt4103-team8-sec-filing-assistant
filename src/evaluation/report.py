@@ -84,8 +84,9 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
         values: dict[str, Any] = {"questions": len(items), "metric_denominators": {}}
         # Read leniently, unlike full_ablation.summarize: a row whose score is not
         # one is left out of the mean and its count rather than failing. Recall,
-        # nDCG and MRR score the same questions, so a row with any of the three
-        # set to a non-score leaves all three, and they keep one count.
+        # nDCG and MRR score the same questions (metrics.score_question sets the
+        # three together), so a row with any of them set to a non-score leaves
+        # all three.
         relevance_rows = [row for row in items if all(
             row.get(metric) is None or _score(row.get(metric)) is not None
             for metric in RELEVANCE_METRICS)]
@@ -526,20 +527,24 @@ def _out_folder(value: str) -> Path:
     return Path(value)
 
 
+def _folders_up(path: Path) -> tuple[Path, ...]:
+    """``path`` with symlinks resolved, then each folder above it."""
+    resolved = Path(os.path.realpath(path))
+    return (resolved, *resolved.parents)
+
+
 def _inside(path: Path, folder: Path) -> bool:
     """Whether ``path`` is ``folder`` or under it, by file identity, so neither a
     symlink nor a case-insensitive filesystem's other spelling gets past."""
-    resolved = Path(os.path.realpath(path))
     return any(candidate.exists() and os.path.samefile(candidate, folder)
-               for candidate in (resolved, *resolved.parents))
+               for candidate in _folders_up(path))
 
 
 def _saved_run_holding(path: Path) -> Path | None:
     """The saved run ``path`` is or lies under, if any: the nearest folder with a
     summary.json. A lookup on disk, so a symlink or a case-insensitive
     filesystem's other spelling of a run is found too."""
-    resolved = Path(os.path.realpath(path))
-    return next((candidate for candidate in (resolved, *resolved.parents)
+    return next((candidate for candidate in _folders_up(path)
                  if (candidate / SUMMARY).is_file()), None)
 
 
