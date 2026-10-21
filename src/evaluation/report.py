@@ -79,7 +79,9 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
     for kind, items in grouped.items():
         values: dict[str, Any] = {"questions": len(items), "metric_denominators": {}}
         for metric in RETRIEVAL_METRICS:
-            measured = [row[metric] for row in items if row.get(metric) is not None]
+            # Read leniently, unlike full_ablation.summarize: a row whose score is
+            # not one is left out of the mean and its count rather than failing.
+            measured = [score for row in items if (score := _score(row.get(metric))) is not None]
             values[metric] = mean(measured) if measured else None
             values["metric_denominators"][metric] = len(measured)
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
@@ -123,8 +125,9 @@ def _rescored_splits(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    configurations = manifest.get("configurations") if isinstance(manifest, dict) else None
     splits = {}
-    for summary in manifest.get("configurations", ()) if isinstance(manifest, dict) else ():
+    for summary in configurations if isinstance(configurations, list) else ():
         config = summary.get("config") if isinstance(summary, dict) else None
         if isinstance(config, dict):
             splits[str(config.get("id"))] = {
@@ -202,7 +205,7 @@ def _answered(path: Path) -> dict[str, Any] | None:
         return answer_scores(rows)
     # A row of the wrong shape anywhere in it, a missing key or a check that is
     # not a record, falls back rather than taking the Results page down.
-    except (KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError, OverflowError):
         return None
 
 
@@ -283,7 +286,7 @@ def _score(value: Any) -> float | None:
     too large for a float.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1:
-        return float(value)
+        return float(value) + 0.0  # + 0.0 turns -0.0 into 0.0
     return None
 
 
@@ -344,7 +347,7 @@ def retrieval_configurations(configurations: list[dict[str, Any]],
     it, with at least one retrieval score on either benchmark."""
     return [item for item in configurations
             if benchmark in item["benchmark_metrics"]
-            and any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
+            and any(any(_score(item["benchmark_metrics"].get(kind, {}).get(metric)) is not None
                         for metric in METRIC_LABELS)
                     for _, kind in BENCHMARKS)]
 
@@ -508,12 +511,13 @@ def _out_folder(value: str) -> Path:
     return Path(value)
 
 
-def _inside(path: Path, folder: Path) -> bool:
-    """Whether ``path`` is ``folder`` or under it, by file identity, so neither a
-    symlink nor a case-insensitive filesystem's other spelling gets past."""
+def _saved_run_holding(path: Path) -> Path | None:
+    """The saved run ``path`` is or lies under, if any: the nearest folder with a
+    summary.json. A lookup on disk, so a symlink or a case-insensitive
+    filesystem's other spelling of a run is found too."""
     resolved = Path(os.path.realpath(path))
-    return any(candidate.exists() and os.path.samefile(candidate, folder)
-               for candidate in (resolved, *resolved.parents))
+    return next((candidate for candidate in (resolved, *resolved.parents)
+                 if (candidate / "summary.json").is_file()), None)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -535,10 +539,13 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if out.exists() and not out.is_dir():
             parser.error(f"--out {out} is not a folder")
-        # The run's own files are hashed by the tools that publish it, so a
+        # A run's own files are hashed by the tools that publish it, so a
         # report beside them would change what they check.
-        if _inside(out, args.run_dir):
+        holder = _saved_run_holding(out)
+        if holder is not None and os.path.samefile(holder, args.run_dir):
             parser.error(f"--out {out} is inside the run it reads; write the report elsewhere")
+        if holder is not None:
+            parser.error(f"--out {out} is inside a saved run ({holder}); write the report elsewhere")
         write_report(run, out)
     except OSError as error:
         parser.error(f"cannot write the report to {out}: {error.strerror or error}")

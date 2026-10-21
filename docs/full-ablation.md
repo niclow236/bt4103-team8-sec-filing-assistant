@@ -333,8 +333,9 @@ them.
 The [generated report](evaluation/full-matrix-20261017/ablation.md) holds these
 tables with their charts, as the app's Results page shows them, written from
 the native run by `python -m src.evaluation.report results/full-matrix-20261017`
-(#48). Every figure in the two tables below equals it. After a re-run or
-rescore, regenerate that report rather than editing figures here.
+(#48). The two tables below are a snapshot of it taken on 21 October 2026,
+when every figure matched; the generated report is the live source. After a
+re-run or rescore, regenerate it rather than editing figures here.
 
 | Benchmark | Row | Relevance-scored | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
 | --- | --- | ---: | ---: | ---: | ---: | --- |

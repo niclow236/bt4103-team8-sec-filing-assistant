@@ -1923,7 +1923,8 @@ rows are missing, and an `answers.jsonl` that cannot be read or scored is
 named in a warning. After a rescore, the retrieval figures come from
 `rescored/summary.json`, since rescore leaves the per-question rows as they
 were. A configuration answered for fewer team questions than it retrieved for
-is labelled incomplete. The page and `python -m src.evaluation.report` build
+is labelled incomplete. A saved score counts only when it is a number from 0
+to 1; anything else is a blank cell, left out of its mean and its count. The page and `python -m src.evaluation.report` build
 every table and chart through `src/evaluation/report.py`, so the page and a
 generated report cannot disagree.
 
@@ -2428,8 +2429,8 @@ where the run has them and any partial-results warning, plus the bar charts
 saved and makes no model calls. After a run is repeated or rescored, run the
 same command again: it rewrites every file it owns and removes a chart the
 new run no longer has, so nothing is edited by hand. Other files in the folder
-are left alone. It refuses an `--out` inside `results/<run-id>/`, whose every
-file `tools/report_c6_rebase.py` hashes. The generated report for the
+are left alone. It refuses an `--out` inside any saved run (a folder holding a
+`summary.json`), whose files tools such as `tools/report_c6_rebase.py` hash. The generated report for the
 archived matrix is [docs/evaluation/full-matrix-20261017/](docs/evaluation/full-matrix-20261017/ablation.md).
 
 ### Embedding and generation ablations

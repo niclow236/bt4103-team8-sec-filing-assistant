@@ -409,7 +409,9 @@ def test_a_rescored_runs_retrieval_figures_reach_the_report(tmp_path):
 
 
 @pytest.mark.parametrize("saved", [
-    "not json", "[]", '{"configurations": ["broken"]}', '{"configurations": [{"config": "C4"}]}',
+    "not json", "[]", '{"configurations": null}', '{"configurations": 5}',
+    '{"configurations": ["broken"]}',
+    '{"configurations": [{"config": "C4"}]}',
     '{"configurations": [{"config": {"id": "C4"}, "by_benchmark": {"team": 0.25}}]}'])
 def test_an_unreadable_rescore_summary_leaves_the_saved_rows_in_charge(tmp_path, saved):
     run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
@@ -617,3 +619,92 @@ def test_an_out_under_an_unreadable_folder_is_a_usage_error(tmp_path, capsys):
 
     assert stopped.value.code == 2
     assert "cannot write" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("recall", ["high", 10 ** 400, 5, -3, True],
+                         ids=["text", "huge integer", "above one", "below zero", "true"])
+def test_a_question_row_score_that_is_not_a_score_is_left_out_of_its_mean(tmp_path, recall):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 0.5}, {"question_id": "q2", "recall": recall}]})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | row C4 | 2 | 1 | 0.5000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+def test_an_answer_row_too_large_to_average_is_flagged_not_fatal(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    row = _answer_row("q1", 1.0)
+    row["quality"]["correctness"] = 10 ** 400
+    (run / "C4" / "answers.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "Unscored answers: C4." in (out / "ablation.md").read_text(encoding="utf-8")
+
+
+def test_negative_zero_is_shown_as_zero(tmp_path):
+    run = tmp_path / "results" / "matrix"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [{
+        "config": {"id": "C4"}, "by_benchmark": {"team": {"questions": 1, "recall": -0.0}}}]}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | C4 | 1 | 0.0000 |" in (out / "ablation.md").read_text(encoding="utf-8")
+    assert 'height="-0"' not in (out / "handwritten-retrieval.svg").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("saved", [{"recall": 5, "ndcg": 0.5}, {"recall": -0.5, "ndcg": 0.5},
+                                   {"hard_negative_accuracy": 2, "ndcg": 0.5}],
+                         ids=["recall above one", "recall below zero", "hard negatives above one"])
+def test_a_saved_retrieval_score_outside_zero_to_one_is_left_blank(tmp_path, saved):
+    run = tmp_path / "results" / "matrix"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [{
+        "config": {"id": "C4"}, "by_benchmark": {"team": {"questions": 1, **saved}}}]}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| Configuration | Name | Questions | nDCG |" in table
+    assert set(_bars(out / "handwritten-retrieval.svg")) == {"C4 nDCG: 0.5000"}
+
+
+def test_a_configuration_whose_saved_scores_are_all_invalid_is_not_listed(tmp_path):
+    run = tmp_path / "results" / "matrix"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "by_benchmark": {"team": {"questions": 1, "recall": 0.5}}},
+        {"config": {"id": "C5"}, "by_benchmark": {"team": {"questions": 1, "recall": 2}}}]}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 |" in table
+    assert "| C5 |" not in table
+
+
+def test_the_report_is_never_written_into_another_saved_run(tmp_path, capsys):
+    results = tmp_path / "results"
+    run = _save_run(results, "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    other = _save_run(results, "other", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    before = sorted(path.relative_to(other) for path in other.rglob("*"))
+
+    for out in (other, other / "report"):
+        with pytest.raises(SystemExit) as stopped:
+            report.main([str(run), "--out", str(out)])
+        assert stopped.value.code == 2
+        assert "inside a saved run" in capsys.readouterr().err
+    assert sorted(path.relative_to(other) for path in other.rglob("*")) == before
+
+    report.main([str(run), "--out", str(results / "matrix-report")])
+    assert (results / "matrix-report" / "ablation.md").is_file()
