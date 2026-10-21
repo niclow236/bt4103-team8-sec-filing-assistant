@@ -30,7 +30,7 @@ import streamlit as st
 import pandas as pd
 
 from src.config import read_tickers
-from src.evaluation import report
+from src.evaluation import breakdown, report
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
 from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
@@ -299,12 +299,64 @@ def _render_change_counts(measure: _Measure, changes: Counter, answered: int) ->
     unchanged.metric("Unchanged", changes[_UNCHANGED])
 
 
+# How the breakdown splits a configuration's questions (#170): the words its
+# headline uses, the table's first column, and how a question is labelled.
+_GROUPINGS = (("question type", "Question type", attrgetter("question_type")),
+              ("difficulty", "Difficulty", attrgetter("difficulty")))
+_SCORE_BAR = st.column_config.ProgressColumn("Score", format="%.2f", min_value=0, max_value=1)
+
+
+def _breakdown_table(column: str, groups: list[breakdown.Group]) -> pd.DataFrame:
+    """One grouping's rows: a group too small to read keeps its counts but not its score."""
+    table = pd.DataFrame([{column: group.name, "Questions": group.questions,
+                           "Scored": group.scored,
+                           "Score": group.score if group.readable else None,
+                           "Too few to read": not group.readable} for group in groups])
+    return table if table["Too few to read"].any() else table.drop(columns="Too few to read")
+
+
+def _render_breakdown(run: Mapping[str, Any], benchmark: str,
+                      outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
+    """Where the default configuration is strong and weak: its scores by
+    question type and by difficulty, each beside the questions it covers (#170)."""
+    readable = {item["config_id"] for item in run["configurations"]
+                if item.get("questions_read") and benchmark in item["benchmark_metrics"]}
+    if DEFAULT_STACK not in readable:
+        return
+    questions = [outcome for outcome in outcomes(run["run_dir"], DEFAULT_STACK).values()
+                 if outcome.benchmark == benchmark]
+    sections = []
+    for measure in _MEASURES:
+        tables = []
+        for grouping, column, label in _GROUPINGS:
+            groups = breakdown.group_scores(questions, label, measure.score)
+            # A single group, or one with nothing scored, shows no strong or weak side.
+            if len(groups) > 1 and any(group.scored for group in groups):
+                tables.append((grouping, column, groups))
+        if tables:
+            sections.append((measure, tables))
+    if not sections:
+        return
+    st.subheader("By question type and difficulty")
+    st.caption(f"{DEFAULT_STACK}, the app's default configuration, on this benchmark. A group "
+               f"with fewer than {breakdown.MIN_GROUP_QUESTIONS} scored questions is too few "
+               "to read, so its score is not shown.")
+    for measure, tables in sections:
+        st.markdown(f"**{measure.title}**")
+        for grouping, column, groups in tables:
+            line = breakdown.headline(groups, grouping)
+            if line:
+                st.caption(line)
+            st.dataframe(_breakdown_table(column, groups), column_config={"Score": _SCORE_BAR},
+                         width="stretch", hide_index=True)
+
+
 def render_results(runs: list[dict[str, Any]], *,
                    outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
 
     ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
-    for the before and after view.
+    for the breakdown by question type and difficulty and the before and after view.
     """
     if not runs:
         st.info("No completed benchmark runs were found under results/.")
@@ -320,6 +372,7 @@ def render_results(runs: list[dict[str, Any]], *,
             matching = report.retrieval_configurations(selected["configurations"], kind)
             saved = _render_results_benchmark(title, matching, selected, kind)
             if saved:
+                _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
 
 

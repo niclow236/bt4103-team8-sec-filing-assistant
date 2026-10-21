@@ -80,6 +80,15 @@ class QuestionOutcome(NamedTuple):
     # Whether its text was looked up in the benchmark as it stands now, which
     # may word it differently from what the run asked.
     current_text: bool = False
+    # Its benchmark labels, as its retrieval row saved them, for the breakdown (#170).
+    question_type: str | None = None
+    difficulty: str | None = None
+
+
+def _label(row: dict[str, Any], key: str) -> str | None:
+    """A saved row's ``question_type`` or ``difficulty``, or None if it kept no text there."""
+    value = row.get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def _chunk_ids(value: Any) -> list[str] | None:
@@ -140,7 +149,8 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
             continue
         scored, rank = _first_right_rank(row)
         outcomes[str(question_id)] = QuestionOutcome(
-            _question_text(row), benchmark_kind(row), scored, rank)
+            _question_text(row), benchmark_kind(row), scored, rank,
+            question_type=_label(row, "question_type"), difficulty=_label(row, "difficulty"))
     answers = (read_result_rows(folder / "answers.jsonl")
                or read_result_rows(folder / "report.json"))
     for row in answers:
