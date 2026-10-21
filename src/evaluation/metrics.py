@@ -65,6 +65,16 @@ def ndcg_at_k(
     return dcg / idcg
 
 
+def first_relevant_rank(
+    retrieved_chunk_ids: Iterable[str],
+    relevant_chunk_ids: Iterable[str],
+) -> int | None:
+    """The 1-based rank of the first relevant chunk retrieved, or None if none was."""
+    relevant = _as_set(relevant_chunk_ids)
+    return next((rank for rank, chunk_id in enumerate(retrieved_chunk_ids, start=1)
+                 if chunk_id in relevant), None)
+
+
 def mrr(
     result: RunResult,
     relevant_chunk_ids: Iterable[str],
@@ -77,10 +87,8 @@ def mrr(
         return None
     if k <= 0:
         return 0.0
-    for rank, chunk_id in enumerate(result.retrieved_chunk_ids[:k], start=1):
-        if chunk_id in relevant:
-            return 1.0 / rank
-    return 0.0
+    rank = first_relevant_rank(result.retrieved_chunk_ids[:k], relevant)
+    return 0.0 if rank is None else 1.0 / rank
 
 
 def hard_negative_accuracy(
@@ -131,6 +139,7 @@ def score_question(
 
 
 __all__ = [
+    "first_relevant_rank",
     "hard_negative_accuracy",
     "mrr",
     "ndcg_at_k",
