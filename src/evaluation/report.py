@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 from html import escape
-from math import isnan
+from math import isfinite, isnan
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -242,17 +242,18 @@ def retrieval_table(configurations: list[dict[str, Any]], benchmark: str) -> lis
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
         counts = _record(saved.get("metric_denominators"))
-        relevance = any(saved.get(metric) is not None for metric in ("recall", "ndcg", "mrr"))
-        hard_negatives = saved.get("hard_negative_accuracy") is not None
+        scores = {metric: _score(saved.get(metric)) for metric in METRIC_LABELS}
+        relevance = any(scores[metric] is not None for metric in ("recall", "ndcg", "mrr"))
+        hard_negatives = scores["hard_negative_accuracy"] is not None
         # Recall, nDCG and MRR score the same questions: those with a gold passage.
         rows.append({"Configuration": item["config_id"], "Name": item["name"],
                      "Questions": saved.get("questions", item["questions"]),
                      "Relevance-scored": counts.get("recall") if relevance else None,
-                     **{label: saved.get(metric) for metric, label in METRIC_LABELS.items()
+                     **{label: scores[metric] for metric, label in METRIC_LABELS.items()
                         if metric != "hard_negative_accuracy"},
                      "Hard negatives": (counts.get("hard_negative_accuracy")
                                         if hard_negatives else None),
-                     METRIC_LABELS["hard_negative_accuracy"]: saved.get("hard_negative_accuracy")})
+                     METRIC_LABELS["hard_negative_accuracy"]: scores["hard_negative_accuracy"]})
     return _without_empty_columns(rows)
 
 
@@ -274,6 +275,13 @@ def _record(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _score(value: Any) -> float | None:
+    """A saved score as a number, or None for anything else: text, true, NaN."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value):
+        return float(value)
+    return None
+
+
 def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, Any]]:
     """Judged answer quality per configuration, each mean beside how many outputs it scored.
 
@@ -293,7 +301,7 @@ def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, 
         quality = _record(saved.get("quality"))
         for metric, label in QUALITY_LABELS.items():
             measured = _record(quality.get(metric))
-            row[label] = measured.get("mean")
+            row[label] = _score(measured.get("mean"))
             row[f"{label} scored"] = measured.get("scored")
         checks = _record(saved.get("checks"))
         row["Claim checks"] = ", ".join(f"{status} {count}"
@@ -310,17 +318,17 @@ def chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dic
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
         for metric, label in METRIC_LABELS.items():
-            value = saved.get(metric)
+            value = _score(saved.get(metric))
             if value is not None:
                 rows.append({"Configuration": item["config_id"],
                              "Metric": label,
-                             "Value": float(value)})
+                             "Value": value})
     return rows
 
 
 def quality_chart_rows(run: dict[str, Any], benchmark: str) -> list[dict[str, Any]]:
     """The judged answer-quality means of ``answer_quality_table``, one row per bar."""
-    return [{"Configuration": row["Configuration"], "Metric": label, "Value": float(row[label])}
+    return [{"Configuration": row["Configuration"], "Metric": label, "Value": row[label]}
             for row in answer_quality_table(run, benchmark)
             for label in QUALITY_LABELS.values() if row.get(label) is not None]
 
@@ -487,6 +495,14 @@ def write_report(run: dict[str, Any], out_dir: Path) -> None:
         (out_dir / name).write_text(text, encoding="utf-8")
 
 
+def _inside(path: Path, folder: Path) -> bool:
+    """Whether ``path`` is ``folder`` or under it, by file identity, so neither a
+    symlink nor a case-insensitive filesystem's other spelling gets past."""
+    resolved = Path(os.path.realpath(path))
+    return any(candidate.exists() and os.path.samefile(candidate, folder)
+               for candidate in (resolved, *resolved.parents))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m src.evaluation.report",
@@ -506,9 +522,8 @@ def main(argv: list[str] | None = None) -> None:
     if out.exists() and not out.is_dir():
         parser.error(f"--out {out} is not a folder")
     # The run's own files are hashed by the tools that publish it, so a report
-    # beside them would change what they check. Symlinks are followed here.
-    run_real, out_real = Path(os.path.realpath(args.run_dir)), Path(os.path.realpath(out))
-    if out_real == run_real or run_real in out_real.parents:
+    # beside them would change what they check.
+    if _inside(out, args.run_dir):
         parser.error(f"--out {out} is inside the run it reads; write the report elsewhere")
     try:
         write_report(run, out)

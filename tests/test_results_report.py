@@ -542,3 +542,47 @@ def test_a_count_column_goes_with_the_scores_it_counts(tmp_path, row, absent):
     table = (out / "ablation.md").read_text(encoding="utf-8")
     assert "| C4 | row C4 | 1 | 1 | 1.0000 |" in table
     assert absent not in table
+
+
+@pytest.mark.parametrize("mean", ["high", [0.5], {"value": 0.5}, True, float("nan"), float("inf")],
+                         ids=["text", "list", "record", "true", "nan", "infinity"])
+def test_a_saved_mean_that_is_not_a_number_is_left_blank(tmp_path, mean):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 150, "quality": {
+        "correctness": {"mean": mean, "scored": 1}, "faithfulness": _quality(0.5, 150)}})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | row C4 | 150 | — | 1 | 0.5000 | 150 |" in (out / "ablation.md").read_text(encoding="utf-8")
+    assert set(_bars(out / "handwritten-answer-quality.svg")) == {"C4 Faithfulness: 0.5000"}
+
+
+def test_a_rescored_score_that_is_not_a_number_is_left_blank(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    (run / "rescored").mkdir()
+    (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [{
+        "config": {"id": "C4"}, "by_benchmark": {"team": {"recall": "high", "ndcg": 0.5}}}]}),
+        encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| Relevance-scored | nDCG |" in table
+    assert "| C4 | row C4 | 1 | 1 | 0.5000 |" in table
+    assert set(_bars(out / "handwritten-retrieval.svg")) == {"C4 nDCG: 0.5000"}
+
+
+def test_a_case_variant_spelling_of_the_run_is_still_inside_it(tmp_path, capsys):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    variant = run.parent / "MATRIX"
+    if not variant.exists():
+        pytest.skip("this filesystem tells MATRIX from matrix")
+
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(run), "--out", str(variant / "report")])
+
+    assert stopped.value.code == 2
+    assert "inside the run" in capsys.readouterr().err
+    assert not (run / "report").exists()
