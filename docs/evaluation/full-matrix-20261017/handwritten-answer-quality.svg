@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1072" height="336" viewBox="0 0 1072 336" font-family="sans-serif" font-size="12" role="img" aria-label="Team benchmark: answer quality">
+<rect width="1072" height="336" fill="#ffffff"/>
+<text x="48" y="20" font-size="14" font-weight="bold" fill="#1f1f1f">Team benchmark: answer quality</text>
+<rect x="48" y="30" width="10" height="10" fill="#3ca951"/>
+<text x="62" y="39" fill="#1f1f1f">Correctness</text>
+<rect x="155" y="30" width="10" height="10" fill="#ff8ab7"/>
+<text x="169" y="39" fill="#1f1f1f">Faithfulness</text>
+<rect x="269" y="30" width="10" height="10" fill="#a463f2"/>
+<text x="283" y="39" fill="#1f1f1f">Answerability</text>
+<rect x="390" y="30" width="10" height="10" fill="#97bbf5"/>
+<text x="404" y="39" fill="#1f1f1f">Citation precision</text>
+<rect x="546" y="30" width="10" height="10" fill="#9c6b4e"/>
+<text x="560" y="39" fill="#1f1f1f">Citation recall</text>
+<line x1="48" x2="1056" y1="296" y2="296" stroke="#d9d9d9"/>
+<text x="42" y="300" text-anchor="end" fill="#555555">0</text>
+<line x1="48" x2="1056" y1="236" y2="236" stroke="#d9d9d9"/>
+<text x="42" y="240" text-anchor="end" fill="#555555">0.25</text>
+<line x1="48" x2="1056" y1="176" y2="176" stroke="#d9d9d9"/>
+<text x="42" y="180" text-anchor="end" fill="#555555">0.5</text>
+<line x1="48" x2="1056" y1="116" y2="116" stroke="#d9d9d9"/>
+<text x="42" y="120" text-anchor="end" fill="#555555">0.75</text>
+<line x1="48" x2="1056" y1="56" y2="56" stroke="#d9d9d9"/>
+<text x="42" y="60" text-anchor="end" fill="#555555">1</text>
+<rect x="60" y="220.352" width="22" height="75.648" fill="#3ca951"><title>C0 Correctness: 0.3152</title></rect>
+<rect x="84" y="119.745" width="22" height="176.255" fill="#ff8ab7"><title>C0 Faithfulness: 0.7344</title></rect>
+<rect x="108" y="184" width="22" height="112" fill="#a463f2"><title>C0 Answerability: 0.4667</title></rect>
+<rect x="132" y="198.9" width="22" height="97.0996" fill="#97bbf5"><title>C0 Citation precision: 0.4046</title></rect>
+<rect x="156" y="259.452" width="22" height="36.5479" fill="#9c6b4e"><title>C0 Citation recall: 0.1523</title></rect>
+<text x="120" y="314" text-anchor="middle" fill="#1f1f1f">C0</text>
+<rect x="204" y="210.112" width="22" height="85.888" fill="#3ca951"><title>C1 Correctness: 0.3579</title></rect>
+<rect x="228" y="106.4" width="22" height="189.6" fill="#ff8ab7"><title>C1 Faithfulness: 0.7900</title></rect>
+<rect x="252" y="172.8" width="22" height="123.2" fill="#a463f2"><title>C1 Answerability: 0.5133</title></rect>
+<rect x="276" y="182.544" width="22" height="113.456" fill="#97bbf5"><title>C1 Citation precision: 0.4727</title></rect>
+<rect x="300" y="233.26" width="22" height="62.7397" fill="#9c6b4e"><title>C1 Citation recall: 0.2614</title></rect>
+<text x="264" y="314" text-anchor="middle" fill="#1f1f1f">C1</text>
+<rect x="348" y="153.792" width="22" height="142.208" fill="#3ca951"><title>C2 Correctness: 0.5925</title></rect>
+<rect x="372" y="93.9835" width="22" height="202.017" fill="#ff8ab7"><title>C2 Faithfulness: 0.8417</title></rect>
+<rect x="396" y="96" width="22" height="200" fill="#a463f2"><title>C2 Answerability: 0.8333</title></rect>
+<rect x="420" y="229.006" width="22" height="66.9941" fill="#97bbf5"><title>C2 Citation precision: 0.2791</title></rect>
+<rect x="444" y="203.397" width="22" height="92.6027" fill="#9c6b4e"><title>C2 Citation recall: 0.3858</title></rect>
+<text x="408" y="314" text-anchor="middle" fill="#1f1f1f">C2</text>
+<rect x="492" y="152.752" width="22" height="143.248" fill="#3ca951"><title>C3 Correctness: 0.5969</title></rect>
+<rect x="516" y="91.8169" width="22" height="204.183" fill="#ff8ab7"><title>C3 Faithfulness: 0.8508</title></rect>
+<rect x="540" y="100.8" width="22" height="195.2" fill="#a463f2"><title>C3 Answerability: 0.8133</title></rect>
+<rect x="564" y="207.668" width="22" height="88.3317" fill="#97bbf5"><title>C3 Citation precision: 0.3680</title></rect>
+<rect x="588" y="189.151" width="22" height="106.849" fill="#9c6b4e"><title>C3 Citation recall: 0.4452</title></rect>
+<text x="552" y="314" text-anchor="middle" fill="#1f1f1f">C3</text>
+<rect x="636" y="99.632" width="22" height="196.368" fill="#3ca951"><title>C4 Correctness: 0.8182</title></rect>
+<rect x="660" y="76.2262" width="22" height="219.774" fill="#ff8ab7"><title>C4 Faithfulness: 0.9157</title></rect>
+<rect x="684" y="57.6" width="22" height="238.4" fill="#a463f2"><title>C4 Answerability: 0.9933</title></rect>
+<rect x="708" y="190.765" width="22" height="105.235" fill="#97bbf5"><title>C4 Citation precision: 0.4385</title></rect>
+<rect x="732" y="105.315" width="22" height="190.685" fill="#9c6b4e"><title>C4 Citation recall: 0.7945</title></rect>
+<text x="696" y="314" text-anchor="middle" fill="#1f1f1f">C4</text>
+<rect x="780" y="109.232" width="22" height="186.768" fill="#3ca951"><title>C5 Correctness: 0.7782</title></rect>
+<rect x="804" y="76.5833" width="22" height="219.417" fill="#ff8ab7"><title>C5 Faithfulness: 0.9142</title></rect>
+<rect x="828" y="59.2" width="22" height="236.8" fill="#a463f2"><title>C5 Answerability: 0.9867</title></rect>
+<rect x="852" y="192.192" width="22" height="103.808" fill="#97bbf5"><title>C5 Citation precision: 0.4325</title></rect>
+<rect x="876" y="109.699" width="22" height="186.301" fill="#9c6b4e"><title>C5 Citation recall: 0.7763</title></rect>
+<text x="840" y="314" text-anchor="middle" fill="#1f1f1f">C5</text>
+<rect x="924" y="113.152" width="22" height="182.848" fill="#3ca951"><title>C6 Correctness: 0.7619</title></rect>
+<rect x="948" y="79.55" width="22" height="216.45" fill="#ff8ab7"><title>C6 Faithfulness: 0.9019</title></rect>
+<rect x="972" y="59.2" width="22" height="236.8" fill="#a463f2"><title>C6 Answerability: 0.9867</title></rect>
+<rect x="996" y="193.054" width="22" height="102.946" fill="#97bbf5"><title>C6 Citation precision: 0.4289</title></rect>
+<rect x="1020" y="107.233" width="22" height="188.767" fill="#9c6b4e"><title>C6 Citation recall: 0.7865</title></rect>
+<text x="984" y="314" text-anchor="middle" fill="#1f1f1f">C6</text>
+</svg>

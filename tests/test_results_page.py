@@ -3,7 +3,8 @@ import os
 import pytest
 from src.config import PROJECT_ROOT
 
-from src.app.state import benchmark_kind, result_runs
+from src.app.state import result_runs
+from src.evaluation.report import benchmark_kind
 from src.app.components import result_chart_rows
 
 
@@ -56,9 +57,9 @@ def test_results_page_reads_saved_runs_and_keeps_question_rows_separate(tmp_path
 def test_results_page_reads_model_report_rows(tmp_path):
     report = tmp_path / "report.json"
     report.write_text(json.dumps({"results": [{"question_id": "q1"}]}), encoding="utf-8")
-    from src.app.state import _read_result_rows
+    from src.evaluation.report import read_result_rows
 
-    assert _read_result_rows(report) == [{"question_id": "q1"}]
+    assert read_result_rows(report) == [{"question_id": "q1"}]
 
 
 def test_old_run_metrics_are_read_from_saved_question_rows(tmp_path):
@@ -119,7 +120,8 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert manual.dataframe[0].value["Recall"].tolist() == [1.0]
     assert mechanical.dataframe[0].value["Recall"].tolist() == [0.0]
     assert list(manual.dataframe[0].value.columns) == [
-        "Configuration", "Name", "Questions", "Recall", "Hard Negative Accuracy"]
+        "Configuration", "Name", "Questions", "Relevance-scored", "Recall",
+        "Hard negatives", "Hard Negative Accuracy"]
     charts = app.get("vega_lite_chart")
     assert len(charts) == 2
     for chart in charts:
@@ -373,3 +375,66 @@ def test_reload_falls_back_when_the_selected_run_is_removed(tmp_path, monkeypatc
     app.button[0].click().run()
     assert not app.exception
     assert app.selectbox[0].value == "newer"
+
+
+def test_matrix_answer_quality_shows_on_the_team_tab(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    run = tmp_path / "matrix"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4", "name": "filtered hybrid"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1", "recall": 1.0}) + "\n", encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "checks": {"not_run": 145},
+        "quality": {"correctness": {"mean": 0.8182, "scored": 150, "total": 150}}}}}),
+        encoding="utf-8")
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    team, mechanical = app.tabs
+    assert "Answer quality" in [header.value for header in team.subheader]
+    quality = team.dataframe[1].value
+    assert quality["Correctness"].tolist() == [0.8182]
+    assert quality["Correctness scored"].tolist() == [150]
+    assert quality["Claim checks"].tolist() == ["not_run 145"]
+    assert "Answer quality" not in [header.value for header in mechanical.subheader]
+
+
+def test_a_run_with_answer_quality_but_no_retrieval_scores_still_shows_it(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    run = tmp_path / "answers-only"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1"}) + "\n", encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "quality": {"correctness": {"mean": 0.5, "scored": 150}}}}}),
+        encoding="utf-8")
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    team = app.tabs[0]
+    assert not team.info
+    assert team.dataframe[0].value["Correctness"].tolist() == [0.5]
+
+
+def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    run = tmp_path / "matrix"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1", "recall": 1.0}) + "\n", encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "quality": {"correctness": {"mean": 0.8, "scored": 150}}}}}),
+        encoding="utf-8")
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    charts = app.tabs[0].get("vega_lite_chart")
+    assert len(charts) == 2
+    values = json.dumps(json.loads(charts[1].proto.spec).get("datasets", {})) + charts[1].proto.spec
+    assert "Correctness" in values

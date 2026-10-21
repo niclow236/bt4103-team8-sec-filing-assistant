@@ -254,6 +254,10 @@ python -u -m src.evaluation.full_ablation answers results/c6-rebase-full-YYYYMMD
   --provider mistral --model ministral-8b-2512
 
 python -m src.evaluation.full_ablation rescore results/c6-rebase-full-YYYYMMDD
+
+# Tables and charts for the report, the same ones the app's Results page shows,
+# written to docs/evaluation/<run-id>/. Rerun after any re-run or rescore.
+python -m src.evaluation.report results/full-matrix-YYYYMMDD
 ```
 
 Retrieval `--configurations` freezes the selected rows in `config.json`; a
@@ -325,6 +329,13 @@ LLM-assisted, and was measured on a different local corpus (28,289 passages)
 and XBRL set. Its resume refuses a changed input file, so this run was measured
 from scratch (#161); the figures below replace its tables rather than amend
 them.
+
+The [generated report](evaluation/full-matrix-20261017/ablation.md) holds these
+tables with their charts, as the app's Results page shows them, written from
+the native run by `python -m src.evaluation.report results/full-matrix-20261017`
+(#48). The two tables below are a snapshot of it taken on 21 October 2026,
+when every figure matched; the generated report is the live source. After a
+re-run or rescore, regenerate it rather than editing figures here.
 
 | Benchmark | Row | Relevance-scored | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
 | --- | --- | ---: | ---: | ---: | ---: | --- |

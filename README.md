@@ -186,6 +186,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── harness.py       #   evaluate(): one configuration end to end through answer_question
 │   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
 │   │   ├── chunk_sweep.py   #   python -m src.evaluation.chunk_sweep: retrieval at four passage sizes
+│   │   ├── report.py        #   python -m src.evaluation.report: a run's tables and charts, as Results shows them
 │   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
@@ -1961,6 +1962,24 @@ or updated runs, keeps the selected run when it still exists, and clears only
 the Results cache, not the caches used by other pages.
 The cache keeps aggregate scores rather than full question rows, and the chart
 shows retrieval metrics as separate bars rather than adding their scores.
+Each retrieval table gives the number of questions its means cover: those
+with a gold passage (Relevance-scored) and those with hard negatives. A matrix
+run's saved answers add an Answer quality table and chart to the Team tab:
+each judged mean beside the number of outputs it scored, and the claim check
+counts. They are recomputed from each configuration's `answers.jsonl`, the way
+`full_ablation rescore` does; `answer-summary.json` is used only where those
+rows are missing, and an `answers.jsonl` that cannot be read or scored is
+named in a warning. After a rescore, the retrieval figures come from
+`rescored/summary.json`, since rescore leaves the per-question rows as they
+were. A configuration answered for fewer team questions than it retrieved for
+is labelled incomplete. A saved score counts only when it is a number from 0
+to 1; anything else is a blank cell, left out of its mean and its count.
+Recall, nDCG and MRR score the same questions, so a question row with any of
+the three set to a non-score leaves all three. An answer row missing one of
+its judged scores is unreadable, as it is to rescore, and is named in the
+"Unscored answers" warning. The page and `python -m src.evaluation.report` build
+every table and chart through `src/evaluation/report.py`, so the page and a
+generated report cannot disagree.
 
 The Compare page runs one question through two configurations from the shared
 evaluation registry, using the same selected answer model. Each side shows its
@@ -2451,6 +2470,27 @@ answer scores, conditional denominators, frozen identities and limitations.
 Its measurements remain separate from the archived C5-based row above and the
 earlier team-only diagnostic. Verification annotates claims; hosted judge-score
 differences do not establish that it corrects answer text.
+
+### Tables and charts from a run
+
+One command turns a saved run into the tables and charts the Results page
+shows, for the written report and slides:
+
+```bash
+python -m src.evaluation.report results/full-matrix-20261017
+```
+
+It writes `docs/evaluation/<run-id>/` (or `--out DIR`): `ablation.md` with
+each benchmark's retrieval table, the answer-model and answer-quality tables
+where the run has them and any partial-results warning, plus the bar charts
+`ablation.md` embeds: `<benchmark>-retrieval.svg` per benchmark and
+`handwritten-answer-quality.svg` for the team answers. It reads only what is
+saved and makes no model calls. After a run is repeated or rescored, run the
+same command again: it rewrites every file it owns and removes a chart the
+new run no longer has, so nothing is edited by hand. Other files in the folder
+are left alone. It refuses an `--out` inside any saved run (a folder holding a
+`summary.json`), whose files tools such as `tools/report_c6_rebase.py` hash. The generated report for the
+archived matrix is [docs/evaluation/full-matrix-20261017/](docs/evaluation/full-matrix-20261017/ablation.md).
 
 ### Embedding and generation ablations
 

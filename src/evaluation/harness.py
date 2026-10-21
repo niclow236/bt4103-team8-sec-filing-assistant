@@ -140,6 +140,15 @@ def _checks(rows: list[dict]) -> dict[str, int]:
     return dict(sorted(worst.items()))
 
 
+def answer_scores(rows: list[dict]) -> dict[str, Any]:
+    """How a configuration's saved answers score: judged quality and claim checks.
+
+    The matrix's answer summaries and the results report both take these from
+    here, so a report regenerated from saved answers scores them as rescore does.
+    """
+    return {"questions": len(rows), "quality": quality_summary(rows), "checks": _checks(rows)}
+
+
 def answer_with_retries(label: str, ask: Callable[[], Asked]) -> tuple[Asked, int]:
     """``ask()``, and how many times it was asked: again after each wait in
     ``RETRY_WAITS_S``, or the longer ``retry_after`` the error asks for, while

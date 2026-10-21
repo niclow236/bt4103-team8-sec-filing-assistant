@@ -505,8 +505,9 @@ def test_a_correctness_saved_as_text_is_not_counted(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(("by_benchmark", "scores_shown"), [
     (None, False),
-    # As the full matrix saves a summary: its keys are not the tabs'.
-    ({"team": {"recall": 0.2}, "xbrl": {"recall": 0.1}}, False),
+    # As the full matrix saves a summary: its "team" and "xbrl" keys are read
+    # as the tabs' benchmarks (#48), so its scores are shown.
+    ({"team": {"recall": 0.2}, "xbrl": {"recall": 0.1}}, True),
     # As the writers before 0b49c77 saved one, keyed as the page's tabs are.
     ({"handwritten": {"recall": 0.2}, "mechanical": {"recall": 0.1}}, True),
 ])

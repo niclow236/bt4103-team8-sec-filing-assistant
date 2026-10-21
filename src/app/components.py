@@ -30,6 +30,7 @@ import streamlit as st
 import pandas as pd
 
 from src.config import read_tickers
+from src.evaluation import report
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
 from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
@@ -56,44 +57,24 @@ _ITEM_MENTION = re.compile(
 )
 
 
-_RESULT_METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
-                         "hard_negative_accuracy": "Hard Negative Accuracy"}
-_RESULT_BENCHMARKS = (("Team benchmark", "handwritten"),
-                      ("Mechanical XBRL benchmark", "mechanical"))
+result_chart_rows = report.chart_rows
 
 
 def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
-    rows = []
-    for item in configurations:
-        saved = item["benchmark_metrics"].get(benchmark, {})
-        rows.append({"Configuration": item["config_id"], "Name": item["name"],
-                     "Questions": saved.get("questions", item["questions"]),
-                     **{label: saved.get(metric)
-                        for metric, label in _RESULT_METRIC_LABELS.items()}})
-    return pd.DataFrame(rows).dropna(axis=1, how="all")
+    return pd.DataFrame(report.retrieval_table(configurations, benchmark))
 
 
 def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
-    rows = []
-    for item in configurations:
-        saved = item["benchmark_metrics"].get(benchmark, {})
-        if saved.get("abstention_rate") is None:
-            continue
-        rows.append({"Configuration": item["config_id"], "Name": item["name"],
-                     "Questions": saved.get("questions"),
-                     "Abstention rate": saved.get("abstention_rate"),
-                     "Median latency (ms)": saved.get("median_latency_ms"),
-                     "LLM questions": saved.get("llm_questions")})
-    return pd.DataFrame(rows).dropna(axis=1, how="all")
+    return pd.DataFrame(report.model_table(configurations, benchmark))
 
 
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
-                              configurations: list[dict[str, Any]],
-                              benchmark: str) -> bool:
+                              run: dict[str, Any], benchmark: str) -> bool:
     """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
-    model_table = _results_model_table(configurations, benchmark)
-    if not retrieval and model_table.empty:
+    model_table = _results_model_table(run["configurations"], benchmark)
+    quality = pd.DataFrame(report.answer_quality_table(run, benchmark))
+    if not retrieval and model_table.empty and quality.empty:
         st.info("No saved results for this benchmark.")
         return False
     if retrieval:
@@ -106,21 +87,14 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not model_table.empty:
         st.subheader("Answer-model ablation")
         st.dataframe(model_table, width="stretch", hide_index=True)
+    if not quality.empty:
+        st.subheader("Answer quality")
+        st.dataframe(quality, width="stretch", hide_index=True)
+        quality_chart = report.quality_chart_rows(run, benchmark)
+        if quality_chart:
+            st.bar_chart(pd.DataFrame(quality_chart).pivot(
+                index="Configuration", columns="Metric", values="Value"), stack=False)
     return True
-
-
-def result_chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dict[str, Any]]:
-    """Return only the four retrieval metrics; counts are not scores."""
-    rows = []
-    for item in configurations:
-        saved = item["benchmark_metrics"].get(benchmark, {})
-        for metric, label in _RESULT_METRIC_LABELS.items():
-            value = saved.get(metric)
-            if value is not None:
-                rows.append({"Configuration": item["config_id"],
-                             "Metric": label,
-                             "Value": float(value)})
-    return rows
 
 
 # The cutoff "found the right passage" is judged at, the top 10 the issue
@@ -236,12 +210,6 @@ def _question_changes(before: Mapping[str, QuestionOutcome], after: Mapping[str,
     return len(shared), counts, table
 
 
-def _keyed_as_tabs(item: Mapping[str, Any]) -> bool:
-    """Whether a configuration's benchmark scores are keyed as the tabs are,
-    so they say which of the tabs' benchmarks it ran."""
-    return any(kind in item["benchmark_metrics"] for _, kind in _RESULT_BENCHMARKS)
-
-
 def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                              outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Question by question, what one configuration changed against a baseline (#169)."""
@@ -250,7 +218,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
     # Its rows, or a summary keyed as the tabs are, tell which benchmarks it
     # ran; with neither, there is no telling.
     elsewhere = [item["config_id"] for item in run["configurations"]
-                 if (item.get("questions_read") or _keyed_as_tabs(item))
+                 if (item.get("questions_read") or report.keyed_as_tabs(item))
                  and benchmark not in item["benchmark_metrics"]]
     unread = [item["config_id"] for item in run["configurations"]
               if not item.get("questions_read") and item["config_id"] not in elsewhere]
@@ -344,30 +312,13 @@ def render_results(runs: list[dict[str, Any]], *,
     run_id = _existing_choice("Run", [run["run_id"] for run in runs],
                               key="results_run", format_func=str)
     selected = next(run for run in runs if run["run_id"] == run_id)
-    # A summary's by-benchmark scores split only as the tabs do when they
-    # are keyed as the tabs are; the full matrix keys them "team" and "xbrl".
-    unsplit = [item["config_id"] for item in selected["configurations"]
-               if not _keyed_as_tabs(item)]
-    if unsplit:
-        st.warning(
-            f"{len(unsplit)} of this run's {len(selected['configurations'])} configurations "
-            "have a summary but no usable per-question results on this machine "
-            f"(results/{run_id}/<configuration>/questions.jsonl or report.json), so their "
-            "scores cannot be split by benchmark and are not shown: " + ", ".join(unsplit))
-    incomplete = [f"{item['config_id']} ({item['incomplete']})"
-                  for item in selected["configurations"] if item.get("incomplete")]
-    if incomplete:
-        st.warning("Incomplete results: " + ", ".join(incomplete)
-                   + ". These scores are partial and are not comparable to a complete run.")
-    retrieval = [item for item in selected["configurations"]
-                 if any(any(item["benchmark_metrics"].get(kind, {}).get(metric) is not None
-                            for metric in _RESULT_METRIC_LABELS)
-                        for _, kind in _RESULT_BENCHMARKS)]
-    for tab, (title, kind) in zip(st.tabs([title for title, _ in _RESULT_BENCHMARKS]),
-                                _RESULT_BENCHMARKS):
+    for warning in report.run_warnings(selected):
+        st.warning(warning)
+    for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
+                                report.BENCHMARKS):
         with tab:
-            matching = [item for item in retrieval if kind in item["benchmark_metrics"]]
-            saved = _render_results_benchmark(title, matching, selected["configurations"], kind)
+            matching = report.retrieval_configurations(selected["configurations"], kind)
+            saved = _render_results_benchmark(title, matching, selected, kind)
             if saved:
                 _render_question_changes(selected, kind, outcomes)
 
