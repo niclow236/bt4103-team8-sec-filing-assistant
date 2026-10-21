@@ -90,6 +90,53 @@ def runner(tmp_path,monkeypatch):
     return state
 
 
+@pytest.mark.parametrize('difference',['counts','content','order'])
+def test_required_decision_benchmark_is_rejected_before_index_construction(runner,monkeypatch,difference):
+    questions=runner.questions
+    monkeypatch.setitem(matrix.POLICY,'decision_benchmark_counts',{'team':len(questions)})
+    monkeypatch.setitem(matrix.POLICY,'decision_question_records_sha256',matrix.question_records_sha256(questions))
+    if difference=='counts':
+        supplied=questions[:1]
+    elif difference=='content':
+        supplied=[replace(questions[0],expected_answer='Changed answer'),questions[1]]
+    else:
+        supplied=list(reversed(questions))
+    matrix.write_rows(runner.args.questions[0],[q.to_dict() for q in supplied])
+    runner.args.require_decision_benchmark=True
+    monkeypatch.setattr(matrix,'build_retriever',lambda *a,**kw:pytest.fail('constructed an index for a wrong benchmark'))
+    with pytest.raises(ValueError,match='exact frozen question counts and digest'):
+        matrix.retrieval(runner.args)
+    assert not runner.directory.exists() and not runner.calls
+
+
+def test_required_decision_benchmark_is_frozen_and_checked_on_replay(runner,monkeypatch):
+    monkeypatch.setitem(matrix.POLICY,'decision_benchmark_counts',{'team':len(runner.questions)})
+    monkeypatch.setitem(matrix.POLICY,'decision_question_records_sha256',matrix.question_records_sha256(runner.questions))
+    runner.args.require_decision_benchmark=True
+    matrix.retrieval(runner.args)
+    config=json.loads((runner.directory/'config.json').read_text())
+    declaration=config['benchmark_declaration']
+    assert declaration['required'] and declaration['matches_decision_benchmark']
+    assert declaration['counts']=={'team':2}
+    matrix.validate_snapshot(config,runner.questions)
+    # Replay uses its frozen policy even if a later release declares a new cohort.
+    monkeypatch.setitem(matrix.POLICY,'decision_question_records_sha256','0'*64)
+    matrix.validate_snapshot(config,runner.questions)
+    for key,value in [('counts',{'team':1}),('matches_decision_benchmark',False),
+                      ('decision_question_records_sha256','0'*64)]:
+        changed=deepcopy(config)
+        changed['benchmark_declaration'][key]=value
+        with pytest.raises(ValueError,match='benchmark declaration'):
+            matrix.validate_snapshot(changed,runner.questions)
+
+
+def test_diagnostic_subset_is_explicitly_recorded_without_claiming_the_decision_benchmark(runner):
+    matrix.retrieval(runner.args)
+    declaration=json.loads((runner.directory/'config.json').read_text())['benchmark_declaration']
+    assert declaration['counts']=={'team':2}
+    assert not declaration['required'] and not declaration['matches_decision_benchmark']
+
+
 @pytest.mark.parametrize('count',[0,1])
 def test_retrieval_runs_and_resumes_the_actual_transaction_loop(runner,count):
     runner.fail_after=count
@@ -331,6 +378,48 @@ def test_answer_loop_clears_a_stale_checkpoint_even_when_the_row_is_already_comp
     assert not pending.exists() and not state.generated and not state.judged
 
 
+def test_soclaas_answers_can_use_a_separate_frozen_mistral_judge(answer_run,monkeypatch):
+    state=answer_run
+    generation_module=importlib.import_module('src.rag.generate')
+    quality=importlib.import_module('src.evaluation.quality')
+    configs={
+        'soclaas':GenerationConfig('soclaas','qwen3.6:35b',PROMPT_TEMPLATE_ID),
+        'mistral':GenerationConfig('mistral','ministral-8b-2512',PROMPT_TEMPLATE_ID),
+    }
+    clients={provider:object() for provider in configs}
+    monkeypatch.setattr(generation_module,'config_from_env',lambda *,provider,model:replace(
+        configs[provider],model=model or configs[provider].model))
+    monkeypatch.setattr(generation_module,'checked_model',lambda config,llm:clients[config.provider])
+    class Judge:
+        def __init__(self,config,*,llm):
+            self.config=config
+            assert config==configs['mistral'] and llm is clients['mistral']
+    monkeypatch.setattr(quality,'LLMJudge',Judge)
+    state.args.provider='soclaas'
+    state.args.model='qwen3.6:35b'
+    state.args.judge_provider='mistral'
+    state.args.judge_model='ministral-8b-2512'
+    state.args.configurations=('C4',)
+    matrix.write_rows(state.args.run_dir/'C4/answers.jsonl',[])
+    matrix.answers(state.args)
+    config=json.loads((state.args.run_dir/'answers-config.json').read_text())
+    assert config['generation']==configs['soclaas'].to_dict()
+    assert config['judge_generation']==configs['mistral'].to_dict()
+    assert all(kw['llm'] is clients['soclaas'] and kw['judge'].config==configs['mistral']
+               for _,kw in state.generated)
+    before=artifacts(state.args.run_dir)
+    state.args.judge_model='different-judge'
+    with pytest.raises(ValueError,match='identical settings/source/facts'):
+        matrix.answers(state.args)
+    assert artifacts(state.args.run_dir)==before
+
+
+def test_answers_default_judge_remains_the_generator(answer_run):
+    matrix.answers(answer_run.args)
+    config=json.loads((answer_run.args.run_dir/'answers-config.json').read_text())
+    assert config['generation']==config['judge_generation']
+
+
 def test_answer_loop_can_measure_only_the_rebased_c6_row(answer_run):
     state=answer_run
     state.args.configurations=("C6",)
@@ -415,3 +504,12 @@ def test_answer_flags_follow_the_registry_instead_of_the_c6_id(answer_run):
 def test_cli_requires_reference_and_archived_digest_together(argv):
     with pytest.raises(SystemExit) as stopped:matrix.main(argv)
     assert stopped.value.code==2
+
+
+def test_cli_accepts_soclaas_and_separate_judge_options(monkeypatch):
+    seen=[]
+    monkeypatch.setattr(matrix,'answers',lambda args:seen.append(args))
+    matrix.main(['answers','results/example','--provider','soclaas','--model','qwen3.6:35b',
+                 '--judge-provider','mistral','--judge-model','ministral-8b-2512'])
+    assert seen[0].provider=='soclaas' and seen[0].model=='qwen3.6:35b'
+    assert seen[0].judge_provider=='mistral' and seen[0].judge_model=='ministral-8b-2512'
