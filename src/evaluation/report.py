@@ -20,6 +20,7 @@ from src.config import PROJECT_ROOT
 from src.evaluation.harness import answer_scores
 from src.evaluation.metrics import RETRIEVAL_METRICS
 
+RELEVANCE_METRICS = ("recall", "ndcg", "mrr")
 METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
                  "hard_negative_accuracy": "Hard Negative Accuracy"}
 # Answer quality as full_ablation's answer-summary.json records it, team questions only.
@@ -81,10 +82,16 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
     output: dict[str, dict[str, Any]] = {}
     for kind, items in grouped.items():
         values: dict[str, Any] = {"questions": len(items), "metric_denominators": {}}
+        # Read leniently, unlike full_ablation.summarize: a row whose score is not
+        # one is left out of the mean and its count rather than failing. Recall,
+        # nDCG and MRR score the same questions, so a row with any of the three
+        # set to a non-score leaves all three, and they keep one count.
+        relevance_rows = [row for row in items if all(
+            row.get(metric) is None or _score(row.get(metric)) is not None
+            for metric in RELEVANCE_METRICS)]
         for metric in RETRIEVAL_METRICS:
-            # Read leniently, unlike full_ablation.summarize: a row whose score is
-            # not one is left out of the mean and its count rather than failing.
-            measured = [score for row in items if (score := _score(row.get(metric))) is not None]
+            source = relevance_rows if metric in RELEVANCE_METRICS else items
+            measured = [score for row in source if (score := _score(row.get(metric))) is not None]
             values[metric] = mean(measured) if measured else None
             values["metric_denominators"][metric] = len(measured)
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
@@ -204,6 +211,11 @@ def _answered(path: Path) -> dict[str, Any] | None:
     rows = read_result_rows(path)
     if not rows:
         return None
+    # As with retrieval rows, a judged score that is not a number from 0 to 1 is
+    # left out of its mean and count; valid rows score exactly as rescore does.
+    rows = [{**row, "quality": {**row["quality"], **{
+                metric: _score(row["quality"].get(metric)) for metric in QUALITY_LABELS}}}
+            if isinstance(row.get("quality"), dict) else row for row in rows]
     try:
         return answer_scores(rows)
     # A row of the wrong shape anywhere in it, a missing key or a check that is
@@ -249,7 +261,7 @@ def retrieval_table(configurations: list[dict[str, Any]], benchmark: str) -> lis
         saved = item["benchmark_metrics"].get(benchmark, {})
         counts = _record(saved.get("metric_denominators"))
         scores = {metric: _score(saved.get(metric)) for metric in METRIC_LABELS}
-        relevance = any(scores[metric] is not None for metric in ("recall", "ndcg", "mrr"))
+        relevance = any(scores[metric] is not None for metric in RELEVANCE_METRICS)
         hard_negatives = scores["hard_negative_accuracy"] is not None
         # Recall, nDCG and MRR score the same questions: those with a gold passage.
         rows.append({"Configuration": item["config_id"], "Name": item["name"],
@@ -514,6 +526,14 @@ def _out_folder(value: str) -> Path:
     return Path(value)
 
 
+def _inside(path: Path, folder: Path) -> bool:
+    """Whether ``path`` is ``folder`` or under it, by file identity, so neither a
+    symlink nor a case-insensitive filesystem's other spelling gets past."""
+    resolved = Path(os.path.realpath(path))
+    return any(candidate.exists() and os.path.samefile(candidate, folder)
+               for candidate in (resolved, *resolved.parents))
+
+
 def _saved_run_holding(path: Path) -> Path | None:
     """The saved run ``path`` is or lies under, if any: the nearest folder with a
     summary.json. A lookup on disk, so a symlink or a case-insensitive
@@ -544,9 +564,11 @@ def main(argv: list[str] | None = None) -> None:
             parser.error(f"--out {out} is not a folder")
         # A run's own files are hashed by the tools that publish it, so a
         # report beside them would change what they check.
-        holder = _saved_run_holding(out)
-        if holder is not None and os.path.samefile(holder, args.run_dir):
+        # The run's own configuration folders hold summary.json too, so the run
+        # being read is looked for first, then any other saved run.
+        if _inside(out, args.run_dir):
             parser.error(f"--out {out} is inside the run it reads; write the report elsewhere")
+        holder = _saved_run_holding(out)
         if holder is not None:
             parser.error(f"--out {out} is inside a saved run ({holder}); write the report elsewhere")
         write_report(run, out)

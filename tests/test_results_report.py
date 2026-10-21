@@ -633,7 +633,7 @@ def test_a_question_row_score_that_is_not_a_score_is_left_out_of_its_mean(tmp_pa
     assert "| C4 | row C4 | 2 | 1 | 0.5000 |" in (out / "ablation.md").read_text(encoding="utf-8")
 
 
-def test_an_answer_row_too_large_to_average_is_flagged_not_fatal(tmp_path):
+def test_an_answer_row_too_large_to_average_leaves_only_its_own_score(tmp_path):
     run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
     row = _answer_row("q1", 1.0)
     row["quality"]["correctness"] = 10 ** 400
@@ -642,7 +642,9 @@ def test_an_answer_row_too_large_to_average_is_flagged_not_fatal(tmp_path):
 
     report.main([str(run), "--out", str(out)])
 
-    assert "Unscored answers: C4." in (out / "ablation.md").read_text(encoding="utf-8")
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 1 | — | 0 | 1.0000 | 1 |" in table
+    assert "Unscored answers" not in table
 
 
 def test_negative_zero_is_shown_as_zero(tmp_path):
@@ -708,3 +710,68 @@ def test_the_report_is_never_written_into_another_saved_run(tmp_path, capsys):
 
     report.main([str(run), "--out", str(results / "matrix-report")])
     assert (results / "matrix-report" / "ablation.md").is_file()
+
+
+@pytest.mark.parametrize("inside", ["C4", "C4/report", "rescored/C4/x"])
+def test_a_folder_of_the_run_being_read_is_named_as_that_run(tmp_path, capsys, inside):
+    """Real runs keep a summary.json in each configuration folder and under rescored/."""
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    (run / "C4" / "summary.json").write_text("{}", encoding="utf-8")
+    (run / "rescored" / "C4").mkdir(parents=True)
+    (run / "rescored" / "C4" / "summary.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as stopped:
+        report.main([str(run), "--out", str(run / inside)])
+
+    assert stopped.value.code == 2
+    assert "inside the run it reads" in capsys.readouterr().err
+
+
+def test_recall_ndcg_and_mrr_share_the_questions_they_count(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 0.5, "ndcg": 0.5, "mrr": 0.5},
+        {"question_id": "q2", "recall": "high", "ndcg": 0.7, "mrr": 0.7}]})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    assert "| C4 | row C4 | 2 | 1 | 0.5000 | 0.5000 | 0.5000 |" in (
+        out / "ablation.md").read_text(encoding="utf-8")
+
+
+def test_an_answer_row_score_outside_zero_to_one_is_left_out_of_its_mean(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 1.0}, {"question_id": "q2", "recall": 1.0}]})
+    rows = [_answer_row("q1", 0.5), _answer_row("q2", 5)]
+    rows[1]["quality"]["faithfulness"] = 10 ** 400
+    (run / "C4" / "answers.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "| C4 | row C4 | 2 | 0.5000 | 1 | 1.0000 | 1 | 1.0000 | 2 |" in table
+    assert "Unscored answers" not in table
+
+
+def test_every_score_the_tables_can_show_gets_a_bar_of_its_own_colour(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 0.5, "ndcg": 0.5, "mrr": 0.5,
+         "hard_negative_accuracy": 0.5}]})
+    _save_answers(run, C4={"questions": 1, "quality": {
+        metric: _quality(0.5, 1, 1) for metric in report.QUALITY_LABELS}})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    fills = set()
+    labels = set()
+    for chart in ("handwritten-retrieval.svg", "handwritten-answer-quality.svg"):
+        root = ElementTree.parse(out / chart).getroot()
+        for rect in root.iter(SVG + "rect"):
+            if rect.find(SVG + "title") is not None:
+                labels.add(rect.find(SVG + "title").text.split(":")[0].removeprefix("C4 "))
+                fills.add(rect.get("fill"))
+    assert labels == {*report.METRIC_LABELS.values(), *report.QUALITY_LABELS.values()}
+    assert len(fills) == len(labels)
