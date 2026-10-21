@@ -27,6 +27,9 @@ QUALITY_LABELS = {"correctness": "Correctness", "faithfulness": "Faithfulness",
                   "answerability_correct": "Answerability",
                   "citation_precision": "Citation precision",
                   "citation_recall": "Citation recall"}
+# The manifest every evaluation command writes at a run's root; a folder that
+# holds one is a saved run.
+SUMMARY = "summary.json"
 # Generated reports sit beside the hand-curated summaries the docs link to.
 REPORT_ROOT = PROJECT_ROOT / "docs" / "evaluation"
 TEXT_COLUMNS = ("Configuration", "Name", "Claim checks")
@@ -139,12 +142,12 @@ def _rescored_splits(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
 def read_run(run_dir: Path) -> dict[str, Any] | None:
     """One saved run, or None when its folder holds no readable configurations."""
     try:
-        manifest = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        manifest = json.loads((run_dir / SUMMARY).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(manifest, dict):
         return None
-    rescored = _rescored_splits(run_dir / "rescored" / "summary.json")
+    rescored = _rescored_splits(run_dir / "rescored" / SUMMARY)
     configurations = []
     for summary in manifest.get("configurations", ()):
         if not isinstance(summary, dict):
@@ -517,7 +520,7 @@ def _saved_run_holding(path: Path) -> Path | None:
     filesystem's other spelling of a run is found too."""
     resolved = Path(os.path.realpath(path))
     return next((candidate for candidate in (resolved, *resolved.parents)
-                 if (candidate / "summary.json").is_file()), None)
+                 if (candidate / SUMMARY).is_file()), None)
 
 
 def main(argv: list[str] | None = None) -> None:
