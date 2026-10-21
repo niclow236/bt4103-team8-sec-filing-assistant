@@ -775,3 +775,24 @@ def test_every_score_the_tables_can_show_gets_a_bar_of_its_own_colour(tmp_path):
                 fills.add(rect.get("fill"))
     assert labels == {*report.METRIC_LABELS.values(), *report.QUALITY_LABELS.values()}
     assert len(fills) == len(labels)
+
+
+@pytest.mark.parametrize("damage", ["drop correctness", "empty quality"])
+def test_an_answer_row_missing_a_judged_score_is_flagged_not_half_read(tmp_path, damage):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [
+        {"question_id": "q1", "recall": 1.0}, {"question_id": "q2", "recall": 1.0}]})
+    _save_answers(run, C4={"questions": 2, "quality": {"correctness": _quality(0.9, 2, 2)}})
+    rows = [_answer_row("q1", 1.0), _answer_row("q2", 0.0)]
+    if damage == "drop correctness":
+        del rows[1]["quality"]["correctness"]
+    else:
+        rows[1]["quality"] = {}
+    (run / "C4" / "answers.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "Unscored answers: C4." in table
+    assert "| C4 | row C4 | 2 | 0.9000 | 2 |" in table

@@ -214,8 +214,11 @@ def _answered(path: Path) -> dict[str, Any] | None:
         return None
     # As with retrieval rows, a judged score that is not a number from 0 to 1 is
     # left out of its mean and count; valid rows score exactly as rescore does.
+    # Only the scores a row has are cleaned, so a row missing one still fails
+    # below, as rescore would, and is flagged.
     rows = [{**row, "quality": {**row["quality"], **{
-                metric: _score(row["quality"].get(metric)) for metric in QUALITY_LABELS}}}
+                metric: _score(value) for metric, value in row["quality"].items()
+                if metric in QUALITY_LABELS}}}
             if isinstance(row.get("quality"), dict) else row for row in rows]
     try:
         return answer_scores(rows)

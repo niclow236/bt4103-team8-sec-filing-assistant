@@ -1924,7 +1924,11 @@ named in a warning. After a rescore, the retrieval figures come from
 `rescored/summary.json`, since rescore leaves the per-question rows as they
 were. A configuration answered for fewer team questions than it retrieved for
 is labelled incomplete. A saved score counts only when it is a number from 0
-to 1; anything else is a blank cell, left out of its mean and its count. The page and `python -m src.evaluation.report` build
+to 1; anything else is a blank cell, left out of its mean and its count.
+Recall, nDCG and MRR score the same questions, so a question row with any of
+the three set to a non-score leaves all three. An answer row missing one of
+its judged scores is unreadable, as it is to rescore, and is named in the
+"Unscored answers" warning. The page and `python -m src.evaluation.report` build
 every table and chart through `src/evaluation/report.py`, so the page and a
 generated report cannot disagree.
 
