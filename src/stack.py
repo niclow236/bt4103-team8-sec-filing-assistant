@@ -67,10 +67,12 @@ class StackConfig:
     name: str
     retriever: str              # a key in RETRIEVERS, or the runner's own baseline
     chunking: str               # "section-aware", or "fixed-size" for C0
-    metadata_filter: bool       # whether the question's own filters are applied
+    metadata_filter: bool       # whether the question's own filters are applied,
+                                # which use_facts also needs (see scoped)
     top_k: int = FINAL_K        # passages that reach the generator
     min_score: float | None = None   # an extra floor on this retriever's scale
-    use_facts: bool = True           # #34: look a numeric question up first
+    use_facts: bool = True           # #34: look a numeric question up first,
+                                     # by company and year, so only with the filter
     use_decomposition: bool = True   # #35: one search per filing
     use_refusal: bool = True         # refuse, unsearched, what no filing answers
 
@@ -89,6 +91,15 @@ class StackConfig:
             "use_refusal": self.use_refusal,
         }
 
+    @property
+    def answers_figures_from_facts(self) -> bool:
+        """Whether a figure question can be answered from the facts store, with
+        no model: the route has to be on, and it needs the company and year the
+        metadata filter applies (see ``scoped``). A question searched within an
+        Item still goes to the model, since the route cannot honour an Item
+        filter (``answer_question``); that is per question, so not decided here."""
+        return self.use_facts and self.metadata_filter
+
     def scoped(self, query: Query) -> Query:
         """``query`` as this row searches for it.
 
@@ -98,6 +109,13 @@ class StackConfig:
         here rather than left for each caller to remember. Recording the flag
         and not applying it made C1 to C3 answer exactly as C4 does, so a row
         selected in the app was not the row ``results/`` had measured.
+
+        The facts route (``use_facts``) looks a figure up by this Query's
+        company and year, so it only fires on a row with the metadata filter:
+        C1 to C3 send a figure question to retrieval and the model, as a row
+        searched without the question's company and year should (#156). The
+        full ablation turns the route off on every row, so its numbers do not
+        depend on this; a single-configuration run that leaves it on does.
         """
         return query if self.metadata_filter else Query(query.text, top_k=query.top_k)
 

@@ -151,6 +151,9 @@ def answer_question(
 
     # The Query's filters rather than the parse's, so a caller that narrowed the
     # search by hand gets the figure for the company and year it asked about.
+    # A configuration without the metadata filter passes a Query with neither
+    # (StackConfig.scoped), so on C1 to C3 this finds nothing and the question
+    # goes to the model: decided in #156, not an oversight.
     # The facts route searches its own supporting passages and does not accept
     # Item filters. Let normal retrieval enforce an explicit sidebar Item.
     if use_facts and parsed.question_type == "numeric" and not query.items:

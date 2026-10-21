@@ -377,7 +377,7 @@ def answer_models() -> AnswerModels:
     sent. It holds what is wrong and not the check's advice, which is written
     for a command: a page says for itself what to do. A provider that is not
     ready can still be picked, since a question the facts store answers asks
-    no model.
+    no model, on a row with the metadata filter (#156).
     """
     models, unready = {}, {}
     try:

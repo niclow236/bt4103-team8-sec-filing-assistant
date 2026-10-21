@@ -1124,6 +1124,11 @@ _PROVIDERS = {
 }
 
 
+# The rows whose figure questions the facts store can answer with no model
+# (#156).
+_FACTS_ROWS = tuple(key for key in SELECTABLE if STACKS[key].answers_figures_from_facts)
+
+
 def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
     """Pick what writes the answers, in the sidebar: the local model or a hosted one.
 
@@ -1136,8 +1141,9 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
     Two things are said under it, as soon as they are true and not when Ask
     is pressed: what the provider picked lacks, with what to do about it in
     the app, and what was wrong with ``.env``. A provider that lacks
-    something can still be picked: a figure the facts store looks up asks no
-    model. Returns the provider picked.
+    something can still be picked: on a row with the metadata filter and no
+    Item filter, a figure the facts store looks up asks no model. Returns the
+    provider picked.
     """
     models, unready = available.models, available.unready
     with st.sidebar:
@@ -1156,7 +1162,8 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
             # off the screen.
             st.warning(f"{label} cannot write an answer yet: {unready[provider]}. "
                        f"{_fix_in_app(provider, available)} "
-                       "A figure the facts store holds is still answered.")
+                       f"On {' or '.join(_FACTS_ROWS)} with no Item filter, a figure "
+                       "the facts store holds is still answered.")
         if available.problem:
             st.warning(available.problem)
     return provider

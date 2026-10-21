@@ -350,6 +350,53 @@ def test_the_harness_searches_the_way_the_row_was_measured():
     assert filtered.filters == {"ticker": ["AAPL"], "fiscal_year": [2024]}
 
 
+def test_only_a_row_with_the_metadata_filter_answers_a_figure_from_the_facts_store(tmp_path):
+    # #156, decided as documented behaviour: the facts route looks the figure
+    # up by the Query's company and year, and a row without the metadata
+    # filter answers from a Query with neither, so C1 to C3 send a figure
+    # question to the model even with use_facts on. Like the row itself, it
+    # does not use the company and year it was asked about.
+    import pandas as pd
+
+    from src.rag.constants import FACTS_PROVIDER
+    from tests.test_rag_numeric import QUESTION, _fact_row, _passage
+    from tests.test_rag_numeric import StubRetriever as PassageRetriever
+
+    facts_file = tmp_path / "facts.parquet"
+    pd.DataFrame([_fact_row()]).to_parquet(facts_file, index=False)
+
+    class ModelAsked(Exception):
+        pass
+
+    class FailingModel:
+        def stream(self, *args, **kwargs):
+            raise ModelAsked
+
+    def stack(config_id):
+        return Stack(config=STACKS[config_id], retriever=PassageRetriever(_passage()),
+                     generation=GENERATION, llm=FailingModel())
+
+    assert STACKS["C4"].use_facts and STACKS["C1"].use_facts
+    answered = stack("C4").answer(QUESTION, facts_file=facts_file)
+    assert answered.config.provider == FACTS_PROVIDER
+    assert "391,035,000,000" in answered.text
+    with pytest.raises(ModelAsked):
+        stack("C1").answer(QUESTION, facts_file=facts_file)
+    # Nor does C4 with an Item filter: the route cannot honour one, so the
+    # question is searched within it and given to the model.
+    within_item = Query(QUESTION, tickers=("AAPL",), fiscal_years=(2024,), items=("8",))
+    with pytest.raises(ModelAsked):
+        stack("C4").answer(QUESTION, query=within_item, facts_file=facts_file)
+
+
+def test_a_row_answers_figures_unaided_only_with_the_route_and_the_filter():
+    # What the app's provider warning names (#156): C4, and not a row like it
+    # with the route turned off.
+    assert STACKS["C4"].answers_figures_from_facts is True
+    assert STACKS["C1"].answers_figures_from_facts is False
+    assert replace(STACKS["C4"], use_facts=False).answers_figures_from_facts is False
+
+
 # --- the configurations results/ has measured ------------------------------------------
 
 def _write_run(root, run_id, *config_ids, questions=48):
