@@ -404,10 +404,11 @@ def markdown_table(rows: list[dict[str, Any]]) -> str:
 
 # One colour per metric, from a palette that stays distinct under the common
 # colour-vision deficiencies, on a white plate so it reads in a dark viewer too.
-METRIC_COLOURS = {"Recall": "#4269d0", "nDCG": "#efb118", "MRR": "#ff725c",
-                  "Hard Negative Accuracy": "#6cc5b0", "Correctness": "#3ca951",
-                  "Faithfulness": "#ff8ab7", "Answerability": "#a463f2",
-                  "Citation precision": "#97bbf5", "Citation recall": "#9c6b4e"}
+# Paired with every charted label, in chart order; zip(strict=True) refuses a
+# label added to either map without a colour of its own.
+METRIC_COLOURS = dict(zip((*METRIC_LABELS.values(), *QUALITY_LABELS.values()),
+                          ("#4269d0", "#efb118", "#ff725c", "#6cc5b0", "#3ca951",
+                           "#ff8ab7", "#a463f2", "#97bbf5", "#9c6b4e"), strict=True))
 
 
 def svg_chart(rows: list[dict[str, Any]], title: str) -> str:
