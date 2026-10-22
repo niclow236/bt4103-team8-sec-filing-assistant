@@ -614,8 +614,11 @@ def test_a_configuration_without_reciprocal_ranks_has_no_median_beside_one_that_
     manifest["configurations"].append({"config": {"id": "C0"},
                                        "by_benchmark": {"handwritten": {"recall": 0.5}}})
     (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
-    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
+    table = element.value
     assert table[RANK].iloc[0] == 1 and pd.isna(table[RANK].iloc[1])
+    # The grid draws a missing value as None, and the tooltip says what it means.
+    assert "None means" in (_tooltips(element).get(RANK) or "")
 
 
 def test_a_tab_without_retrieval_scores_has_no_full_metrics_section(tmp_path, monkeypatch):

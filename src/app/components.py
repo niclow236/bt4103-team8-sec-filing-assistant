@@ -75,7 +75,8 @@ _RESULT_METRIC_LABELS = {
     report.MEDIAN_RANK: ("Typical rank of the first right passage",
                          "The median of 1 / reciprocal rank, each question's MRR{at} "
                          "score turned back into a rank; 1 is the top. A blank means "
-                         "the typical question found no right passage {top}."),
+                         "the typical question found no right passage {top}; None means "
+                         "the run saved no ranks to work it out from."),
     "Hard negatives": ("Questions with a similar filing",
                        "How many of the questions have hard negatives: passages from the "
                        "wrong company or year that read like the right one."),
