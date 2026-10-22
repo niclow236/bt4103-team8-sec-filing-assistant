@@ -320,8 +320,13 @@ That one command runs the whole suite. The tests need no network, no EDGAR
 identity, no `.env` and nothing under `data/`: each builds its own small
 corpus in a temporary directory, the dense-index tests replace the embedding
 model with a deterministic stand-in, and a test of a command replaces the stage
-the command calls. The suite takes a few minutes on a laptop. One test counts
-tokens with the real bge tokenizer and is skipped if that cannot be downloaded.
+the command calls. The suite takes a few minutes on a laptop. One test is the
+exception: it counts tokens with the real bge tokenizer, downloaded from the
+Hugging Face Hub. On a laptop that cannot download it the test skips, since
+there is nothing to count against. In CI it fails instead, because there a
+skip would leave both checks green with the regression it guards (#64)
+unchecked (#143). `CI` is what tells the two apart, and GitHub Actions sets it
+on every runner.
 
 What the suite holds in place, and where (#49):
 

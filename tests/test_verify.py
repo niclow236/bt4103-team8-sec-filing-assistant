@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from src.pipeline.chunk import chunk_tables
@@ -76,18 +78,86 @@ def as_rows(chunks):
              "n_chars": c.n_chars, "content_type": c.content_type} for c in chunks]
 
 
+def real_token_counter(load=bge_token_counter):
+    """The bge tokenizer, or the reason this machine has none.
+
+    It is downloaded from the Hugging Face Hub, unauthenticated, so it can be
+    missing for two different reasons. On a laptop with no network and nothing
+    cached, there is nothing to test against and skipping is right. On a CI
+    runner the download is part of the run: a skip there reports ``1 skipped``,
+    leaves both checks green, and the #64 regression this test exists to catch
+    goes unchecked until someone opens the log. So in CI the unavailable
+    tokenizer is the failure.
+
+    ``CI`` is set by GitHub Actions on every runner, as it is by GitLab and
+    CircleCI. Any non-empty value counts as CI; nothing here reads the value.
+
+    ``load`` is the tokenizer to try, so the two paths below can be tested
+    without a network to take away.
+    """
+    try:
+        return load()
+    except Exception as error:   # no network and no cached tokenizer
+        if os.environ.get("CI"):
+            raise AssertionError(
+                f"tokenizer unavailable in CI, so the #64 regression went unchecked: {error}"
+            ) from error
+        pytest.skip(f"tokenizer unavailable: {error}")
+
+
 def test_reverting_the_table_budget_fails_the_gate():
     """The regression #64 asks the gate to catch, with the real tokenizer."""
-    try:
-        counter = bge_token_counter()
-    except Exception as error:   # no network and no cached tokenizer
-        pytest.skip(f"tokenizer unavailable: {error}")
+    counter = real_token_counter()
 
     cut_right = as_rows(chunk_tables(dense_section(), accession_no="acc"))
     cut_wrong = as_rows(chunk_tables(dense_section(), accession_no="acc",
                                      table_budget=CHUNK_CHAR_BUDGET))
     assert check_passage_sizes(cut_right, count_tokens=counter).passed
     assert not check_passage_sizes(cut_wrong, count_tokens=counter).passed
+
+
+def no_tokenizer():
+    """What an unreachable Hub raises, as the real loader lets it through."""
+    raise OSError("Hub rate limit")
+
+
+def set_ci_env(monkeypatch, ci):
+    """Set CI to ``ci`` for one test, or clear it when ``ci`` is None."""
+    monkeypatch.delenv("CI", raising=False)
+    if ci is not None:
+        monkeypatch.setenv("CI", ci)
+
+
+def test_an_unavailable_tokenizer_fails_in_ci(monkeypatch):
+    """A skip here would report 1 skipped and leave both checks green."""
+    set_ci_env(monkeypatch, "true")
+    # A skip is caught too, so losing the CI branch fails here rather than
+    # turning this test into the very skip it guards against: Skipped is a
+    # BaseException, which pytest.raises(AssertionError) would let through.
+    with pytest.raises((AssertionError, pytest.skip.Exception)) as raised:
+        real_token_counter(no_tokenizer)
+    assert raised.type is AssertionError, f"skipped in CI: {raised.value}"
+    assert "Hub rate limit" in str(raised.value)
+
+
+def test_an_unavailable_tokenizer_skips_on_a_laptop(monkeypatch):
+    """With no network and nothing cached there is nothing to test against."""
+    set_ci_env(monkeypatch, None)
+    with pytest.raises(pytest.skip.Exception):
+        real_token_counter(no_tokenizer)
+
+
+def test_an_empty_ci_is_not_ci(monkeypatch):
+    """`CI=` is how a shell clears it in place, not a runner announcing itself."""
+    set_ci_env(monkeypatch, "")
+    with pytest.raises(pytest.skip.Exception):
+        real_token_counter(no_tokenizer)
+
+
+@pytest.mark.parametrize("ci", ["true", None])
+def test_an_available_tokenizer_is_returned_whatever_ci_says(monkeypatch, ci):
+    set_ci_env(monkeypatch, ci)
+    assert real_token_counter(lambda: "counter") == "counter"
 
 
 # --- statement titles (#88) -----------------------------------------------------
