@@ -1261,7 +1261,8 @@ so it is the one to set up first.
    and the app opens on Ollama with SOCLAAS one click away unless
    `LLM_PROVIDER=soclaas` is set. The hosted app is the same exception as for
    Mistral: it uses the SOCLAAS key the team chose, set in the host's
-   environment, and everyone using the hosted app shares that key's limits.
+   environment. SOCLAAS's limits are per SoC account, not per key, so everyone
+   using the hosted app shares the limits of the account that made that key.
 3. Ask a question that needs the model. `answer.config` should record
    `provider='soclaas'` and `model='qwen3.6:35b'`.
 
@@ -2813,8 +2814,10 @@ question asked in the app sends SOCLAAS at most one request, and the Compare
 page two, one per side. A question the app refuses, one the facts store
 answers and one whose search finds nothing send none, and the app does not
 ask again after a failure. So one key allows about 90 questions a minute, or
-45 comparisons, and on the host that is shared by everyone using the hosted
-app. Every presenter makes their own key.
+45 comparisons. On the host that is shared by everyone using the hosted app,
+and by anyone else answering with a key from the same SoC account, so a host
+key made from a presenter's account shares that presenter's limits. Every
+presenter makes their own key.
 
 ### Chunk-size sweep
 
