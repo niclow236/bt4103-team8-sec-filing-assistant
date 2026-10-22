@@ -2811,8 +2811,8 @@ SOCLAAS is a school service for teaching and experiments. Its usage page, read
 on 19 October 2026, gave default limits of 90 requests a minute and $80 a day
 per user, and the 352 SOCLAAS requests this work made cost SoC $0.79, as its
 usage record showed: about $0.0022 each, so a full replay is about $0.34. A
-question asked in the app sends SOCLAAS at most one request, and the Compare
-page two, one per side. A question the app refuses, one the facts store
+question on the Ask page sends SOCLAAS at most one request, and one on the
+Compare page two, one per side. A question the app refuses, one the facts store
 answers and one whose search finds nothing send none, and the app does not
 ask again after a failure. So one SoC account's limit supports about 90
 questions or 45 comparisons a minute. On the host that is shared by everyone
