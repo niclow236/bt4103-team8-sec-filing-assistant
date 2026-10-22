@@ -541,8 +541,10 @@ def test_the_retrieval_table_says_what_recall_means_at_the_runs_own_cutoff(tmp_p
     assert table["Found the right passage in the top 16"].tolist() == [1.0]
 
 
-def test_a_run_that_saved_no_cutoff_still_says_what_recall_means(tmp_path, monkeypatch):
-    _scored_run(tmp_path, top_k=None)
+# None saved, or one that is not a count of passages: json's true, or none at all.
+@pytest.mark.parametrize("top_k", [None, True, 0])
+def test_a_run_that_saved_no_cutoff_still_says_what_recall_means(tmp_path, monkeypatch, top_k):
+    _scored_run(tmp_path, top_k=top_k)
     table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
     assert "Found the right passage among those retrieved" in table.columns
 
@@ -561,17 +563,17 @@ def test_a_plain_label_names_its_technical_metric_in_a_tooltip(tmp_path, monkeyp
 
 @pytest.mark.parametrize(("mrrs", "shown"), [
     # Ranks 1, 2 and 2: the median is 2.
-    ((1.0, 0.5, 0.5), "2"),
-    # Ranks 1 and 3: the median, 2.0, is a whole rank.
-    ((1.0, 1 / 3), "2"),
+    ((1.0, 0.5, 0.5), 2),
     # Ranks 1 and 2: the median falls between them.
-    ((1.0, 0.5), "1.5"),
+    ((1.0, 0.5), 1.5),
 ])
 def test_the_retrieval_table_shows_the_median_rank_of_the_first_right_passage(
         tmp_path, monkeypatch, mrrs, shown):
     _scored_run(tmp_path, mrrs=mrrs)
     table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
     assert RANK in table.columns
+    # A number, so the column sorts as one: 2 before 10.
+    assert pd.api.types.is_numeric_dtype(table[RANK])
     assert table[RANK].tolist() == [shown]
 
 
@@ -585,7 +587,7 @@ def test_a_configuration_without_reciprocal_ranks_has_no_median_beside_one_that_
                                        "by_benchmark": {"handwritten": {"recall": 0.5}}})
     (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
     table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
-    assert table[RANK].iloc[0] == "1" and pd.isna(table[RANK].iloc[1])
+    assert table[RANK].iloc[0] == 1 and pd.isna(table[RANK].iloc[1])
 
 
 def test_a_tab_without_retrieval_scores_has_no_full_metrics_section(tmp_path, monkeypatch):
@@ -600,10 +602,15 @@ def test_a_tab_without_retrieval_scores_has_no_full_metrics_section(tmp_path, mo
     assert team.dataframe and not team.expander
 
 
-def test_a_median_question_that_found_no_right_passage_says_so(tmp_path, monkeypatch):
+def test_a_median_question_that_found_no_right_passage_ranks_past_every_number(
+        tmp_path, monkeypatch):
+    """Past the cutoff it sorts after every rank; the grid draws it blank, and
+    the tooltip says what a blank means."""
     _scored_run(tmp_path, top_k=16, mrrs=(1.0, 0.0, 0.0))
-    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
-    assert table[RANK].tolist() == ["Not in the top 16"]
+    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
+    assert element.value[RANK].tolist() == [math.inf]
+    assert "blank" in (_tooltips(element).get(RANK) or "")
+    assert "top 16" in (_tooltips(element).get(RANK) or "")
 
 
 def test_ndcg_and_mrr_are_kept_to_a_collapsed_full_metrics_section(tmp_path, monkeypatch):

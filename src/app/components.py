@@ -23,7 +23,6 @@ from hashlib import sha256
 from itertools import groupby
 from operator import attrgetter
 from html import escape
-from math import inf
 import re
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -75,7 +74,8 @@ _RESULT_METRIC_LABELS = {
                "retrieved, averaged over the questions that have one."),
     report.MEDIAN_RANK: ("Typical rank of the first right passage",
                          "The median of 1 / reciprocal rank, each question's MRR{at} "
-                         "score turned back into a rank; 1 is the top."),
+                         "score turned back into a rank; 1 is the top. A blank means "
+                         "the typical question found no right passage {top}."),
     "Hard negatives": ("Questions with a similar filing",
                        "How many of the questions have hard negatives: passages from the "
                        "wrong company or year that read like the right one."),
@@ -122,8 +122,12 @@ _MAIN_RETRIEVAL_COLUMNS = ("Configuration", "Name", "Questions", "Relevance-scor
 
 
 def _cutoff_words(top_k: Any) -> tuple[str, str]:
-    """The run's cutoff as the labels word it: ``{top}`` and ``{at}``."""
-    if isinstance(top_k, int):
+    """The run's cutoff as the labels word it: ``{top}`` and ``{at}``.
+
+    Only a count of passages is a cutoff: json's true reads as an int, and
+    a top 0 retrieves nothing.
+    """
+    if isinstance(top_k, int) and not isinstance(top_k, bool) and top_k > 0:
         return f"in the top {top_k}", f"@{top_k}"
     return "among those retrieved", ""
 
@@ -131,7 +135,7 @@ def _cutoff_words(top_k: Any) -> tuple[str, str]:
 def _plain_labels(top_k: Any) -> dict[str, tuple[str, str]]:
     """Each label and tooltip, by the column it names, at the run's cutoff."""
     top, at = _cutoff_words(top_k)
-    return {column: (label.format(top=top), tooltip.format(at=at))
+    return {column: (label.format(top=top), tooltip.format(top=top, at=at))
             for column, (label, tooltip) in _RESULT_METRIC_LABELS.items()}
 
 
@@ -148,22 +152,19 @@ def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.D
     return pd.DataFrame(report.retrieval_table(configurations, benchmark))
 
 
-def _rank(rank: float, top_k: Any) -> str:
-    """A median rank as the table shows it; past every rank counted, it says so."""
-    return f"Not {_cutoff_words(top_k)[0]}" if rank == inf else f"{rank:g}"
+def _main_results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
+    """The retrieval table of the page's main view, with the median rank.
 
-
-def _main_results_table(configurations: list[dict[str, Any]], benchmark: str,
-                        top_k: Any) -> pd.DataFrame:
-    """The retrieval table of the page's main view, with the median rank."""
+    The rank is a number, so the column sorts as one. Past the cutoff it is
+    infinite, which sorts after every rank and which the grid draws blank.
+    """
     table = _results_table(configurations, benchmark)
     ranks = [item["benchmark_metrics"][benchmark].get(report.MEDIAN_RANK)
              for item in configurations]
     # A configuration whose rows saved no reciprocal rank has none, and the
     # column goes, as the report's tables drop one that no row fills.
     if any(rank is not None for rank in ranks):
-        table[report.MEDIAN_RANK] = [None if rank is None else _rank(rank, top_k)
-                                     for rank in ranks]
+        table[report.MEDIAN_RANK] = ranks
     return table[[column for column in _MAIN_RETRIEVAL_COLUMNS if column in table]]
 
 
@@ -181,8 +182,7 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
         st.info("No saved results for this benchmark.")
         return False
     if retrieval:
-        _plain_dataframe(_main_results_table(retrieval, benchmark, run.get("top_k")),
-                         run.get("top_k"))
+        _plain_dataframe(_main_results_table(retrieval, benchmark), run.get("top_k"))
     # The bars of the main view's own scores, labelled as its table is.
     words = _plain_labels(run.get("top_k"))
     chart_rows = [{**row, "Metric": words[row["Metric"]][0]}
