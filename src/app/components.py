@@ -23,6 +23,7 @@ from hashlib import sha256
 from itertools import groupby
 from operator import attrgetter
 from html import escape
+from math import inf
 import re
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -60,9 +61,110 @@ _ITEM_MENTION = re.compile(
 
 result_chart_rows = report.chart_rows
 
+# What each column of the Results page means to a user (#164), keyed by the
+# name ``report`` gives it, which the Full metrics section keeps: its label,
+# and a tooltip naming the technical metric, so an assessor can match it to
+# the report. ``{top}`` and ``{at}`` are the cutoff the run scored at, as in
+# "in the top 16" and "Recall@16"; a run that saved none has neither.
+_RESULT_METRIC_LABELS = {
+    "Relevance-scored": ("Questions with a right passage",
+                         "How many of the questions name a passage that answers them: "
+                         "the two columns after this one are worked out over these."),
+    "Recall": ("Found the right passage {top}",
+               "Recall{at}: the share of each question's right passages that were "
+               "retrieved, averaged over the questions that have one."),
+    report.MEDIAN_RANK: ("Typical rank of the first right passage",
+                         "The median of 1 / reciprocal rank, each question's MRR{at} "
+                         "score turned back into a rank; 1 is the top."),
+    "Hard negatives": ("Questions with a similar filing",
+                       "How many of the questions have hard negatives: passages from the "
+                       "wrong company or year that read like the right one."),
+    "Hard Negative Accuracy": ("Not fooled by a similar filing (wrong company or year)",
+                               "Hard-negative accuracy{at}: the share of each question's hard "
+                               "negatives kept out of the passages retrieved, averaged over "
+                               "the questions that have them."),
+    "Abstention rate": ("Refused rather than guessed",
+                        "Abstention rate: the share of questions the configuration declined "
+                        "to answer, saying the filings did not support an answer."),
+    "Median latency (ms)": ("Typical answer time (ms)",
+                            "Median latency: the middle of the configuration's answer times, "
+                            "in milliseconds."),
+    "LLM questions": ("Answered by the language model",
+                      "LLM questions: how many questions went to the language model, rather "
+                      "than being answered straight from the facts store."),
+    # Answer quality keeps its names, each explained.
+    "Outputs": ("Outputs", "How many of the configuration's answers were scored."),
+    "Correctness": ("Correctness",
+                    "How completely and accurately an answer answers the question against "
+                    "the benchmark's answer, as the judge model scores it from 0 to 1."),
+    "Faithfulness": ("Faithfulness",
+                     "The share of an answer's factual claims that its own cited passages "
+                     "support, as the judge model scores it."),
+    "Answerability": ("Answerability",
+                      "The share of questions where answering or refusing was the right "
+                      "call: refusing only the questions the filings cannot answer."),
+    "Citation precision": ("Citation precision",
+                           "The share of the passages an answer cites that are right passages."),
+    "Citation recall": ("Citation recall",
+                        "The share of each question's right passages that its answer cites."),
+    **{f"{label} scored": (f"{label} scored",
+                           f"How many of the outputs were scored on {label.lower()}; the "
+                           "mean beside it is over these.")
+       for label in report.QUALITY_LABELS.values()},
+    "Claim checks": ("Claim checks",
+                     "How the answers' claims fared against the verification checks: each "
+                     "outcome and how many claims had it."),
+}
+# The main view's retrieval columns, in order: nDCG and MRR are left to the
+# Full metrics section, and the median rank stands in for MRR.
+_MAIN_RETRIEVAL_COLUMNS = ("Configuration", "Name", "Questions", "Relevance-scored", "Recall",
+                           report.MEDIAN_RANK, "Hard negatives", "Hard Negative Accuracy")
+
+
+def _cutoff_words(top_k: Any) -> tuple[str, str]:
+    """The run's cutoff as the labels word it: ``{top}`` and ``{at}``."""
+    if isinstance(top_k, int):
+        return f"in the top {top_k}", f"@{top_k}"
+    return "among those retrieved", ""
+
+
+def _plain_labels(top_k: Any) -> dict[str, tuple[str, str]]:
+    """Each label and tooltip, by the column it names, at the run's cutoff."""
+    top, at = _cutoff_words(top_k)
+    return {column: (label.format(top=top), tooltip.format(at=at))
+            for column, (label, tooltip) in _RESULT_METRIC_LABELS.items()}
+
+
+def _plain_dataframe(table: pd.DataFrame, top_k: Any) -> None:
+    """Draw ``table`` with each column the labels name in plain words, and its tooltip."""
+    words = _plain_labels(top_k)
+    st.dataframe(table.rename(columns={column: label for column, (label, _) in words.items()}),
+                 column_config={label: st.column_config.Column(help=tooltip)
+                                for label, tooltip in words.values()},
+                 width="stretch", hide_index=True)
+
 
 def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
     return pd.DataFrame(report.retrieval_table(configurations, benchmark))
+
+
+def _rank(rank: float, top_k: Any) -> str:
+    """A median rank as the table shows it; past every rank counted, it says so."""
+    return f"Not {_cutoff_words(top_k)[0]}" if rank == inf else f"{rank:g}"
+
+
+def _main_results_table(configurations: list[dict[str, Any]], benchmark: str,
+                        top_k: Any) -> pd.DataFrame:
+    """The retrieval table of the page's main view, with the median rank."""
+    table = _results_table(configurations, benchmark)
+    ranks = [item["benchmark_metrics"][benchmark].get(report.MEDIAN_RANK)
+             for item in configurations]
+    # A configuration whose rows saved no reciprocal rank has none, and the
+    # column goes, as the report's tables drop one that no row fills.
+    if any(rank is not None for rank in ranks):
+        table[report.MEDIAN_RANK] = [None if rank is None else _rank(rank, top_k)
+                                     for rank in ranks]
+    return table[[column for column in _MAIN_RETRIEVAL_COLUMNS if column in table]]
 
 
 def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
@@ -79,18 +181,23 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
         st.info("No saved results for this benchmark.")
         return False
     if retrieval:
-        st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
-    chart_rows = result_chart_rows(retrieval, benchmark)
+        _plain_dataframe(_main_results_table(retrieval, benchmark, run.get("top_k")),
+                         run.get("top_k"))
+    # The bars of the main view's own scores, labelled as its table is.
+    words = _plain_labels(run.get("top_k"))
+    chart_rows = [{**row, "Metric": words[row["Metric"]][0]}
+                  for row in result_chart_rows(retrieval, benchmark)
+                  if row["Metric"] in _MAIN_RETRIEVAL_COLUMNS]
     if chart_rows:
         chart = pd.DataFrame(chart_rows).pivot(index="Configuration", columns="Metric",
                                                 values="Value")
         st.bar_chart(chart, stack=False)
     if not model_table.empty:
         st.subheader("Answer-model ablation")
-        st.dataframe(model_table, width="stretch", hide_index=True)
+        _plain_dataframe(model_table, run.get("top_k"))
     if not quality.empty:
         st.subheader("Answer quality")
-        st.dataframe(quality, width="stretch", hide_index=True)
+        _plain_dataframe(quality, run.get("top_k"))
         quality_chart = report.quality_chart_rows(run, benchmark)
         if quality_chart:
             st.bar_chart(pd.DataFrame(quality_chart).pivot(
@@ -247,8 +354,8 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
             # counts can disagree with the scores above them (#169).
             ranks = (f"{first_left_out}" if scored_at == first_left_out
                      else f"{first_left_out} to {scored_at}")
-            st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
-                       f"ranked {ranks} counts there but not here.")
+            st.caption(f"The scores above count a right passage in this run's top "
+                       f"{scored_at}, so one ranked {ranks} counts there but not here.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in (_IMPROVED, _WORSE)}
     show = st.selectbox("Show", [_SHOW_ALL, *filters], key=f"results_show_{benchmark}")
@@ -322,6 +429,14 @@ def _render_breakdown(run: Mapping[str, Any], benchmark: str,
                          column_config={"Score": _SCORE_BAR}, width="stretch", hide_index=True)
 
 
+def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> None:
+    """The retrieval table under the report's own names, nDCG and MRR among
+    them, collapsed below the rest of the tab (#164, #171)."""
+    if retrieval:
+        with st.expander("Full metrics"):
+            st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
+
+
 def render_results(runs: list[dict[str, Any]], *,
                    outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
@@ -345,6 +460,7 @@ def render_results(runs: list[dict[str, Any]], *,
             if saved:
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
+                _render_full_metrics(matching, kind)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:

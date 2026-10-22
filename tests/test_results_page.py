@@ -1,12 +1,21 @@
 import json
 import math
 import os
+import pandas as pd
 import pytest
 from src.config import PROJECT_ROOT
 
 from src.app.state import result_runs
 from src.evaluation.report import benchmark_kind
 from src.app.components import result_chart_rows
+
+# How the Results page heads its columns in plain words (#164): Recall for a
+# run that saved no cutoff, the median rank, hard-negative accuracy, and the
+# abstention rate.
+FOUND = "Found the right passage among those retrieved"
+RANK = "Typical rank of the first right passage"
+NOT_FOOLED = "Not fooled by a similar filing (wrong company or year)"
+REFUSED = "Refused rather than guessed"
 
 
 def _read_results_from(monkeypatch, root):
@@ -118,28 +127,28 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert len(app.tabs) == 2
     manual, mechanical = app.tabs
     assert manual.label == "Team benchmark"
-    assert manual.dataframe[0].value["Recall"].tolist() == [1.0]
-    assert mechanical.dataframe[0].value["Recall"].tolist() == [0.0]
+    assert manual.dataframe[0].value[FOUND].tolist() == [1.0]
+    assert mechanical.dataframe[0].value[FOUND].tolist() == [0.0]
     assert list(manual.dataframe[0].value.columns) == [
-        "Configuration", "Name", "Questions", "Relevance-scored", "Recall",
-        "Hard negatives", "Hard Negative Accuracy"]
+        "Configuration", "Name", "Questions", "Questions with a right passage", FOUND,
+        "Questions with a similar filing", NOT_FOOLED]
     charts = app.get("vega_lite_chart")
     assert len(charts) == 2
     for chart in charts:
         encoding = json.loads(chart.proto.spec)["encoding"]
         assert "xOffset" in encoding
         assert encoding["y"]["stack"] is False
-    assert mechanical.dataframe[0].value["Hard Negative Accuracy"].tolist() == [0.0]
-    assert manual.dataframe[1].value["Abstention rate"].tolist() == [0.0]
-    assert mechanical.dataframe[1].value["Abstention rate"].tolist() == [1.0]
-    assert manual.dataframe[1].value["LLM questions"].tolist() == [1]
-    assert mechanical.dataframe[1].value["LLM questions"].tolist() == [0]
+    assert mechanical.dataframe[0].value[NOT_FOOLED].tolist() == [0.0]
+    assert manual.dataframe[1].value[REFUSED].tolist() == [0.0]
+    assert mechanical.dataframe[1].value[REFUSED].tolist() == [1.0]
+    assert manual.dataframe[1].value["Answered by the language model"].tolist() == [1]
+    assert mechanical.dataframe[1].value["Answered by the language model"].tolist() == [0]
 
     (run / "C4" / "questions.jsonl").write_text(
         json.dumps({"question_id": "manual", "recall": 0.25}), encoding="utf-8")
     app.button[0].click().run()
     assert not app.exception
-    assert app.tabs[0].dataframe[0].value["Recall"].tolist() == [0.25]
+    assert app.tabs[0].dataframe[0].value[FOUND].tolist() == [0.25]
 
 
 def test_malformed_summary_does_not_hide_valid_runs(tmp_path):
@@ -164,7 +173,7 @@ def test_hard_negative_only_run_is_visible(monkeypatch):
     }]}])
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     assert not app.exception
-    assert app.tabs[0].dataframe[0].value["Hard Negative Accuracy"].tolist() == [1.0]
+    assert app.tabs[0].dataframe[0].value[NOT_FOOLED].tolist() == [1.0]
 
 
 def test_reload_discovers_first_run(tmp_path, monkeypatch):
@@ -217,8 +226,8 @@ def test_answer_model_only_run_shows_its_results_without_saying_there_are_none(t
     _read_results_from(monkeypatch, tmp_path)
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     assert not app.exception and not app.info
-    assert app.tabs[0].dataframe[0].value["Abstention rate"].tolist() == [0.0]
-    assert app.tabs[1].dataframe[0].value["Abstention rate"].tolist() == [1.0]
+    assert app.tabs[0].dataframe[0].value[REFUSED].tolist() == [0.0]
+    assert app.tabs[1].dataframe[0].value[REFUSED].tolist() == [1.0]
 
 
 def test_a_stopped_or_unreadable_run_says_its_scores_are_partial(tmp_path, monkeypatch):
@@ -302,7 +311,7 @@ def test_two_folders_with_one_saved_run_id_can_both_be_opened(tmp_path, monkeypa
     for name, recall in (("sweep", 1), ("sweep-copy", 0)):
         app.selectbox[0].select(name).run()
         assert not app.exception
-        assert app.tabs[0].dataframe[0].value["Recall"].tolist() == [recall]
+        assert app.tabs[0].dataframe[0].value[FOUND].tolist() == [recall]
 
 
 def test_a_configuration_id_cannot_read_outside_its_run(tmp_path):
@@ -490,3 +499,173 @@ def test_a_rescored_benchmark_shows_no_median_rank_from_the_rows_rescore_left_be
     team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
     assert team["mrr"] == 0.5
     assert team["median_rank"] is None
+
+
+def _scored_run(root, *, top_k=16, mrrs=(1.0, 0.5, 0.5)):
+    """A run of one configuration at ``top_k``, every question with a right
+    passage and a hard negative, and one answer-model configuration."""
+    run = root / "scored"
+    (run / "C4").mkdir(parents=True)
+    (run / "G1").mkdir()
+    (run / "summary.json").write_text(json.dumps({"top_k": top_k, "configurations": [
+        {"config": {"id": "C4", "name": "filtered hybrid"}, "questions": len(mrrs)},
+        {"config": {"id": "G1", "provider": "ollama"}, "questions": 2}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text("".join(
+        json.dumps({"question_id": f"q{n}", "recall": 1.0 if mrr else 0.0, "ndcg": mrr,
+                    "mrr": mrr, "hard_negative_accuracy": 0.5}) + "\n"
+        for n, mrr in enumerate(mrrs)), encoding="utf-8")
+    (run / "G1" / "report.json").write_text(json.dumps({"results": [
+        {"question_id": "q0", "route": "ollama", "answer": {"abstained": False, "latency_ms": 900}},
+        {"question_id": "q1", "route": "ollama", "answer": {"abstained": True, "latency_ms": 100}},
+    ]}), encoding="utf-8")
+
+
+def _results_page(monkeypatch, root):
+    from streamlit.testing.v1 import AppTest
+    _read_results_from(monkeypatch, root)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    assert not app.exception
+    return app
+
+
+def test_the_retrieval_table_says_what_recall_means_at_the_runs_own_cutoff(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=16)
+    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    assert "Found the right passage in the top 16" in table.columns
+    assert table["Found the right passage in the top 16"].tolist() == [1.0]
+
+
+def test_a_run_that_saved_no_cutoff_still_says_what_recall_means(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=None)
+    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    assert "Found the right passage among those retrieved" in table.columns
+
+
+def _tooltips(dataframe):
+    """Each column's help text, as the page hands it to the grid."""
+    return {column: config.get("help")
+            for column, config in json.loads(dataframe.proto.columns or "{}").items()}
+
+
+def test_a_plain_label_names_its_technical_metric_in_a_tooltip(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=16)
+    tips = _tooltips(_results_page(monkeypatch, tmp_path).tabs[0].dataframe[0])
+    assert (tips.get("Found the right passage in the top 16") or "").startswith("Recall@16")
+
+
+@pytest.mark.parametrize(("mrrs", "shown"), [
+    # Ranks 1, 2 and 2: the median is 2.
+    ((1.0, 0.5, 0.5), "2"),
+    # Ranks 1 and 3: the median, 2.0, is a whole rank.
+    ((1.0, 1 / 3), "2"),
+    # Ranks 1 and 2: the median falls between them.
+    ((1.0, 0.5), "1.5"),
+])
+def test_the_retrieval_table_shows_the_median_rank_of_the_first_right_passage(
+        tmp_path, monkeypatch, mrrs, shown):
+    _scored_run(tmp_path, mrrs=mrrs)
+    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    assert RANK in table.columns
+    assert table[RANK].tolist() == [shown]
+
+
+def test_a_configuration_without_reciprocal_ranks_has_no_median_beside_one_that_has(
+        tmp_path, monkeypatch):
+    _scored_run(tmp_path, mrrs=(1.0,))
+    run = tmp_path / "scored"
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    # Its summary's scores alone: no rows, so no rank to read.
+    manifest["configurations"].append({"config": {"id": "C0"},
+                                       "by_benchmark": {"handwritten": {"recall": 0.5}}})
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    assert table[RANK].iloc[0] == "1" and pd.isna(table[RANK].iloc[1])
+
+
+def test_a_tab_without_retrieval_scores_has_no_full_metrics_section(tmp_path, monkeypatch):
+    run = tmp_path / "answers"
+    (run / "G1").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "G1", "provider": "ollama"}, "questions": 1}]}), encoding="utf-8")
+    (run / "G1" / "report.json").write_text(json.dumps({"results": [
+        {"question_id": "manual", "route": "ollama",
+         "answer": {"abstained": False, "latency_ms": 100}}]}), encoding="utf-8")
+    team = _results_page(monkeypatch, tmp_path).tabs[0]
+    assert team.dataframe and not team.expander
+
+
+def test_a_median_question_that_found_no_right_passage_says_so(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=16, mrrs=(1.0, 0.0, 0.0))
+    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    assert table[RANK].tolist() == ["Not in the top 16"]
+
+
+def test_ndcg_and_mrr_are_kept_to_a_collapsed_full_metrics_section(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=16, mrrs=(1.0, 0.5, 0.5))
+    team = _results_page(monkeypatch, tmp_path).tabs[0]
+    assert not {"nDCG", "MRR"} & set(team.dataframe[0].value.columns)
+    full = [expander for expander in team.expander if expander.label == "Full metrics"]
+    assert len(full) == 1 and not full[0].proto.expanded
+    table = full[0].dataframe[0].value
+    assert list(table.columns) == [
+        "Configuration", "Name", "Questions", "Relevance-scored", "Recall", "nDCG", "MRR",
+        "Hard negatives", "Hard Negative Accuracy"]
+    assert table["MRR"].tolist() == [pytest.approx(2 / 3)]
+
+
+def test_hard_negative_accuracy_and_the_counts_beside_it_read_in_plain_words(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=16)
+    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
+    table, tips = element.value, _tooltips(element)
+    assert list(table.columns) == [
+        "Configuration", "Name", "Questions", "Questions with a right passage",
+        "Found the right passage in the top 16", RANK,
+        "Questions with a similar filing", NOT_FOOLED]
+    assert table[NOT_FOOLED].tolist() == [0.5]
+    assert (tips.get(NOT_FOOLED) or "").startswith("Hard-negative accuracy@16")
+    assert all(tips.get(column) for column in table.columns[3:])
+
+
+def test_the_answer_model_table_reads_in_plain_words(tmp_path, monkeypatch):
+    _scored_run(tmp_path)
+    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[1]
+    table, tips = element.value, _tooltips(element)
+    assert {REFUSED, "Typical answer time (ms)",
+            "Answered by the language model"} <= set(table.columns)
+    assert table[REFUSED].tolist() == [0.5]
+    assert table["Typical answer time (ms)"].tolist() == [500]
+    assert table["Answered by the language model"].tolist() == [2]
+    assert (tips.get(REFUSED) or "").startswith("Abstention rate")
+    assert (tips.get("Typical answer time (ms)") or "").startswith("Median latency")
+    assert (tips.get("Answered by the language model") or "").startswith("LLM questions")
+
+
+def test_the_retrieval_chart_charts_the_plain_labels_and_leaves_ndcg_and_mrr_out(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    _scored_run(tmp_path, top_k=16)
+    _read_results_from(monkeypatch, tmp_path)
+    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
+    import pyarrow as pa
+    chart = app.tabs[0].get("vega_lite_chart")[0]
+    # st.bar_chart melts its table, naming each bar's series in a column of its own.
+    bars = pa.ipc.open_stream(chart.proto.datasets[0].data.data).read_pandas()
+    assert set(bars["color -- streamlit-generated"]) == {
+        "Found the right passage in the top 16", NOT_FOOLED}
+
+
+def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monkeypatch):
+    run = tmp_path / "judged"
+    (run / "C4").mkdir(parents=True)
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(
+        json.dumps({"question_id": "q1", "recall": 1.0}) + "\n", encoding="utf-8")
+    quality = {metric: {"mean": 0.5, "scored": 2} for metric in (
+        "correctness", "faithfulness", "answerability_correct", "citation_precision",
+        "citation_recall")}
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 2, "checks": {"not_run": 3}, "quality": quality}}}), encoding="utf-8")
+    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[1]
+    tips = _tooltips(element)
+    assert "Citation precision" in element.value.columns
+    assert [column for column in element.value.columns[2:] if not tips.get(column)] == []

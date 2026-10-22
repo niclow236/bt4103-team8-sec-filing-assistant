@@ -21,6 +21,8 @@ from src.evaluation.harness import answer_scores
 from src.evaluation.metrics import RETRIEVAL_METRICS
 
 RELEVANCE_METRICS = ("recall", "ndcg", "mrr")
+# Where a benchmark's median question ranked its first right passage (#164).
+MEDIAN_RANK = "median_rank"
 METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
                  "hard_negative_accuracy": "Hard Negative Accuracy"}
 # Answer quality as full_ablation's answer-summary.json records it, team questions only.
@@ -108,7 +110,7 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
         # past every rank the run counted, and a median there is infinite.
         ranks = [round(1 / score) if score else inf for row in relevance_rows
                  if (score := saved_score(row.get("mrr"))) is not None]
-        values["median_rank"] = median(ranks) if ranks else None
+        values[MEDIAN_RANK] = median(ranks) if ranks else None
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
         if answers:
             latencies = [answer["latency_ms"] for answer in answers
@@ -192,7 +194,7 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         # they were, so its figures replace theirs, and a median rank read
         # off those rows no longer goes with them.
         for kind, rescored_metrics in rescored.get(config_id, {}).items():
-            metrics[kind] = {**metrics.get(kind, {}), "median_rank": None, **rescored_metrics}
+            metrics[kind] = {**metrics.get(kind, {}), MEDIAN_RANK: None, **rescored_metrics}
         configurations.append({
             "run_id": run_dir.name,
             "config_id": config_id,
