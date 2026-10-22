@@ -437,3 +437,14 @@ def test_a_summary_saves_the_median_rank_its_rows_give(reciprocal_ranks, median_
     assert (summary["median_rank"], summary["metric_denominators"]["median_rank"]) == (
         median_rank, counted)
     json.dumps(summary, allow_nan=False)
+
+
+@pytest.mark.parametrize(("reciprocal_ranks", "median_rank"), [
+    ((1.0, 0.5, 0.5), 2), ((1.0, 0.0, 0.0), float("inf"))])
+def test_the_results_page_reads_back_the_median_rank_a_summary_saves(
+        reciprocal_ranks, median_rank):
+    """The page reads the format summarize writes, past the cutoff included."""
+    from src.evaluation.report import saved_median_rank
+    saved = json.loads(json.dumps(matrix.summarize(_scored_rows(reciprocal_ranks)),
+                                  allow_nan=False))
+    assert saved_median_rank(saved) == median_rank
