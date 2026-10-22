@@ -18,11 +18,9 @@ from typing import Any
 
 from src.config import PROJECT_ROOT
 from src.evaluation.harness import answer_scores
-from src.evaluation.metrics import RETRIEVAL_METRICS, median_rank
+from src.evaluation.metrics import MEDIAN_RANK, RETRIEVAL_METRICS, median_rank
 
 RELEVANCE_METRICS = ("recall", "ndcg", "mrr")
-# Where a benchmark's median question ranked its first right passage (#164).
-MEDIAN_RANK = "median_rank"
 METRIC_LABELS = {"recall": "Recall", "ndcg": "nDCG", "mrr": "MRR",
                  "hard_negative_accuracy": "Hard Negative Accuracy"}
 # Answer quality as full_ablation's answer-summary.json records it, team questions only.
@@ -329,6 +327,11 @@ def saved_score(value: Any) -> float | None:
     return None
 
 
+def is_count(value: Any) -> bool:
+    """Whether a saved value is a count of one or more: json's true reads as an int."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def saved_median_rank(saved: dict[str, Any]) -> float | None:
     """A benchmark's median rank of the first right passage, or None for anything else.
 
@@ -339,9 +342,7 @@ def saved_median_rank(saved: dict[str, Any]) -> float | None:
     rank = saved.get(MEDIAN_RANK)
     if rank is None:
         counted = _record(saved.get("metric_denominators")).get(MEDIAN_RANK)
-        over_questions = (isinstance(counted, int) and not isinstance(counted, bool)
-                          and counted > 0)
-        return inf if over_questions else None
+        return inf if is_count(counted) else None
     if isinstance(rank, (int, float)) and not isinstance(rank, bool) and rank >= 1:
         return rank
     return None

@@ -9,6 +9,9 @@ from statistics import median
 from .records import BenchmarkQuestion, RunResult
 
 RETRIEVAL_METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+# Where a benchmark's median question ranked its first right passage (#164),
+# as a summary saves it.
+MEDIAN_RANK = "median_rank"
 
 
 def _as_set(chunk_ids: Iterable[str]) -> set[str]:

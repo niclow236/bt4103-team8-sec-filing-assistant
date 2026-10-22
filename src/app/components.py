@@ -126,9 +126,7 @@ def _cutoff(run: Mapping[str, Any]) -> int | None:
     """How many passages the run scored at, or None if it saved no count:
     json's true reads as an int, and a top 0 retrieves nothing."""
     top_k = run.get("top_k")
-    if isinstance(top_k, int) and not isinstance(top_k, bool) and top_k > 0:
-        return top_k
-    return None
+    return top_k if report.is_count(top_k) else None
 
 
 class _Heading(NamedTuple):
