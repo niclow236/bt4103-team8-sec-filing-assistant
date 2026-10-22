@@ -1178,7 +1178,7 @@ Only needed to answer with Mistral. Everyone uses a key from their own account.
 A key works like a password, and the free plan's rate limits are per account, so
 never share yours or use a teammate's. That includes the demo: whoever presents
 from their own computer uses their own key. The hosted app is the exception: it
-uses the key the team chose, set on the host, as the fallback to SOCLAAS.
+will use a key the team chooses, set on the host, as the fallback to SOCLAAS.
 
 1. Sign up at <https://console.mistral.ai> and choose the free plan. It needs no
    credit card; signing up with an email address asks you to verify a phone
@@ -1260,9 +1260,10 @@ so it is the one to set up first.
    The same rules as for a Mistral key apply: it is yours, it stays in `.env`,
    and the app opens on Ollama with SOCLAAS one click away unless
    `LLM_PROVIDER=soclaas` is set. The hosted app is the same exception as for
-   Mistral: it uses the SOCLAAS key the team chose, set in the host's
-   environment. SOCLAAS's limits are per SoC account, not per key, so everyone
-   using the hosted app shares the limits of the account that made that key.
+   Mistral: it will use a SOCLAAS key the team chooses, set in the host's
+   environment (#179). SOCLAAS's limits are per SoC account, not per key, so
+   everyone using the hosted app shares the limits of the account that made
+   that key.
 3. Ask a question that needs the model. `answer.config` should record
    `provider='soclaas'` and `model='qwen3.6:35b'`.
 
