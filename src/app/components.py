@@ -69,7 +69,7 @@ result_chart_rows = report.chart_rows
 _RESULT_METRIC_LABELS = {
     "Relevance-scored": ("Questions with a right passage",
                          "How many of the questions name a passage that answers them: "
-                         "the two columns after this one are worked out over these."),
+                         "the scores of finding it are worked out over these."),
     "Recall": ("Found the right passage {top}",
                "Recall{at}: the share of each question's right passages that were "
                "retrieved, averaged over the questions that have one."),
@@ -189,9 +189,11 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
                   for row in result_chart_rows(retrieval, benchmark)
                   if row["Metric"] in _MAIN_RETRIEVAL_COLUMNS]
     if chart_rows:
-        chart = pd.DataFrame(chart_rows).pivot(index="Configuration", columns="Metric",
-                                                values="Value")
-        st.bar_chart(chart, stack=False)
+        # Coloured by its Metric column, a chart keeps its legend when the
+        # run has only one of the scores to chart; a wide table's single
+        # column would be drawn with none.
+        st.bar_chart(pd.DataFrame(chart_rows), x="Configuration", y="Value", color="Metric",
+                     x_label="", y_label="", stack=False)
     if not model_table.empty:
         st.subheader("Answer-model ablation")
         _plain_dataframe(model_table, run.get("top_k"))
