@@ -416,3 +416,24 @@ def test_answer_phase_resumes_under_its_own_frozen_settings(tmp_path,monkeypatch
     facts.write_bytes(b'rebuilt facts')
     with pytest.raises(ValueError,match='identical settings'):
         matrix.answers(args)
+
+
+def _scored_rows(reciprocal_ranks):
+    return [{"recall": None if rr is None else float(rr > 0), "ndcg": rr, "mrr": rr,
+             "hard_negative_accuracy": None, "latency_ms": 1.0} for rr in reciprocal_ranks]
+
+
+@pytest.mark.parametrize(("reciprocal_ranks", "median_rank", "counted"), [
+    # Ranks 1, 2 and 2; the question with no right passage to find is not counted.
+    ((1.0, 0.5, 0.5, None), 2, 3),
+    # The median question found none in the top k: json has no infinity, so
+    # it is saved as null beside the questions it was worked out over.
+    ((1.0, 0.0, 0.0), None, 3),
+])
+def test_a_summary_saves_the_median_rank_its_rows_give(reciprocal_ranks, median_rank, counted):
+    """rescore saves no rows of its own, so a rescored run's median rank (#164)
+    is only what its summary saves."""
+    summary = matrix.summarize(_scored_rows(reciprocal_ranks))
+    assert (summary["median_rank"], summary["metric_denominators"]["median_rank"]) == (
+        median_rank, counted)
+    json.dumps(summary, allow_nan=False)

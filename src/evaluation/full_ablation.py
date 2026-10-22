@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 from collections.abc import Sequence
+from math import inf
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from statistics import mean, median
@@ -33,7 +34,7 @@ from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 
 from .artifacts import dump_json as dump, read_jsonl
 from .benchmark import load_questions
-from .metrics import RETRIEVAL_METRICS, score_question
+from .metrics import RETRIEVAL_METRICS, median_rank, score_question
 from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
 from .records import TEAM, BenchmarkQuestion, RunResult, benchmark_of
 from .rerank_ablation import _comparable_manifest, _index_manifests, read_pairs, verify_rankings
@@ -169,6 +170,14 @@ def summarize(rows: list[dict]) -> dict:
         values = [r[metric] for r in rows if r[metric] is not None]
         result[metric] = mean(values) if values else None
         result["metric_denominators"][metric] = len(values)
+    # Where the median question's first right passage ranked (#164): rescore
+    # saves no rows, so a rescored run's is only this. Past the cutoff it is
+    # infinite, which json cannot hold, so it is saved as null beside the
+    # questions it was worked out over.
+    reciprocal_ranks = [r["mrr"] for r in rows if r["mrr"] is not None]
+    rank = median_rank(reciprocal_ranks)
+    result["median_rank"] = None if rank == inf else rank
+    result["metric_denominators"]["median_rank"] = len(reciprocal_ranks)
     result["median_latency_ms"] = median(r["latency_ms"] for r in rows) if rows else None
     return result
 

@@ -11,14 +11,14 @@ import argparse
 import json
 import os
 from html import escape
-from math import inf, isclose, isnan
+from math import inf, isnan
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
 from src.config import PROJECT_ROOT
 from src.evaluation.harness import answer_scores
-from src.evaluation.metrics import RETRIEVAL_METRICS, rank_from_reciprocal
+from src.evaluation.metrics import RETRIEVAL_METRICS, median_rank
 
 RELEVANCE_METRICS = ("recall", "ndcg", "mrr")
 # Where a benchmark's median question ranked its first right passage (#164).
@@ -104,14 +104,10 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
                         if (score := saved_score(row.get(metric))) is not None]
             values[metric] = mean(measured) if measured else None
             values["metric_denominators"][metric] = len(measured)
-        # Where the first right passage ranked, read off each question's
-        # reciprocal rank (#164): a rank is easier to read than its reciprocal.
-        # A reciprocal rank of 0 found none within the cutoff, so it ranks
-        # past every rank the run counted, and a median there is infinite.
-        ranks = [inf if (rank := rank_from_reciprocal(score)) is None else rank
-                 for row in relevance_rows
-                 if (score := saved_score(row.get("mrr"))) is not None]
-        values[MEDIAN_RANK] = median(ranks) if ranks else None
+        # Where the first right passage ranked (#164): a rank is easier to
+        # read than its reciprocal.
+        values[MEDIAN_RANK] = median_rank(
+            score for row in relevance_rows if (score := saved_score(row.get("mrr"))) is not None)
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
         if answers:
             latencies = [answer["latency_ms"] for answer in answers
@@ -123,12 +119,6 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
             })
         output[kind] = values
     return output
-
-
-def _same_score(saved: Any, rescored: Any) -> bool:
-    """Whether two saved means are one score, as far as a float's rounding goes."""
-    first, second = saved_score(saved), saved_score(rescored)
-    return first is not None and second is not None and isclose(first, second, abs_tol=1e-9)
 
 
 def incomplete(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
@@ -198,13 +188,12 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         metrics = (saved_benchmark_metrics(rows, config.get("provider"))
                    if rows else _saved_split(summary.get("by_benchmark")))
         # rescore recomputes retrieval under rescored/ and leaves the rows as
-        # they were, so its figures replace theirs. A median rank read off
-        # those rows still goes with them while the rows' MRR is rescore's.
+        # they were, so its figures replace theirs, the median rank read off
+        # those rows among them: only rescore's own goes with its scores.
         for kind, rescored_metrics in rescored.get(config_id, {}).items():
-            saved = metrics.get(kind, {})
-            current = _same_score(saved.get("mrr"), rescored_metrics.get("mrr"))
-            metrics[kind] = {**saved, **({} if current else {MEDIAN_RANK: None}),
-                             **rescored_metrics}
+            metrics[kind] = {**metrics.get(kind, {}), MEDIAN_RANK: None, **rescored_metrics}
+        metrics = {kind: {**saved, MEDIAN_RANK: saved_median_rank(saved)}
+                   for kind, saved in metrics.items()}
         configurations.append({
             "run_id": run_dir.name,
             "config_id": config_id,
@@ -337,6 +326,24 @@ def saved_score(value: Any) -> float | None:
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1:
         return float(value) + 0.0  # + 0.0 turns -0.0 into 0.0
+    return None
+
+
+def saved_median_rank(saved: dict[str, Any]) -> float | None:
+    """A benchmark's median rank of the first right passage, or None for anything else.
+
+    A rank is 1 or more. One past the cutoff is infinite: a summary saves it
+    as null beside the questions it was worked out over, since json has no
+    infinity, and rows give it as infinity itself.
+    """
+    rank = saved.get(MEDIAN_RANK)
+    if rank is None:
+        counted = _record(saved.get("metric_denominators")).get(MEDIAN_RANK)
+        over_questions = (isinstance(counted, int) and not isinstance(counted, bool)
+                          and counted > 0)
+        return inf if over_questions else None
+    if isinstance(rank, (int, float)) and not isinstance(rank, bool) and rank >= 1:
+        return rank
     return None
 
 

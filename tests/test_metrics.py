@@ -1,9 +1,12 @@
 """Tests for retriever-independent retrieval metrics."""
 
+import math
+
 import pytest
 
 from src.evaluation.metrics import (
     hard_negative_accuracy,
+    median_rank,
     mrr,
     ndcg_at_k,
     recall_at_k,
@@ -283,3 +286,16 @@ def test_a_run_averages_only_the_questions_a_metric_scored():
     unscored = _summary([{"recall": None, "ndcg": None, "mrr": None,
                           "hard_negative_accuracy": None}])
     assert unscored["recall"] is None and unscored["questions"] == 1
+
+
+@pytest.mark.parametrize(("reciprocal_ranks", "expected"), [
+    # Ranks 1, 3 and 2.
+    ([1.0, 1 / 3, 0.5], 2),
+    # Ranks 1 and 2: the median falls between them.
+    ([1.0, 0.5], 1.5),
+    # Two of three found nothing within the cutoff.
+    ([1.0, 0.0, 0.0], math.inf),
+    ([], None),
+])
+def test_median_rank_reads_each_reciprocal_rank_back_as_a_rank(reciprocal_ranks, expected):
+    assert median_rank(reciprocal_ranks) == expected

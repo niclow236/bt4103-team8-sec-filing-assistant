@@ -482,28 +482,56 @@ def test_a_question_whose_right_passage_missed_the_cutoff_ranks_below_every_foun
     assert team["median_rank"] == math.inf
 
 
-@pytest.mark.parametrize("rescored", [
-    # A different MRR from the rows'.
-    {"recall": 1.0, "mrr": 0.5},
-    # No MRR to tell whether the rows' still holds.
-    {"recall": 1.0},
+@pytest.mark.parametrize(("rescored", "median_rank"), [
+    # rescore's own median replaces the one the rows it left behind give (2).
+    ({"recall": 1.0, "mrr": 1.0, "median_rank": 1}, 1),
+    # Its median question found nothing within the cutoff: saved as null
+    # beside the questions it was worked out over, since json has no infinity.
+    ({"recall": 1.0, "mrr": 0.0, "median_rank": None,
+      "metric_denominators": {"median_rank": 3}}, math.inf),
+    # A rescore that saved no median, even with the rows' own MRR, says
+    # nothing of the per-question ranks behind it.
+    ({"recall": 1.0, "mrr": 2 / 3}, None),
 ])
-def test_a_rescored_benchmark_shows_no_median_rank_from_the_rows_rescore_left_behind(
-        tmp_path, rescored):
-    """rescore rewrites MRR under rescored/ and leaves questions.jsonl as it
-    was, so the rows' ranks may no longer go with the scores shown beside them."""
+def test_a_rescored_benchmark_takes_its_median_rank_from_rescore(tmp_path, rescored, median_rank):
+    """rescore rewrites the scores under rescored/ and leaves questions.jsonl
+    as it was, so the rows' ranks may no longer go with the scores shown
+    beside them: their reciprocal ranks 1, 1/2 and 1/2 average 2/3, as 1, 1
+    and 0 would, with a median of 2 to the other's 1."""
     run = tmp_path / "rescored-run"
     (run / "C4").mkdir(parents=True)
     (run / "rescored").mkdir()
     (run / "summary.json").write_text(json.dumps({
-        "configurations": [{"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
-    (run / "C4" / "questions.jsonl").write_text(json.dumps(
-        {"question_id": "q1", "recall": 1.0, "ndcg": 1.0, "mrr": 1.0}) + "\n", encoding="utf-8")
+        "configurations": [{"config": {"id": "C4"}, "questions": 3}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text("".join(json.dumps(
+        {"question_id": f"q{n}", "recall": 1.0, "ndcg": 1.0, "mrr": mrr}) + "\n"
+        for n, mrr in enumerate((1.0, 0.5, 0.5))), encoding="utf-8")
     (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [
         {"config": {"id": "C4"}, "by_benchmark": {"team": rescored}}]}), encoding="utf-8")
     result_runs.clear()
     team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
-    assert team["median_rank"] is None
+    assert team["median_rank"] == median_rank
+
+
+@pytest.mark.parametrize(("saved", "median_rank"), [
+    ({"median_rank": 3}, 3),
+    ({"median_rank": None, "metric_denominators": {"median_rank": 2}}, math.inf),
+    # Not a rank: text, a rank above the top, true, or a null over no questions.
+    ({"median_rank": "n/a"}, None),
+    ({"median_rank": 0.5}, None),
+    ({"median_rank": True}, None),
+    ({"median_rank": None, "metric_denominators": {"median_rank": 0}}, None),
+    ({"median_rank": None, "metric_denominators": {"median_rank": True}}, None),
+])
+def test_a_summary_only_configuration_reads_its_saved_median_rank(tmp_path, saved, median_rank):
+    run = tmp_path / "summary-only"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"},
+         "by_benchmark": {"handwritten": {"recall": 0.5, **saved}}}]}), encoding="utf-8")
+    result_runs.clear()
+    team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
+    assert team["median_rank"] == median_rank
 
 
 def _scored_run(root, *, top_k=16, mrrs=(1.0, 0.5, 0.5), hard_negatives=0.5):
@@ -680,25 +708,6 @@ def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monk
     tips = _tooltips(element)
     assert "Citation precision" in element.value.columns
     assert [column for column in element.value.columns[2:] if not tips.get(column)] == []
-
-
-def test_a_rescored_benchmark_whose_rows_still_match_keeps_their_median_rank(tmp_path):
-    """rescore found the same MRR as the rows saved, so their ranks still go
-    with the scores shown beside them."""
-    run = tmp_path / "rescored-run"
-    (run / "C4").mkdir(parents=True)
-    (run / "rescored").mkdir()
-    (run / "summary.json").write_text(json.dumps({
-        "configurations": [{"config": {"id": "C4"}, "questions": 2}]}), encoding="utf-8")
-    (run / "C4" / "questions.jsonl").write_text("".join(json.dumps(
-        {"question_id": f"q{n}", "recall": 1.0, "ndcg": 1.0, "mrr": mrr}) + "\n"
-        for n, mrr in enumerate((1.0, 0.5))), encoding="utf-8")
-    (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [
-        {"config": {"id": "C4"}, "by_benchmark": {"team": {"recall": 1.0, "mrr": 0.75}}}]}),
-        encoding="utf-8")
-    result_runs.clear()
-    team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
-    assert team["median_rank"] == 1.5
 
 
 def test_a_retrieval_chart_of_one_score_still_names_it_in_a_legend(tmp_path, monkeypatch):
