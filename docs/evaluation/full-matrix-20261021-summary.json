@@ -1,0 +1,2407 @@
+{
+  "run_id": "full-matrix-20261021",
+  "configurations_measured": [
+    "C0",
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+  ],
+  "retrieval_questions_per_row": 12729,
+  "by_benchmark": {
+    "team": 150,
+    "xbrl": 12579
+  },
+  "team_answers_per_row": 150,
+  "reference_imported": false,
+  "benchmark_declaration": {
+    "counts": {
+      "team": 150,
+      "xbrl": 12579
+    },
+    "question_records_sha256": "84763df25b8c320ef5f1a60ab8e554db35b4e959eff975bdf81fc898bfc90339",
+    "decision_benchmark_counts": {
+      "team": 150,
+      "xbrl": 12579
+    },
+    "decision_question_records_sha256": "84763df25b8c320ef5f1a60ab8e554db35b4e959eff975bdf81fc898bfc90339",
+    "matches_decision_benchmark": true,
+    "required": true
+  },
+  "retrieval": {
+    "run_id": "full-matrix-20261021",
+    "top_k": 16,
+    "configurations": [
+      {
+        "config": {
+          "id": "C0",
+          "name": "naive BM25",
+          "retriever": "bm25-fixed-size",
+          "chunking": "fixed-size",
+          "metadata_filter": false,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.025197118533071383,
+        "ndcg": 0.012721909784152333,
+        "mrr": 0.013301165544780476,
+        "hard_negative_accuracy": 0.9320987654320988,
+        "median_latency_ms": 62.482957961037755,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.17226027397260274,
+            "ndcg": 0.09991888504412066,
+            "mrr": 0.1106457469471168,
+            "hard_negative_accuracy": 0.9320987654320988,
+            "median_latency_ms": 61.18391652125865
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.023490208548639268,
+            "ndcg": 0.011709845360274808,
+            "mrr": 0.01217132144868849,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 62.50241701491177
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.0625,
+            "ndcg": 0.09759501249802542,
+            "mrr": 0.25,
+            "hard_negative_accuracy": 0.9375,
+            "median_latency_ms": 53.296958009013906
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.3371212121212121,
+            "ndcg": 0.2009285996049561,
+            "mrr": 0.21478035853035854,
+            "hard_negative_accuracy": 0.9270833333333334,
+            "median_latency_ms": 64.9441874702461
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.02385331964948291,
+            "ndcg": 0.011886746952784957,
+            "mrr": 0.012362507671183758,
+            "hard_negative_accuracy": 0.8888888888888888,
+            "median_latency_ms": 62.47945799259469
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.34,
+            "ndcg": 0.2085639919801212,
+            "mrr": 0.22111111111111112,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 69.24781200359575
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 51.07793750357814
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C1",
+          "name": "section-aware BM25",
+          "retriever": "bm25",
+          "chunking": "section-aware",
+          "metadata_filter": false,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.0694302554027505,
+        "ndcg": 0.03173191786154344,
+        "mrr": 0.025299322157868325,
+        "hard_negative_accuracy": 0.9074074074074074,
+        "median_latency_ms": 66.79100001929328,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.3025114155251142,
+            "ndcg": 0.1474854957819143,
+            "mrr": 0.11052284853654716,
+            "hard_negative_accuracy": 0.9074074074074074,
+            "median_latency_ms": 67.58599996101111
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.0667249648885709,
+            "ndcg": 0.030388407059701153,
+            "mrr": 0.024310162856549692,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 66.7826670105569
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.0,
+            "ndcg": 0.0,
+            "mrr": 0.0,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 199.97818797128275
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.4696969696969697,
+            "ndcg": 0.24377052520424689,
+            "mrr": 0.19801612528885257,
+            "hard_negative_accuracy": 0.875,
+            "median_latency_ms": 68.29622949589975
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.0678271624430936,
+            "ndcg": 0.03084707846481063,
+            "mrr": 0.024579971443869763,
+            "hard_negative_accuracy": 0.8333333333333334,
+            "median_latency_ms": 66.76879100268707
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.36666666666666664,
+            "ndcg": 0.23228087653971816,
+            "mrr": 0.18666666666666668,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 76.4252709923312
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 61.265833530342206
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C2",
+          "name": "dense retrieval",
+          "retriever": "dense",
+          "chunking": "section-aware",
+          "metadata_filter": false,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.36826457105435495,
+        "ndcg": 0.23183636436440977,
+        "mrr": 0.23487763230002914,
+        "hard_negative_accuracy": 0.8703703703703703,
+        "median_latency_ms": 132.55979103269055,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.4132420091324201,
+            "ndcg": 0.2610231582434111,
+            "mrr": 0.22901369939041172,
+            "hard_negative_accuracy": 0.8703703703703703,
+            "median_latency_ms": 131.7606664961204
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.3677425338527175,
+            "ndcg": 0.23149760358006014,
+            "mrr": 0.23494569289346298,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 132.56762496894225
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.25,
+            "ndcg": 0.11806734053698968,
+            "mrr": 0.10416666666666666,
+            "hard_negative_accuracy": 0.875,
+            "median_latency_ms": 96.96010398329236
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.7348484848484849,
+            "ndcg": 0.45410748889196945,
+            "mrr": 0.392458362344726,
+            "hard_negative_accuracy": 0.75,
+            "median_latency_ms": 45.34539650194347
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.3672140206836662,
+            "ndcg": 0.23119260256637222,
+            "mrr": 0.23446814844935948,
+            "hard_negative_accuracy": 0.9444444444444444,
+            "median_latency_ms": 132.6369580347091
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.13333333333333333,
+            "ndcg": 0.11480409554829327,
+            "mrr": 0.1125,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 130.61906248913147
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.875,
+            "median_latency_ms": 89.56452101119794
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C3",
+          "name": "hybrid retrieval",
+          "retriever": "hybrid",
+          "chunking": "section-aware",
+          "metadata_filter": false,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.29333333333333333,
+        "ndcg": 0.1721020829384235,
+        "mrr": 0.16798844257685122,
+        "hard_negative_accuracy": 0.8888888888888888,
+        "median_latency_ms": 213.2272909511812,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.4691780821917808,
+            "ndcg": 0.25856912241298335,
+            "mrr": 0.20808088410828138,
+            "hard_negative_accuracy": 0.8888888888888888,
+            "median_latency_ms": 229.6747914806474
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.2912923655828497,
+            "ndcg": 0.17109849062080798,
+            "mrr": 0.16752310380082858,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 213.14458310371265
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.375,
+            "ndcg": 0.19055004710765894,
+            "mrr": 0.16666666666666666,
+            "hard_negative_accuracy": 0.875,
+            "median_latency_ms": 284.79058397351764
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.6893939393939394,
+            "ndcg": 0.3981436708105976,
+            "mrr": 0.3338964381578018,
+            "hard_negative_accuracy": 0.875,
+            "median_latency_ms": 114.5897505339235
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.29187389805531433,
+            "ndcg": 0.1712686228210531,
+            "mrr": 0.1674011069586186,
+            "hard_negative_accuracy": 0.8888888888888888,
+            "median_latency_ms": 213.2985420175828
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.36666666666666664,
+            "ndcg": 0.22588384130627362,
+            "mrr": 0.1825,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 265.43966701137833
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.875,
+            "median_latency_ms": 166.32270903210156
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C4",
+          "name": "hybrid retrieval with metadata filters",
+          "retriever": "hybrid",
+          "chunking": "section-aware",
+          "metadata_filter": true,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.6536476751800917,
+        "ndcg": 0.4733777420614461,
+        "mrr": 0.47703292832467686,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 303.9618749753572,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.8184931506849316,
+            "ndcg": 0.5975243055002812,
+            "mrr": 0.5484698520657425,
+            "hard_negative_accuracy": 0.9629629629629629,
+            "median_latency_ms": 281.7506459832657
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.6517343721016509,
+            "ndcg": 0.47193681684783056,
+            "mrr": 0.4762037852396784,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 304.3343329918571
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.75,
+            "ndcg": 0.5191651833815294,
+            "mrr": 0.6011904761904762,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 311.7335829883814
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.9545454545454546,
+            "ndcg": 0.7557924867129094,
+            "mrr": 0.7112193362193362,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 191.67843749164604
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.6527328228204521,
+            "ndcg": 0.4725167628617664,
+            "mrr": 0.47634031286731215,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 304.3531670118682
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.45,
+            "ndcg": 0.3030402413012514,
+            "mrr": 0.2742857142857143,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 598.4265629958827
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.75,
+            "median_latency_ms": 123.68550003156997
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C5",
+          "name": "C4 + experimental MiniLM reranking",
+          "retriever": "hybrid",
+          "chunking": "section-aware",
+          "metadata_filter": true,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": false,
+          "use_refusal": false,
+          "use_verification": false,
+          "rerank": true,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.6671119842829076,
+        "ndcg": 0.41763442320849725,
+        "mrr": 0.38453988981985054,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 729.4327080016956,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.8127853881278538,
+            "ndcg": 0.5162963521819692,
+            "mrr": 0.44366045864333536,
+            "hard_negative_accuracy": 0.9629629629629629,
+            "median_latency_ms": 677.7039165026508
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.665421204653258,
+            "ndcg": 0.4164892891254917,
+            "mrr": 0.3838536983063575,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 730.3582920576446
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.75,
+            "ndcg": 0.6451708940569352,
+            "mrr": 0.75,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 728.3096454921179
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.7575757575757576,
+            "ndcg": 0.5610030814741426,
+            "mrr": 0.5183367768595041,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 644.1874584998004
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.6668640298939501,
+            "ndcg": 0.4170237089313613,
+            "mrr": 0.38390241187371527,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 730.4975419538096
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.55,
+            "ndcg": 0.46938951334840695,
+            "mrr": 0.45714285714285713,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 1089.642584003741
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.75,
+            "median_latency_ms": 507.14075050200336
+          }
+        }
+      },
+      {
+        "config": {
+          "id": "C6",
+          "name": "C4 + filing decomposition and verification",
+          "retriever": "hybrid",
+          "chunking": "section-aware",
+          "metadata_filter": true,
+          "top_k": 16,
+          "min_score": null,
+          "use_facts": false,
+          "use_decomposition": true,
+          "use_refusal": false,
+          "use_verification": true,
+          "rerank": false,
+          "candidate_k": 50
+        },
+        "questions": 12729,
+        "metric_denominators": {
+          "recall": 12725,
+          "ndcg": 12725,
+          "mrr": 12725,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.6537655533726261,
+        "ndcg": 0.4733753788950903,
+        "mrr": 0.4769484489533605,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 303.1314589898102,
+        "by_benchmark": {
+          "team": {
+            "questions": 150,
+            "metric_denominators": {
+              "recall": 146,
+              "ndcg": 146,
+              "mrr": 146,
+              "hard_negative_accuracy": 27
+            },
+            "recall": 0.8287671232876712,
+            "ndcg": 0.597318337747695,
+            "mrr": 0.5411068383671124,
+            "hard_negative_accuracy": 0.9629629629629629,
+            "median_latency_ms": 265.32925048377365
+          },
+          "xbrl": {
+            "questions": 12579,
+            "metric_denominators": {
+              "recall": 12579,
+              "ndcg": 12579,
+              "mrr": 12579,
+              "hard_negative_accuracy": 0
+            },
+            "recall": 0.6517343721016509,
+            "ndcg": 0.47193681684783056,
+            "mrr": 0.4762037852396784,
+            "hard_negative_accuracy": null,
+            "median_latency_ms": 304.3343329918571
+          }
+        },
+        "by_type": {
+          "comparative": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 4,
+              "ndcg": 4,
+              "mrr": 4,
+              "hard_negative_accuracy": 4
+            },
+            "recall": 0.75,
+            "ndcg": 0.3817584134003925,
+            "mrr": 0.2583333333333333,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 272.062125033699
+          },
+          "factual": {
+            "questions": 44,
+            "metric_denominators": {
+              "recall": 44,
+              "ndcg": 44,
+              "mrr": 44,
+              "hard_negative_accuracy": 8
+            },
+            "recall": 0.9545454545454546,
+            "ndcg": 0.7557924867129094,
+            "mrr": 0.7112193362193362,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 191.67843749164604
+          },
+          "numeric": {
+            "questions": 12667,
+            "metric_denominators": {
+              "recall": 12667,
+              "ndcg": 12667,
+              "mrr": 12667,
+              "hard_negative_accuracy": 9
+            },
+            "recall": 0.6527328228204521,
+            "ndcg": 0.4725167628617664,
+            "mrr": 0.47634031286731215,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 304.3531670118682
+          },
+          "temporal": {
+            "questions": 10,
+            "metric_denominators": {
+              "recall": 10,
+              "ndcg": 10,
+              "mrr": 10,
+              "hard_negative_accuracy": 2
+            },
+            "recall": 0.6,
+            "ndcg": 0.35499582010594666,
+            "mrr": 0.30392857142857144,
+            "hard_negative_accuracy": 1.0,
+            "median_latency_ms": 257.74504197761416
+          },
+          "unanswerable": {
+            "questions": 4,
+            "metric_denominators": {
+              "recall": 0,
+              "ndcg": 0,
+              "mrr": 0,
+              "hard_negative_accuracy": 4
+            },
+            "recall": null,
+            "ndcg": null,
+            "mrr": null,
+            "hard_negative_accuracy": 0.75,
+            "median_latency_ms": 123.68550003156997
+          }
+        }
+      }
+    ],
+    "phase": "retrieval",
+    "complete": true,
+    "config_file": "config.json",
+    "evaluation_only": true
+  },
+  "retrieval_by_benchmark": {
+    "team": {
+      "C0": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.17226027397260274,
+        "ndcg": 0.09991888504412066,
+        "mrr": 0.1106457469471168,
+        "hard_negative_accuracy": 0.9320987654320988,
+        "median_latency_ms": 61.18391652125865
+      },
+      "C1": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.3025114155251142,
+        "ndcg": 0.1474854957819143,
+        "mrr": 0.11052284853654716,
+        "hard_negative_accuracy": 0.9074074074074074,
+        "median_latency_ms": 67.58599996101111
+      },
+      "C2": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.4132420091324201,
+        "ndcg": 0.2610231582434111,
+        "mrr": 0.22901369939041172,
+        "hard_negative_accuracy": 0.8703703703703703,
+        "median_latency_ms": 131.7606664961204
+      },
+      "C3": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.4691780821917808,
+        "ndcg": 0.25856912241298335,
+        "mrr": 0.20808088410828138,
+        "hard_negative_accuracy": 0.8888888888888888,
+        "median_latency_ms": 229.6747914806474
+      },
+      "C4": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.8184931506849316,
+        "ndcg": 0.5975243055002812,
+        "mrr": 0.5484698520657425,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 281.7506459832657
+      },
+      "C5": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.8127853881278538,
+        "ndcg": 0.5162963521819692,
+        "mrr": 0.44366045864333536,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 677.7039165026508
+      },
+      "C6": {
+        "questions": 150,
+        "metric_denominators": {
+          "recall": 146,
+          "ndcg": 146,
+          "mrr": 146,
+          "hard_negative_accuracy": 27
+        },
+        "recall": 0.8287671232876712,
+        "ndcg": 0.597318337747695,
+        "mrr": 0.5411068383671124,
+        "hard_negative_accuracy": 0.9629629629629629,
+        "median_latency_ms": 265.32925048377365
+      }
+    },
+    "xbrl": {
+      "C0": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.023490208548639268,
+        "ndcg": 0.011709845360274808,
+        "mrr": 0.01217132144868849,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 62.50241701491177
+      },
+      "C1": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.0667249648885709,
+        "ndcg": 0.030388407059701153,
+        "mrr": 0.024310162856549692,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 66.7826670105569
+      },
+      "C2": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.3677425338527175,
+        "ndcg": 0.23149760358006014,
+        "mrr": 0.23494569289346298,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 132.56762496894225
+      },
+      "C3": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.2912923655828497,
+        "ndcg": 0.17109849062080798,
+        "mrr": 0.16752310380082858,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 213.14458310371265
+      },
+      "C4": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.6517343721016509,
+        "ndcg": 0.47193681684783056,
+        "mrr": 0.4762037852396784,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 304.3343329918571
+      },
+      "C5": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.665421204653258,
+        "ndcg": 0.4164892891254917,
+        "mrr": 0.3838536983063575,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 730.3582920576446
+      },
+      "C6": {
+        "questions": 12579,
+        "metric_denominators": {
+          "recall": 12579,
+          "ndcg": 12579,
+          "mrr": 12579,
+          "hard_negative_accuracy": 0
+        },
+        "recall": 0.6517343721016509,
+        "ndcg": 0.47193681684783056,
+        "mrr": 0.4762037852396784,
+        "hard_negative_accuracy": null,
+        "median_latency_ms": 304.3343329918571
+      }
+    }
+  },
+  "answers": {
+    "complete": true,
+    "team_questions": 150,
+    "configurations": {
+      "C0": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.8672727272727273,
+            "scored": 55,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.31453333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.3933333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.6042424242424242,
+            "scored": 55,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.15114155251141553,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.1879439017890642,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 1053.6754719602566,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.002982477890327573,
+              "queries": 150
+            },
+            "other": {
+              "mean": 5.032234414247796,
+              "queries": 150
+            },
+            "total": {
+              "mean": 1058.8986327541836,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": null,
+            "known_queries": 0,
+            "unknown_queries": 150,
+            "mean": null
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 1215.182967518922,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 0.0012586025210718315,
+                "queries": 150
+              },
+              "total": {
+                "mean": 1215.184226121443,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 95,
+              "unknown_queries": 55,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 55
+        },
+        "verification_enabled": false
+      },
+      "C1": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.9305970149253732,
+            "scored": 67,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.4108888866666667,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.47333333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.6248756218905472,
+            "scored": 67,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.2819634703196347,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.21367112019409737,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 929.8473094337775,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.0030114385299384594,
+              "queries": 150
+            },
+            "other": {
+              "mean": 0.8250009687617421,
+              "queries": 150
+            },
+            "total": {
+              "mean": 930.8889929612633,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": null,
+            "known_queries": 0,
+            "unknown_queries": 150,
+            "mean": null
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 1241.8783680803608,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 66.73618134188776,
+                "queries": 150
+              },
+              "total": {
+                "mean": 1308.6145494222485,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 83,
+              "unknown_queries": 67,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 67
+        },
+        "verification_enabled": false
+      },
+      "C2": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.9045454545454545,
+            "scored": 110,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.606,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.76,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.43242424242424243,
+            "scored": 110,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.3824200913242009,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.15654671393955746,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 1201.4816750613197,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.0029729997428754964,
+              "queries": 150
+            },
+            "other": {
+              "mean": 0.9478821900362769,
+              "queries": 150
+            },
+            "total": {
+              "mean": 1202.5890769650384,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": null,
+            "known_queries": 0,
+            "unknown_queries": 150,
+            "mean": null
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 2216.386558940479,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 0.002193017862737179,
+                "queries": 150
+              },
+              "total": {
+                "mean": 2216.388751958342,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 40,
+              "unknown_queries": 110,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 110
+        },
+        "verification_enabled": false
+      },
+      "C3": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.8718918918918919,
+            "scored": 111,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.6178866666666667,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.7666666666666667,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.4904904904904905,
+            "scored": 111,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.4280821917808219,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.16655557905323803,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 2100.057934737997,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.0029799931993087134,
+              "queries": 150
+            },
+            "other": {
+              "mean": 0.9584188628165672,
+              "queries": 150
+            },
+            "total": {
+              "mean": 2101.1858891730662,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": null,
+            "known_queries": 0,
+            "unknown_queries": 150,
+            "mean": null
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 2196.5048155460195,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 0.002329498529434204,
+                "queries": 150
+              },
+              "total": {
+                "mean": 2196.507145044549,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 39,
+              "unknown_queries": 111,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 111
+        },
+        "verification_enabled": false
+      },
+      "C4": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.9206896551724137,
+            "scored": 145,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.871,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.9933333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.5514969896004378,
+            "scored": 145,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.7568493150684932,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.17446054029278457,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 1558.6807341792155,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.0030836439691483974,
+              "queries": 150
+            },
+            "other": {
+              "mean": 0.9800999491320302,
+              "queries": 150
+            },
+            "total": {
+              "mean": 1559.8383783126094,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 1,
+            "unknown_queries": 149,
+            "mean": 0.0
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 2815.0459283190626,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 0.003193641702334086,
+                "queries": 150
+              },
+              "total": {
+                "mean": 2815.0491219607648,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 5,
+              "unknown_queries": 145,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 145
+        },
+        "verification_enabled": false
+      },
+      "C5": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.9349285714285713,
+            "scored": 140,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.8418666666666667,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.96,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.5730357142857142,
+            "scored": 140,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.7705479452054794,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.20676388521678746,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 2541.829253907393,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.00325140543282032,
+              "queries": 150
+            },
+            "other": {
+              "mean": 0.9684191504493356,
+              "queries": 150
+            },
+            "total": {
+              "mean": 2543.007688348492,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 1,
+            "unknown_queries": 149,
+            "mean": 0.0
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 2942.6006652383753,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 66.73868756275624,
+                "queries": 150
+              },
+              "total": {
+                "mean": 3009.3393528011316,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 10,
+              "unknown_queries": 140,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "not_run": 140
+        },
+        "verification_enabled": false
+      },
+      "C6": {
+        "questions": 150,
+        "quality": {
+          "faithfulness": {
+            "mean": 0.923448275862069,
+            "scored": 145,
+            "total": 150
+          },
+          "correctness": {
+            "mean": 0.8606666666666666,
+            "scored": 150,
+            "total": 150
+          },
+          "answerability_correct": {
+            "mean": 0.9933333333333333,
+            "scored": 150,
+            "total": 150
+          },
+          "citation_precision": {
+            "mean": 0.5636234263820471,
+            "scored": 145,
+            "total": 150
+          },
+          "citation_recall": {
+            "mean": 0.7808219178082192,
+            "scored": 146,
+            "total": 150
+          }
+        },
+        "resources": {
+          "latency_ms": {
+            "retrieve": {
+              "mean": 0.16150386887602508,
+              "queries": 150
+            },
+            "rerank": {
+              "mean": 0.0,
+              "queries": 150
+            },
+            "generate": {
+              "mean": 2815.4742358089425,
+              "queries": 150
+            },
+            "retry_wait": {
+              "mean": 0.00322642270475626,
+              "queries": 150
+            },
+            "other": {
+              "mean": 17.304183578041073,
+              "queries": 150
+            },
+            "total": {
+              "mean": 2832.943149678564,
+              "queries": 150
+            }
+          },
+          "api_cost_usd": {
+            "known_total": 0.0,
+            "known_queries": 1,
+            "unknown_queries": 149,
+            "mean": 0.0
+          },
+          "judge_overhead": {
+            "latency_ms": {
+              "generate": {
+                "mean": 3104.8107607786856,
+                "queries": 150
+              },
+              "retry_wait": {
+                "mean": 66.73697059081557,
+                "queries": 150
+              },
+              "total": {
+                "mean": 3171.547731369501,
+                "queries": 150
+              }
+            },
+            "api_cost_usd": {
+              "known_total": 0.0,
+              "known_queries": 5,
+              "unknown_queries": 145,
+              "mean": 0.0
+            }
+          }
+        },
+        "checks": {
+          "mismatch": 37,
+          "supported": 43,
+          "unchecked": 30,
+          "unverified": 35
+        },
+        "verification_enabled": true
+      }
+    }
+  },
+  "evaluation_methods": {
+    "C0": {
+      "abstention": 95,
+      "llm_judge": 55
+    },
+    "C1": {
+      "abstention": 83,
+      "llm_judge": 67
+    },
+    "C2": {
+      "llm_judge": 110,
+      "abstention": 40
+    },
+    "C3": {
+      "llm_judge": 111,
+      "abstention": 39
+    },
+    "C4": {
+      "llm_judge": 145,
+      "abstention": 5
+    },
+    "C5": {
+      "llm_judge": 140,
+      "abstention": 10
+    },
+    "C6": {
+      "llm_judge": 145,
+      "abstention": 5
+    }
+  },
+  "verification_outputs": {
+    "C0": 0,
+    "C1": 0,
+    "C2": 0,
+    "C3": 0,
+    "C4": 0,
+    "C5": 0,
+    "C6": 150
+  },
+  "scoring_denominators": {
+    "C0": {
+      "total": 150,
+      "llm_judged": 55,
+      "automatically_scored": 95,
+      "judge_failed": 0,
+      "not_scored": 0
+    },
+    "C1": {
+      "total": 150,
+      "llm_judged": 67,
+      "automatically_scored": 83,
+      "judge_failed": 0,
+      "not_scored": 0
+    },
+    "C2": {
+      "total": 150,
+      "llm_judged": 110,
+      "automatically_scored": 40,
+      "judge_failed": 0,
+      "not_scored": 0
+    },
+    "C3": {
+      "total": 150,
+      "llm_judged": 111,
+      "automatically_scored": 39,
+      "judge_failed": 0,
+      "not_scored": 0
+    },
+    "C4": {
+      "total": 150,
+      "llm_judged": 145,
+      "automatically_scored": 5,
+      "judge_failed": 0,
+      "not_scored": 0
+    },
+    "C5": {
+      "total": 150,
+      "llm_judged": 140,
+      "automatically_scored": 10,
+      "judge_failed": 0,
+      "not_scored": 0
+    },
+    "C6": {
+      "total": 150,
+      "llm_judged": 145,
+      "automatically_scored": 5,
+      "judge_failed": 0,
+      "not_scored": 0
+    }
+  },
+  "usage_by_provider": {
+    "C0": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 150,
+        "successful_calls": 150,
+        "usage_calls": 150,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 1089282,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 7329,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 1089282,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 7329,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 56,
+        "successful_calls": 55,
+        "usage_calls": 55,
+        "unsuccessful_attempts": 1,
+        "input_tokens": {
+          "known_total": 76375,
+          "known_queries": 149,
+          "unknown_queries": 1
+        },
+        "output_tokens": {
+          "known_total": 13391,
+          "known_queries": 149,
+          "unknown_queries": 1
+        },
+        "observed_input_tokens": {
+          "known_total": 77980,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 13758,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 95,
+          "unknown_queries": 55
+        }
+      }
+    },
+    "C1": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 150,
+        "successful_calls": 150,
+        "usage_calls": 150,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 832311,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 7447,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 832311,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 7447,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 68,
+        "successful_calls": 67,
+        "usage_calls": 68,
+        "unsuccessful_attempts": 1,
+        "input_tokens": {
+          "known_total": 74802,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 15977,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 74802,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 15977,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 83,
+          "unknown_queries": 67
+        }
+      }
+    },
+    "C2": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 150,
+        "successful_calls": 150,
+        "usage_calls": 150,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 704714,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 13996,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 704714,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 13996,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 110,
+        "successful_calls": 110,
+        "usage_calls": 110,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 148104,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 26127,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 148104,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 26127,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 40,
+          "unknown_queries": 110
+        }
+      }
+    },
+    "C3": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 150,
+        "successful_calls": 150,
+        "usage_calls": 150,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 768248,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 13549,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 768248,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 13549,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": null,
+          "known_queries": 0,
+          "unknown_queries": 150
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 111,
+        "successful_calls": 111,
+        "usage_calls": 111,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 142550,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 27092,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 142550,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 27092,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 39,
+          "unknown_queries": 111
+        }
+      }
+    },
+    "C4": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 149,
+        "successful_calls": 149,
+        "usage_calls": 149,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 772609,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 19277,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 772609,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 19277,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 1,
+          "unknown_queries": 149
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 145,
+        "successful_calls": 145,
+        "usage_calls": 145,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 228955,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 35785,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 228955,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 35785,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 5,
+          "unknown_queries": 145
+        }
+      }
+    },
+    "C5": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 149,
+        "successful_calls": 149,
+        "usage_calls": 149,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 840946,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 17508,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 840946,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 17508,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 1,
+          "unknown_queries": 149
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 141,
+        "successful_calls": 140,
+        "usage_calls": 141,
+        "unsuccessful_attempts": 1,
+        "input_tokens": {
+          "known_total": 221520,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 35663,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 221520,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 35663,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 10,
+          "unknown_queries": 140
+        }
+      }
+    },
+    "C6": {
+      "generation": {
+        "provider": "soclaas",
+        "model": "qwen3.6:35b",
+        "model_calls": 149,
+        "successful_calls": 149,
+        "usage_calls": 149,
+        "unsuccessful_attempts": 0,
+        "input_tokens": {
+          "known_total": 772380,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 18794,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 772380,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 18794,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 1,
+          "unknown_queries": 149
+        }
+      },
+      "judge": {
+        "provider": "mistral",
+        "model": "ministral-8b-2512",
+        "model_calls": 146,
+        "successful_calls": 145,
+        "usage_calls": 146,
+        "unsuccessful_attempts": 1,
+        "input_tokens": {
+          "known_total": 231145,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "output_tokens": {
+          "known_total": 36660,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_input_tokens": {
+          "known_total": 231145,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "observed_output_tokens": {
+          "known_total": 36660,
+          "known_queries": 150,
+          "unknown_queries": 0
+        },
+        "usd": {
+          "known_total": 0.0,
+          "known_queries": 5,
+          "unknown_queries": 145
+        }
+      }
+    }
+  },
+  "generation": {
+    "provider": "soclaas",
+    "model": "qwen3.6:35b",
+    "prompt_template_id": "grounded_v4",
+    "temperature": 0.0
+  },
+  "judge": {
+    "provider": "mistral",
+    "model": "ministral-8b-2512",
+    "prompt_template_id": "answer-quality-v1",
+    "temperature": 0.0
+  },
+  "judge_rubric": "answer-quality-v1",
+  "max_output_tokens_per_call": 1024,
+  "verification_claim_status_counts": {
+    "C0": {},
+    "C1": {},
+    "C2": {},
+    "C3": {},
+    "C4": {},
+    "C5": {},
+    "C6": {
+      "unverified": 409,
+      "supported": 100,
+      "mismatch": 56,
+      "not_applicable": 5
+    }
+  },
+  "decomposition_questions": 10,
+  "limitations": [
+    "XBRL retrieval uses facts-derived relevance proxies, not independent answer labels; answers are evaluated on team questions only.",
+    "C0 uses reconstructed fixed-window evidence with projected gold labels in a different chunk namespace.",
+    "SOCLAAS generation and Mistral judging are separate hosted calls; semantic scores are model judgements, not human accuracy.",
+    "Hosted models are nondeterministic; separate generations on identical evidence do not isolate verification benefits.",
+    "C6 verification annotates claims and does not rewrite answers.",
+    "Laptop retrieval overlaps hosted answer evaluation and uncontrolled local applications; timings are not isolated throughput.",
+    "The archived Mistral-generator studies use different generator settings and are not a controlled comparison to this SOCLAAS study."
+  ]
+}
