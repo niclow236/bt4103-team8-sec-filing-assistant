@@ -20,6 +20,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, replace
 from hashlib import sha256
+from itertools import groupby
 from operator import attrgetter
 from html import escape
 import re
@@ -97,25 +98,15 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     return True
 
 
-# The cutoff "found the right passage" is judged at, the top 10 the issue
-# asks for (#169). It is not the run's own: the full matrix scores its Recall
-# and MRR at 16 (FINAL_K), so a right passage ranked 11 to 16 counts there
-# and not here. Ranks are worked out from the saved passages, not from MRR.
-_FOUND_WITHIN = 10
 # What a configuration is compared against until another baseline is picked:
 # naive BM25, the configuration every design choice is measured from.
 _DEFAULT_BASELINE = "C0"
 
 
-def _found(outcome: QuestionOutcome) -> bool | None:
-    """Whether the right passage ranked in the top 10, or None for an unscored question."""
-    if not outcome.scored:
-        return None
-    return outcome.rank is not None and outcome.rank <= _FOUND_WITHIN
-
-
 class _Measure(NamedTuple):
-    """What the before and after view counts changes on."""
+    """What the before and after view counts changes on. Its title and score
+    are the breakdown's (``breakdown.MEASURES``), so the two views score a
+    question the same way."""
 
     title: str
     column: str         # the table column that says how a question changed on it
@@ -128,17 +119,16 @@ class _Measure(NamedTuple):
     unscored: str       # why a question both answered was not counted on it
 
 
-_TOP_10 = _Measure(f"Found the right passage in the top {_FOUND_WITHIN}", f"Top {_FOUND_WITHIN}",
+_TOP_10 = _Measure(breakdown.FOUND.title, f"Top {breakdown.FOUND_WITHIN}",
                    # A rank is a whole number, shown as 2 and not 2.0 beside a missing one.
-                   "rank", attrgetter("rank"), "Int64", _found,
+                   "rank", attrgetter("rank"), "Int64", breakdown.FOUND.score,
                    # No right passage to find, or a row that could not be read.
                    "were not scored on retrieval by both")
 _MEASURES = (
     _TOP_10,
-    # Scored by the LLM judge, or for an abstention by whether abstaining was
-    # right, so not "judged" correctness alone.
-    _Measure("Answer correctness", "Correctness", "correctness", attrgetter("correctness"),
-             None, attrgetter("correctness"), "had no scored answer from both"),
+    _Measure(breakdown.CORRECTNESS.title, "Correctness", "correctness",
+             attrgetter("correctness"), None, breakdown.CORRECTNESS.score,
+             "had no scored answer from both"),
 )
 _SHOW_ALL = "All questions"
 # The text colour of a change in the table, matching the green and red of the
@@ -222,8 +212,7 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                  and benchmark not in item["benchmark_metrics"]]
     unread = [item["config_id"] for item in run["configurations"]
               if not item.get("questions_read") and item["config_id"] not in elsewhere]
-    config_ids = [item["config_id"] for item in run["configurations"]
-                  if item["config_id"] not in unread + elsewhere]
+    config_ids = breakdown.configurations_read(run, benchmark)
     # With fewer than two to compare, the section still says which were left
     # out for want of their files; one that ran no question here needs no word.
     if len(config_ids) < 2 and not (unread and len(run["configurations"]) > 1):
@@ -250,13 +239,14 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
                 "that was scored the same way on this benchmark.")
         return
     scored_at = run.get("top_k")
+    first_left_out = breakdown.FOUND_WITHIN + 1
     for measure, changes in counts:
         _render_change_counts(measure, changes, answered)
-        if measure is _TOP_10 and isinstance(scored_at, int) and scored_at > _FOUND_WITHIN:
+        if measure is _TOP_10 and isinstance(scored_at, int) and scored_at >= first_left_out:
             # The cutoff stays the issue's top 10, and this says why the
             # counts can disagree with the scores above them (#169).
-            ranks = (f"{_FOUND_WITHIN + 1}" if scored_at == _FOUND_WITHIN + 1
-                     else f"{_FOUND_WITHIN + 1} to {scored_at}")
+            ranks = (f"{first_left_out}" if scored_at == first_left_out
+                     else f"{first_left_out} to {scored_at}")
             st.caption(f"This run scores Recall and MRR at {scored_at}, so a right passage "
                        f"ranked {ranks} counts there but not here.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
@@ -299,10 +289,6 @@ def _render_change_counts(measure: _Measure, changes: Counter, answered: int) ->
     unchanged.metric("Unchanged", changes[_UNCHANGED])
 
 
-# How the breakdown splits a configuration's questions (#170): the words its
-# headline uses, the table's first column, and how a question is labelled.
-_GROUPINGS = (("question type", "Question type", attrgetter("question_type")),
-              ("difficulty", "Difficulty", attrgetter("difficulty")))
 _SCORE_BAR = st.column_config.ProgressColumn("Score", format="%.2f", min_value=0, max_value=1)
 
 
@@ -319,36 +305,21 @@ def _render_breakdown(run: Mapping[str, Any], benchmark: str,
                       outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
     """Where the default configuration is strong and weak: its scores by
     question type and by difficulty, each beside the questions it covers (#170)."""
-    readable = {item["config_id"] for item in run["configurations"]
-                if item.get("questions_read") and benchmark in item["benchmark_metrics"]}
-    if DEFAULT_STACK not in readable:
-        return
-    questions = [outcome for outcome in outcomes(run["run_dir"], DEFAULT_STACK).values()
-                 if outcome.benchmark == benchmark]
-    sections = []
-    for measure in _MEASURES:
-        tables = []
-        for grouping, column, label in _GROUPINGS:
-            groups = breakdown.group_scores(questions, label, measure.score)
-            # A single group, or one with nothing scored, shows no strong or weak side.
-            if len(groups) > 1 and any(group.scored for group in groups):
-                tables.append((grouping, column, groups))
-        if tables:
-            sections.append((measure, tables))
-    if not sections:
+    splits = breakdown.default_breakdown(run, benchmark, outcomes)
+    if not splits:
         return
     st.subheader("By question type and difficulty")
     st.caption(f"{DEFAULT_STACK}, the app's default configuration, on this benchmark. A group "
                f"with fewer than {breakdown.MIN_GROUP_QUESTIONS} scored questions is too few "
                "to read, so its score is not shown.")
-    for measure, tables in sections:
+    for measure, measured in groupby(splits, key=attrgetter("measure")):
         st.markdown(f"**{measure.title}**")
-        for grouping, column, groups in tables:
-            line = breakdown.headline(groups, grouping)
+        for split in measured:
+            line = breakdown.headline(split.groups, split.grouping)
             if line:
                 st.caption(line)
-            st.dataframe(_breakdown_table(column, groups), column_config={"Score": _SCORE_BAR},
-                         width="stretch", hide_index=True)
+            st.dataframe(_breakdown_table(split.grouping.capitalize(), split.groups),
+                         column_config={"Score": _SCORE_BAR}, width="stretch", hide_index=True)
 
 
 def render_results(runs: list[dict[str, Any]], *,

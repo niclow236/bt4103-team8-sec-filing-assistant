@@ -1989,9 +1989,13 @@ judged answers, on answer correctness. Every group shows its question count
 and how many of them were scored. A group with fewer than 10 scored questions
 (`MIN_GROUP_QUESTIONS` in `src/evaluation/breakdown.py`) is marked too few to
 read and its score is not shown. A line above each table names the strongest
-and weakest readable group. A grouping with a single group, such as the XBRL
-benchmark's question types, is left out. The Ask page's track record (#168)
-reads the same groups through `src/evaluation/breakdown.py`.
+and weakest readable groups, as the table shows them to two places, and names
+every group tied for either. A grouping with a single group, such as the XBRL
+benchmark's question types, is left out. `default_breakdown` in
+`src/evaluation/breakdown.py` picks the configuration, the benchmark's
+questions and how each question is scored, and the before and after view
+scores questions with the same functions, so the Ask page's track record
+(#168) can read the same groups by calling it.
 
 The Compare page runs one question through two configurations from the shared
 evaluation registry, using the same selected answer model. Each side shows its

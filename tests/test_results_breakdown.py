@@ -4,6 +4,9 @@ import json
 
 import pandas as pd
 
+from src.app.state import question_outcomes
+from src.evaluation.breakdown import CORRECTNESS, FOUND, Group, default_breakdown
+from src.evaluation.report import MECHANICAL, TEAM, read_runs
 from tests.test_results_comparison import _answer_row, _open, _retrieval_row, _save_run
 
 BREAKDOWN = "By question type and difficulty"
@@ -69,6 +72,8 @@ def test_the_default_configuration_is_scored_by_question_type_with_each_groups_c
     assert ("By difficulty, easy questions score highest (0.75 over 12) "
             "and medium lowest (0.30 over 10).") in captions
     assert any(caption.startswith("C4, the app's default configuration") for caption in captions)
+    # The run saved no answers, so there is no correctness section of unscored groups.
+    assert "**Answer correctness**" not in [markdown.value for markdown in team.markdown]
 
 
 def test_each_tab_breaks_down_only_its_own_benchmarks_questions(tmp_path, monkeypatch):
@@ -140,3 +145,28 @@ def test_a_breakdown_with_every_group_readable_has_no_too_few_column(tmp_path, m
     # One question type is no split at all; difficulty has two readable groups.
     assert "Question type" not in tables
     assert list(tables["Difficulty"][0].columns) == ["Difficulty", "Questions", "Scored", "Score"]
+
+
+def test_the_grouping_function_splits_a_fixture_run_as_the_page_shows_it(tmp_path):
+    _fixture_run(tmp_path, answers=[_answer_row(f"n{index:02}", 1.0) for index in range(12)])
+    run = read_runs(tmp_path)[0]
+
+    splits = default_breakdown(run, TEAM, question_outcomes)
+
+    assert [(split.measure, split.grouping) for split in splits] == [
+        (FOUND, "question type"), (FOUND, "difficulty"),
+        (CORRECTNESS, "question type"), (CORRECTNESS, "difficulty")]
+    assert splits[0].groups == [Group("numeric", 12, 12, 0.75), Group("factual", 10, 10, 0.3),
+                                Group("comparative", 4, 4, 1.0)]
+    # Only the numeric answers were judged.
+    assert splits[2].groups == [Group("numeric", 12, 12, 1.0), Group("factual", 10, 0, None),
+                                Group("comparative", 4, 0, None)]
+    # The XBRL questions are one group each way, so there is nothing to split.
+    assert default_breakdown(run, MECHANICAL, question_outcomes) == []
+
+
+def test_the_grouping_function_gives_nothing_for_a_run_without_the_default_configuration(
+        tmp_path):
+    _fixture_run(tmp_path, with_c4=False)
+
+    assert default_breakdown(read_runs(tmp_path)[0], TEAM, question_outcomes) == []

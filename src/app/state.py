@@ -55,7 +55,8 @@ ANSWERS_KEPT = 128
 
 from src.evaluation.benchmark import DEFAULT_GENERATED_QUESTIONS_PATH, DEFAULT_QUESTIONS_PATH
 from src.evaluation.metrics import first_relevant_rank
-from src.evaluation.report import benchmark_kind, question_rows, read_result_rows, read_runs
+from src.evaluation.report import (benchmark_kind, question_rows, read_result_rows, read_runs,
+                                   saved_score)
 
 # Where a question's text is looked up when the rows a run saved for it kept
 # none, as an embedding ablation's do: the team's questions and, where it has
@@ -161,9 +162,10 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
             _question_text(row), benchmark_kind(row))
         correctness = quality.get("correctness")
-        # Only a number is compared: text there is a malformed row, not a score.
-        outcomes[str(question_id)] = outcome._replace(
-            correctness=correctness if isinstance(correctness, (int, float)) else None)
+        # Only what the Answer quality table counts is a score: text there is a
+        # malformed row, and a NaN (which json reads) would count as unchanged
+        # against any score.
+        outcomes[str(question_id)] = outcome._replace(correctness=saved_score(correctness))
     # The benchmark the run froze, where it froze one, is what it asked.
     frozen = _benchmark_texts((Path(run_dir) / "benchmark.jsonl",))
     current = _benchmark_texts(BENCHMARK_FILES)

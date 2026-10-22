@@ -33,6 +33,24 @@ def test_a_true_or_false_score_is_averaged_as_a_rate():
     assert groups == [Group("numeric", 4, 3, 2 / 3)]
 
 
+def test_a_nan_or_infinite_score_counts_toward_its_group_but_not_its_mean():
+    groups = group_scores(_items("numeric", [1.0, float("nan"), float("inf"), None]),
+                          itemgetter("kind"), itemgetter("score"))
+
+    assert groups == [Group("numeric", 4, 1, 1.0)]
+
+
+def test_one_nan_score_leaves_the_headline_worked_out_from_the_other_scores():
+    items = (_items("numeric", [1.0] * 10 + [float("nan")]) + _items("factual", [0.5] * 10)
+             + _items("temporal", [0.0] * 10))
+
+    groups = group_scores(items, itemgetter("kind"), itemgetter("score"))
+
+    assert headline(groups, "question type") == (
+        "By question type, numeric questions score highest (1.00 over 10) "
+        "and temporal lowest (0.00 over 10).")
+
+
 def test_a_group_is_readable_from_the_threshold_of_scored_questions_up():
     assert MIN_GROUP_QUESTIONS == 10
     assert Group("hard", 12, MIN_GROUP_QUESTIONS, 0.5).readable
@@ -61,3 +79,31 @@ def test_no_headline_without_two_readable_groups_to_set_side_by_side():
 def test_readable_groups_that_score_the_same_are_not_called_strongest_and_weakest():
     assert headline([Group("easy", 10, 10, 0.5), Group("medium", 10, 10, 0.5)],
                     "difficulty") == "By difficulty, every group with enough questions scores 0.50."
+
+
+def test_every_group_tied_at_the_top_is_named():
+    groups = [Group("numeric", 12, 12, 0.9), Group("factual", 11, 11, 0.9),
+              Group("temporal", 10, 10, 0.5)]
+
+    assert headline(groups, "question type") == (
+        "By question type, numeric and factual questions score highest "
+        "(0.90 each, over 12 and 11) and temporal lowest (0.50 over 10).")
+
+
+def test_every_group_tied_at_the_bottom_is_named():
+    groups = [Group("easy", 40, 40, 0.8), Group("medium", 30, 30, 0.4),
+              Group("hard", 20, 20, 0.4), Group("expert", 10, 10, 0.4)]
+
+    assert headline(groups, "difficulty") == (
+        "By difficulty, easy questions score highest (0.80 over 40) "
+        "and medium, hard and expert lowest (0.40 each, over 30, 20 and 10).")
+
+
+def test_groups_that_show_the_same_score_to_two_places_are_tied():
+    # Both are shown as 0.90, so naming one of them alone would disagree with the table.
+    groups = [Group("numeric", 12, 12, 0.904), Group("factual", 11, 11, 0.896),
+              Group("temporal", 10, 10, 0.5)]
+
+    assert headline(groups, "question type") == (
+        "By question type, numeric and factual questions score highest "
+        "(0.90 each, over 12 and 11) and temporal lowest (0.50 over 10).")
