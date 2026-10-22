@@ -12,7 +12,7 @@ from src.app.components import result_chart_rows
 # How the Results page heads its columns in plain words (#164): Recall for a
 # run that saved no cutoff, the median rank, hard-negative accuracy, and the
 # abstention rate.
-FOUND = "Found the right passage among those retrieved"
+FOUND = "Right passages found among those retrieved"
 RANK = "Typical rank of the first right passage"
 NOT_FOOLED = "Not fooled by a similar filing (wrong company or year)"
 REFUSED = "Refused rather than guessed"
@@ -130,8 +130,8 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert manual.dataframe[0].value[FOUND].tolist() == [1.0]
     assert mechanical.dataframe[0].value[FOUND].tolist() == [0.0]
     assert list(manual.dataframe[0].value.columns) == [
-        "Configuration", "Name", "Questions", "Questions with a right passage", FOUND,
-        "Questions with a similar filing", NOT_FOOLED]
+        "Configuration", "Name", FOUND, NOT_FOOLED, "Questions",
+        "Questions with a right passage", "Questions with a similar filing"]
     charts = app.get("vega_lite_chart")
     assert len(charts) == 2
     for chart in charts:
@@ -565,8 +565,8 @@ def _results_page(monkeypatch, root):
 def test_the_retrieval_table_says_what_recall_means_at_the_runs_own_cutoff(tmp_path, monkeypatch):
     _scored_run(tmp_path, top_k=16)
     table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
-    assert "Found the right passage in the top 16" in table.columns
-    assert table["Found the right passage in the top 16"].tolist() == [1.0]
+    assert "Right passages found in the top 16" in table.columns
+    assert table["Right passages found in the top 16"].tolist() == [1.0]
 
 
 # None saved, or one that is not a count of passages: json's true, or none at all.
@@ -574,7 +574,7 @@ def test_the_retrieval_table_says_what_recall_means_at_the_runs_own_cutoff(tmp_p
 def test_a_run_that_saved_no_cutoff_still_says_what_recall_means(tmp_path, monkeypatch, top_k):
     _scored_run(tmp_path, top_k=top_k)
     table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
-    assert "Found the right passage among those retrieved" in table.columns
+    assert "Right passages found among those retrieved" in table.columns
 
 
 def _tooltips(dataframe):
@@ -586,7 +586,7 @@ def _tooltips(dataframe):
 def test_a_plain_label_names_its_technical_metric_in_a_tooltip(tmp_path, monkeypatch):
     _scored_run(tmp_path, top_k=16)
     tips = _tooltips(_results_page(monkeypatch, tmp_path).tabs[0].dataframe[0])
-    assert (tips.get("Found the right passage in the top 16") or "").startswith("Recall@16")
+    assert (tips.get("Right passages found in the top 16") or "").startswith("Recall@16")
 
 
 @pytest.mark.parametrize(("mrrs", "shown"), [
@@ -662,12 +662,12 @@ def test_hard_negative_accuracy_and_the_counts_beside_it_read_in_plain_words(tmp
     element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
     table, tips = element.value, _tooltips(element)
     assert list(table.columns) == [
-        "Configuration", "Name", "Questions", "Questions with a right passage",
-        "Found the right passage in the top 16", RANK,
-        "Questions with a similar filing", NOT_FOOLED]
+        "Configuration", "Name", "Right passages found in the top 16", RANK, NOT_FOOLED,
+        "Questions", "Questions with a right passage", "Questions with a similar filing"]
     assert table[NOT_FOOLED].tolist() == [0.5]
     assert (tips.get(NOT_FOOLED) or "").startswith("Hard-negative accuracy@16")
-    assert all(tips.get(column) for column in table.columns[3:])
+    assert all(tips.get(column) for column in table.columns
+               if column not in ("Configuration", "Name", "Questions"))
 
 
 def test_the_answer_model_table_reads_in_plain_words(tmp_path, monkeypatch):
@@ -692,7 +692,7 @@ def test_the_retrieval_chart_charts_the_plain_labels_and_leaves_ndcg_and_mrr_out
     series = json.loads(chart.proto.spec)["encoding"]["color"]["field"]
     bars = pa.ipc.open_stream(chart.proto.datasets[0].data.data).read_pandas()
     assert set(bars[series]) == {
-        "Found the right passage in the top 16", NOT_FOOLED}
+        "Right passages found in the top 16", NOT_FOOLED}
 
 
 def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monkeypatch):

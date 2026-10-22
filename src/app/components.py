@@ -69,7 +69,7 @@ _RESULT_METRIC_LABELS = {
     "Relevance-scored": ("Questions with a right passage",
                          "How many of the questions name a passage that answers them: "
                          "the scores of finding it are worked out over these."),
-    "Recall": ("Found the right passage {top}",
+    "Recall": ("Right passages found {top}",
                "Recall{at}: the share of each question's right passages that were "
                "retrieved, averaged over the questions that have one."),
     report.MEDIAN_RANK: ("Typical rank of the first right passage",
@@ -116,10 +116,12 @@ _RESULT_METRIC_LABELS = {
                      "How the answers' claims fared against the verification checks: each "
                      "outcome and how many claims had it."),
 }
-# The main view's retrieval columns, in order: nDCG and MRR are left to the
-# Full metrics section, and the median rank stands in for MRR.
-_MAIN_RETRIEVAL_COLUMNS = ("Configuration", "Name", "Questions", "Relevance-scored", "Recall",
-                           report.MEDIAN_RANK, "Hard negatives", "Hard Negative Accuracy")
+# The main view's retrieval columns, in order: the scores come first, so the
+# page's width shows them before the counts behind them. nDCG and MRR are
+# left to the Full metrics section, and the median rank stands in for MRR.
+_MAIN_RETRIEVAL_COLUMNS = ("Configuration", "Name", "Recall", report.MEDIAN_RANK,
+                           "Hard Negative Accuracy", "Questions", "Relevance-scored",
+                           "Hard negatives")
 
 
 def _cutoff(run: Mapping[str, Any]) -> int | None:

@@ -678,7 +678,7 @@ def test_a_lone_configuration_without_its_rows_draws_no_comparison(tmp_path, mon
     (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
     app = _open(monkeypatch, tmp_path)
     assert app.tabs[0].dataframe[0].value[
-        "Found the right passage among those retrieved"].tolist() == [0.2]
+        "Right passages found among those retrieved"].tolist() == [0.2]
 
     assert not any(header.value == "Before and after"
                    for tab in app.tabs for header in tab.subheader)
