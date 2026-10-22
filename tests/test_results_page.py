@@ -654,12 +654,9 @@ def test_the_answer_model_table_reads_in_plain_words(tmp_path, monkeypatch):
 
 
 def test_the_retrieval_chart_charts_the_plain_labels_and_leaves_ndcg_and_mrr_out(tmp_path, monkeypatch):
-    from streamlit.testing.v1 import AppTest
-    _scored_run(tmp_path, top_k=16)
-    _read_results_from(monkeypatch, tmp_path)
-    app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     import pyarrow as pa
-    chart = app.tabs[0].get("vega_lite_chart")[0]
+    _scored_run(tmp_path, top_k=16)
+    chart = _results_page(monkeypatch, tmp_path).tabs[0].get("vega_lite_chart")[0]
     # Each bar's series is named in the column the chart colours by.
     series = json.loads(chart.proto.spec)["encoding"]["color"]["field"]
     bars = pa.ipc.open_stream(chart.proto.datasets[0].data.data).read_pandas()
