@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 from html import escape
-from math import isnan
+from math import inf, isnan
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -102,6 +102,13 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
                         if (score := saved_score(row.get(metric))) is not None]
             values[metric] = mean(measured) if measured else None
             values["metric_denominators"][metric] = len(measured)
+        # Where the first right passage ranked, read off each question's
+        # reciprocal rank (#164): a rank is easier to read than its reciprocal.
+        # A reciprocal rank of 0 found none within the cutoff, so it ranks
+        # past every rank the run counted, and a median there is infinite.
+        ranks = [round(1 / score) if score else inf for row in relevance_rows
+                 if (score := saved_score(row.get("mrr"))) is not None]
+        values["median_rank"] = median(ranks) if ranks else None
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
         if answers:
             latencies = [answer["latency_ms"] for answer in answers
@@ -182,9 +189,10 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         metrics = (saved_benchmark_metrics(rows, config.get("provider"))
                    if rows else _saved_split(summary.get("by_benchmark")))
         # rescore recomputes retrieval under rescored/ and leaves the rows as
-        # they were, so its figures replace theirs.
+        # they were, so its figures replace theirs, and a median rank read
+        # off those rows no longer goes with them.
         for kind, rescored_metrics in rescored.get(config_id, {}).items():
-            metrics[kind] = {**metrics.get(kind, {}), **rescored_metrics}
+            metrics[kind] = {**metrics.get(kind, {}), "median_rank": None, **rescored_metrics}
         configurations.append({
             "run_id": run_dir.name,
             "config_id": config_id,

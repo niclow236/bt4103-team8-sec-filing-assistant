@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import pytest
 from src.config import PROJECT_ROOT
@@ -438,3 +439,54 @@ def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypat
     assert len(charts) == 2
     values = json.dumps(json.loads(charts[1].proto.spec).get("datasets", {})) + charts[1].proto.spec
     assert "Correctness" in values
+
+
+def test_a_run_saves_the_median_rank_of_each_questions_first_right_passage(tmp_path):
+    """Worked out from each question's reciprocal rank: 1/2, 1/4 and 1 are
+    ranks 2, 4 and 1, so the median is 2. A question with no right passage
+    to find does not count, nor does one whose scores could not be read."""
+    run = tmp_path / "ranks" / "C4"
+    run.mkdir(parents=True)
+    (tmp_path / "ranks" / "summary.json").write_text(json.dumps({
+        "configurations": [{"config": {"id": "C4"}, "questions": 5}]}), encoding="utf-8")
+    (run / "questions.jsonl").write_text("".join(
+        json.dumps({"question_id": f"q{n}", "recall": recall, "ndcg": 1.0, "mrr": mrr}) + "\n"
+        for n, (recall, mrr) in enumerate(((1.0, 0.5), (1.0, 0.25), (1.0, 1.0), (None, None),
+                                           ("unreadable", 0.01)))), encoding="utf-8")
+    result_runs.clear()
+    team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
+    assert team["median_rank"] == 2
+
+
+def test_a_question_whose_right_passage_missed_the_cutoff_ranks_below_every_found_one(tmp_path):
+    """Two of three found nothing in the top k, so the median question found
+    nothing either: its rank is past any number the run ranked."""
+    run = tmp_path / "missed" / "C4"
+    run.mkdir(parents=True)
+    (tmp_path / "missed" / "summary.json").write_text(json.dumps({
+        "configurations": [{"config": {"id": "C4"}, "questions": 3}]}), encoding="utf-8")
+    (run / "questions.jsonl").write_text("".join(
+        json.dumps({"question_id": f"q{n}", "recall": mrr, "ndcg": mrr, "mrr": mrr}) + "\n"
+        for n, mrr in enumerate((1.0, 0.0, 0.0))), encoding="utf-8")
+    result_runs.clear()
+    team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
+    assert team["median_rank"] == math.inf
+
+
+def test_a_rescored_benchmark_shows_no_median_rank_from_the_rows_rescore_left_behind(tmp_path):
+    """rescore rewrites MRR under rescored/ and leaves questions.jsonl as it
+    was, so the rows' ranks no longer go with the scores shown beside them."""
+    run = tmp_path / "rescored-run"
+    (run / "C4").mkdir(parents=True)
+    (run / "rescored").mkdir()
+    (run / "summary.json").write_text(json.dumps({
+        "configurations": [{"config": {"id": "C4"}, "questions": 1}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text(json.dumps(
+        {"question_id": "q1", "recall": 1.0, "ndcg": 1.0, "mrr": 1.0}) + "\n", encoding="utf-8")
+    (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "by_benchmark": {"team": {"recall": 1.0, "mrr": 0.5}}}]}),
+        encoding="utf-8")
+    result_runs.clear()
+    team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
+    assert team["mrr"] == 0.5
+    assert team["median_rank"] is None
