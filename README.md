@@ -105,7 +105,7 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: Mistral's API on its free plan, with a free account and API key of your own, and NUS SoC's SOCLAAS API, with a key from your SoC account, which SoC pays for. Exact versions are pinned in `requirements.txt`.
+Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: NUS SoC's SOCLAAS API, with a key from your SoC account, which SoC pays for, and Mistral's API on its free plan, with a free account and API key of your own. The hosted app and the demo answer with SOCLAAS, with Mistral as the fallback. Exact versions are pinned in `requirements.txt`.
 
 | Layer | What it uses |
 |---|---|
@@ -117,7 +117,7 @@ Python is the primary language. The team has no budget for paid APIs, so nothing
 | Holding the answer to a shape | `pydantic`, whose JSON schema every provider decodes against |
 | Tests | `pytest`, with `pytest-cov` to measure coverage |
 
-Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). Mistral and SOCLAAS need nothing beyond `requirements.txt` except your own key; see [Setting up Mistral](#setting-up-mistral) and [Setting up SOCLAAS](#setting-up-soclaas).
+Ollama is not a Python package, so it is installed separately; see [Setting up Ollama](#setting-up-ollama). SOCLAAS and Mistral need nothing beyond `requirements.txt` except your own key; see [Setting up SOCLAAS](#setting-up-soclaas) and [Setting up Mistral](#setting-up-mistral).
 
 ## Repository structure
 
@@ -368,9 +368,13 @@ Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
 request to carry a contact string and blocks traffic without one, so the
 download stops immediately with a `MissingIdentityError` if this is blank. The
 generation settings further down the file are optional. By default answers come
-from a local model and need no key; the `# MISTRAL_API_KEY=` line stays commented
-out until you have your own key, if you choose to answer with Mistral's API
-instead. Both are covered under [Answering a question](#answering-a-question).
+from a local model and need no key, but each takes minutes on a laptop. For
+answers in seconds, use SOCLAAS, as the team does in the hosted app and the
+demo: make a key with your SoC account as
+[Setting up SOCLAAS](#setting-up-soclaas) describes. Mistral's API, with a key
+from your own account, is the fallback. The `# SOCLAAS_API_KEY=` and
+`# MISTRAL_API_KEY=` lines stay commented out until you have a key. All three
+providers are covered under [Answering a question](#answering-a-question).
 
 Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
@@ -1124,12 +1128,15 @@ from. One of three providers writes the answer, chosen with `LLM_PROVIDER` in
 - `ollama`, the default: a local model served by Ollama. It needs no account,
   key or network connection once the model is downloaded, but an answer takes
   minutes on a laptop; see [How long an answer takes](#how-long-an-answer-takes).
-- `mistral`: an open-weight Ministral model on Mistral's API, on the free plan.
-  An answer takes about two seconds, and needs an internet connection and an
-  API key from your own Mistral account.
 - `soclaas`: an open-weight model on NUS SoC's SOCLAAS API, which serves larger
   models than Mistral's free plan. An answer takes about a second, and needs an
-  internet connection (no VPN) and a SOCLAAS API key.
+  internet connection (no VPN) and a SOCLAAS API key. The team answers with it
+  in the hosted app and the demo, so set it up first for hosted answers; the
+  [decision](#g-rows-over-a-full-matrix-runs-recorded-evidence) says why.
+- `mistral`: an open-weight Ministral model on Mistral's API, on the free plan.
+  An answer takes about two seconds, and needs an internet connection and an
+  API key from your own Mistral account. It is the fallback for when SOCLAAS is
+  down or a limit is hit.
 
 All get the same prompt and the same answer schema, and everything before and
 after generation is the same code. Each answer records the provider and model
@@ -1138,7 +1145,7 @@ neither is required:
 
 | Variable | Default | When to set it |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral); `soclaas` to answer with SOCLAAS, once you have [set it up](#setting-up-soclaas) |
+| `LLM_PROVIDER` | `ollama` | `soclaas` to answer with SOCLAAS, as the hosted app does, once you have [set it up](#setting-up-soclaas); `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral) |
 | `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral, `qwen3.6:35b` with SOCLAAS | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks another one with `--provider` uses that provider's default |
 
 ### Setting up Ollama
@@ -1169,7 +1176,8 @@ Two more settings in `.env` change how Ollama runs. Neither is required:
 Only needed to answer with Mistral. Everyone uses a key from their own account.
 A key works like a password, and the free plan's rate limits are per account, so
 never share yours or use a teammate's. That includes the demo: whoever presents
-uses their own key on their own computer.
+from their own computer uses their own key. The hosted app is the exception: it
+uses the key the team chose, set on the host, as the fallback to SOCLAAS.
 
 1. Sign up at <https://console.mistral.ai> and choose the free plan. It needs no
    credit card; signing up with an email address asks you to verify a phone
@@ -1229,7 +1237,8 @@ hosted runs under [Searching the indexes](#searching-the-indexes) and
 Only needed to answer with SOCLAAS, the OpenAI-compatible LLM API NUS School of
 Computing runs for teaching and experiments
 (<https://soclaas-api.comp.nus.edu.sg>). It needs no VPN to answer, so a key
-is all a teammate needs.
+is all a teammate needs. It is what the hosted app and the demo answer with,
+so it is the one to set up first.
 
 1. Make an API key at <https://soclaas-portal.comp.nus.edu.sg>, signing in
    with your School of Computing (SoC) account; activate one at
@@ -2782,18 +2791,26 @@ row of the complete experiment. The summary and each question's paired scores
 are in `docs/evaluation/generators-c4-20261018-summary.json` and
 `docs/evaluation/generators-c4-20261018-paired.json`.
 
-**Recommendation.** Make SOCLAAS with `qwen3.6:35b` the generator for hosted
-answers in the demo and for later evaluation runs, in place of
+**Decision.** The team decided on 19 October 2026 (#179) that the hosted app
+and the demo answer with SOCLAAS and `qwen3.6:35b`, in place of
 `ministral-8b-2512`. It is significantly more correct on this benchmark,
-equally careful about what the filings do not answer, and faster. SOCLAAS
-is a school service for teaching and experiments. Its usage page, read on 19
-October 2026, gave default limits of 90 requests a minute and $80 a day per
-user, and the 352 SOCLAAS requests this work made cost SoC $0.79, as its usage
-record showed: about $0.0022 each, so a full replay is about $0.34.
-Every presenter needs their own key. Keep Mistral one click away in the app as
-the fallback, and Ollama as the offline default, which `LLM_PROVIDER` still
-selects. Moving the hosted default changes `DEFAULT_PROVIDER` or the team's
-`.env` advice, not this measurement, so it is left to the team.
+equally careful about what the filings do not answer, and faster. Mistral's
+`ministral-8b-2512` stays one click away in the app's Answer model box as the
+fallback, for when SOCLAAS is down or a limit is hit. The switch is
+configuration, not code: the host's environment and each member's `.env` set
+`LLM_PROVIDER=soclaas` and leave `LLM_MODEL` unset, so the model is pinned by
+its ID. `DEFAULT_PROVIDER` stays `ollama`, so a fresh clone with no keys still
+answers.
+
+SOCLAAS is a school service for teaching and experiments. Its usage page, read
+on 19 October 2026, gave default limits of 90 requests a minute and $80 a day
+per user, and the 352 SOCLAAS requests this work made cost SoC $0.79, as its
+usage record showed: about $0.0022 each, so a full replay is about $0.34. A
+question asked in the app sends SOCLAAS at most one request, and the Compare
+page two, one per side. A question the app refuses, one the facts store
+answers and one whose search finds nothing send none, and the app does not
+ask again after a failure. So one key allows about 90 questions a minute, or
+45 comparisons. Every presenter makes their own key.
 
 ### Chunk-size sweep
 
