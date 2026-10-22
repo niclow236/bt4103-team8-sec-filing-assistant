@@ -69,6 +69,35 @@ def _scores(row: dict, config: str, k: int) -> dict:
     return score_question(question, result, k=k)
 
 
+def question_digest(rows: Sequence[dict]) -> str:
+    """The canonical digest of the stored questions, in the order they were run."""
+    return question_records_sha256([BenchmarkQuestion.from_mapping(row["question"]) for row in rows])
+
+
+def _cohort_reason(rows: Sequence[dict], report: dict, policy: dict) -> str | None:
+    """Why the questions are not the declared cohort, or None when they are.
+
+    The digest covers question order, so the same questions read from the
+    files in another order are a different cohort.
+    """
+    counts = {name: group["questions"] for name, group in report["by_benchmark"].items()}
+    declared = policy.get("decision_benchmark_counts")
+    digest = policy.get("decision_question_records_sha256")
+    prefix = "exploratory benchmark cohort; "
+    if declared is None and digest is None:
+        return prefix + "the policy declares neither benchmark counts nor a question digest"
+    if declared is None:
+        return prefix + "the policy declares no benchmark counts"
+    if counts != declared:
+        return prefix + f"adoption requires the declared benchmark counts {declared}, not {counts}"
+    if digest is None:
+        return prefix + "the policy declares no question digest"
+    if question_digest(rows) != digest:
+        return prefix + ("the benchmark counts match the declaration but the question digest "
+                         "does not, so the questions or their order differ")
+    return None
+
+
 def _clusters(rows: Sequence[dict]) -> list[str]:
     """Join filings linked by a multi-filing question before resampling.
 
@@ -268,12 +297,8 @@ def summarize(
         exploratory.append(f"sensitivity rescore; decided at k={declared_k}")
     if candidate_k != declared_candidates:
         exploratory.append(f"exploratory pool of {candidate_k}; decided over {declared_candidates} candidates")
-    if not exploratory:
-        counts = {name:group["questions"] for name,group in report["by_benchmark"].items()}
-        digest = question_records_sha256([BenchmarkQuestion.from_mapping(row["question"]) for row in rows])
-        if (counts != policy.get("decision_benchmark_counts")
-                or digest != policy.get("decision_question_records_sha256")):
-            exploratory.append("exploratory benchmark cohort; adoption requires the declared complete benchmark counts and question digest")
+    if not exploratory and (cohort := _cohort_reason(rows, report, policy)) is not None:
+        exploratory.append(cohort)
     if exploratory:
         report["quality_gate_reasons"] = list(reasons)
         report["decision"] = {"advance_to_answer_evaluation": None, "reasons": exploratory, "default": "C4"}
@@ -302,7 +327,7 @@ def _logit_ranking(row: dict, k: int, table_boost: float) -> dict:
             "latency_ms": row["C5"]["latency_ms"]}
 
 
-def verify_rankings(rows: Sequence[dict], k: int, *, candidate_k: int = 50) -> None:
+def verify_rankings(rows: Sequence[dict], k: int, *, candidate_k: int) -> None:
     """Check stored rankings against the recorded pool/logits, at stored k.
 
     This detects inconsistent edits/corruption, not coordinated fabrication of
@@ -321,9 +346,9 @@ def verify_rankings(rows: Sequence[dict], k: int, *, candidate_k: int = 50) -> N
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
                     raise ValueError("saved candidate pool contains non-finite or invalid ranking scores")
         n = min(k, len(candidates))
-        for cid in ("C4", "C5"):
-            if (len(row[cid]["retrieved_chunk_ids"]) != n
-                    or len(row[cid]["retrieved_scores"]) != n):
+        for config in ("C4", "C5"):
+            if (len(row[config]["retrieved_chunk_ids"]) != n
+                    or len(row[config]["retrieved_scores"]) != n):
                 raise ValueError("recorded rankings do not retain the expected number of passages and scores")
         if (ids[:n] != row["C4"]["retrieved_chunk_ids"]
                 or [p["hybrid_score"] for p in candidates[:n]] != row["C4"]["retrieved_scores"]):
@@ -585,7 +610,7 @@ def main(argv: list[str] | None = None) -> None:
             parser.error("run is incomplete; resume it before final rescoring")
         expected = manifest["provenance"].get("question_records_sha256")
         try:
-            digest = question_records_sha256([BenchmarkQuestion.from_mapping(r["question"]) for r in rows])
+            digest = question_digest(rows)
         except (BenchmarkValidationError, TypeError, KeyError):
             digest = None
         if expected is not None and digest != expected:
