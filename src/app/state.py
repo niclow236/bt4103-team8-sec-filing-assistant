@@ -55,7 +55,8 @@ ANSWERS_KEPT = 128
 
 from src.evaluation.benchmark import DEFAULT_GENERATED_QUESTIONS_PATH, DEFAULT_QUESTIONS_PATH
 from src.evaluation.metrics import first_relevant_rank
-from src.evaluation.report import benchmark_kind, question_rows, read_result_rows, read_runs
+from src.evaluation.report import (benchmark_kind, question_rows, read_result_rows, read_runs,
+                                   saved_score)
 
 # Where a question's text is looked up when the rows a run saved for it kept
 # none, as an embedding ablation's do: the team's questions and, where it has
@@ -80,6 +81,15 @@ class QuestionOutcome(NamedTuple):
     # Whether its text was looked up in the benchmark as it stands now, which
     # may word it differently from what the run asked.
     current_text: bool = False
+    # Its benchmark labels, as its retrieval row saved them, for the breakdown (#170).
+    question_type: str | None = None
+    difficulty: str | None = None
+
+
+def _label(row: dict[str, Any], key: str) -> str | None:
+    """A saved row's ``question_type`` or ``difficulty``, or None if it kept no text there."""
+    value = row.get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def _chunk_ids(value: Any) -> list[str] | None:
@@ -140,7 +150,8 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
             continue
         scored, rank = _first_right_rank(row)
         outcomes[str(question_id)] = QuestionOutcome(
-            _question_text(row), benchmark_kind(row), scored, rank)
+            _question_text(row), benchmark_kind(row), scored, rank,
+            question_type=_label(row, "question_type"), difficulty=_label(row, "difficulty"))
     answers = (read_result_rows(folder / "answers.jsonl")
                or read_result_rows(folder / "report.json"))
     for row in answers:
@@ -151,9 +162,10 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
             _question_text(row), benchmark_kind(row))
         correctness = quality.get("correctness")
-        # Only a number is compared: text there is a malformed row, not a score.
-        outcomes[str(question_id)] = outcome._replace(
-            correctness=correctness if isinstance(correctness, (int, float)) else None)
+        # Only what the Answer quality table counts is a score: text there is a
+        # malformed row, and a NaN (which json reads) would count as unchanged
+        # against any score.
+        outcomes[str(question_id)] = outcome._replace(correctness=saved_score(correctness))
     # The benchmark the run froze, where it froze one, is what it asked.
     frozen = _benchmark_texts((Path(run_dir) / "benchmark.jsonl",))
     current = _benchmark_texts(BENCHMARK_FILES)

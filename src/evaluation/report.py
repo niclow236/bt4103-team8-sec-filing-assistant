@@ -94,11 +94,12 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
         # three together), so a row with any of them set to a non-score leaves
         # all three.
         relevance_rows = [row for row in items if all(
-            row.get(metric) is None or _score(row.get(metric)) is not None
+            row.get(metric) is None or saved_score(row.get(metric)) is not None
             for metric in RELEVANCE_METRICS)]
         for metric in RETRIEVAL_METRICS:
             source = relevance_rows if metric in RELEVANCE_METRICS else items
-            measured = [score for row in source if (score := _score(row.get(metric))) is not None]
+            measured = [score for row in source
+                        if (score := saved_score(row.get(metric))) is not None]
             values[metric] = mean(measured) if measured else None
             values["metric_denominators"][metric] = len(measured)
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
@@ -227,7 +228,7 @@ def _answered(path: Path) -> dict[str, Any] | None:
     # Only the scores a row has are cleaned, so a row missing one still fails
     # below, as rescore would, and is flagged.
     rows = [{**row, "quality": {**row["quality"], **{
-                metric: _score(value) for metric, value in row["quality"].items()
+                metric: saved_score(value) for metric, value in row["quality"].items()
                 if metric in QUALITY_LABELS}}}
             if isinstance(row.get("quality"), dict) else row for row in rows]
     try:
@@ -274,7 +275,7 @@ def retrieval_table(configurations: list[dict[str, Any]], benchmark: str) -> lis
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
         counts = _record(saved.get("metric_denominators"))
-        scores = {metric: _score(saved.get(metric)) for metric in METRIC_LABELS}
+        scores = {metric: saved_score(saved.get(metric)) for metric in METRIC_LABELS}
         relevance = any(scores[metric] is not None for metric in RELEVANCE_METRICS)
         hard_negatives = scores["hard_negative_accuracy"] is not None
         # Recall, nDCG and MRR score the same questions: those with a gold passage.
@@ -307,7 +308,7 @@ def _record(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _score(value: Any) -> float | None:
+def saved_score(value: Any) -> float | None:
     """A saved score as a number, or None for anything else: text, true, NaN.
 
     Every score here is a proportion, so one outside 0-1 is not a score either.
@@ -338,7 +339,7 @@ def answer_quality_table(run: dict[str, Any], benchmark: str) -> list[dict[str, 
         quality = _record(saved.get("quality"))
         for metric, label in QUALITY_LABELS.items():
             measured = _record(quality.get(metric))
-            row[label] = _score(measured.get("mean"))
+            row[label] = saved_score(measured.get("mean"))
             row[f"{label} scored"] = measured.get("scored")
         checks = _record(saved.get("checks"))
         row["Claim checks"] = ", ".join(f"{status} {count}"
@@ -355,7 +356,7 @@ def chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dic
     for item in configurations:
         saved = item["benchmark_metrics"].get(benchmark, {})
         for metric, label in METRIC_LABELS.items():
-            value = _score(saved.get(metric))
+            value = saved_score(saved.get(metric))
             if value is not None:
                 rows.append({"Configuration": item["config_id"],
                              "Metric": label,
@@ -376,8 +377,8 @@ def retrieval_configurations(configurations: list[dict[str, Any]],
     it, with at least one retrieval score on either benchmark."""
     return [item for item in configurations
             if benchmark in item["benchmark_metrics"]
-            and any(any(_score(item["benchmark_metrics"].get(kind, {}).get(metric)) is not None
-                        for metric in METRIC_LABELS)
+            and any(any(saved_score(item["benchmark_metrics"].get(kind, {}).get(metric))
+                        is not None for metric in METRIC_LABELS)
                     for _, kind in BENCHMARKS)]
 
 

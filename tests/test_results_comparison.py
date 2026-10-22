@@ -491,10 +491,14 @@ def test_a_run_scored_at_11_names_the_one_rank_the_view_leaves_out(tmp_path, mon
         "but not here."]
 
 
-def test_a_correctness_saved_as_text_is_not_counted(tmp_path, monkeypatch):
+# Text is a malformed row. A NaN, which json reads, would count as unchanged
+# against any score. The Answer quality table counts none of them either.
+@pytest.mark.parametrize("saved", ["0.5", float("nan"), 1.5, True],
+                         ids=["text", "nan", "above_one", "true"])
+def test_a_correctness_that_is_not_a_score_is_not_counted(tmp_path, monkeypatch, saved):
     retrieval = [_retrieval_row("q1", 1), _retrieval_row("q2", 1)]
     _save_run(tmp_path, {
-        "C0": {"questions": retrieval, "answers": [_answer_row("q1", "0.5"), _answer_row("q2", 0.5)]},
+        "C0": {"questions": retrieval, "answers": [_answer_row("q1", saved), _answer_row("q2", 0.5)]},
         "C4": {"questions": retrieval, "answers": [_answer_row("q1", 1.0), _answer_row("q2", 1.0)]},
     })
     app = _open(monkeypatch, tmp_path)

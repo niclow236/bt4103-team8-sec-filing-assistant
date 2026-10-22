@@ -187,6 +187,7 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
 │   │   ├── chunk_sweep.py   #   python -m src.evaluation.chunk_sweep: retrieval at four passage sizes
 │   │   ├── report.py        #   python -m src.evaluation.report: a run's tables and charts, as Results shows them
+│   │   ├── breakdown.py     #   a run's scores by question type and difficulty (Results, #168)
 │   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
@@ -1980,6 +1981,21 @@ its judged scores is unreadable, as it is to rescore, and is named in the
 "Unscored answers" warning. The page and `python -m src.evaluation.report` build
 every table and chart through `src/evaluation/report.py`, so the page and a
 generated report cannot disagree.
+
+Under each benchmark's tables, "By question type and difficulty" splits the
+default configuration's (C4's) questions into groups and scores each one, on
+whether the right passage was found in the top 10 and, where the run saved
+judged answers, on answer correctness. Every group shows its question count
+and how many of them were scored. A group with fewer than 10 scored questions
+(`MIN_GROUP_QUESTIONS` in `src/evaluation/breakdown.py`) is marked too few to
+read and its score is not shown. A line above each table names the strongest
+and weakest readable groups, as the table shows them to two places, and names
+every group tied for either. A grouping with a single group, such as the XBRL
+benchmark's question types, is left out. `default_breakdown` in
+`src/evaluation/breakdown.py` picks the configuration, the benchmark's
+questions and how each question is scored, and the before and after view
+scores questions with the same functions, so the Ask page's track record
+(#168) can read the same groups by calling it.
 
 The Compare page runs one question through two configurations from the shared
 evaluation registry, using the same selected answer model. Each side shows its
