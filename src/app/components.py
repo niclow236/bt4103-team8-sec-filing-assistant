@@ -121,30 +121,37 @@ _MAIN_RETRIEVAL_COLUMNS = ("Configuration", "Name", "Questions", "Relevance-scor
                            report.MEDIAN_RANK, "Hard negatives", "Hard Negative Accuracy")
 
 
-def _cutoff_words(top_k: Any) -> tuple[str, str]:
-    """The run's cutoff as the labels word it: ``{top}`` and ``{at}``.
-
-    Only a count of passages is a cutoff: json's true reads as an int, and
-    a top 0 retrieves nothing.
-    """
+def _cutoff(run: Mapping[str, Any]) -> int | None:
+    """How many passages the run scored at, or None if it saved no count:
+    json's true reads as an int, and a top 0 retrieves nothing."""
+    top_k = run.get("top_k")
     if isinstance(top_k, int) and not isinstance(top_k, bool) and top_k > 0:
-        return f"in the top {top_k}", f"@{top_k}"
-    return "among those retrieved", ""
+        return top_k
+    return None
 
 
-def _plain_labels(top_k: Any) -> dict[str, tuple[str, str]]:
-    """Each label and tooltip, by the column it names, at the run's cutoff."""
-    top, at = _cutoff_words(top_k)
-    return {column: (label.format(top=top), tooltip.format(top=top, at=at))
+class _Heading(NamedTuple):
+    """How the Results page heads one column: its label, and its tooltip."""
+
+    label: str
+    tooltip: str
+
+
+def _headings(top_k: int | None) -> dict[str, _Heading]:
+    """Each column's heading, by the name ``report`` gives it, at the run's cutoff."""
+    top, at = ((f"in the top {top_k}", f"@{top_k}") if top_k is not None
+               else ("among those retrieved", ""))
+    return {column: _Heading(label.format(top=top), tooltip.format(top=top, at=at))
             for column, (label, tooltip) in _RESULT_METRIC_LABELS.items()}
 
 
-def _plain_dataframe(table: pd.DataFrame, top_k: Any) -> None:
+def _plain_dataframe(table: pd.DataFrame, top_k: int | None) -> None:
     """Draw ``table`` with each column the labels name in plain words, and its tooltip."""
-    words = _plain_labels(top_k)
-    st.dataframe(table.rename(columns={column: label for column, (label, _) in words.items()}),
-                 column_config={label: st.column_config.Column(help=tooltip)
-                                for label, tooltip in words.values()},
+    headings = _headings(top_k)
+    st.dataframe(table.rename(columns={column: heading.label
+                                       for column, heading in headings.items()}),
+                 column_config={heading.label: st.column_config.Column(help=heading.tooltip)
+                                for heading in headings.values()},
                  width="stretch", hide_index=True)
 
 
@@ -181,25 +188,27 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not retrieval and model_table.empty and quality.empty:
         st.info("No saved results for this benchmark.")
         return False
+    top_k = _cutoff(run)
     if retrieval:
-        _plain_dataframe(_main_results_table(retrieval, benchmark), run.get("top_k"))
+        _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
     # The bars of the main view's own scores, labelled as its table is.
-    words = _plain_labels(run.get("top_k"))
-    chart_rows = [{**row, "Metric": words[row["Metric"]][0]}
+    headings = _headings(top_k)
+    chart_rows = [{**row, "Metric": headings[row["Metric"]].label}
                   for row in result_chart_rows(retrieval, benchmark)
                   if row["Metric"] in _MAIN_RETRIEVAL_COLUMNS]
     if chart_rows:
         # Coloured by its Metric column, a chart keeps its legend when the
         # run has only one of the scores to chart; a wide table's single
-        # column would be drawn with none.
+        # column would be drawn with none. Its axes stay untitled, as the
+        # wide table's were.
         st.bar_chart(pd.DataFrame(chart_rows), x="Configuration", y="Value", color="Metric",
                      x_label="", y_label="", stack=False)
     if not model_table.empty:
         st.subheader("Answer-model ablation")
-        _plain_dataframe(model_table, run.get("top_k"))
+        _plain_dataframe(model_table, top_k)
     if not quality.empty:
         st.subheader("Answer quality")
-        _plain_dataframe(quality, run.get("top_k"))
+        _plain_dataframe(quality, top_k)
         quality_chart = report.quality_chart_rows(run, benchmark)
         if quality_chart:
             st.bar_chart(pd.DataFrame(quality_chart).pivot(
@@ -347,11 +356,11 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         st.info(f"{baseline} and {compared} have no saved question in common "
                 "that was scored the same way on this benchmark.")
         return
-    scored_at = run.get("top_k")
+    scored_at = _cutoff(run)
     first_left_out = breakdown.FOUND_WITHIN + 1
     for measure, changes in counts:
         _render_change_counts(measure, changes, answered)
-        if measure is _TOP_10 and isinstance(scored_at, int) and scored_at >= first_left_out:
+        if measure is _TOP_10 and scored_at is not None and scored_at >= first_left_out:
             # The cutoff stays the issue's top 10, and this says why the
             # counts can disagree with the scores above them (#169).
             ranks = (f"{first_left_out}" if scored_at == first_left_out
