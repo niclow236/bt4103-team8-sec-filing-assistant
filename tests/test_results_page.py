@@ -482,9 +482,16 @@ def test_a_question_whose_right_passage_missed_the_cutoff_ranks_below_every_foun
     assert team["median_rank"] == math.inf
 
 
-def test_a_rescored_benchmark_shows_no_median_rank_from_the_rows_rescore_left_behind(tmp_path):
+@pytest.mark.parametrize("rescored", [
+    # A different MRR from the rows'.
+    {"recall": 1.0, "mrr": 0.5},
+    # No MRR to tell whether the rows' still holds.
+    {"recall": 1.0},
+])
+def test_a_rescored_benchmark_shows_no_median_rank_from_the_rows_rescore_left_behind(
+        tmp_path, rescored):
     """rescore rewrites MRR under rescored/ and leaves questions.jsonl as it
-    was, so the rows' ranks no longer go with the scores shown beside them."""
+    was, so the rows' ranks may no longer go with the scores shown beside them."""
     run = tmp_path / "rescored-run"
     (run / "C4").mkdir(parents=True)
     (run / "rescored").mkdir()
@@ -493,17 +500,16 @@ def test_a_rescored_benchmark_shows_no_median_rank_from_the_rows_rescore_left_be
     (run / "C4" / "questions.jsonl").write_text(json.dumps(
         {"question_id": "q1", "recall": 1.0, "ndcg": 1.0, "mrr": 1.0}) + "\n", encoding="utf-8")
     (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [
-        {"config": {"id": "C4"}, "by_benchmark": {"team": {"recall": 1.0, "mrr": 0.5}}}]}),
-        encoding="utf-8")
+        {"config": {"id": "C4"}, "by_benchmark": {"team": rescored}}]}), encoding="utf-8")
     result_runs.clear()
     team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
-    assert team["mrr"] == 0.5
     assert team["median_rank"] is None
 
 
-def _scored_run(root, *, top_k=16, mrrs=(1.0, 0.5, 0.5)):
+def _scored_run(root, *, top_k=16, mrrs=(1.0, 0.5, 0.5), hard_negatives=0.5):
     """A run of one configuration at ``top_k``, every question with a right
-    passage and a hard negative, and one answer-model configuration."""
+    passage and, unless ``hard_negatives`` is None, a hard negative, and one
+    answer-model configuration."""
     run = root / "scored"
     (run / "C4").mkdir(parents=True)
     (run / "G1").mkdir()
@@ -512,7 +518,7 @@ def _scored_run(root, *, top_k=16, mrrs=(1.0, 0.5, 0.5)):
         {"config": {"id": "G1", "provider": "ollama"}, "questions": 2}]}), encoding="utf-8")
     (run / "C4" / "questions.jsonl").write_text("".join(
         json.dumps({"question_id": f"q{n}", "recall": 1.0 if mrr else 0.0, "ndcg": mrr,
-                    "mrr": mrr, "hard_negative_accuracy": 0.5}) + "\n"
+                    "mrr": mrr, "hard_negative_accuracy": hard_negatives}) + "\n"
         for n, mrr in enumerate(mrrs)), encoding="utf-8")
     (run / "G1" / "report.json").write_text(json.dumps({"results": [
         {"question_id": "q0", "route": "ollama", "answer": {"abstained": False, "latency_ms": 900}},
@@ -647,9 +653,10 @@ def test_the_retrieval_chart_charts_the_plain_labels_and_leaves_ndcg_and_mrr_out
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     import pyarrow as pa
     chart = app.tabs[0].get("vega_lite_chart")[0]
-    # st.bar_chart melts its table, naming each bar's series in a column of its own.
+    # Each bar's series is named in the column the chart colours by.
+    series = json.loads(chart.proto.spec)["encoding"]["color"]["field"]
     bars = pa.ipc.open_stream(chart.proto.datasets[0].data.data).read_pandas()
-    assert set(bars["color -- streamlit-generated"]) == {
+    assert set(bars[series]) == {
         "Found the right passage in the top 16", NOT_FOOLED}
 
 
@@ -669,3 +676,29 @@ def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monk
     tips = _tooltips(element)
     assert "Citation precision" in element.value.columns
     assert [column for column in element.value.columns[2:] if not tips.get(column)] == []
+
+
+def test_a_rescored_benchmark_whose_rows_still_match_keeps_their_median_rank(tmp_path):
+    """rescore found the same MRR as the rows saved, so their ranks still go
+    with the scores shown beside them."""
+    run = tmp_path / "rescored-run"
+    (run / "C4").mkdir(parents=True)
+    (run / "rescored").mkdir()
+    (run / "summary.json").write_text(json.dumps({
+        "configurations": [{"config": {"id": "C4"}, "questions": 2}]}), encoding="utf-8")
+    (run / "C4" / "questions.jsonl").write_text("".join(json.dumps(
+        {"question_id": f"q{n}", "recall": 1.0, "ndcg": 1.0, "mrr": mrr}) + "\n"
+        for n, mrr in enumerate((1.0, 0.5))), encoding="utf-8")
+    (run / "rescored" / "summary.json").write_text(json.dumps({"configurations": [
+        {"config": {"id": "C4"}, "by_benchmark": {"team": {"recall": 1.0, "mrr": 0.75}}}]}),
+        encoding="utf-8")
+    result_runs.clear()
+    team = result_runs(tmp_path)[0]["configurations"][0]["benchmark_metrics"]["handwritten"]
+    assert team["median_rank"] == 1.5
+
+
+def test_a_retrieval_chart_of_one_score_still_names_it_in_a_legend(tmp_path, monkeypatch):
+    _scored_run(tmp_path, top_k=16, hard_negatives=None)
+    chart = _results_page(monkeypatch, tmp_path).tabs[0].get("vega_lite_chart")[0]
+    colour = json.loads(chart.proto.spec)["encoding"].get("color", {})
+    assert colour.get("legend") is not None

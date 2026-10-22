@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 from html import escape
-from math import inf, isnan
+from math import inf, isclose, isnan
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -124,6 +124,12 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
     return output
 
 
+def _same_score(saved: Any, rescored: Any) -> bool:
+    """Whether two saved means are one score, as far as a float's rounding goes."""
+    first, second = saved_score(saved), saved_score(rescored)
+    return first is not None and second is not None and isclose(first, second, abs_tol=1e-9)
+
+
 def incomplete(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
     """Describe partial results without treating a summary-only run as truncated."""
     stopped = summary.get("stopped")
@@ -191,10 +197,13 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         metrics = (saved_benchmark_metrics(rows, config.get("provider"))
                    if rows else _saved_split(summary.get("by_benchmark")))
         # rescore recomputes retrieval under rescored/ and leaves the rows as
-        # they were, so its figures replace theirs, and a median rank read
-        # off those rows no longer goes with them.
+        # they were, so its figures replace theirs. A median rank read off
+        # those rows still goes with them while the rows' MRR is rescore's.
         for kind, rescored_metrics in rescored.get(config_id, {}).items():
-            metrics[kind] = {**metrics.get(kind, {}), MEDIAN_RANK: None, **rescored_metrics}
+            saved = metrics.get(kind, {})
+            current = _same_score(saved.get("mrr"), rescored_metrics.get("mrr"))
+            metrics[kind] = {**saved, **({} if current else {MEDIAN_RANK: None}),
+                             **rescored_metrics}
         configurations.append({
             "run_id": run_dir.name,
             "config_id": config_id,
