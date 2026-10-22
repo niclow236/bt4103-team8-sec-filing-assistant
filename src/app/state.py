@@ -54,7 +54,7 @@ NOT_PART_OF_THE_ANSWER = ("parsed", "on_token")
 ANSWERS_KEPT = 128
 
 from src.evaluation.benchmark import DEFAULT_GENERATED_QUESTIONS_PATH, DEFAULT_QUESTIONS_PATH
-from src.evaluation.metrics import first_relevant_rank
+from src.evaluation.metrics import first_relevant_rank, rank_from_reciprocal
 from src.evaluation.report import (benchmark_kind, question_rows, read_result_rows, read_runs,
                                    saved_score)
 
@@ -113,7 +113,7 @@ def _first_right_rank(row: dict[str, Any]) -> tuple[bool, int | None]:
         reciprocal = row.get("mrr")
         if not isinstance(reciprocal, (int, float)):
             return False, None
-        return True, round(1 / reciprocal) if reciprocal > 0 else None
+        return True, rank_from_reciprocal(reciprocal)
     retrieved = _chunk_ids(row.get("retrieved_chunk_ids"))
     if not supporting or retrieved is None:
         return False, None

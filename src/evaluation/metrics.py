@@ -75,6 +75,12 @@ def first_relevant_rank(
                  if chunk_id in relevant), None)
 
 
+def rank_from_reciprocal(reciprocal: float) -> int | None:
+    """The rank a saved reciprocal rank stands for, or None for 0: no relevant
+    chunk within the cutoff it was scored at."""
+    return round(1 / reciprocal) if reciprocal > 0 else None
+
+
 def mrr(
     result: RunResult,
     relevant_chunk_ids: Iterable[str],
@@ -143,6 +149,7 @@ __all__ = [
     "hard_negative_accuracy",
     "mrr",
     "ndcg_at_k",
+    "rank_from_reciprocal",
     "recall_at_k",
     "score_question",
 ]

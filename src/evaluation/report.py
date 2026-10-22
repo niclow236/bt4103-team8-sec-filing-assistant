@@ -18,7 +18,7 @@ from typing import Any
 
 from src.config import PROJECT_ROOT
 from src.evaluation.harness import answer_scores
-from src.evaluation.metrics import RETRIEVAL_METRICS
+from src.evaluation.metrics import RETRIEVAL_METRICS, rank_from_reciprocal
 
 RELEVANCE_METRICS = ("recall", "ndcg", "mrr")
 # Where a benchmark's median question ranked its first right passage (#164).
@@ -108,7 +108,8 @@ def saved_benchmark_metrics(rows: list[dict[str, Any]], provider: str | None = N
         # reciprocal rank (#164): a rank is easier to read than its reciprocal.
         # A reciprocal rank of 0 found none within the cutoff, so it ranks
         # past every rank the run counted, and a median there is infinite.
-        ranks = [round(1 / score) if score else inf for row in relevance_rows
+        ranks = [inf if (rank := rank_from_reciprocal(score)) is None else rank
+                 for row in relevance_rows
                  if (score := saved_score(row.get("mrr"))) is not None]
         values[MEDIAN_RANK] = median(ranks) if ranks else None
         answers = [row["answer"] for row in items if isinstance(row.get("answer"), dict)]
