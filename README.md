@@ -371,7 +371,8 @@ generation settings further down the file are optional. By default answers come
 from a local model and need no key, but each takes minutes on a laptop. For
 answers in seconds, use SOCLAAS, as the team does in the hosted app and the
 demo: make a key with your SoC account as
-[Setting up SOCLAAS](#setting-up-soclaas) describes. Mistral's API, with a key
+[Setting up SOCLAAS](#setting-up-soclaas) describes, and leave `LLM_MODEL`
+unset so it answers with `qwen3.6:35b`. Mistral's API, with a key
 from your own account, is the fallback. The `# SOCLAAS_API_KEY=` and
 `# MISTRAL_API_KEY=` lines stay commented out until you have a key. All three
 providers are covered under [Answering a question](#answering-a-question).
