@@ -2813,11 +2813,11 @@ usage record showed: about $0.0022 each, so a full replay is about $0.34. A
 question asked in the app sends SOCLAAS at most one request, and the Compare
 page two, one per side. A question the app refuses, one the facts store
 answers and one whose search finds nothing send none, and the app does not
-ask again after a failure. So one key allows about 90 questions a minute, or
-45 comparisons. On the host that is shared by everyone using the hosted app,
-and by anyone else answering with a key from the same SoC account, so a host
-key made from a presenter's account shares that presenter's limits. Every
-presenter makes their own key.
+ask again after a failure. So one SoC account's limit supports about 90
+questions or 45 comparisons a minute. On the host that is shared by everyone
+using the hosted app, and by anyone else answering with a key from the same
+SoC account, so a host key made from a presenter's account shares that
+presenter's limits. Every presenter makes their own key.
 
 ### Chunk-size sweep
 
