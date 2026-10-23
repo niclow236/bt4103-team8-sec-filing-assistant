@@ -428,6 +428,15 @@ recomputes retrieval from the recorded rankings/gold IDs at the recorded cutoff,
 plus answer aggregates from saved judge/citation outputs. It refuses incomplete
 retrieval or team answers. It does not ask a new judge to invent past scores.
 
+Each retrieval summary also saves `median_rank`: where the median question's
+first right passage ranked. The app's Results page shows it as "Typical rank
+of the first right passage" (#164). One past the cutoff is saved as `null`
+beside a positive `metric_denominators.median_rank`, since JSON has no
+infinity. `rescore` saves no per-question rows, so for a rescored run the page
+shows only the median that `rescored/summary.json` saves. A run rescored before
+#164, such as `full-matrix-20261017`, saved none, and the page shows no rank
+column for it until `rescore` is run on it again. That makes no model calls.
+
 Generation is at temperature zero with a separate structured judge call using
 the versioned `answer-quality-v1` rubric. Judge scores are model assessments,
 with reasons and scored/total denominators; self-judging bias and hosted-model

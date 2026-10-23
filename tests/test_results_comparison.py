@@ -257,9 +257,16 @@ def test_two_configurations_with_no_question_in_common_say_so_instead_of_countin
     assert any("C0 and C4" in info.value for info in team.info)
 
 
+def _comparison_dataframe(tab):
+    """The comparison's table: the last one in the tab, after the run's scores,
+    outside the Full metrics section at the tab's foot."""
+    full = [table for expander in tab.expander if expander.label == "Full metrics"
+            for table in expander.dataframe]
+    return [table for table in tab.dataframe if not any(table is other for other in full)][-1]
+
+
 def _questions_table(tab):
-    """The comparison's table: the last one in the tab, after the run's scores."""
-    return tab.dataframe[-1].value
+    return _comparison_dataframe(tab).value
 
 
 def test_each_question_shows_both_configurations_rank_and_can_be_filtered_to_the_worse(
@@ -353,7 +360,7 @@ def test_a_row_whose_retrieved_passages_are_unreadable_is_left_unscored(tmp_path
 
 def _cell_colours(tab, column):
     """Each question's text colour in ``column`` of the comparison's table, None where plain."""
-    element = tab.dataframe[-1]
+    element = _comparison_dataframe(tab)
     styles = element.proto.arrow_data.styler.styles
     position = list(element.value.columns).index(column)
     colours = {}
@@ -386,7 +393,7 @@ def test_the_table_shows_scores_to_two_places(tmp_path, monkeypatch):
         "C4": {"questions": [_retrieval_row("q1", 3)], "answers": [_answer_row("q1", 1 / 3)]},
     })
     app = _open(monkeypatch, tmp_path)
-    styler = app.tabs[0].dataframe[-1].proto.arrow_data.styler
+    styler = _comparison_dataframe(app.tabs[0]).proto.arrow_data.styler
     shown = pa.ipc.open_stream(styler.display_values).read_pandas().iloc[0]
 
     assert shown["C4 rank"] == "3"
@@ -415,7 +422,8 @@ def test_a_run_scored_past_the_top_10_says_its_recall_counts_passages_the_view_d
     app = _open(monkeypatch, tmp_path)
 
     def says_why(app):
-        return [caption.value for caption in app.tabs[0].caption if "Recall" in caption.value]
+        return [caption.value for caption in app.tabs[0].caption
+                if "but not here" in caption.value]
 
     app.selectbox[0].select("at-16").run()
     assert len(says_why(app)) == 1 and "11 to 16" in says_why(app)[0]
@@ -486,9 +494,10 @@ def test_a_run_scored_at_11_names_the_one_rank_the_view_leaves_out(tmp_path, mon
                          "C4": {"questions": [_retrieval_row("q1", 2)]}}, top_k=11)
     app = _open(monkeypatch, tmp_path)
 
-    assert [caption.value for caption in app.tabs[0].caption if "Recall" in caption.value] == [
-        "This run scores Recall and MRR at 11, so a right passage ranked 11 counts there "
-        "but not here."]
+    assert [caption.value for caption in app.tabs[0].caption
+            if "but not here" in caption.value] == [
+        "The scores above count a right passage in this run's top 11, so one ranked 11 "
+        "counts there but not here."]
 
 
 # Text is a malformed row. A NaN, which json reads, would count as unchanged
@@ -668,7 +677,8 @@ def test_a_lone_configuration_without_its_rows_draws_no_comparison(tmp_path, mon
     manifest["configurations"][0]["by_benchmark"] = {"handwritten": {"recall": 0.2}}
     (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
     app = _open(monkeypatch, tmp_path)
-    assert app.tabs[0].dataframe[0].value["Recall"].tolist() == [0.2]
+    assert app.tabs[0].dataframe[0].value[
+        "Right passages found among those retrieved"].tolist() == [0.2]
 
     assert not any(header.value == "Before and after"
                    for tab in app.tabs for header in tab.subheader)

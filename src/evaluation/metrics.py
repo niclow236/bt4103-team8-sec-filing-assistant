@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from math import log2
+from math import inf, log2
+from statistics import median
 
 from .records import BenchmarkQuestion, RunResult
 
 RETRIEVAL_METRICS = ("recall", "ndcg", "mrr", "hard_negative_accuracy")
+# Where a benchmark's median question ranked its first right passage (#164),
+# as a summary saves it.
+MEDIAN_RANK = "median_rank"
 
 
 def _as_set(chunk_ids: Iterable[str]) -> set[str]:
@@ -73,6 +77,24 @@ def first_relevant_rank(
     relevant = _as_set(relevant_chunk_ids)
     return next((rank for rank, chunk_id in enumerate(retrieved_chunk_ids, start=1)
                  if chunk_id in relevant), None)
+
+
+def rank_from_reciprocal(reciprocal: float) -> int | None:
+    """The rank a saved reciprocal rank stands for, or None for 0: no relevant
+    chunk within the cutoff it was scored at."""
+    return round(1 / reciprocal) if reciprocal > 0 else None
+
+
+def median_rank(reciprocal_ranks: Iterable[float]) -> float | None:
+    """The median rank of the first relevant chunk, read off each question's
+    saved reciprocal rank, or None over no questions.
+
+    A reciprocal rank of 0 found none within the cutoff, so it ranks past
+    every rank counted, and a median there is infinite.
+    """
+    ranks = [inf if (rank := rank_from_reciprocal(reciprocal)) is None else rank
+             for reciprocal in reciprocal_ranks]
+    return median(ranks) if ranks else None
 
 
 def mrr(
@@ -141,8 +163,10 @@ def score_question(
 __all__ = [
     "first_relevant_rank",
     "hard_negative_accuracy",
+    "median_rank",
     "mrr",
     "ndcg_at_k",
+    "rank_from_reciprocal",
     "recall_at_k",
     "score_question",
 ]
