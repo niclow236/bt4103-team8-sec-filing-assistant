@@ -5,7 +5,7 @@ from src.config import PROJECT_ROOT
 
 from src.app.state import result_runs
 from src.evaluation.report import benchmark_kind
-from src.app.components import result_chart_rows
+from src.evaluation.report import chart_rows as result_chart_rows
 
 
 def _read_results_from(monkeypatch, root):
@@ -122,12 +122,11 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert list(manual.dataframe[0].value.columns) == [
         "Configuration", "Name", "Questions", "Relevance-scored", "Recall",
         "Hard negatives", "Hard Negative Accuracy"]
-    charts = app.get("vega_lite_chart")
-    assert len(charts) == 2
-    for chart in charts:
-        encoding = json.loads(chart.proto.spec)["encoding"]
-        assert "xOffset" in encoding
-        assert encoding["y"]["stack"] is False
+    # These rows kept no retrieved passages, so there is no rank to count and
+    # no chart to draw; the page says so rather than leaving a gap (#166).
+    assert not app.get("vega_lite_chart")
+    assert all(any("saved no per-question results" in caption.value for caption in tab.caption)
+               for tab in app.tabs)
     assert mechanical.dataframe[0].value["Hard Negative Accuracy"].tolist() == [0.0]
     assert manual.dataframe[1].value["Abstention rate"].tolist() == [0.0]
     assert mechanical.dataframe[1].value["Abstention rate"].tolist() == [1.0]
@@ -420,7 +419,7 @@ def test_a_run_with_answer_quality_but_no_retrieval_scores_still_shows_it(tmp_pa
     assert team.dataframe[0].value["Correctness"].tolist() == [0.5]
 
 
-def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypatch):
+def test_the_team_tab_charts_answer_quality(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
     run = tmp_path / "matrix"
     (run / "C4").mkdir(parents=True)
@@ -434,7 +433,9 @@ def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypat
     _read_results_from(monkeypatch, tmp_path)
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     assert not app.exception
+    # Found by what it charts rather than by its position, since the retrieval
+    # chart beside it is drawn only where per-question ranks were saved (#166).
     charts = app.tabs[0].get("vega_lite_chart")
-    assert len(charts) == 2
-    values = json.dumps(json.loads(charts[1].proto.spec).get("datasets", {})) + charts[1].proto.spec
-    assert "Correctness" in values
+    drawn = [json.dumps(json.loads(chart.proto.spec).get("datasets", {})) + chart.proto.spec
+             for chart in charts]
+    assert [values for values in drawn if "Correctness" in values]

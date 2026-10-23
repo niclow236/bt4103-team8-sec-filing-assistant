@@ -84,6 +84,10 @@ pytest==9.1.1
 
 # Interactive answer cards, citation expanders and metadata filters.
 streamlit==1.64.0
+# The Results page's chart is built as an Altair chart rather than left to
+# st.bar_chart, so its bars can be coloured and labelled one at a time (#166).
+# Streamlit installs altair anyway; pinned because components.py imports it.
+altair==6.2.2
 
 # Test coverage: python -m pytest --cov, with the settings in .coveragerc.
 # pytest-cov runs coverage inside pytest. coverage is pinned as well, because

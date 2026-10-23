@@ -1980,8 +1980,20 @@ than their summaries claim are labelled incomplete; their scores are partial
 and are not comparable to a complete run. Reload saved results discovers new
 or updated runs, keeps the selected run when it still exists, and clears only
 the Results cache, not the caches used by other pages.
-The cache keeps aggregate scores rather than full question rows, and the chart
-shows retrieval metrics as separate bars rather than adding their scores.
+The cache keeps aggregate scores rather than full question rows. One chart
+carries one message (#166): how often each configuration put a right passage
+in the top 10, the app's default and the C0 baseline coloured and the rest
+grey, every bar labelled with its own value. Its title is written from the
+run's own numbers -- what the default scored, whether that is up from, down
+from or level with the baseline, and, where another configuration beat the
+default, which one and by how much, rather than leaving the reader to find it
+on the chart. Two scores that would read alike in tenths are given as
+percentages instead. The rate is counted from each question's saved rank, the
+same measure as the breakdown below it (#170), so the two cannot disagree
+about a question; a run that saved only its means has no ranks to count and
+says so in place of the chart. The four retrieval metrics stay in the table
+above it, and `python -m src.evaluation.report` still writes them as a grouped
+bar chart for the report files.
 Each retrieval table gives the number of questions its means cover: those
 with a gold passage (Relevance-scored) and those with hard negatives. A matrix
 run's saved answers add an Answer quality table and chart to the Team tab:
@@ -2151,7 +2163,7 @@ what the first one does:
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
 | `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack`, `measured` and `result_runs` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, Results' `render_results` and `result_chart_rows`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, Results' `render_results`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
