@@ -27,6 +27,7 @@ import re
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
+import altair as alt
 import streamlit as st
 import pandas as pd
 
@@ -57,8 +58,6 @@ _ITEM_MENTION = re.compile(
     re.IGNORECASE,
 )
 
-
-result_chart_rows = report.chart_rows
 
 # What each column of the Results page means to a user (#164), keyed by the
 # name ``report`` gives it, which the Full metrics section keeps: its label,
@@ -180,8 +179,91 @@ def _results_model_table(configurations: list[dict[str, Any]], benchmark: str) -
     return pd.DataFrame(report.model_table(configurations, benchmark))
 
 
+# The two bars the chart's message is about, and the grey the rest are drawn
+# in so they recede. Orange against blue rather than green against red, so the
+# pair is still two colours to a reader who cannot tell those apart.
+#
+# One set for both themes, rather than a pair picked by ``_dark_theme()``.
+# Streamlit infers the theme from the background and documents that the answer
+# is wrong "when the user changes the theme in the settings menu", which is the
+# one moment anyone checks a chart in both. Each of these clears 3:1, what
+# WCAG asks of a shape, on Streamlit's light and dark backgrounds alike, so
+# nothing here has to know which one the reader is on.
+_FOUND_COLOURS = {"default": "#3b82f6", "baseline": "#d97706", "other": "#6b7280"}
+
+# The value above each bar, in the one grey that reads on both backgrounds.
+# Left uncoloured it comes out black, which disappears on the dark one, and
+# Streamlit's theme does not reach a text mark. No colour clears 4.5:1 against
+# white and #0e1117 at once -- the arithmetic allows 4.35:1 at best, which
+# this is -- so it is a hair under what WCAG asks of small text, and the
+# figure is in the tooltip and the table as well.
+_FOUND_LABEL = "#797979"
+
+
+def _found_role(config_id: str) -> str:
+    """Which of the chart's three colours ``config_id`` is drawn in."""
+    if config_id == DEFAULT_STACK:
+        return "default"
+    return "baseline" if config_id == breakdown.BASELINE else "other"
+
+
+def _found_chart(scores: list[breakdown.ConfigurationScore]) -> alt.LayerChart:
+    """One bar per configuration, the default and the baseline coloured.
+
+    Drawn on a fixed 0 to 100% axis so two runs can be compared by eye, and
+    labelled with each value, since reading a bar against gridlines is not
+    what the number is for. Nothing here is told which theme the reader is
+    on, because the server can have it wrong: every colour is one that reads
+    on either background.
+    """
+    rows = pd.DataFrame([{"Configuration": item.config_id, "Name": item.name,
+                          "Score": item.score, "Questions scored": item.scored,
+                          "Role": _found_role(item.config_id)}
+                         for item in scores if item.score is not None])
+    order = list(rows["Configuration"])
+    base = alt.Chart(rows).encode(
+        x=alt.X("Configuration:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("Score:Q", title=None, scale=alt.Scale(domain=[0, 1]),
+                axis=alt.Axis(format=".0%")),
+        tooltip=[alt.Tooltip("Configuration:N"), alt.Tooltip("Name:N"),
+                 alt.Tooltip("Score:Q", format=".1%", title=breakdown.FOUND.title),
+                 alt.Tooltip("Questions scored:Q", format="d")],
+    )
+    bars = base.mark_bar().encode(
+        color=alt.Color("Role:N", legend=None,
+                        scale=alt.Scale(domain=list(_FOUND_COLOURS),
+                                        range=list(_FOUND_COLOURS.values()))))
+    # Above the bar rather than inside it, so a short bar still carries its
+    # label and the text never has to read against three different fills.
+    labels = base.mark_text(dy=-8, color=_FOUND_LABEL, fontWeight="bold").encode(
+        text=alt.Text("Score:Q", format=".0%"))
+    return bars + labels
+
+
+def _render_found_chart(run: Mapping[str, Any], benchmark: str,
+                        outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
+    """How often each configuration put a right passage in the top 10, under a
+    title that says what the bars show (#166)."""
+    scores = breakdown.measured_by_configuration(run, benchmark, outcomes)
+    if not any(item.score is not None for item in scores):
+        # The measure reads a question's own rank, so a run that saved only
+        # its means has no chart. Said once, rather than leaving a gap.
+        st.caption(f"No chart of {breakdown.FOUND.title.lower()}: this run saved no "
+                   "per-question results for this benchmark.")
+        return
+    headline = breakdown.found_headline(scores)
+    if headline:
+        st.markdown(f"**{headline}**")
+    st.altair_chart(_found_chart(scores), width="stretch")
+    st.caption(f"{breakdown.FOUND.title}, over the questions each configuration scored. "
+               f"{DEFAULT_STACK} is the app's default and {breakdown.BASELINE} the baseline "
+               "every other row adds to.")
+
+
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
-                              run: dict[str, Any], benchmark: str) -> bool:
+                              run: dict[str, Any], benchmark: str,
+                              outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]],
+                              ) -> bool:
     """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
     model_table = _results_model_table(run["configurations"], benchmark)
@@ -192,18 +274,9 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     top_k = _cutoff(run)
     if retrieval:
         _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
-    # The bars of the main view's own scores, labelled as its table is.
-    headings = _headings(top_k)
-    chart_rows = [{**row, "Metric": headings[row["Metric"]].label}
-                  for row in result_chart_rows(retrieval, benchmark)
-                  if row["Metric"] in _MAIN_RETRIEVAL_COLUMNS]
-    if chart_rows:
-        # Coloured by its Metric column, a chart keeps its legend when the
-        # run has only one of the scores to chart; a wide table's single
-        # column would be drawn with none. Its axes stay untitled, as the
-        # wide table's were.
-        st.bar_chart(pd.DataFrame(chart_rows), x="Configuration", y="Value", color="Metric",
-                     x_label="", y_label="", stack=False)
+    # #202's table keeps the scores in plain words; its bars of the same three
+    # metrics give way to one chart of one of them (#166).
+    _render_found_chart(run, benchmark, outcomes)
     if not model_table.empty:
         st.subheader("Answer-model ablation")
         _plain_dataframe(model_table, top_k)
@@ -218,8 +291,9 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
 
 
 # What a configuration is compared against until another baseline is picked:
-# naive BM25, the configuration every design choice is measured from.
-_DEFAULT_BASELINE = "C0"
+# naive BM25, the configuration every design choice is measured from. Named
+# once, beside the measures, so the chart and this view cannot drift apart.
+_DEFAULT_BASELINE = breakdown.BASELINE
 
 
 class _Measure(NamedTuple):
@@ -468,7 +542,7 @@ def render_results(runs: list[dict[str, Any]], *,
                                 report.BENCHMARKS):
         with tab:
             matching = report.retrieval_configurations(selected["configurations"], kind)
-            saved = _render_results_benchmark(title, matching, selected, kind)
+            saved = _render_results_benchmark(title, matching, selected, kind, outcomes)
             if saved:
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)

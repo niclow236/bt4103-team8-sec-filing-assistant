@@ -229,6 +229,9 @@ def test_answer_model_configurations_are_compared_on_judged_correctness_alone(
 
     assert _counts(team) == [(":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "1")]
     assert [caption.value for caption in team.caption] == [
+        # An answer-model run saves no retrieval ranks, so it has no chart (#166).
+        "No chart of found the right passage in the top 10: this run saved no "
+        "per-question results for this benchmark.",
         "Out of the 2 questions both configurations answered."]
     assert not any("top 10" in markdown.value for markdown in team.markdown)
     assert _questions_table(team).set_index("Question").loc["q1", "Asked"] == "Asked q1?"
@@ -354,6 +357,8 @@ def test_a_row_whose_retrieved_passages_are_unreadable_is_left_unscored(tmp_path
         (":green[Improved]", "1"), (":red[Worse]", "0"), ("Unchanged", "0")]
     # q2 has a right passage, so the caption must not say it had none.
     assert [caption.value for caption in app.tabs[0].caption] == [
+        "Found the right passage in the top 10, over the questions each configuration "
+        "scored. C4 is the app's default and C0 the baseline every other row adds to.",
         "Out of 1 of the 2 questions both configurations answered; "
         "the other 1 were not scored on retrieval by both."]
 

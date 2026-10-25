@@ -6,8 +6,9 @@ import pytest
 from src.config import PROJECT_ROOT
 
 from src.app.state import result_runs
+from src.evaluation import breakdown
 from src.evaluation.report import benchmark_kind
-from src.app.components import result_chart_rows
+from src.evaluation.report import chart_rows as result_chart_rows
 
 # How the Results page heads its columns in plain words (#164): Recall for a
 # run that saved no cutoff, the median rank, hard-negative accuracy, and the
@@ -132,12 +133,11 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert list(manual.dataframe[0].value.columns) == [
         "Configuration", "Name", FOUND, NOT_FOOLED, "Questions",
         "Questions with a right passage", "Questions with a similar filing"]
-    charts = app.get("vega_lite_chart")
-    assert len(charts) == 2
-    for chart in charts:
-        encoding = json.loads(chart.proto.spec)["encoding"]
-        assert "xOffset" in encoding
-        assert encoding["y"]["stack"] is False
+    # These rows kept no retrieved passages, so there is no rank to count and
+    # no chart to draw; the page says so rather than leaving a gap (#166).
+    assert not app.get("vega_lite_chart")
+    assert all(any("saved no per-question results" in caption.value for caption in tab.caption)
+               for tab in app.tabs)
     assert mechanical.dataframe[0].value[NOT_FOOLED].tolist() == [0.0]
     assert manual.dataframe[1].value[REFUSED].tolist() == [0.0]
     assert mechanical.dataframe[1].value[REFUSED].tolist() == [1.0]
@@ -430,7 +430,7 @@ def test_a_run_with_answer_quality_but_no_retrieval_scores_still_shows_it(tmp_pa
     assert team.dataframe[0].value["Correctness"].tolist() == [0.5]
 
 
-def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypatch):
+def test_the_team_tab_charts_answer_quality(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
     run = tmp_path / "matrix"
     (run / "C4").mkdir(parents=True)
@@ -444,10 +444,12 @@ def test_the_team_tab_charts_answer_quality_beside_retrieval(tmp_path, monkeypat
     _read_results_from(monkeypatch, tmp_path)
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     assert not app.exception
+    # Found by what it charts rather than by its position, since the retrieval
+    # chart beside it is drawn only where per-question ranks were saved (#166).
     charts = app.tabs[0].get("vega_lite_chart")
-    assert len(charts) == 2
-    values = json.dumps(json.loads(charts[1].proto.spec).get("datasets", {})) + charts[1].proto.spec
-    assert "Correctness" in values
+    drawn = [json.dumps(json.loads(chart.proto.spec).get("datasets", {})) + chart.proto.spec
+             for chart in charts]
+    assert [values for values in drawn if "Correctness" in values]
 
 
 def test_a_run_saves_the_median_rank_of_each_questions_first_right_passage(tmp_path):
@@ -684,17 +686,6 @@ def test_the_answer_model_table_reads_in_plain_words(tmp_path, monkeypatch):
     assert (tips.get("Answered by the language model") or "").startswith("LLM questions")
 
 
-def test_the_retrieval_chart_charts_the_plain_labels_and_leaves_ndcg_and_mrr_out(tmp_path, monkeypatch):
-    import pyarrow as pa
-    _scored_run(tmp_path, top_k=16)
-    chart = _results_page(monkeypatch, tmp_path).tabs[0].get("vega_lite_chart")[0]
-    # Each bar's series is named in the column the chart colours by.
-    series = json.loads(chart.proto.spec)["encoding"]["color"]["field"]
-    bars = pa.ipc.open_stream(chart.proto.datasets[0].data.data).read_pandas()
-    assert set(bars[series]) == {
-        "Right passages found in the top 16", NOT_FOOLED}
-
-
 def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monkeypatch):
     run = tmp_path / "judged"
     (run / "C4").mkdir(parents=True)
@@ -713,8 +704,13 @@ def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monk
     assert [column for column in element.value.columns[2:] if not tips.get(column)] == []
 
 
-def test_a_retrieval_chart_of_one_score_still_names_it_in_a_legend(tmp_path, monkeypatch):
-    _scored_run(tmp_path, top_k=16, hard_negatives=None)
-    chart = _results_page(monkeypatch, tmp_path).tabs[0].get("vega_lite_chart")[0]
-    colour = json.loads(chart.proto.spec)["encoding"].get("color", {})
-    assert colour.get("legend") is not None
+def test_the_plain_labels_reach_the_chart_that_replaced_the_grouped_one(tmp_path, monkeypatch):
+    """#202 charted the main table's metrics under its own plain labels. One
+    chart of one measure took that chart's place (#166), so what carries the
+    plain words now is its title and the caption under it, not a legend."""
+    _scored_run(tmp_path, top_k=16)
+    tab = _results_page(monkeypatch, tmp_path).tabs[0]
+
+    assert len(tab.get("vega_lite_chart")) == 1
+    assert any("finds the right passage for" in markdown.value for markdown in tab.markdown)
+    assert any(breakdown.FOUND.title in caption.value for caption in tab.caption)
