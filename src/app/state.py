@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from threading import Event, Lock
 from time import perf_counter
 from pathlib import Path
+from sys import float_info
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import streamlit as st
@@ -84,6 +85,10 @@ class QuestionOutcome(NamedTuple):
     # Its benchmark labels, as its retrieval row saved them, for the breakdown (#170).
     question_type: str | None = None
     difficulty: str | None = None
+    # Explicit observations only: missing refusal flags must not become false,
+    # and generation-call time must not be replaced with retrieval/judge time.
+    abstained: bool | None = None
+    latency_ms: float | None = None
 
 
 def _label(row: dict[str, Any], key: str) -> str | None:
@@ -157,15 +162,24 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
     for row in answers:
         question_id = row.get("question_id")
         quality = row.get("quality")
-        if not question_id or not isinstance(quality, dict):
+        answer = row.get("answer")
+        if not question_id or not (isinstance(quality, dict) or isinstance(answer, dict)):
             continue
         outcome = outcomes.get(str(question_id)) or QuestionOutcome(
             _question_text(row), benchmark_kind(row))
-        correctness = quality.get("correctness")
+        correctness = quality.get("correctness") if isinstance(quality, dict) else None
         # Only what the Answer quality table counts is a score: text there is a
         # malformed row, and a NaN (which json reads) would count as unchanged
         # against any score.
-        outcomes[str(question_id)] = outcome._replace(correctness=saved_score(correctness))
+        answer = answer if isinstance(answer, dict) else {}
+        abstained = answer.get("abstained")
+        latency = answer.get("latency_ms")
+        valid_latency = (isinstance(latency, (int, float)) and not isinstance(latency, bool)
+                         and 0 <= latency <= float_info.max)
+        outcomes[str(question_id)] = outcome._replace(
+            correctness=saved_score(correctness),
+            abstained=abstained if isinstance(abstained, bool) else None,
+            latency_ms=float(latency) if valid_latency else None)
     # The benchmark the run froze, where it froze one, is what it asked.
     frozen = _benchmark_texts((Path(run_dir) / "benchmark.jsonl",))
     current = _benchmark_texts(BENCHMARK_FILES)

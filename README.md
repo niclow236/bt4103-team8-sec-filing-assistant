@@ -1980,8 +1980,21 @@ than their summaries claim are labelled incomplete; their scores are partial
 and are not comparable to a complete run. Reload saved results discovers new
 or updated runs, keeps the selected run when it still exists, and clears only
 the Results cache, not the caches used by other pages.
-The cache keeps aggregate scores rather than full question rows. One chart
-carries one message (#166): how often each configuration put a right passage
+The cache keeps aggregate scores rather than full question rows. Up to four
+headline tiles precede the tables for the app's default configuration
+(#165), separately on each benchmark tab. These show the actual number of
+questions finding a right passage in the top 10 (not mean Recall), mean answer
+correctness out of 1 (partial credit, never a count of correct answers), actual
+refusals, and median saved generation-call time in seconds. Time excludes
+retrieval and judging; refusal rate alone does not measure a correct decision.
+Missing measures are hidden, while a real zero is displayed. C0 deltas require
+exactly the same scored question IDs for that measure; proportions use
+percentage points, correctness uses score units and latency uses seconds.
+A saved correctness summary can supply its mean and scored count, but cannot
+supply an ID-matched delta. Ten fractionally filled circles visualise the
+passage-found proportion alongside its exact accessible count.
+
+One chart carries one message (#166): how often each configuration put a right passage
 in the top 10, the app's default and the C0 baseline coloured and the rest
 grey, every bar labelled with its own value. Its title is written from the
 run's own numbers -- what the default scored, whether that is up from, down
