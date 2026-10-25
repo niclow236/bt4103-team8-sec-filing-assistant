@@ -559,6 +559,10 @@ def _render_worked_example(run: Mapping[str, Any],
     with st.container(border=True):
         st.markdown(f"**{plain(passage_labels([example.passage])[0])}**")
         _passage_body(example.passage)
+    if example.citation_marker is not None and example.other_citation_markers:
+        other_markers = ", ".join(f"[{marker}]" for marker in example.other_citation_markers)
+        st.caption(f"The answer also cites {other_markers}; only the passage for "
+                   f"[{example.citation_marker}] is shown.")
     st.markdown("**3. Saved answer**")
     st.write(plain(example.answer))
     st.caption(f"Benchmark answer: {plain(example.expected_answer)}")

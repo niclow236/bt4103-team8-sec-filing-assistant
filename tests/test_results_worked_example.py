@@ -162,6 +162,31 @@ def test_page_walks_the_saved_example_and_links_to_edgar(tmp_path, monkeypatch):
     assert any("question q2" in caption.value for caption in app.caption)
 
 
+def test_page_names_other_citations_when_only_the_first_passage_is_shown(
+        tmp_path, monkeypatch):
+    row = _answer_row("comparison", fact_check=True)
+    first = row["answer"]["passages"][0]
+    row["answer"]["passages"].append(first | {
+        "chunk_id": "comparison-passage", "fiscal_year": 2023,
+        "text": "Comparison passage: Revenue was $4 billion.",
+    })
+    row["answer"]["citations"] = [
+        {"marker": 1, "chunk_id": first["chunk_id"], "resolved": True},
+        {"marker": 2, "chunk_id": "comparison-passage", "resolved": True},
+    ]
+    row["answer"]["text"] = (
+        "Revenue was $5 billion in FY2024 [1], compared with $4 billion in FY2023 [2].")
+    _save_run(tmp_path, c6_answers=[row])
+    _read_results_from(monkeypatch, tmp_path)
+    worked_examples.clear()
+
+    app = AppTest.from_file(RESULTS_PAGE, default_timeout=30).run()
+
+    assert not app.exception
+    assert any("The answer also cites [2]; only the passage for [1] is shown."
+               in caption.value for caption in app.caption)
+
+
 def test_page_renders_saved_currency_as_literal_text(tmp_path, monkeypatch):
     _save_run(tmp_path, c6_answers=[_answer_row("q1", fact_check=True)])
     _read_results_from(monkeypatch, tmp_path)

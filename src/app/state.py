@@ -97,6 +97,7 @@ class WorkedExample(NamedTuple):
     expected_answer: str
     passage: dict[str, Any]
     citation_marker: int | None
+    other_citation_markers: tuple[int, ...]
     fact_checks: tuple[dict[str, Any], ...]
     correctness_reason: str
 
@@ -113,8 +114,9 @@ def _edgar_url(value: Any) -> bool:
     return parsed.scheme == "https" and (host == "sec.gov" or host.endswith(".sec.gov"))
 
 
-def _example_passage(answer: dict[str, Any]) -> tuple[dict[str, Any], int | None] | None:
-    """A saved EDGAR passage and the answer marker that cites it, where one does."""
+def _example_passage(
+        answer: dict[str, Any]) -> tuple[dict[str, Any], int | None, tuple[int, ...]] | None:
+    """A saved EDGAR passage, its marker, and the answer's other resolved markers."""
     passages = answer.get("passages")
     if not isinstance(passages, list):
         return None
@@ -126,15 +128,20 @@ def _example_passage(answer: dict[str, Any]) -> tuple[dict[str, Any], int | None
     by_chunk = {passage.get("chunk_id"): passage for passage in usable
                 if isinstance(passage.get("chunk_id"), str)}
     citations = answer.get("citations")
+    resolved: list[tuple[int, str]] = []
     if isinstance(citations, list):
         for citation in citations:
             if not isinstance(citation, dict) or citation.get("resolved") is not True:
                 continue
             marker, chunk_id = citation.get("marker"), citation.get("chunk_id")
             if (isinstance(marker, int) and not isinstance(marker, bool) and marker > 0
-                    and isinstance(chunk_id, str) and chunk_id in by_chunk):
-                return by_chunk[chunk_id], marker
-    return usable[0], None
+                    and isinstance(chunk_id, str)):
+                resolved.append((marker, chunk_id))
+    for marker, chunk_id in resolved:
+        if chunk_id in by_chunk:
+            others = tuple(dict.fromkeys(other for other, _ in resolved if other != marker))
+            return by_chunk[chunk_id], marker, others
+    return usable[0], None, ()
 
 
 def _examples_from(rows: list[dict[str, Any]], config_id: str) -> tuple[WorkedExample, ...]:
@@ -156,7 +163,7 @@ def _examples_from(rows: list[dict[str, Any]], config_id: str) -> tuple[WorkedEx
                 or not isinstance(expected, str) or not expected.strip()
                 or selected is None):
             continue
-        passage, citation_marker = selected
+        passage, citation_marker, other_citation_markers = selected
         verification = answer.get("verification")
         checks = verification.get("checks", []) if isinstance(verification, dict) else []
         fact_checks = tuple(dict(check) for check in checks
@@ -166,7 +173,7 @@ def _examples_from(rows: list[dict[str, Any]], config_id: str) -> tuple[WorkedEx
         saved_config = matrix_config.get("id") if isinstance(matrix_config, dict) else None
         examples.append(WorkedExample(
             question_id, str(saved_config or config_id), question, text, expected,
-            dict(passage), citation_marker, fact_checks,
+            dict(passage), citation_marker, other_citation_markers, fact_checks,
             reason if isinstance(reason, str) else ""))
     return tuple(sorted(examples, key=lambda example: (
         not any(check.get("status") == "supported" for check in example.fact_checks),
