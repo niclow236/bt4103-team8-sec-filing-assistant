@@ -322,3 +322,21 @@ def test_page_labels_and_steps_between_saved_failures(tmp_path, monkeypatch):
     assert any("Refused" in message.value for message in app.error)
     assert any("model_declined" in caption.value for caption in app.caption)
 
+
+def test_page_says_a_correct_refusal_is_not_a_failure(tmp_path, monkeypatch):
+    correct = _answer_row("unanswerable")
+    correct["answer"].update({"abstained": True, "abstention_reason": "model_declined",
+                              "text": "The filings do not answer this question."})
+    correct["quality"].update(correctness=1.0, answerability_correct=1.0,
+                              correctness_reason="Benchmark answerability")
+    _save_run(tmp_path, [_answer_row("correct"), correct])
+    _read_results_from(monkeypatch, tmp_path)
+    worked_examples.clear()
+    failure_examples.clear()
+
+    app = AppTest.from_file(RESULTS_PAGE, default_timeout=30).run()
+
+    assert not app.exception
+    assert any("no saved answer or refusal scored below 0.5" in caption.value
+               and "unanswerable question is correct" in caption.value for caption in app.caption)
+
