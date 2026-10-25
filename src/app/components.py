@@ -1423,6 +1423,38 @@ def answer_summary(answer: Answer, config: StackConfig, seconds: float) -> None:
         st.caption(f"Query completed in {seconds:.2f}s", width="content")
 
 
+def answer_track_record(runs: Sequence[Mapping[str, Any]],
+                        outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]], *,
+                        config_id: str, question_type: str) -> None:
+    """One line under an answer: how this configuration did on questions read
+    the same way, in the newest saved run (#168).
+
+    Nothing is drawn unless there is a figure worth standing behind: a saved
+    run, this configuration's own questions in it, and enough of this type
+    among them. The record is this configuration's, not the default's, since
+    on the Compare page the two sides are different configurations and the
+    default's numbers under the other side's answer would be the wrong claim.
+
+    The team benchmark only. The mechanical set is generated from the facts
+    store and is numeric throughout, so its record for a numeric question says
+    little about one a person typed.
+    """
+    if not runs:
+        return
+    newest = runs[0]
+    record = breakdown.track_record(newest, report.TEAM, outcomes,
+                                    config_id=config_id, question_type=question_type)
+    if record is None:
+        return
+    # A mean, said as one. The judge scores an answer from 0 to 1 and gives
+    # partial credit, so "right 20 of 28 times" is not a number this has.
+    st.caption(
+        f":material/history: In testing, {config_id}'s answers to {record.name} questions "
+        f"scored {record.score:.2f} out of 1 for correctness, averaged over the "
+        f"{record.scored} scored (run {newest['run_id']}, team benchmark)."
+    )
+
+
 def trace_rows(answer: Answer) -> list[dict[str, object]]:
     """One row per passage the answer was written from, in prompt order.
 
@@ -1694,6 +1726,7 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
+    "answer_track_record",
     "comparison_evidence", "comparison_overlap", "comparison_rows",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
     "CorpusSelection", "filter_sidebar", "passage_labels", "provider_error", "provider_message",

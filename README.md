@@ -2165,7 +2165,7 @@ what the first one does:
 | `main.py` | The entry point. Makes the project importable, sets the page title, lists the pages in `PAGES`, and keeps Streamlit's file watcher from importing transformers' alias modules. No page content. |
 | `app_pages/<page>.py` | One page, as a script: what is asked, and the order the page is drawn in. It loads through `state.py` and draws with `components.py`. |
 | `state.py` | Everything kept between reruns: `corpus_passages`, `load_stack`, `measured` and `result_runs` (cached for the process), `Remembered` (answers already given), `keep` and `kept` (the answer a page is showing, for the `Request` it answers), `Stopwatch`. Also what a page reads from `.env`: `answer_models`. |
-| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_card`, `abstention_notice`, `retrieval_trace`, Results' `render_results`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
+| `components.py` | What a page draws from the data it is handed: `filter_sidebar`, `provider_picker`, `configuration_picker`, `resolved_filters`, `answer_summary`, `answer_track_record`, `answer_card`, `abstention_notice`, `retrieval_trace`, Results' `render_results`, and Browse's `corpus_picker`, `corpus_passage_page`, `corpus_passage` and `passage_labels`. A component builds no stack, asks no model and caches nothing. Widget selections, and the keys that reset them, are the only state one holds. |
 | `answers.py` | The saved-answers viewer, a command of its own. Not part of the Streamlit app. |
 
 To add a page, write `app_pages/<name>.py` and add one `st.Page` to `PAGES` in
@@ -2184,6 +2184,21 @@ pieces from #38.
   provider's settings what it lacks with `check_provider` and builds no
   client to do it.
 - `answer_summary(answer, config, seconds)` is the row above an answer.
+- `answer_track_record(runs, outcomes, config_id=..., question_type=...)` is the
+  line under one, saying how that configuration's answers to questions read the
+  same way scored in the newest saved run (#168). It draws nothing unless there
+  is a figure worth standing behind: a saved run, that configuration's own
+  questions in it, and at least `MIN_GROUP_QUESTIONS` of the type among them.
+  The record is the configuration's own, not the default's, because the Compare
+  page shows two configurations at once and the default's numbers under the
+  other side's answer would be the wrong claim. It reads the team benchmark
+  only: the mechanical set is generated from the facts store and is numeric
+  throughout, so its record for a numeric question says little about one a
+  person typed. The figure is the judge's mean correctness, stated as a mean --
+  the judge scores an answer from 0 to 1 and gives partial credit, so "right 20
+  of 28 times" is not a number the run holds. The type comes from
+  `parse_question`, which is also where the benchmark's own `question_type`
+  labels come from, so the live reading and the saved label are one vocabulary.
 - `abstention_notice(answer)` states an abstention. `answer_card` calls it for
   an abstained answer, so a page does not have to. `answer_card_html` is for
   an answer with claims and refuses an abstention.

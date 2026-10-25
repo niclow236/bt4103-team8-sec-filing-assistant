@@ -13,6 +13,7 @@ from src.app import state
 from src.app.components import (
     answer_card,
     answer_summary,
+    answer_track_record,
     configuration_picker,
     filter_sidebar,
     provider_error,
@@ -115,6 +116,12 @@ if shown is not None:
         st.subheader("Answer", anchor=False)
         answer_summary(shown.answer, config, shown.seconds)
         answer_card(shown.answer, key="ask-answer", show_question=False)
+        # Under the card, where the question of whether to trust it is.
+        # ``scoped`` is the reading the answer was checked against, so the
+        # record is for the type this answer was actually treated as.
+        if scoped is not None:
+            answer_track_record(state.result_runs(), state.question_outcomes,
+                                config_id=config_id, question_type=scoped.question_type)
     if not evidence_shown:
         with evidence_space.container():
             retrieved_evidence(shown.answer.passages)
