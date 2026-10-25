@@ -304,7 +304,7 @@ def test_page_labels_and_steps_between_saved_failures(tmp_path, monkeypatch):
         "abstention_reason": "model_declined",
         "text": "I cannot support the $5 billion answer.",
     })
-    refused["quality"]["correctness"] = None
+    refused["quality"].update(correctness=None, answerability_correct=0.0)
     _save_run(tmp_path, [_answer_row("correct"), wrong, refused])
     _read_results_from(monkeypatch, tmp_path)
     worked_examples.clear()
