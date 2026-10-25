@@ -260,6 +260,21 @@ def test_a_run_with_neither_a_wrong_answer_nor_refusal_has_no_failure(tmp_path):
     assert failure_examples(str(run)) == ()
 
 
+def test_a_correct_refusal_of_an_unanswerable_question_is_not_a_failure(tmp_path):
+    judged, unjudged = _answer_row("judged"), _answer_row("unjudged")
+    for row in (judged, unjudged):
+        row["answer"].update({"abstained": True, "abstention_reason": "model_declined",
+                              "text": "The filings do not answer this question."})
+        row["quality"]["answerability_correct"] = 1.0
+    judged["quality"].update(correctness=1.0, correctness_reason="Benchmark answerability")
+    unjudged["quality"]["correctness"] = None
+    run = _save_run(tmp_path, [judged, unjudged])
+
+    failure_examples.clear()
+
+    assert failure_examples(str(run)) == ()
+
+
 def test_failure_prefers_run_local_then_c6_before_c4(tmp_path):
     run = _save_run(
         tmp_path,
