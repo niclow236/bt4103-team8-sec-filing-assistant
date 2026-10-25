@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
+from math import inf
 from pathlib import Path
 from statistics import mean, median
 from time import perf_counter
@@ -33,10 +35,10 @@ from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 
 from .artifacts import dump_json as dump, read_jsonl
 from .benchmark import load_questions
-from .metrics import RETRIEVAL_METRICS, score_question
+from .metrics import MEDIAN_RANK, RETRIEVAL_METRICS, median_rank, score_question
 from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
 from .records import TEAM, BenchmarkQuestion, RunResult, benchmark_of
-from .rerank_ablation import _comparable_manifest, _index_manifests, read_pairs, verify_rankings
+from .rerank_ablation import POLICY, _comparable_manifest, _index_manifests, read_pairs, verify_rankings
 from .results import _safe_run_id, write_comparison
 from .run import FixedSizeBM25Retriever, _query, question_fields
 
@@ -133,6 +135,30 @@ def validate_snapshot(config: dict, questions: Sequence[BenchmarkQuestion]) -> N
             or len({q.question_id for q in questions})!=len(questions)
             or question_records_sha256(questions)!=provenance["question_records_sha256"]):
         raise ValueError("benchmark snapshot differs from the frozen manifest")
+    declaration = config.get("benchmark_declaration")
+    if declaration is not None:
+        observed = {"counts": dict(Counter(q.benchmark for q in questions)),
+                    "question_records_sha256": question_records_sha256(questions)}
+        matches = (observed["counts"] == declaration["decision_benchmark_counts"]
+                   and observed["question_records_sha256"] == declaration["decision_question_records_sha256"])
+        if (any(declaration[key] != value for key, value in observed.items())
+                or declaration["matches_decision_benchmark"] != matches
+                or (declaration["required"] and not matches)):
+            raise ValueError("benchmark declaration differs from the frozen snapshot")
+
+
+def declare_benchmark(questions: Sequence[BenchmarkQuestion], *, required: bool = False) -> dict:
+    """Freeze observed identity and the decision policy, even for diagnostic runs."""
+    counts = dict(Counter(q.benchmark for q in questions))
+    digest = question_records_sha256(questions)
+    matches = (counts == POLICY["decision_benchmark_counts"]
+               and digest == POLICY["decision_question_records_sha256"])
+    if required and not matches:
+        raise ValueError("declared decision benchmark requires the exact frozen question counts and digest")
+    return {"counts": counts, "question_records_sha256": digest,
+            "decision_benchmark_counts": dict(POLICY["decision_benchmark_counts"]),
+            "decision_question_records_sha256": POLICY["decision_question_records_sha256"],
+            "matches_decision_benchmark": matches, "required": required}
 
 
 def frozen_manifest_matches(path: Path, config: dict) -> bool:
@@ -165,10 +191,18 @@ def ranking_sources(provenance: dict) -> dict[str, str]:
 
 def summarize(rows: list[dict]) -> dict:
     result = {"questions": len(rows), "metric_denominators": {}}
+    scored = {}
     for metric in METRICS:
-        values = [r[metric] for r in rows if r[metric] is not None]
+        values = scored[metric] = [r[metric] for r in rows if r[metric] is not None]
         result[metric] = mean(values) if values else None
         result["metric_denominators"][metric] = len(values)
+    # Where the median question's first right passage ranked (#164): rescore
+    # saves no rows, so a rescored run's is only this. Past the cutoff it is
+    # infinite, which json cannot hold, so it is saved as null beside the
+    # questions it was worked out over.
+    rank = median_rank(scored["mrr"])
+    result[MEDIAN_RANK] = None if rank == inf else rank
+    result["metric_denominators"][MEDIAN_RANK] = len(scored["mrr"])
     result["median_latency_ms"] = median(r["latency_ms"] for r in rows) if rows else None
     return result
 
@@ -404,6 +438,7 @@ def retrieval(args: argparse.Namespace) -> None:
         path, processed_dir=args.processed_dir, chunk_ids=chunks)]
     if not questions or len({q.question_id for q in questions}) != len(questions):
         raise ValueError("benchmark questions must be nonempty and unique across files")
+    declaration = declare_benchmark(questions, required=getattr(args, "require_decision_benchmark", False))
     provenance = record_provenance(args.questions, questions, args.processed_dir, chunks=snapshot)
     fixed = FixedSizeBM25Retriever(args.processed_dir, chunks=snapshot)
     baseline = list(fixed.baseline_chunks)
@@ -417,6 +452,7 @@ def retrieval(args: argparse.Namespace) -> None:
         expected_pairs_sha256=args.reference_pairs_sha256)
     config = {
         "schema": FULL_MATRIX_SCHEMA, "provenance": provenance,
+        "benchmark_declaration": declaration,
         "matrix": {cid: MATRIX[cid].to_dict() for cid in configuration_ids},
         "reranker": reranker.config.to_dict() if reranker is not None else None, "reference": source,
         "baseline_records_sha256": corpus_records_sha256(baseline),
@@ -586,8 +622,8 @@ def finish_pending_judge(path: Path, question: BenchmarkQuestion, judge: Any) ->
 
 def answers(args: argparse.Namespace) -> None:
     from src.evaluation.harness import evaluate, RunStopped, RunInterrupted
-    from src.evaluation.quality import LLMJudge
-    from src.rag.generate import config_from_env, checked_model
+    from src.evaluation.quality import LLMJudge, RUBRIC_ID
+    from src.rag.generate import config_from_env, checked_model, check_provider
 
     run_dir = args.run_dir
     original = json.loads((run_dir / "config.json").read_text())
@@ -612,8 +648,17 @@ def answers(args: argparse.Namespace) -> None:
     baseline = verified_baseline(run_dir, chunks)
     indexed = {c["chunk_id"]: c for c in [*chunks, *baseline]}
     generation = config_from_env(provider=args.provider, model=args.model)
+    judge_provider = getattr(args, "judge_provider", None)
+    judge_model = getattr(args, "judge_model", None)
+    judging = (config_from_env(provider=judge_provider or generation.provider, model=judge_model)
+               if judge_provider or judge_model else generation)
+    # Refuse either missing key before creating clients, manifests or checkpoints.
+    check_provider(generation)
+    check_provider(judging)
     configuration = {"retrieval_config_sha256":sha256(run_dir/"config.json"),
-                     "generation":generation.to_dict(), "judge_rubric":"answer-quality-v1",
+                     "generation":generation.to_dict(),
+                     "judge_generation":replace(judging,prompt_template_id=RUBRIC_ID).to_dict(),
+                     "judge_rubric":RUBRIC_ID,
                      "facts_sha256":sha256(args.facts_file),
                      "questions":[q.to_dict() for q in team],
                      "source":record_provenance([],team,args.processed_dir,chunks=chunks),
@@ -634,7 +679,7 @@ def answers(args: argparse.Namespace) -> None:
             "workload_note": getattr(args, "workload_note", "Answer replay over recorded evidence"),
         })
         llm = checked_model(generation, None)
-        judge = LLMJudge(generation, llm=llm)
+        judge = LLMJudge(judging, llm=llm if judging == generation else checked_model(judging, None))
         for cid in configuration_ids:
             directory = run_dir/cid
             directory.mkdir(exist_ok=True)
@@ -734,14 +779,20 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--device",default="mps")
     run.add_argument("--workload-note",required=True)
     run.add_argument("--resume",action="store_true")
+    run.add_argument("--require-decision-benchmark",action="store_true",
+                     help="Refuse counts or ordered question digest outside the frozen C5 decision benchmark")
     run.add_argument("--configurations",nargs="+",choices=tuple(MATRIX),
                      help="Measure only these rows; freeze the selection for this run (default: every row)")
     answer=commands.add_parser("answers")
     answer.add_argument("run_dir",type=Path)
     answer.add_argument("--processed-dir",type=Path,default=PROCESSED_DIR)
     answer.add_argument("--facts-file",type=Path,default=FACTS_FILE)
-    answer.add_argument("--provider",choices=("mistral","ollama"),default="mistral")
+    from src.rag.constants import PROVIDERS
+    answer.add_argument("--provider",choices=PROVIDERS,default="mistral")
     answer.add_argument("--model")
+    answer.add_argument("--judge-provider",choices=PROVIDERS,
+                        help="Judge provider (default: the answer generator's provider)")
+    answer.add_argument("--judge-model",help="Judge model (default: the selected judge provider's default)")
     answer.add_argument("--configurations",nargs="+",choices=tuple(MATRIX),
                         help="Answer only these matrix rows (default: every row)")
     answer.add_argument("--workload-note", default="Answer replay over recorded evidence")

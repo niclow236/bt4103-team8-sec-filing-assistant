@@ -1,6 +1,7 @@
 """The Results page's one chart, and the title it builds from its own numbers (#166)."""
 
 import json
+import re
 
 import pytest
 
@@ -91,6 +92,35 @@ def test_a_gap_too_small_for_the_chart_to_show_is_not_announced():
                            _score("C5", 0.502)])
     assert line.endswith("the same as C0.")
     assert "finds more" not in line
+
+
+def test_a_gap_the_title_cannot_print_is_not_announced():
+    """50.6% and 51.4% gave "C5 finds more, at 51% against 51%".
+
+    The gap was over the half point the title called a difference and under
+    the whole point it prints to, so the sentence announced a difference and
+    then gave one number twice.
+    """
+    line = found_headline([_score(BASELINE, 0.2), _score(DEFAULT_STACK, 0.506),
+                           _score("C5", 0.514)])
+    assert "finds more" not in line
+    assert "51% against 51%" not in line
+
+
+def _compared(line):
+    """Each pair of figures the sentence sets against each other."""
+    pairs = re.findall(r"for (.+?) questions, (?:up|down) from (.+?) with ", line)
+    return pairs + re.findall(r"more, at (.+?) against (.+?)\.", line)
+
+
+@pytest.mark.parametrize("default", [0.0, 0.004, 0.2, 0.499, 0.5, 0.501, 0.506, 0.95, 1.0])
+@pytest.mark.parametrize("other", [0.0, 0.009, 0.3, 0.5, 0.514, 0.509, 0.8, 0.999, 1.0])
+def test_a_sentence_never_sets_a_figure_against_itself(default, other):
+    """Whatever it compares, the two figures it prints are two figures."""
+    line = found_headline([_score(BASELINE, other), _score(DEFAULT_STACK, default),
+                           _score("C5", other)])
+    for first, second in _compared(line):
+        assert first != second, line
 
 
 def test_two_scores_alike_in_tenths_are_stated_as_percentages():

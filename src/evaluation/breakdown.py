@@ -36,10 +36,14 @@ FOUND_WITHIN = 10
 # against it, so neither can be reading a different baseline from the other.
 BASELINE = "C0"
 
-# The smallest gap the chart's title calls a difference. Its bars are labelled
-# to the whole point, so two scores inside one of each other are drawn the
-# same and are not worth a word either.
-_A_POINT = 0.005
+# The smallest gap the chart's title calls a difference: one percentage point,
+# the precision the title and the chart's labels both print to. It has to be
+# the whole point and not half of it. At half, 50.6% and 51.4% were a gap
+# worth announcing and still printed "51% against 51%" -- the sentence
+# contradicting itself inside eight words. Above a point, two scores cannot
+# round to the same whole percent, since that rounding puts them in buckets a
+# point wide.
+_A_POINT = 0.01
 
 
 class Group(NamedTuple):

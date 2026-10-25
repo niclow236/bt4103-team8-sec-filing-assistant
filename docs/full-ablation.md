@@ -1,34 +1,153 @@
-# C0–C6 matrix (#44)
+# Complete C0–C6 matrix (#44, #176)
 
-The archived #172 matrix measures its 2,034-question retrieval cohort: the 150 team
-questions and 1,884 mechanical XBRL questions. Answer generation, semantic
-judging and verification cover the complete 150-question team set. The team's
-questions carry no `source` tag (#162), so results report one team slice
-beside the mechanical set. The #172 measurement machine's facts store held
-5,046 facts (built 11 September), so its local `benchmark/generated.jsonl`,
-generated from it on 23 September, holds
-1,884 questions, not the 12,579 a full facts store gives (see the README).
-During #172 verification, regenerating it gave the same 1,884 questions, 34 of
-them with different supporting chunks; the runs pin the 23 September file by hash.
-Mechanical labels come from the facts store, so their separate retrieval
-results do not claim independent answer quality. The app continues to use C4;
-these evaluation rows do not adopt the experimental reranker.
+The current **`full-matrix-20261021`** study completes #176: every C0–C6 retrieval row
+covers **150 team + 12,579 frozen XBRL questions (12,729 per row; 89,103 row-question outputs)**.
+All seven rows also have **150 freshly evaluated team answers (1,050 outputs)**.
+The runner requires the declared counts and ordered canonical question digest
+from `rerank_ablation.POLICY`; the manifest records a successful identity match.
+The corpus is the accepted full #155 corpus: **28,289 passages from 75 filings**.
 
-The accepted C5 decision reference is now the **complete
-`c5-full-20261017` study: 150 team + 12,579 mechanical questions (12,729 total)**,
-reported in [the full C5 results](c5-reranking.md#complete-benchmark-result-and-relationship-to-44),
-[summary](evaluation/c5-full-20261017-summary.json) and
-[manifest](evaluation/c5-full-20261017-manifest.json). Team nDCG@16 falls
-0.5975 → 0.5163 and XBRL 0.4719 → 0.4165; C4 remains the default.
-Issue #173 rebases the matrix runner's C6 on the retained C4 stack. The tables
-under **Archived #172 matrix result** remain the frozen, C5-based historical
-study and are labelled as such; they are not evidence for the current C6.
+Answers use **SOCLAAS `qwen3.6:35b`**, temperature zero, with a separately
+configured **Mistral `ministral-8b-2512`** judge and **`answer-quality-v1`**.
+Both calls use the frozen **1,024-output-token limit**.
+Model IDs are explicit; no mutable `default` alias or archived answers are used.
+Both required API-key settings are checked before clients or answer artifacts are created;
+generator, judge, temperature, prompt/rubric, facts and source identities are
+frozen for answer resume. API keys are never saved in these artifacts.
 
-The matrix tables below retain the #172 machine's original 150 + 1,884
-cohort and measurements. Its C4/C5 imports belong to that frozen matrix;
-they are not replaced with rows from the larger M1 study. The complete C5
-study supplies the current adoption decision, while source/corpus/cohort
-identity checks prevent incompatible results from being spliced together.
+C4/C5 were **measured afresh** alongside the other rows. An attempted import
+of `c5-full-20261017`, checked against trusted pairs digest
+`876ee63a56254bd6a80b18c9ccc0a353ef7c1173344093aad849e1412b67e501`,
+was refused because ranking sources changed (`evaluation/run.py`,
+`rag/constants.py`, `retrieval/rerank.py`, and `stack.py`). No historical rankings
+or timings were substituted. C6 remains **C4-based**, with decomposition and
+verification enabled and reranking disabled. The app's adopted retrieval
+configuration remains C4.
+
+## Complete retrieval results
+
+| Benchmark | Row | Questions | Recall@16 | nDCG@16 | MRR@16 | Hard-negative accuracy (n) |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Team | C0 | 150 | 0.1723 | 0.0999 | 0.1106 | 0.9321 (27) |
+| Team | C1 | 150 | 0.3025 | 0.1475 | 0.1105 | 0.9074 (27) |
+| Team | C2 | 150 | 0.4132 | 0.2610 | 0.2290 | 0.8704 (27) |
+| Team | C3 | 150 | 0.4692 | 0.2586 | 0.2081 | 0.8889 (27) |
+| Team | C4 | 150 | 0.8185 | 0.5975 | 0.5485 | 0.9630 (27) |
+| Team | C5 | 150 | 0.8128 | 0.5163 | 0.4437 | 0.9630 (27) |
+| Team | C6 | 150 | 0.8288 | 0.5973 | 0.5411 | 0.9630 (27) |
+| XBRL | C0 | 12,579 | 0.0235 | 0.0117 | 0.0122 | — (0) |
+| XBRL | C1 | 12,579 | 0.0667 | 0.0304 | 0.0243 | — (0) |
+| XBRL | C2 | 12,579 | 0.3677 | 0.2315 | 0.2349 | — (0) |
+| XBRL | C3 | 12,579 | 0.2913 | 0.1711 | 0.1675 | — (0) |
+| XBRL | C4 | 12,579 | 0.6517 | 0.4719 | 0.4762 | — (0) |
+| XBRL | C5 | 12,579 | 0.6654 | 0.4165 | 0.3839 | — (0) |
+| XBRL | C6 | 12,579 | 0.6517 | 0.4719 | 0.4762 | — (0) |
+
+All rows contain 150 team outputs, but the four unanswerable questions are
+excluded from relevance metrics: **146 team and 12,579 XBRL relevance-scored
+questions per row**. Hard-negative accuracy has **27 eligible team questions**
+and none in XBRL. C0 uses fixed-window projected relevance proxies in a
+different chunk namespace. XBRL labels are facts-derived proxies, not
+independently assessed answer quality.
+
+## Complete team-answer results
+
+| Row | Correctness (n/150) | Faithfulness (n/150) | Answerability | Citation precision (n/150) | Citation recall (n/150) |
+| --- | --- | --- | ---: | --- | --- |
+| C0 | 0.3145 (150/150) | 0.8673 (55/150) | 0.3933 | 0.6042 (55/150) | 0.1511 (146/150) |
+| C1 | 0.4109 (150/150) | 0.9306 (67/150) | 0.4733 | 0.6249 (67/150) | 0.2820 (146/150) |
+| C2 | 0.6060 (150/150) | 0.9045 (110/150) | 0.7600 | 0.4324 (110/150) | 0.3824 (146/150) |
+| C3 | 0.6179 (150/150) | 0.8719 (111/150) | 0.7667 | 0.4905 (111/150) | 0.4281 (146/150) |
+| C4 | 0.8710 (150/150) | 0.9207 (145/150) | 0.9933 | 0.5515 (145/150) | 0.7568 (146/150) |
+| C5 | 0.8419 (150/150) | 0.9349 (140/150) | 0.9600 | 0.5730 (140/150) | 0.7705 (146/150) |
+| C6 | 0.8607 (150/150) | 0.9234 (145/150) | 0.9933 | 0.5636 (145/150) | 0.7808 (146/150) |
+
+| Row | Total | LLM-judged | Automatic abstentions | Final judge failures | Generation calls | Judge calls | Unsuccessful API attempts |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| C0 | 150 | 55 | 95 | 0 | 150 | 56 | 1 |
+| C1 | 150 | 67 | 83 | 0 | 150 | 68 | 1 |
+| C2 | 150 | 110 | 40 | 0 | 150 | 110 | 0 |
+| C3 | 150 | 111 | 39 | 0 | 150 | 111 | 0 |
+| C4 | 150 | 145 | 5 | 0 | 149 | 145 | 0 |
+| C5 | 150 | 140 | 10 | 0 | 149 | 141 | 1 |
+| C6 | 150 | 145 | 5 | 0 | 149 | 146 | 1 |
+
+Correctness combines semantic judging with the existing automatic abstention
+scores. Faithfulness and citation denominators are conditional and shown
+explicitly. These are automated assessments, not human-verified accuracy.
+Final judge failures count unscored outputs; unsuccessful API attempts count
+request failures, including a resolved invalid-key attempt. That attempt's
+SOCLAAS answer was checkpointed and its Mistral judge alone was retried after
+the key was replaced. Unknown failed-request tokens remain unknown, while
+observed tokens are retained separately; no zero-cost claim is made for
+unpriced hosted calls.
+
+The [summary](evaluation/full-matrix-20261021-summary.json) records each provider's calls,
+successful/unsuccessful attempts, complete and observed tokens, unknown-usage
+counts, latency and cost denominators separately. Native per-question outputs
+and runtime segments are under `results/full-matrix-20261021/`, with hashes and both phase
+source identities in the [manifest](evaluation/full-matrix-20261021-manifest.json).
+The [report auditor](../tools/report_full_matrix.py) verifies complete coverage,
+committed source, unchanged retrieval/replay definitions, per-question metrics,
+model-free rescore, and archived artifact hashes before publishing these tables.
+
+Retrieval was measured at `9e63d5f5af58f5427a5f2e4951795774b2e7876b`; the answer phase used
+`cfcb8861e3fe32075d8ef753b4022ccb2b9880fb`, after the additional credential validation and judge
+manifest tests requested in the updated issue. Their ranking source hashes and
+matrix/replay definitions match; each phase retains its own committed source.
+
+### Reproduce this complete study
+
+Use the [shared frozen data snapshot](../README.md#shared-frozen-evaluation-dataset)
+and build compatible local indexes once. Keep the questions/corpus unchanged.
+Each machine uses a new run ID and its own runtime identities. With keys in
+local `.env`, run from the repository root:
+
+```bash
+git checkout 9e63d5f5af58f5427a5f2e4951795774b2e7876b
+HF_HUB_OFFLINE=1 python -u -m src.evaluation.full_ablation retrieval \
+  benchmark/questions.jsonl benchmark/generated.jsonl \
+  --require-decision-benchmark --run-id NEW_RUN_ID --device mps \
+  --workload-note "describe hardware and concurrent work"
+
+git checkout cfcb8861e3fe32075d8ef753b4022ccb2b9880fb
+python -u -m src.evaluation.full_ablation answers results/NEW_RUN_ID \
+  --provider soclaas --model qwen3.6:35b \
+  --judge-provider mistral --judge-model ministral-8b-2512
+python -m src.evaluation.full_ablation rescore results/NEW_RUN_ID
+```
+
+Use `--device cpu` on hardware without MPS and record that difference. Retrieval
+`--resume` runs at its frozen source; answer retry/resume runs at its own frozen
+source and refuses a changed generator, judge, rubric, facts or settings. The
+retrieval matrix saves one transaction per question, containing all seven rows.
+The answer phase evaluates only the team set, not 12,579 additional hosted
+answers per row. Without judge overrides, the existing caller behavior of
+judging with the generation provider/model is preserved; this study explicitly
+sets both providers and pinned model IDs.
+
+The reporting helper is in this PR's reporting commit, after both measurement
+commits. Use that helper with `src/` kept at the frozen answer-source hashes;
+`python tools/report_full_matrix.py results/NEW_RUN_ID` audits the rescored run
+and writes the publication JSON. It refuses changed retrieval/replay sources.
+
+Retrieval timings measure actual searches/reranking; answer timing measures
+replay and generation, with judge overhead separate. The recorded laptop workload
+overlapped hosted answer work and uncontrolled local applications; timings are
+not isolated throughput or end-to-end latency. C6 verification annotates claims
+and does not rewrite answers. Independent hosted generations/judgements are
+nondeterministic, so differences do not establish that verification corrects
+answer text.
+
+## Relationship to archived studies
+
+`full-matrix-20261017` remains the **archived partial 150 + 1,884 XBRL study**,
+including its original Mistral-generated answers and old C5-based C6 definition.
+It used a 28,313-passage M2 corpus and a facts store with 5,046 facts. The new
+study changes both coverage/corpus and generation model, so differences from
+those archived scores cannot be attributed solely to retrieval changes.
+The accepted complete C5 decision study and the earlier paired C4/C6 acceptance
+study remain separate historical evidence; their JSON artifacts are unchanged.
 
 | Row | Evidence construction | Decomposition | Answer verification |
 | --- | --- | --- | --- |
@@ -93,7 +212,7 @@ treated as gold, with the conflict count recorded. These are reproducible
 relevance proxies in a different chunk namespace, not independently adjudicated
 C0 evidence labels. C0 answer citations use that same projected namespace.
 
-## Current C4-based C6 evidence (#173)
+## Earlier C4-based C6 acceptance evidence (#173)
 
 The runner now records schema `full-matrix-v2`. Its C6 is the configuration the
 matrix shows going forward: C4 filtered hybrid retrieval, company/year
@@ -207,7 +326,11 @@ generation and judging for all 150 team questions. The archived answer numbers
 below remain historical C5-based C6 results and are
 not attributed to the current row.
 
-## Run and reproduce
+## Runner and historical diagnostic commands
+
+Use the pinned commands above for the current complete SOCLAAS/Mistral study.
+The examples below describe the runner API and older Mistral-generation or
+selected-row diagnostic studies; they are not the current full answer matrix.
 
 Exact reproduction of the archived #172 measurements needs its recorded source
 (`13ca6f5` for retrieval and `9f29f9f` for answers), corpus, indexes and frozen
@@ -304,6 +427,15 @@ denominators. Model-free `rescore` writes under `rescored/` and
 recomputes retrieval from the recorded rankings/gold IDs at the recorded cutoff,
 plus answer aggregates from saved judge/citation outputs. It refuses incomplete
 retrieval or team answers. It does not ask a new judge to invent past scores.
+
+Each retrieval summary also saves `median_rank`: where the median question's
+first right passage ranked. The app's Results page shows it as "Typical rank
+of the first right passage" (#164). One past the cutoff is saved as `null`
+beside a positive `metric_denominators.median_rank`, since JSON has no
+infinity. `rescore` saves no per-question rows, so for a rescored run the page
+shows only the median that `rescored/summary.json` saves. A run rescored before
+#164, such as `full-matrix-20261017`, saved none, and the page shows no rank
+column for it until `rescore` is run on it again. That makes no model calls.
 
 Generation is at temperature zero with a separate structured judge call using
 the versioned `answer-quality-v1` rubric. Judge scores are model assessments,

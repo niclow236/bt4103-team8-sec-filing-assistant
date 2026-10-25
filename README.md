@@ -1988,12 +1988,14 @@ run's own numbers -- what the default scored, whether that is up from, down
 from or level with the baseline, and, where another configuration beat the
 default, which one and by how much, rather than leaving the reader to find it
 on the chart. Two scores that would read alike in tenths are given as
-percentages instead. The rate is counted from each question's saved rank, the
-same measure as the breakdown below it (#170), so the two cannot disagree
-about a question; a run that saved only its means has no ranks to count and
-says so in place of the chart. The four retrieval metrics stay in the table
-above it, and `python -m src.evaluation.report` still writes them as a grouped
-bar chart for the report files.
+percentages instead, and a gap under one point -- the precision the title and
+the labels print to -- reads as level rather than as a difference the chart
+cannot draw. The rate is counted from each question's saved rank, the same
+measure as the breakdown below it (#170), so the two cannot disagree about a
+question; a run that saved only its means has no ranks to count and says so in
+place of the chart. The metrics themselves stay in the table above it, in the
+plain words #164 gave them, and `python -m src.evaluation.report` still writes
+them as a grouped bar chart for the report files.
 Each retrieval table gives the number of questions its means cover: those
 with a gold passage (Relevance-scored) and those with hard negatives. A matrix
 run's saved answers add an Answer quality table and chart to the Team tab:
@@ -2485,38 +2487,43 @@ run.
 
 ### Complete C0–C6 experiment
 
-Issue #44 adds an evaluation-only [complete matrix](docs/full-ablation.md), with
-all retrieval questions and the complete team answer benchmark, frozen
-provenance, restartable per-question outputs and model-free rescoring. C5 remains
-experimental; C6 is now based on the app-default C4, with decomposition and
-post-answer claim verification enabled and reranking disabled. The archived
-measured run (#161), over the 150 team questions and 1,884 XBRL questions, used
-the older C5-based C6 definition:
+The current [complete matrix](docs/full-ablation.md) (`full-matrix-20261021`, #176)
+measures all seven configurations on **150 team + 12,579 frozen XBRL questions
+(12,729 per row)**, plus **150 newly evaluated team answers per row**.
+C4/C5 retrieval was measured afresh because the archived reference's ranking
+sources failed the import compatibility check. No archived answers were reused.
 
-| Row | Team nDCG@16 (146) | Mechanical nDCG@16 (1,884) | Team judged correctness (150/150) |
-| --- | ---: | ---: | ---: |
-| C0 | 0.1004 | 0.0064 | 0.3152 |
-| C1 | 0.1474 | 0.0335 | 0.3579 |
-| C2 | 0.2610 | 0.2681 | 0.5925 |
-| C3 | 0.2612 | 0.1926 | 0.5969 |
-| C4 | 0.5978 | 0.5504 | 0.8182 |
-| C5 | 0.5195 | 0.5426 | 0.7782 |
-| C6 (archived, C5-based) | 0.5160 | 0.5426 | 0.7619 |
+| Row | Team nDCG@16 (146) | XBRL nDCG@16 (12,579) | Team judged correctness (n/150) |
+| --- | ---: | ---: | --- |
+| C0 | 0.0999 | 0.0117 | 0.3145 (150/150) |
+| C1 | 0.1475 | 0.0304 | 0.4109 (150/150) |
+| C2 | 0.2610 | 0.2315 | 0.6060 (150/150) |
+| C3 | 0.2586 | 0.1711 | 0.6179 (150/150) |
+| C4 | 0.5975 | 0.4719 | 0.8710 (150/150) |
+| C5 | 0.5163 | 0.4165 | 0.8419 (150/150) |
+| C6 | 0.5973 | 0.4719 | 0.8607 (150/150) |
 
-C0 is scored against gold labels projected onto its fixed windows. Correctness
-is a hosted model's judgement, from one run.
+Generation is **SOCLAAS `qwen3.6:35b`**, temperature zero; the independently
+configured judge is **Mistral `ministral-8b-2512`**, rubric `answer-quality-v1`.
+Correctness includes automatic abstention scoring and is a model assessment,
+not human accuracy. The full report separates judged/automatic/failed outputs,
+conditional quality denominators, and generation/judge usage and timing.
+C0 has projected fixed-window relevance labels; XBRL relevance is facts-derived.
 
-Issue #173 rebases the current C6 definition on C4 and disables reranking. The
-fresh paired acceptance study covers **150 team + all 12,579 frozen XBRL
-questions per row**, plus **150 team answer evaluations per row**. Team C4 → C6
-Recall@16 is **0.8185 → 0.8288** and nDCG@16
-**0.5975 → 0.5973**; all XBRL rankings are exactly C4.
-Decomposition activates on 10 team questions. The
-[paired report](docs/full-ablation.md#complete-paired-acceptance-study) records
-answer scores, conditional denominators, frozen identities and limitations.
-Its measurements remain separate from the archived C5-based row above and the
-earlier team-only diagnostic. Verification annotates claims; hosted judge-score
-differences do not establish that it corrects answer text.
+C5 remains experimental. C6 uses C4 evidence with filing decomposition and
+post-answer claim verification, with reranking disabled. The app's adopted
+retrieval configuration remains C4; verification annotates claims rather than
+rewriting answers. The runner enforces this study's exact declared benchmark
+counts/digest with `--require-decision-benchmark`, freezes both model identities,
+and refuses incompatible resumes.
+
+See [reproduction commands and limitations](docs/full-ablation.md#reproduce-this-complete-study),
+[summary](docs/evaluation/full-matrix-20261021-summary.json) and
+[provenance/hashes](docs/evaluation/full-matrix-20261021-manifest.json).
+The [archived partial study](docs/full-ablation.md#archived-172-matrix-result-c5-based-c6-150-team--1884-xbrl)
+retains its original 150 + 1,884 cohort and Mistral answers. The new corpus/coverage
+and generator both differ, so cross-study score differences are not a controlled
+retrieval comparison. Earlier complete C5 and paired C4/C6 studies remain separate.
 
 ### Tables and charts from a run
 
@@ -2742,7 +2749,7 @@ documented. The embedding run's application commit `a0cb411` passed all
 
 The `generation` command answers through the app's C4 stack, with
 decomposition and refusal on, and judges nothing. To set a generator beside the
-answers the [complete C0–C6 experiment](#complete-c0c6-experiment) recorded for
+answers the [archived partial C0–C6 study](docs/full-ablation.md#archived-172-matrix-result-c5-based-c6-150-team--1884-xbrl) recorded for
 C4, `replay` answers the run's recorded C4 rankings with each named G row. It
 keeps the matrix's C4 answer settings (no facts, decomposition or refusal
 shortcuts) and judges with the model and rubric that judged the run's own
@@ -2772,7 +2779,7 @@ The replay was measured on 18 October 2026 at `165963f`, on an Apple M2 with
 8 GiB RAM, over `full-matrix-20261017` (#161): the 150 team questions, the
 28,313-passage corpus, and the C4 rankings, settings and judge that run
 recorded. G2 is that run's own C4 answers, which scored 0.8182 in the
-[complete C0–C6 experiment](#complete-c0c6-experiment); G3 answered the same
+[archived partial C0–C6 study](docs/full-ablation.md#archived-172-matrix-result-c5-based-c6-150-team--1884-xbrl); G3 answered the same
 evidence through SOCLAAS. Both were judged by `ministral-8b-2512` with
 `answer-quality-v1`, by the command above.
 
