@@ -526,12 +526,18 @@ def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> Non
 def _render_worked_example(run: Mapping[str, Any],
                            examples: Callable[[str, str], Sequence[WorkedExample]]) -> None:
     """Walk one correct saved answer from question through verification (#167)."""
+    def plain(text: str) -> str:
+        """Keep currency in saved text from becoming Streamlit inline maths."""
+        return text.replace("$", r"\$")
+
     st.subheader("Worked Example")
     run_dir = run.get("run_dir")
     saved = list(examples(str(run_dir), DEFAULT_STACK)) if run_dir else []
     if not saved:
-        st.caption("This run has no saved correct answer with its answer text and an EDGAR "
-                   "passage, so there is no worked example to show.")
+        st.caption("This run has no saved correct answer from C6 or C4 with its answer text "
+                   "and an EDGAR passage, so there is no worked example to show. Runs that "
+                   "only measured retrieval save no answers, and a run whose judge failed "
+                   "saved no correctness score.")
         return
 
     # Each run gets its own cursor. Changing the selected run cannot carry an
@@ -546,26 +552,30 @@ def _render_worked_example(run: Mapping[str, Any],
                f"{example.config_id} rows (question {example.question_id}).")
 
     st.markdown("**1. Benchmark question**")
-    st.write(example.question)
-    st.markdown("**2. Passage the default configuration found**")
-    corpus_passage(example.passage, label="Saved retrieved passage")
+    st.write(plain(example.question))
+    citation = (f", cited as [{example.citation_marker}]"
+                if example.citation_marker is not None else ", not cited by the answer")
+    st.markdown(f"**2. Passage {plain(example.config_id)} retrieved{citation}**")
+    with st.container(border=True):
+        st.markdown(f"**{plain(passage_labels([example.passage])[0])}**")
+        _passage_body(example.passage)
     st.markdown("**3. Saved answer**")
-    st.write(example.answer)
-    st.caption(f"Benchmark answer: {example.expected_answer}")
+    st.write(plain(example.answer))
+    st.caption(f"Benchmark answer: {plain(example.expected_answer)}")
     correctness = "The saved judge marked this answer fully correct."
     if example.correctness_reason:
-        correctness += f" {example.correctness_reason}"
+        correctness += f" {plain(example.correctness_reason)}"
     st.success(correctness)
     st.markdown("**4. Check against the XBRL facts store**")
     if not example.fact_checks:
         st.info("No XBRL facts-store check was saved for this answer.")
     for check in example.fact_checks:
         status = str(check.get("status") or "unverified")
-        claim = str(check.get("claim") or "Saved numeric claim")
-        reason = str(check.get("reason") or "No reason was saved.")
+        claim = plain(str(check.get("claim") or "Saved numeric claim"))
+        reason = plain(str(check.get("reason") or "No reason was saved."))
         message = f"**{status.replace('_', ' ').title()}:** {claim} — {reason}"
         (st.success if status == "supported" else st.warning)(message)
-        details = [f"{label}: {check[field]}" for field, label in
+        details = [f"{label}: {plain(str(check[field]))}" for field, label in
                    (("figure", "figure"), ("value", "XBRL value"), ("unit", "unit"))
                    if check.get(field) not in (None, "")]
         if details:
