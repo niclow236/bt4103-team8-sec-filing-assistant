@@ -27,13 +27,14 @@ from threading import Event, Lock
 from time import perf_counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import urlsplit
 
 import streamlit as st
 
 from src.pipeline.chunk import iter_chunks
 from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
 from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
-from src.stack import RESULTS_ROOT, build_stack, measured_runs
+from src.stack import DEFAULT_STACK, RESULTS_ROOT, build_stack, measured_runs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -84,6 +85,93 @@ class QuestionOutcome(NamedTuple):
     # Its benchmark labels, as its retrieval row saved them, for the breakdown (#170).
     question_type: str | None = None
     difficulty: str | None = None
+
+
+class WorkedExample(NamedTuple):
+    """One correct answer the Results page can replay from a saved run (#167)."""
+
+    question_id: str
+    config_id: str
+    question: str
+    answer: str
+    expected_answer: str
+    passage: dict[str, Any]
+    fact_checks: tuple[dict[str, Any], ...]
+    correctness_reason: str
+
+
+def _edgar_url(value: Any) -> bool:
+    """Whether ``value`` is an HTTPS page served by the SEC."""
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and (host == "sec.gov" or host.endswith(".sec.gov"))
+
+
+def _example_passage(answer: dict[str, Any]) -> dict[str, Any] | None:
+    """The first cited EDGAR passage, falling back to the first saved EDGAR passage."""
+    passages = answer.get("passages")
+    if not isinstance(passages, list):
+        return None
+    usable = [passage for passage in passages
+              if isinstance(passage, dict) and isinstance(passage.get("text"), str)
+              and passage["text"].strip() and _edgar_url(passage.get("url"))]
+    citations = answer.get("citations")
+    cited = ({citation.get("chunk_id") for citation in citations
+              if isinstance(citation, dict) and citation.get("resolved") is True
+              and isinstance(citation.get("chunk_id"), str)}
+             if isinstance(citations, list) else set())
+    return next((passage for passage in usable if passage.get("chunk_id") in cited),
+                usable[0] if usable else None)
+
+
+@st.cache_data(show_spinner=False)
+def worked_examples(run_dir: str, config_id: str = DEFAULT_STACK) -> tuple[WorkedExample, ...]:
+    """Correct, displayable examples from one configuration's saved answer rows.
+
+    Nothing is reconstructed from the current corpus or benchmark: every word,
+    passage, score and verification check comes from the selected run. Examples
+    with an XBRL fact check come first, so the walkthrough is as complete as the
+    saved artifact permits.
+    """
+    root = Path(run_dir)
+    curated = read_result_rows(root / "worked-example.jsonl")
+    folder = root / config_id
+    rows = curated or (read_result_rows(folder / "answers.jsonl")
+                       or read_result_rows(folder / "report.json"))
+    examples: list[WorkedExample] = []
+    for row in rows:
+        quality, answer = row.get("quality"), row.get("answer")
+        if not isinstance(quality, dict) or not isinstance(answer, dict):
+            continue
+        if saved_score(quality.get("correctness")) != 1.0 or answer.get("abstained") is not False:
+            continue
+        question_id = row.get("question_id")
+        question, text = answer.get("question"), answer.get("text")
+        expected = row.get("expected_answer")
+        passage = _example_passage(answer)
+        if (not isinstance(question_id, str) or not question_id
+                or not isinstance(question, str) or not question.strip()
+                or not isinstance(text, str) or not text.strip()
+                or not isinstance(expected, str) or not expected.strip()
+                or passage is None):
+            continue
+        verification = answer.get("verification")
+        checks = verification.get("checks", []) if isinstance(verification, dict) else []
+        fact_checks = tuple(dict(check) for check in checks
+                            if isinstance(check, dict) and check.get("kind") == "fact")
+        reason = quality.get("correctness_reason")
+        matrix_config = row.get("matrix_config")
+        saved_config = (matrix_config.get("id") if isinstance(matrix_config, dict) else None)
+        examples.append(WorkedExample(
+            question_id, str(saved_config or config_id), question, text, expected,
+            dict(passage), fact_checks,
+            reason if isinstance(reason, str) else ""))
+    return tuple(sorted(examples, key=lambda example: not bool(example.fact_checks)))
 
 
 def _label(row: dict[str, Any], key: str) -> str | None:
