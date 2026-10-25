@@ -689,7 +689,6 @@ def render_results(runs: list[dict[str, Any]], *,
     selected = next(run for run in runs if run["run_id"] == run_id)
     for warning in report.run_warnings(selected):
         st.warning(warning)
-    _render_worked_example(selected, examples)
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:
@@ -699,6 +698,9 @@ def render_results(runs: list[dict[str, Any]], *,
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
                 _render_full_metrics(matching, kind)
+    # Lead with statistics (#165), then let the saved walkthrough explain
+    # an individual answer without pushing the headline tiles off screen.
+    _render_worked_example(selected, examples)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:

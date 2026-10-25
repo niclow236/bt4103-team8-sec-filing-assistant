@@ -205,3 +205,15 @@ def test_partial_run_warning_stays_above_the_headlines(tmp_path, monkeypatch):
     assert any("partial" in warning.value for warning in app.warning)
     order = [element.type for element in app.main]
     assert order.index("warning") < order.index("metric")
+
+
+def test_headlines_precede_the_merged_worked_example(tmp_path, monkeypatch):
+    from tests.test_results_worked_example import _answer_row as worked_answer
+    row = worked_answer("q1")
+    _save_run(tmp_path, {"C4": {"questions": [_retrieval_row("q1", 1)], "answers": [row]}})
+    app = _open(monkeypatch, tmp_path)
+    elements = list(app.main)
+    first_metric = next(index for index, item in enumerate(elements) if item.type == "metric")
+    worked_example = next(index for index, item in enumerate(elements)
+                          if item.type == "subheader" and item.value == "Worked Example")
+    assert first_metric < worked_example
