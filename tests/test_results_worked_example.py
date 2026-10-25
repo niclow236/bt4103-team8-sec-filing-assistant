@@ -171,7 +171,8 @@ def test_page_renders_saved_currency_as_literal_text(tmp_path, monkeypatch):
 
     assert not app.exception
     assert any(r"\$5 billion" in item.value for item in app.markdown)
-    assert any(r"\$5 billion" in item.value for item in app.caption)
+    assert any(item.value.startswith("Benchmark answer:") and r"\$5 billion" in item.value
+               for item in app.caption)
     assert any(r"\$5 billion" in item.value for item in app.success)
 
 
