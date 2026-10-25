@@ -239,7 +239,7 @@ def test_chooses_a_refusal_and_keeps_its_saved_reason(tmp_path):
         "abstention_reason": "model_declined",
         "text": "I cannot support the requested $5 billion figure.",
     })
-    refused["quality"]["correctness"] = None
+    refused["quality"].update(correctness=None, answerability_correct=0.0)
     run = _save_run(tmp_path, [refused])
 
     failure_examples.clear()
