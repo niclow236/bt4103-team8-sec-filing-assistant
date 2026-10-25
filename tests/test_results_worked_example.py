@@ -152,6 +152,9 @@ def test_page_walks_the_saved_example_and_links_to_edgar(tmp_path, monkeypatch):
     links = app.get("link_button")
     assert any(link.label == "Open filing on EDGAR"
                and link.url.startswith("https://www.sec.gov/") for link in links)
+    # The passage is shown open under its own heading, not in a collapsed panel.
+    assert any("Management's Discussion and Analysis" in item.value for item in app.markdown)
+    assert not any(expander.get("link_button") for expander in app.expander)
     assert any("The saved XBRL fact agrees" in item.value for item in app.success)
     next_example = next(button for button in app.button if button.label == "Next example")
     next_example.click().run()
