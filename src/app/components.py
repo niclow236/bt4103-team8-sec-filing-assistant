@@ -534,10 +534,10 @@ def _render_worked_example(run: Mapping[str, Any],
     run_dir = run.get("run_dir")
     saved = list(examples(str(run_dir), DEFAULT_STACK)) if run_dir else []
     if not saved:
-        st.caption("This run has no saved correct answer from C6 or C4 with its answer text "
-                   "and an EDGAR passage, so there is no worked example to show. Runs that "
-                   "only measured retrieval save no answers, and a run whose judge failed "
-                   "saved no correctness score.")
+        st.caption(f"This run has no saved correct answer from C6 or {DEFAULT_STACK} with its "
+                   "answer text and an EDGAR passage, so there is no worked example to show. "
+                   "Runs that only measured retrieval save no answers, and a run whose judge "
+                   "failed saved no correctness score.")
         return
 
     # Each run gets its own cursor. Changing the selected run cannot carry an
