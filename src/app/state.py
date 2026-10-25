@@ -211,7 +211,12 @@ def _failures_from(rows: list[dict[str, Any]], config_id: str) -> tuple[FailureE
         if not isinstance(quality, dict) or not isinstance(answer, dict):
             continue
         correctness = saved_score(quality.get("correctness"))
-        refused = answer.get("abstained") is True
+        # A refusal is a failure only when the question had an answer. The harness
+        # scores a refusal of an unanswerable question 1.0 ("Benchmark answerability"),
+        # and without a judge it still saves answerability_correct.
+        refused = answer.get("abstained") is True and (
+            correctness < WRONG_ANSWER_CUTOFF if correctness is not None
+            else saved_score(quality.get("answerability_correct")) == 0.0)
         wrong = (answer.get("abstained") is False and correctness is not None
                  and correctness < WRONG_ANSWER_CUTOFF)
         if not (refused or wrong):
