@@ -261,15 +261,29 @@ def test_two_configurations_with_no_question_in_common_say_so_instead_of_countin
 
 
 def _comparison_dataframe(tab):
-    """The comparison's table: the last one in the tab, after the run's scores,
-    outside the Full metrics section at the tab's foot."""
-    full = [table for expander in tab.expander if expander.label == "Full metrics"
-            for table in expander.dataframe]
-    return [table for table in tab.dataframe if not any(table is other for other in full)][-1]
+    """The comparison's scrollable question table; other Results tables are static."""
+    return tab.dataframe[-1]
 
 
 def _questions_table(tab):
     return _comparison_dataframe(tab).value
+
+
+def test_before_and_after_keeps_eight_questions_visible_in_a_scrollable_grid(
+        tmp_path, monkeypatch):
+    from src.app.components import _COMPARISON_ROW_HEIGHT, _COMPARISON_VISIBLE_ROWS
+
+    questions = [_retrieval_row(f"q{index}", 1) for index in range(10)]
+    _save_run(tmp_path, {
+        "C0": {"questions": questions},
+        "C4": {"questions": questions},
+    })
+
+    element = _comparison_dataframe(_open(monkeypatch, tmp_path).tabs[0])
+
+    assert _COMPARISON_VISIBLE_ROWS == 8
+    assert element.proto.row_height == _COMPARISON_ROW_HEIGHT == 42
+    assert len(element.value) == 10
 
 
 def test_each_question_shows_both_configurations_rank_and_can_be_filtered_to_the_worse(
@@ -370,7 +384,11 @@ def _cell_colours(tab, column):
     position = list(element.value.columns).index(column)
     colours = {}
     # One rule per style, its selector listing every cell that has it.
-    for selectors, colour in re.findall(r"([^{}]+)\{\s*color:\s*([^;}\s]+)", styles):
+    for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]+)\}", styles):
+        matched = re.search(r"\bcolor:\s*([^;}\s]+)", declarations)
+        if not matched:
+            continue
+        colour = matched.group(1)
         for row in re.findall(rf"row(\d+)_col{position}\b", selectors):
             colours[int(row)] = colour
     return {question: colours.get(row) for row, question in enumerate(element.value["Question"])}
@@ -682,7 +700,7 @@ def test_a_lone_configuration_without_its_rows_draws_no_comparison(tmp_path, mon
     manifest["configurations"][0]["by_benchmark"] = {"handwritten": {"recall": 0.2}}
     (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
     app = _open(monkeypatch, tmp_path)
-    assert app.tabs[0].dataframe[0].value[
+    assert app.tabs[0].table[0].value[
         "Right passages found among those retrieved"].tolist() == [0.2]
 
     assert not any(header.value == "Before and after"

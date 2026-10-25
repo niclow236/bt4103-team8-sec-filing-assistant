@@ -45,7 +45,7 @@ from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
 if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
-    from src.app.state import AnswerModels, QuestionOutcome, WorkedExample
+    from src.app.state import AnswerModels, FailureExample, QuestionOutcome, WorkedExample
     from src.rag.generate import ProviderUnavailable
 
 
@@ -145,14 +145,67 @@ def _headings(top_k: int | None) -> dict[str, _Heading]:
             for column, (label, tooltip) in _RESULT_METRIC_LABELS.items()}
 
 
-def _plain_dataframe(table: pd.DataFrame, top_k: int | None) -> None:
-    """Draw ``table`` with each column the labels name in plain words, and its tooltip."""
+def _result_table_style(table: pd.DataFrame) -> pd.io.formats.style.Styler:
+    """A readable, theme-neutral style for the Results page's static tables."""
+    float_columns = {column: "{:.2f}" for column in table.columns
+                     if pd.api.types.is_float_dtype(table[column])}
+    return (table.style
+            .format(float_columns, na_rep="—")
+            .set_properties(**{
+                "border-bottom": "1px solid rgba(128, 128, 128, 0.20)",
+                "padding": "0.62rem 0.72rem",
+                "text-align": "left",
+                "vertical-align": "top",
+                "white-space": "normal",
+            })
+            .set_table_styles([
+                {"selector": "table", "props": [
+                    ("border-collapse", "separate"),
+                    ("border-spacing", "0"),
+                    ("border", "1px solid rgba(128, 128, 128, 0.24)"),
+                    ("border-radius", "0.65rem"),
+                    ("overflow", "hidden"),
+                ]},
+                {"selector": "thead th", "props": [
+                    ("background", "rgba(59, 130, 246, 0.14)"),
+                    ("border-bottom", "2px solid rgba(59, 130, 246, 0.38)"),
+                    ("font-weight", "700"),
+                    ("padding", "0.72rem"),
+                    ("text-align", "left"),
+                    ("vertical-align", "bottom"),
+                    ("white-space", "normal"),
+                ]},
+                {"selector": "tbody tr:nth-child(even) td", "props": [
+                    ("background", "rgba(128, 128, 128, 0.07)"),
+                ]},
+                {"selector": "tbody tr:last-child td", "props": [
+                    ("border-bottom", "0"),
+                ]},
+            ]))
+
+
+def _static_result_table(table: pd.DataFrame | pd.io.formats.style.Styler) -> None:
+    """Draw one full-height, non-scrollable Results table."""
+    styled = _result_table_style(table) if isinstance(table, pd.DataFrame) else table
+    st.table(styled, width="stretch", hide_index=True)
+
+
+def _plain_table(table: pd.DataFrame, top_k: int | None) -> None:
+    """Draw a full-height Results table with its columns named in plain words.
+
+    ``st.table`` is intentionally static: unlike the interactive dataframe
+    grid, it grows to the table's actual height instead of putting rows in an
+    internal scroll area (#207 follow-up).
+    """
     headings = _headings(top_k)
-    st.dataframe(table.rename(columns={column: heading.label
-                                       for column, heading in headings.items()}),
-                 column_config={heading.label: st.column_config.Column(help=heading.tooltip)
-                                for heading in headings.values()},
-                 width="stretch", hide_index=True)
+    explained = [(heading.label, heading.tooltip) for column, heading in headings.items()
+                 if column in table.columns]
+    if explained:
+        with st.expander("Column guide"):
+            for label, tooltip in explained:
+                st.markdown(f"**{label}** — {tooltip}")
+    _static_result_table(table.rename(columns={column: heading.label
+                                               for column, heading in headings.items()}))
 
 
 def _results_table(configurations: list[dict[str, Any]], benchmark: str) -> pd.DataFrame:
@@ -273,16 +326,16 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
         return False
     top_k = _cutoff(run)
     if retrieval:
-        _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
+        _plain_table(_main_results_table(retrieval, benchmark), top_k)
     # #202's table keeps the scores in plain words; its bars of the same three
     # metrics give way to one chart of one of them (#166).
     _render_found_chart(run, benchmark, outcomes)
     if not model_table.empty:
         st.subheader("Answer-model ablation")
-        _plain_dataframe(model_table, top_k)
+        _plain_table(model_table, top_k)
     if not quality.empty:
         st.subheader("Answer quality")
-        _plain_dataframe(quality, top_k)
+        _plain_table(quality, top_k)
         quality_chart = report.quality_chart_rows(run, benchmark)
         if quality_chart:
             st.bar_chart(pd.DataFrame(quality_chart).pivot(
@@ -324,6 +377,10 @@ _MEASURES = (
              "had no scored answer from both"),
 )
 _SHOW_ALL = "All questions"
+# Keep the question-by-question comparison compact while leaving enough rows
+# visible to compare a meaningful group without scrolling after every item.
+_COMPARISON_VISIBLE_ROWS = 8
+_COMPARISON_ROW_HEIGHT = 42
 # The text colour of a change in the table, matching the green and red of the
 # counts above it in each theme: (light, dark).
 _IMPROVED, _WORSE, _UNCHANGED = "improved", "worse", "unchanged"
@@ -460,11 +517,18 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         shades = _CHANGE_COLOURS.get(change)
         return f"color: {shades[dark]}" if shades else ""
 
-    styled = table.style.map(colour, subset=[measure.column for measure, _ in counts])
-    # A styled table is shown as the styler formats it, so say how: scores to
-    # two places. A missing value is drawn by the grid itself, as "None",
-    # whatever the styler says.
-    st.dataframe(styled.format(precision=2), width="stretch", hide_index=True)
+    styled = _result_table_style(table).map(
+        colour, subset=[measure.column for measure, _ in counts])
+    # This is the one Results table that can contain hundreds of questions.
+    # Keep eight visible and scroll inside it; the summary tables stay static
+    # and full-height.
+    st.dataframe(
+        styled.format(precision=2),
+        width="stretch",
+        height=_COMPARISON_VISIBLE_ROWS * _COMPARISON_ROW_HEIGHT + 38,
+        row_height=_COMPARISON_ROW_HEIGHT,
+        hide_index=True,
+    )
 
 
 def _render_change_counts(measure: _Measure, changes: Counter, answered: int) -> None:
@@ -480,9 +544,6 @@ def _render_change_counts(measure: _Measure, changes: Counter, answered: int) ->
     improved.metric(":green[Improved]", changes[_IMPROVED])
     worse.metric(":red[Worse]", changes[_WORSE])
     unchanged.metric("Unchanged", changes[_UNCHANGED])
-
-
-_SCORE_BAR = st.column_config.ProgressColumn("Score", format="%.2f", min_value=0, max_value=1)
 
 
 def _breakdown_table(column: str, groups: list[breakdown.Group]) -> pd.DataFrame:
@@ -511,8 +572,8 @@ def _render_breakdown(run: Mapping[str, Any], benchmark: str,
             line = breakdown.headline(split.groups, split.grouping)
             if line:
                 st.caption(line)
-            st.dataframe(_breakdown_table(split.grouping.capitalize(), split.groups),
-                         column_config={"Score": _SCORE_BAR}, width="stretch", hide_index=True)
+            table = _breakdown_table(split.grouping.capitalize(), split.groups)
+            _static_result_table(table)
 
 
 def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> None:
@@ -520,7 +581,7 @@ def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> Non
     them, collapsed below the rest of the tab (#164, #171)."""
     if retrieval:
         with st.expander("Full metrics"):
-            st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
+            _static_result_table(_results_table(retrieval, benchmark))
 
 
 def _render_worked_example(run: Mapping[str, Any],
@@ -586,9 +647,65 @@ def _render_worked_example(run: Mapping[str, Any],
             st.caption(" · ".join(details))
 
 
+def _render_failure_example(
+        run: Mapping[str, Any],
+        failures: Callable[[str, str], Sequence[FailureExample]] | None) -> None:
+    """Walk one wrong or refused saved answer through its evidence (#207)."""
+    def plain(text: str) -> str:
+        """Keep currency in saved text from becoming Streamlit inline maths."""
+        return text.replace("$", r"\$")
+
+    st.markdown("### Failure example")
+    run_dir = run.get("run_dir")
+    saved = list(failures(str(run_dir), DEFAULT_STACK)) if run_dir and failures else []
+    if not saved:
+        st.caption("This run has no saved answer below 0.5 correctness or saved refusal "
+                   "with the text, benchmark answer, and EDGAR passage needed for a walkthrough.")
+        return
+
+    cursor_key = "results_failure_" + sha256(str(run_dir).encode()).hexdigest()[:16]
+    cursor = int(st.session_state.get(cursor_key, 0)) % len(saved)
+    if st.button("Next failure", key=cursor_key + "_next", disabled=len(saved) == 1):
+        cursor = (cursor + 1) % len(saved)
+        st.session_state[cursor_key] = cursor
+    example = saved[cursor]
+    label = "Refused" if example.refused else "Answered wrongly"
+    st.error(f"**{label}** — saved failure {cursor + 1} of {len(saved)} from "
+             f"{run['run_id']}'s {example.config_id} rows (question {example.question_id}).")
+
+    st.markdown("**1. Benchmark question**")
+    st.write(plain(example.question))
+    citation = (f", cited as [{example.citation_marker}]"
+                if example.citation_marker is not None else ", not cited by the answer")
+    st.markdown(f"**2. Passage {plain(example.config_id)} retrieved{citation}**")
+    with st.container(border=True):
+        st.markdown(f"**{plain(passage_labels([example.passage])[0])}**")
+        _passage_body(example.passage)
+    if example.citation_marker is not None and example.other_citation_markers:
+        other_markers = ", ".join(f"[{marker}]" for marker in example.other_citation_markers)
+        st.caption(f"The answer also cites {other_markers}; only the passage for "
+                   f"[{example.citation_marker}] is shown.")
+
+    st.markdown("**3. Saved refusal**" if example.refused else "**3. Saved answer**")
+    st.write(plain(example.answer))
+    if example.refused:
+        reason = example.abstention_reason or "not recorded"
+        st.caption(f"Saved abstention reason: {plain(reason)} — "
+                   f"{plain(abstention_text(example.abstention_reason))}")
+    st.caption(f"Benchmark answer: {plain(example.expected_answer)}")
+    st.markdown("**4. Saved judge verdict**")
+    verdict = ("The saved judge did not record a correctness score."
+               if example.correctness is None else
+               f"The saved judge gave this answer {example.correctness:.2f} correctness.")
+    if example.correctness_reason:
+        verdict += f" {plain(example.correctness_reason)}"
+    st.error(verdict)
+
+
 def render_results(runs: list[dict[str, Any]], *,
                    outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]],
-                   examples: Callable[[str, str], Sequence[WorkedExample]]) -> None:
+                   examples: Callable[[str, str], Sequence[WorkedExample]],
+                   failures: Callable[[str, str], Sequence[FailureExample]] | None = None) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
 
     ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
@@ -603,6 +720,7 @@ def render_results(runs: list[dict[str, Any]], *,
     for warning in report.run_warnings(selected):
         st.warning(warning)
     _render_worked_example(selected, examples)
+    _render_failure_example(selected, failures)
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:

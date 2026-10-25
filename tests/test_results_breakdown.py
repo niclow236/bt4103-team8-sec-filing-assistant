@@ -38,7 +38,7 @@ def _fixture_run(root, *, with_c4=True, answers=None):
 def _tables(tab):
     """The breakdown's tables in ``tab``, keyed by the grouping they split on."""
     tables = {}
-    for element in tab.dataframe:
+    for element in tab.table:
         frame = element.value
         for column in ("Question type", "Difficulty"):
             if isinstance(frame, pd.DataFrame) and column in frame.columns:

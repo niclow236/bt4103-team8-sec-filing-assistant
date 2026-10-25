@@ -4,7 +4,7 @@ import json
 
 from streamlit.testing.v1 import AppTest
 
-from src.app.state import worked_examples
+from src.app.state import failure_examples, worked_examples
 from src.config import PROJECT_ROOT
 from tests.sample_answers import sample_answer
 from tests.test_results_page import _read_results_from
@@ -216,4 +216,94 @@ def test_page_explains_when_the_selected_run_has_no_worked_example(tmp_path, mon
     assert "Worked Example" in [heading.value for heading in app.subheader]
     assert any("no saved correct answer" in message.value and "judge failed" in message.value
                for message in app.caption)
+
+
+def test_chooses_only_answers_below_the_wrong_answer_cutoff(tmp_path):
+    run = _save_run(tmp_path, [
+        _answer_row("partial", correctness=0.5),
+        _answer_row("wrong", correctness=0.49),
+        _answer_row("correct"),
+    ])
+
+    failure_examples.clear()
+    examples = failure_examples(str(run))
+
+    assert [(example.question_id, example.correctness, example.refused)
+            for example in examples] == [("wrong", 0.49, False)]
+
+
+def test_chooses_a_refusal_and_keeps_its_saved_reason(tmp_path):
+    refused = _answer_row("refused")
+    refused["answer"].update({
+        "abstained": True,
+        "abstention_reason": "model_declined",
+        "text": "I cannot support the requested $5 billion figure.",
+    })
+    refused["quality"]["correctness"] = None
+    run = _save_run(tmp_path, [refused])
+
+    failure_examples.clear()
+    examples = failure_examples(str(run))
+
+    assert [(example.question_id, example.refused, example.abstention_reason)
+            for example in examples] == [("refused", True, "model_declined")]
+
+
+def test_a_run_with_neither_a_wrong_answer_nor_refusal_has_no_failure(tmp_path):
+    run = _save_run(tmp_path, [
+        _answer_row("partial", correctness=0.5),
+        _answer_row("correct"),
+    ])
+
+    failure_examples.clear()
+
+    assert failure_examples(str(run)) == ()
+
+
+def test_failure_prefers_run_local_then_c6_before_c4(tmp_path):
+    run = _save_run(
+        tmp_path,
+        [_answer_row("c4", correctness=0.0)],
+        c6_answers=[_answer_row("c6", correctness=0.0)],
+    )
+    local = _answer_row("local", correctness=0.0) | {
+        "matrix_config": {"id": "C7", "name": "curated"}}
+    (run / "worked-example.jsonl").write_text(json.dumps(local) + "\n", encoding="utf-8")
+
+    failure_examples.clear()
+    assert [(example.question_id, example.config_id)
+            for example in failure_examples(str(run))] == [("local", "C7")]
+
+    (run / "worked-example.jsonl").unlink()
+    failure_examples.clear()
+    assert [(example.question_id, example.config_id)
+            for example in failure_examples(str(run))] == [("c6", "C6")]
+
+
+def test_page_labels_and_steps_between_saved_failures(tmp_path, monkeypatch):
+    wrong = _answer_row("wrong", correctness=0.0)
+    wrong["answer"]["text"] = "The answer was $4 billion [1]."
+    refused = _answer_row("refused")
+    refused["answer"].update({
+        "abstained": True,
+        "abstention_reason": "model_declined",
+        "text": "I cannot support the $5 billion answer.",
+    })
+    refused["quality"]["correctness"] = None
+    _save_run(tmp_path, [_answer_row("correct"), wrong, refused])
+    _read_results_from(monkeypatch, tmp_path)
+    worked_examples.clear()
+    failure_examples.clear()
+
+    app = AppTest.from_file(RESULTS_PAGE, default_timeout=30).run()
+
+    assert not app.exception
+    assert any("Answered wrongly" in message.value for message in app.error)
+    assert any(r"\$4 billion" in item.value for item in app.markdown)
+    assert any("4. Saved judge verdict" in item.value for item in app.markdown)
+    next_failure = next(button for button in app.button if button.label == "Next failure")
+    next_failure.click().run()
+    assert not app.exception
+    assert any("Refused" in message.value for message in app.error)
+    assert any("model_declined" in caption.value for caption in app.caption)
 
