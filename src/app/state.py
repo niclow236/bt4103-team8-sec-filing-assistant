@@ -27,13 +27,14 @@ from threading import Event, Lock
 from time import perf_counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import urlsplit
 
 import streamlit as st
 
 from src.pipeline.chunk import iter_chunks
 from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
 from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
-from src.stack import RESULTS_ROOT, build_stack, measured_runs
+from src.stack import DEFAULT_STACK, RESULTS_ROOT, build_stack, measured_runs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -84,6 +85,123 @@ class QuestionOutcome(NamedTuple):
     # Its benchmark labels, as its retrieval row saved them, for the breakdown (#170).
     question_type: str | None = None
     difficulty: str | None = None
+
+
+class WorkedExample(NamedTuple):
+    """One correct answer the Results page can replay from a saved run (#167)."""
+
+    question_id: str
+    config_id: str
+    question: str
+    answer: str
+    expected_answer: str
+    passage: dict[str, Any]
+    citation_marker: int | None
+    other_citation_markers: tuple[int, ...]
+    fact_checks: tuple[dict[str, Any], ...]
+    correctness_reason: str
+
+
+def _edgar_url(value: Any) -> bool:
+    """Whether ``value`` is an HTTPS page served by the SEC."""
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and (host == "sec.gov" or host.endswith(".sec.gov"))
+
+
+def _example_passage(
+        answer: dict[str, Any]) -> tuple[dict[str, Any], int | None, tuple[int, ...]] | None:
+    """A saved EDGAR passage, its marker, and the answer's other resolved markers."""
+    passages = answer.get("passages")
+    if not isinstance(passages, list):
+        return None
+    usable = [passage for passage in passages
+              if isinstance(passage, dict) and isinstance(passage.get("text"), str)
+              and passage["text"].strip() and _edgar_url(passage.get("url"))]
+    if not usable:
+        return None
+    by_chunk = {passage.get("chunk_id"): passage for passage in usable
+                if isinstance(passage.get("chunk_id"), str)}
+    citations = answer.get("citations")
+    resolved: list[tuple[int, str]] = []
+    if isinstance(citations, list):
+        for citation in citations:
+            if not isinstance(citation, dict) or citation.get("resolved") is not True:
+                continue
+            marker, chunk_id = citation.get("marker"), citation.get("chunk_id")
+            if (isinstance(marker, int) and not isinstance(marker, bool) and marker > 0
+                    and isinstance(chunk_id, str)):
+                resolved.append((marker, chunk_id))
+    for marker, chunk_id in resolved:
+        if chunk_id in by_chunk:
+            others = tuple(dict.fromkeys(other for other, _ in resolved if other != marker))
+            return by_chunk[chunk_id], marker, others
+    return usable[0], None, ()
+
+
+def _examples_from(rows: list[dict[str, Any]], config_id: str) -> tuple[WorkedExample, ...]:
+    """Displayable worked examples in saved ``rows``, ordered by verification value."""
+    examples: list[WorkedExample] = []
+    for row in rows:
+        quality, answer = row.get("quality"), row.get("answer")
+        if not isinstance(quality, dict) or not isinstance(answer, dict):
+            continue
+        if saved_score(quality.get("correctness")) != 1.0 or answer.get("abstained") is not False:
+            continue
+        question_id = row.get("question_id")
+        question, text = answer.get("question"), answer.get("text")
+        expected = row.get("expected_answer")
+        selected = _example_passage(answer)
+        if (not isinstance(question_id, str) or not question_id
+                or not isinstance(question, str) or not question.strip()
+                or not isinstance(text, str) or not text.strip()
+                or not isinstance(expected, str) or not expected.strip()
+                or selected is None):
+            continue
+        passage, citation_marker, other_citation_markers = selected
+        verification = answer.get("verification")
+        checks = verification.get("checks", []) if isinstance(verification, dict) else []
+        fact_checks = tuple(dict(check) for check in checks
+                            if isinstance(check, dict) and check.get("kind") == "fact")
+        reason = quality.get("correctness_reason")
+        matrix_config = row.get("matrix_config")
+        saved_config = matrix_config.get("id") if isinstance(matrix_config, dict) else None
+        examples.append(WorkedExample(
+            question_id, str(saved_config or config_id), question, text, expected,
+            dict(passage), citation_marker, other_citation_markers, fact_checks,
+            reason if isinstance(reason, str) else ""))
+    return tuple(sorted(examples, key=lambda example: (
+        not any(check.get("status") == "supported" for check in example.fact_checks),
+        not bool(example.fact_checks),
+    )))
+
+
+@st.cache_data(show_spinner=False)
+def worked_examples(run_dir: str, config_id: str = DEFAULT_STACK) -> tuple[WorkedExample, ...]:
+    """Correct, displayable examples from a run's best saved answer rows.
+
+    Nothing is reconstructed from the current corpus or benchmark: every word,
+    passage, score and verification check comes from the selected run. A usable
+    run-local example wins; otherwise C6 supplies verification when available and
+    the default C4 rows are the fallback.
+    """
+    root = Path(run_dir)
+    curated = _examples_from(read_result_rows(root / "worked-example.jsonl"), config_id)
+    if curated:
+        return curated
+    for saved_config in dict.fromkeys(("C6", config_id)):
+        folder = root / saved_config
+        rows = (read_result_rows(folder / "answers.jsonl")
+                or read_result_rows(folder / "report.json"))
+        examples = _examples_from(rows, saved_config)
+        if examples:
+            return examples
+    return ()
 
 
 def _label(row: dict[str, Any], key: str) -> str | None:

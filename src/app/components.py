@@ -45,7 +45,7 @@ from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
 if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
-    from src.app.state import AnswerModels, QuestionOutcome
+    from src.app.state import AnswerModels, QuestionOutcome, WorkedExample
     from src.rag.generate import ProviderUnavailable
 
 
@@ -523,8 +523,72 @@ def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> Non
             st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
 
 
+def _render_worked_example(run: Mapping[str, Any],
+                           examples: Callable[[str, str], Sequence[WorkedExample]]) -> None:
+    """Walk one correct saved answer from question through verification (#167)."""
+    def plain(text: str) -> str:
+        """Keep currency in saved text from becoming Streamlit inline maths."""
+        return text.replace("$", r"\$")
+
+    st.subheader("Worked Example")
+    run_dir = run.get("run_dir")
+    saved = list(examples(str(run_dir), DEFAULT_STACK)) if run_dir else []
+    if not saved:
+        st.caption(f"This run has no saved correct answer from C6 or {DEFAULT_STACK} with its "
+                   "answer text and an EDGAR passage, so there is no worked example to show. "
+                   "Runs that only measured retrieval save no answers, and a run whose judge "
+                   "failed saved no correctness score.")
+        return
+
+    # Each run gets its own cursor. Changing the selected run cannot carry an
+    # out-of-range position across, and the page never writes example text.
+    cursor_key = "results_example_" + sha256(str(run_dir).encode()).hexdigest()[:16]
+    cursor = int(st.session_state.get(cursor_key, 0)) % len(saved)
+    if st.button("Next example", key=cursor_key + "_next", disabled=len(saved) == 1):
+        cursor = (cursor + 1) % len(saved)
+        st.session_state[cursor_key] = cursor
+    example = saved[cursor]
+    st.caption(f"Example {cursor + 1} of {len(saved)} from {run['run_id']}'s saved "
+               f"{example.config_id} rows (question {example.question_id}).")
+
+    st.markdown("**1. Benchmark question**")
+    st.write(plain(example.question))
+    citation = (f", cited as [{example.citation_marker}]"
+                if example.citation_marker is not None else ", not cited by the answer")
+    st.markdown(f"**2. Passage {plain(example.config_id)} retrieved{citation}**")
+    with st.container(border=True):
+        st.markdown(f"**{plain(passage_labels([example.passage])[0])}**")
+        _passage_body(example.passage)
+    if example.citation_marker is not None and example.other_citation_markers:
+        other_markers = ", ".join(f"[{marker}]" for marker in example.other_citation_markers)
+        st.caption(f"The answer also cites {other_markers}; only the passage for "
+                   f"[{example.citation_marker}] is shown.")
+    st.markdown("**3. Saved answer**")
+    st.write(plain(example.answer))
+    st.caption(f"Benchmark answer: {plain(example.expected_answer)}")
+    correctness = "The saved judge marked this answer fully correct."
+    if example.correctness_reason:
+        correctness += f" {plain(example.correctness_reason)}"
+    st.success(correctness)
+    st.markdown("**4. Check against the XBRL facts store**")
+    if not example.fact_checks:
+        st.info("No XBRL facts-store check was saved for this answer.")
+    for check in example.fact_checks:
+        status = str(check.get("status") or "unverified")
+        claim = plain(str(check.get("claim") or "Saved numeric claim"))
+        reason = plain(str(check.get("reason") or "No reason was saved."))
+        message = f"**{status.replace('_', ' ').title()}:** {claim} — {reason}"
+        (st.success if status == "supported" else st.warning)(message)
+        details = [f"{label}: {plain(str(check[field]))}" for field, label in
+                   (("figure", "figure"), ("value", "XBRL value"), ("unit", "unit"))
+                   if check.get(field) not in (None, "")]
+        if details:
+            st.caption(" · ".join(details))
+
+
 def render_results(runs: list[dict[str, Any]], *,
-                   outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> None:
+                   outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]],
+                   examples: Callable[[str, str], Sequence[WorkedExample]]) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
 
     ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
@@ -538,6 +602,7 @@ def render_results(runs: list[dict[str, Any]], *,
     selected = next(run for run in runs if run["run_id"] == run_id)
     for warning in report.run_warnings(selected):
         st.warning(warning)
+    _render_worked_example(selected, examples)
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:
