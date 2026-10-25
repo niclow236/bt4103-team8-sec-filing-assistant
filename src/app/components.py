@@ -598,8 +598,9 @@ def _render_failure_example(
     run_dir = run.get("run_dir")
     saved = list(failures(str(run_dir), DEFAULT_STACK)) if run_dir and failures else []
     if not saved:
-        st.caption("This run has no saved answer below 0.5 correctness or saved refusal "
-                   "with the text, benchmark answer, and EDGAR passage needed for a walkthrough.")
+        st.caption("This run has no saved answer or refusal scored below 0.5 with the text, "
+                   "benchmark answer, and EDGAR passage needed for a walkthrough. Refusing an "
+                   "unanswerable question is correct, so those refusals are not shown here.")
         return
 
     cursor_key = "results_failure_" + sha256(str(run_dir).encode()).hexdigest()[:16]
