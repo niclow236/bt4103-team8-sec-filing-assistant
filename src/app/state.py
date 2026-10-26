@@ -102,6 +102,28 @@ class WorkedExample(NamedTuple):
     correctness_reason: str
 
 
+# A score below this is a wrong answer for the failure walkthrough. Exactly
+# 0.5 remains partial credit, rather than being presented as a failure (#207).
+WRONG_ANSWER_CUTOFF = 0.5
+
+
+class FailureExample(NamedTuple):
+    """One wrong or refused answer the Results page can replay (#207)."""
+
+    question_id: str
+    config_id: str
+    question: str
+    answer: str
+    expected_answer: str
+    passage: dict[str, Any]
+    citation_marker: int | None
+    other_citation_markers: tuple[int, ...]
+    correctness: float | None
+    correctness_reason: str
+    refused: bool
+    abstention_reason: str | None
+
+
 def _edgar_url(value: Any) -> bool:
     """Whether ``value`` is an HTTPS page served by the SEC."""
     if not isinstance(value, str):
@@ -181,6 +203,47 @@ def _examples_from(rows: list[dict[str, Any]], config_id: str) -> tuple[WorkedEx
     )))
 
 
+def _failures_from(rows: list[dict[str, Any]], config_id: str) -> tuple[FailureExample, ...]:
+    """Displayable refused and clearly wrong examples in saved ``rows``."""
+    failures: list[FailureExample] = []
+    for row in rows:
+        quality, answer = row.get("quality"), row.get("answer")
+        if not isinstance(quality, dict) or not isinstance(answer, dict):
+            continue
+        correctness = saved_score(quality.get("correctness"))
+        # A refusal is a failure only when the question had an answer. The harness
+        # scores a refusal of an unanswerable question 1.0 ("Benchmark answerability"),
+        # and without a judge it still saves answerability_correct.
+        refused = answer.get("abstained") is True and (
+            correctness < WRONG_ANSWER_CUTOFF if correctness is not None
+            else saved_score(quality.get("answerability_correct")) == 0.0)
+        wrong = (answer.get("abstained") is False and correctness is not None
+                 and correctness < WRONG_ANSWER_CUTOFF)
+        if not (refused or wrong):
+            continue
+        question_id = row.get("question_id")
+        question, text = answer.get("question"), answer.get("text")
+        expected = row.get("expected_answer")
+        selected = _example_passage(answer)
+        if (not isinstance(question_id, str) or not question_id
+                or not isinstance(question, str) or not question.strip()
+                or not isinstance(text, str) or not text.strip()
+                or not isinstance(expected, str) or not expected.strip()
+                or selected is None):
+            continue
+        passage, citation_marker, other_citation_markers = selected
+        reason = quality.get("correctness_reason")
+        abstention_reason = answer.get("abstention_reason")
+        matrix_config = row.get("matrix_config")
+        saved_config = matrix_config.get("id") if isinstance(matrix_config, dict) else None
+        failures.append(FailureExample(
+            question_id, str(saved_config or config_id), question, text, expected,
+            dict(passage), citation_marker, other_citation_markers, correctness,
+            reason if isinstance(reason, str) else "", refused,
+            abstention_reason if isinstance(abstention_reason, str) else None))
+    return tuple(failures)
+
+
 @st.cache_data(show_spinner=False)
 def worked_examples(run_dir: str, config_id: str = DEFAULT_STACK) -> tuple[WorkedExample, ...]:
     """Correct, displayable examples from a run's best saved answer rows.
@@ -201,6 +264,27 @@ def worked_examples(run_dir: str, config_id: str = DEFAULT_STACK) -> tuple[Worke
         examples = _examples_from(rows, saved_config)
         if examples:
             return examples
+    return ()
+
+
+@st.cache_data(show_spinner=False)
+def failure_examples(run_dir: str, config_id: str = DEFAULT_STACK) -> tuple[FailureExample, ...]:
+    """Wrong or refused displayable examples from one saved run.
+
+    A usable run-local file wins; otherwise C6 is tried before C4 (or the
+    caller's default configuration). No text is reconstructed from the app.
+    """
+    root = Path(run_dir)
+    curated = _failures_from(read_result_rows(root / "worked-example.jsonl"), config_id)
+    if curated:
+        return curated
+    for saved_config in dict.fromkeys(("C6", config_id)):
+        folder = root / saved_config
+        rows = (read_result_rows(folder / "answers.jsonl")
+                or read_result_rows(folder / "report.json"))
+        failures = _failures_from(rows, saved_config)
+        if failures:
+            return failures
     return ()
 
 

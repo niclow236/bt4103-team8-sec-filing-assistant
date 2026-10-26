@@ -45,7 +45,7 @@ from src.stack import DEFAULT_STACK, SELECTABLE, STACKS, StackConfig
 if TYPE_CHECKING:
     # For an annotation alone. A component is handed what state.py holds and
     # imports nothing from it when the app runs.
-    from src.app.state import AnswerModels, QuestionOutcome, WorkedExample
+    from src.app.state import AnswerModels, FailureExample, QuestionOutcome, WorkedExample
     from src.rag.generate import ProviderUnavailable
 
 
@@ -586,9 +586,66 @@ def _render_worked_example(run: Mapping[str, Any],
             st.caption(" · ".join(details))
 
 
+def _render_failure_example(
+        run: Mapping[str, Any],
+        failures: Callable[[str, str], Sequence[FailureExample]] | None) -> None:
+    """Walk one wrong or refused saved answer through its evidence (#207)."""
+    def plain(text: str) -> str:
+        """Keep currency in saved text from becoming Streamlit inline maths."""
+        return text.replace("$", r"\$")
+
+    st.markdown("### Failure example")
+    run_dir = run.get("run_dir")
+    saved = list(failures(str(run_dir), DEFAULT_STACK)) if run_dir and failures else []
+    if not saved:
+        st.caption("This run has no saved answer or refusal scored below 0.5 with the text, "
+                   "benchmark answer, and EDGAR passage needed for a walkthrough. Refusing an "
+                   "unanswerable question is correct, so those refusals are not shown here.")
+        return
+
+    cursor_key = "results_failure_" + sha256(str(run_dir).encode()).hexdigest()[:16]
+    cursor = int(st.session_state.get(cursor_key, 0)) % len(saved)
+    if st.button("Next failure", key=cursor_key + "_next", disabled=len(saved) == 1):
+        cursor = (cursor + 1) % len(saved)
+        st.session_state[cursor_key] = cursor
+    example = saved[cursor]
+    label = "Refused" if example.refused else "Answered wrongly"
+    st.error(f"**{label}** — saved failure {cursor + 1} of {len(saved)} from "
+             f"{run['run_id']}'s {example.config_id} rows (question {example.question_id}).")
+
+    st.markdown("**1. Benchmark question**")
+    st.write(plain(example.question))
+    citation = (f", cited as [{example.citation_marker}]"
+                if example.citation_marker is not None else ", not cited by the answer")
+    st.markdown(f"**2. Passage {plain(example.config_id)} retrieved{citation}**")
+    with st.container(border=True):
+        st.markdown(f"**{plain(passage_labels([example.passage])[0])}**")
+        _passage_body(example.passage)
+    if example.citation_marker is not None and example.other_citation_markers:
+        other_markers = ", ".join(f"[{marker}]" for marker in example.other_citation_markers)
+        st.caption(f"The answer also cites {other_markers}; only the passage for "
+                   f"[{example.citation_marker}] is shown.")
+
+    st.markdown("**3. Saved refusal**" if example.refused else "**3. Saved answer**")
+    st.write(plain(example.answer))
+    if example.refused:
+        reason = example.abstention_reason or "not recorded"
+        st.caption(f"Saved abstention reason: {plain(reason)} — "
+                   f"{plain(abstention_text(example.abstention_reason))}")
+    st.caption(f"Benchmark answer: {plain(example.expected_answer)}")
+    st.markdown("**4. Saved judge verdict**")
+    verdict = ("The saved judge did not record a correctness score."
+               if example.correctness is None else
+               f"The saved judge gave this answer {example.correctness:.2f} correctness.")
+    if example.correctness_reason:
+        verdict += f" {plain(example.correctness_reason)}"
+    st.error(verdict)
+
+
 def render_results(runs: list[dict[str, Any]], *,
                    outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]],
-                   examples: Callable[[str, str], Sequence[WorkedExample]]) -> None:
+                   examples: Callable[[str, str], Sequence[WorkedExample]],
+                   failures: Callable[[str, str], Sequence[FailureExample]] | None = None) -> None:
     """Draw the saved Results page; loading and caching remain in state.py.
 
     ``outcomes(run_dir, config_id)`` reads one configuration's saved questions
@@ -603,6 +660,7 @@ def render_results(runs: list[dict[str, Any]], *,
     for warning in report.run_warnings(selected):
         st.warning(warning)
     _render_worked_example(selected, examples)
+    _render_failure_example(selected, failures)
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:

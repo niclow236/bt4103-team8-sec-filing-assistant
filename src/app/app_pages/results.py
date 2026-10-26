@@ -11,7 +11,8 @@ if st.button("Reload saved results"):
     state.result_runs.clear()
     state.question_outcomes.clear()
     state.worked_examples.clear()
+    state.failure_examples.clear()
     st.rerun()
 
 render_results(state.result_runs(), outcomes=state.question_outcomes,
-               examples=state.worked_examples)
+               examples=state.worked_examples, failures=state.failure_examples)
