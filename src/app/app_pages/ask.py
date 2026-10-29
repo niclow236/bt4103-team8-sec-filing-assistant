@@ -121,7 +121,8 @@ if shown is not None:
         # record is for the type this answer was actually treated as.
         if scoped is not None:
             answer_track_record(state.result_runs(), state.question_outcomes,
-                                config_id=config_id, question_type=scoped.question_type)
+                                config_id=config_id, question_type=scoped.question_type,
+                                answer=shown.answer)
     if not evidence_shown:
         with evidence_space.container():
             retrieved_evidence(shown.answer.passages)

@@ -95,7 +95,8 @@ if shown is not None:
                 if reading is not None:
                     answer_track_record(state.result_runs(), state.question_outcomes,
                                         config_id=config.id,
-                                        question_type=reading.question_type)
+                                        question_type=reading.question_type,
+                                        answer=result.answer)
                 comparison_evidence(result.answer, other, side=side)
 elif question and left_id != right_id:
     st.info("Select Compare to run both configurations for the current question and settings.")

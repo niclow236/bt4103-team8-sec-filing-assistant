@@ -139,12 +139,37 @@ def test_the_ask_page_shows_the_record_under_the_answer(tmp_path, monkeypatch):
     assert said
     assert "numeric questions" in said[0]
     assert "0.75 out of 1 for correctness" in said[0]
-    assert "averaged over the 12 scored" in said[0]
+    assert "averaged over 12 scored answers" in said[0]
     # The acceptance criteria: the line names the configuration and the run.
     assert DEFAULT_STACK in said[0] and "run run" in said[0]
 
 
 def test_the_ask_page_says_nothing_without_a_saved_run(tmp_path, monkeypatch):
+    assert not _said(_ask(monkeypatch, tmp_path))
+
+
+def test_no_record_under_an_answer_the_facts_store_wrote(tmp_path, monkeypatch):
+    """A saved run measures each configuration with the facts route off, so its
+    record is for model answers and says nothing about a looked-up figure."""
+    from tests.test_app_live import FakeStack, _from_facts
+
+    monkeypatch.setattr(FakeStack, "answer",
+                        lambda self, question, **overrides: _from_facts(question))
+    _run(tmp_path)
+    assert not _said(_ask(monkeypatch, tmp_path))
+
+
+def test_no_record_under_an_answer_searched_filing_by_filing(tmp_path, monkeypatch):
+    """A saved run measures each configuration with per-filing search off, so a
+    question split into one search per filing has no record of its own."""
+    from dataclasses import replace
+
+    from tests.sample_answers import sample_answer
+    from tests.test_app_live import FakeStack
+
+    monkeypatch.setattr(FakeStack, "answer", lambda self, question, **overrides: replace(
+        sample_answer(question), sub_questions=("AAPL FY2023", "AAPL FY2024")))
+    _run(tmp_path)
     assert not _said(_ask(monkeypatch, tmp_path))
 
 
@@ -185,3 +210,17 @@ def test_the_ask_page_says_nothing_for_a_type_with_no_record(tmp_path, monkeypat
     ui = _ask(monkeypatch, tmp_path,
               question="How did Apple's revenue compare with Microsoft's in FY2024?")
     assert not _said(ui)
+
+
+def test_a_retrieval_only_run_saved_later_does_not_hide_the_record(tmp_path, monkeypatch):
+    """Runs are read newest first, and a chunk or rerank sweep saves no answers."""
+    import os
+    import time
+
+    _run(tmp_path)
+    numeric_rows, _ = _typed("n", 12, "numeric", 0.75)
+    later = _save_run(tmp_path, {DEFAULT_STACK: {"questions": numeric_rows}}, name="later")
+    os.utime(later, (time.time() + 60, time.time() + 60))
+
+    said = _said(_ask(monkeypatch, tmp_path))
+    assert said and "run run" in said[0]

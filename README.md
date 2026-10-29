@@ -2184,11 +2184,15 @@ pieces from #38.
   provider's settings what it lacks with `check_provider` and builds no
   client to do it.
 - `answer_summary(answer, config, seconds)` is the row above an answer.
-- `answer_track_record(runs, outcomes, config_id=..., question_type=...)` is the
-  line under one, saying how that configuration's answers to questions read the
-  same way scored in the newest saved run (#168). It draws nothing unless there
-  is a figure worth standing behind: a saved run, that configuration's own
-  questions in it, and at least `MIN_GROUP_QUESTIONS` of the type among them.
+- `answer_track_record(runs, outcomes, config_id=..., question_type=..., answer=...)`
+  is the line under one, saying how that configuration's answers to questions
+  read the same way scored in the newest saved run that scored its answers
+  (#168), so a retrieval-only sweep saved later does not hide it. It draws
+  nothing unless there is a figure worth standing behind: a saved run, that
+  configuration's own questions in it, and at least `MIN_GROUP_QUESTIONS` of the
+  type among them. Nor under an answer the facts store wrote or one searched
+  filing by filing, since a saved run measures every configuration with the
+  facts route and per-filing search off.
   The record is the configuration's own, not the default's, because the Compare
   page shows two configurations at once and the default's numbers under the
   other side's answer would be the wrong claim. It reads the team benchmark

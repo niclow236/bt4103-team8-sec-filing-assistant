@@ -125,6 +125,16 @@ def configurations_read(run: Mapping[str, Any], benchmark: str) -> list[str]:
             if item.get("questions_read") and benchmark in item["benchmark_metrics"]]
 
 
+def _benchmark_questions(run: Mapping[str, Any], benchmark: str,
+                         outcomes: Callable[[str, str], Mapping[str, Any]],
+                         config_id: str) -> list[Any] | None:
+    """``config_id``'s saved questions on ``benchmark``, or None when they were not read."""
+    if config_id not in configurations_read(run, benchmark):
+        return None
+    return [outcome for outcome in outcomes(run["run_dir"], config_id).values()
+            if outcome.benchmark == benchmark]
+
+
 def configuration_breakdown(run: Mapping[str, Any], benchmark: str,
                             outcomes: Callable[[str, str], Mapping[str, Any]],
                             config_id: str) -> list[Split]:
@@ -136,10 +146,9 @@ def configuration_breakdown(run: Mapping[str, Any], benchmark: str,
     were read. A split with a single group, or with no question scored, is
     left out, since it has no strong or weak side.
     """
-    if config_id not in configurations_read(run, benchmark):
+    questions = _benchmark_questions(run, benchmark, outcomes, config_id)
+    if questions is None:
         return []
-    questions = [outcome for outcome in outcomes(run["run_dir"], config_id).values()
-                 if outcome.benchmark == benchmark]
     splits = []
     for measure in MEASURES:
         for grouping, label in GROUPINGS:
@@ -175,10 +184,9 @@ def track_record(run: Mapping[str, Any], benchmark: str,
     has nothing to compare on that page and still has a record to report
     here.
     """
-    if config_id not in configurations_read(run, benchmark):
+    questions = _benchmark_questions(run, benchmark, outcomes, config_id)
+    if questions is None:
         return None
-    questions = [outcome for outcome in outcomes(run["run_dir"], config_id).values()
-                 if outcome.benchmark == benchmark]
     for group in group_scores(questions, _QUESTION_TYPE, measure.score):
         if group.name == question_type:
             return group if group.readable and group.score is not None else None
