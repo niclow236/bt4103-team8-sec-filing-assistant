@@ -32,7 +32,7 @@ import streamlit as st
 import pandas as pd
 
 from src.config import read_tickers
-from src.evaluation import breakdown, report
+from src.evaluation import breakdown, headlines, report
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
 from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
@@ -65,6 +65,15 @@ _ITEM_MENTION = re.compile(
 # the report. ``{top}`` and ``{at}`` are the cutoff the run scored at, as in
 # "in the top 16" and "Recall@16"; a run that saved none has neither.
 _RESULT_METRIC_LABELS = {
+    breakdown.FOUND.title: (breakdown.FOUND.title,
+                           "Count of questions with at least one supporting passage in the "
+                           "top 10, not mean Recall. Questions without labelled evidence or "
+                           "readable ranks are excluded."),
+    "Headline correctness": ("Answer correctness (0–1)",
+                             "Mean saved correctness score, including partial credit and "
+                             "automatically scored abstentions; not a count of correct answers."),
+    "Headline latency": ("Typical answer time (s)",
+                         "Median of saved generation-call latencies in seconds."),
     "Relevance-scored": ("Questions with a right passage",
                          "How many of the questions name a passage that answers them: "
                          "the scores of finding it are worked out over these."),
@@ -266,9 +275,10 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
                               ) -> bool:
     """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
+    headline_shown = _render_headlines(run, benchmark, outcomes)
     model_table = _results_model_table(run["configurations"], benchmark)
     quality = pd.DataFrame(report.answer_quality_table(run, benchmark))
-    if not retrieval and model_table.empty and quality.empty:
+    if not retrieval and model_table.empty and quality.empty and not headline_shown:
         st.info("No saved results for this benchmark.")
         return False
     top_k = _cutoff(run)
@@ -287,6 +297,83 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
         if quality_chart:
             st.bar_chart(pd.DataFrame(quality_chart).pivot(
                 index="Configuration", columns="Metric", values="Value"), stack=False)
+    return True
+
+
+_HEADLINE_COLUMNS = {"found": breakdown.FOUND.title,
+                     "correctness": "Headline correctness",
+                     "refused": "Abstention rate", "latency": "Headline latency"}
+
+
+def _headline_value(tile: headlines.Headline) -> str:
+    """Counts stay counts, correctness stays a mean, milliseconds become seconds."""
+    if tile.count is not None:
+        return f"{tile.count} of {tile.scored}"
+    return f"{tile.value:.2f}" if tile.key == "latency" else f"{tile.value:.2f} / 1"
+
+
+def _headline_delta(tile: headlines.Headline) -> str | None:
+    """A same-cohort C0 difference, with units that match the displayed measure."""
+    if tile.delta is None:
+        return None
+    if tile.key in {"found", "refused"}:
+        return f"{tile.delta * 100:+.1f} pp vs {breakdown.BASELINE}"
+    unit = " s" if tile.key == "latency" else ""
+    return f"{tile.delta:+.2f}{unit} vs {breakdown.BASELINE}"
+
+
+def _headline_icons(tile: headlines.Headline) -> str:
+    """Ten proportionally filled circles with an exact accessible count.
+
+    Fractional fill avoids claiming 10 out of 10 when 96% were found. The
+    real count is printed in the tile and its accessible name, not inferred
+    by counting rounded icons. Fixed colours remain visible in either theme.
+    """
+    icons = []
+    for index in range(10):
+        filled = min(1.0, max(0.0, tile.value * 10 - index)) * 100
+        icons.append('<span aria-hidden="true" style="display:inline-block;'
+                     'width:1.1rem;height:1.1rem;border:1px solid #6b7280;'
+                     'border-radius:50%;margin-right:0.25rem;'
+                     f'background:linear-gradient(to right,#3b82f6 {filled:.2f}%,'
+                     f'transparent {filled:.2f}%);"></span>')
+    label = (f"Found a right passage in the top {breakdown.FOUND_WITHIN} for "
+             f"{tile.count} of {tile.scored} scored questions. Ten circles show the proportion.")
+    return f'<div role="img" aria-label="{label}">{"".join(icons)}</div>'
+
+
+def _render_headlines(run: Mapping[str, Any], benchmark: str,
+                      outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> bool:
+    """Headline the selected run's app default before tables; never load live models."""
+    tiles = headlines.headline_tiles(run, benchmark, outcomes)
+    if not tiles:
+        return False
+    headings = _headings(_cutoff(run))
+    with st.container(key=f"results_headlines_{benchmark}"):
+        st.markdown(f"**At a glance — {DEFAULT_STACK}, the app's default configuration**")
+        # Two per row: four columns truncate the plain-language labels at
+        # the app's normal content width, defeating the headline's purpose.
+        columns = []
+        for start in range(0, len(tiles), 2):
+            columns.extend(st.columns(min(2, len(tiles) - start)))
+        for column, tile in zip(columns, tiles):
+            heading = headings[_HEADLINE_COLUMNS[tile.key]]
+            help_text = heading.tooltip + f" Based on {tile.scored} scored questions."
+            if tile.delta is None:
+                help_text += " No C0 delta: matching per-question observations are unavailable."
+            else:
+                help_text += " Compared with C0 on exactly the same scored question IDs; pp means percentage points."
+            if tile.key == "latency":
+                help_text += " Saved generation-call time only; excludes retrieval and judging, not end-to-end latency."
+            if tile.key == "refused":
+                help_text += " A refusal is not necessarily the correct decision; a higher rate is not inherently better."
+            with column:
+                st.metric(heading.label, _headline_value(tile), delta=_headline_delta(tile),
+                          delta_color="off" if tile.key == "refused" else
+                          "inverse" if tile.key == "latency" else "normal", help=help_text)
+        found = next((tile for tile in tiles if tile.key == "found"), None)
+        if found is not None:
+            st.html(_headline_icons(found))
     return True
 
 
@@ -659,8 +746,6 @@ def render_results(runs: list[dict[str, Any]], *,
     selected = next(run for run in runs if run["run_id"] == run_id)
     for warning in report.run_warnings(selected):
         st.warning(warning)
-    _render_worked_example(selected, examples)
-    _render_failure_example(selected, failures)
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:
@@ -670,6 +755,10 @@ def render_results(runs: list[dict[str, Any]], *,
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
                 _render_full_metrics(matching, kind)
+    # Lead with statistics (#165), then let the saved walkthrough explain
+    # an individual answer without pushing the headline tiles off screen.
+    _render_worked_example(selected, examples)
+    _render_failure_example(selected, failures)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
