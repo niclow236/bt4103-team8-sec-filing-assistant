@@ -19,6 +19,13 @@ NOT_FOOLED = "Not fooled by a similar filing (wrong company or year)"
 REFUSED = "Refused rather than guessed"
 
 
+def _metric_tables(tab):
+    """Find saved metric tables within their collapsed section, not story tables."""
+    sections = [item for item in tab.expander if item.label == "Full metrics"]
+    assert len(sections) == 1 and not sections[0].proto.expanded
+    return sections[0].dataframe
+
+
 def _read_results_from(monkeypatch, root):
     """Point the page at root, preserving the targeted Reload cache clear."""
     from src.app import state
@@ -128,9 +135,9 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert len(app.tabs) == 2
     manual, mechanical = app.tabs
     assert manual.label == "Team benchmark"
-    assert manual.dataframe[0].value[FOUND].tolist() == [1.0]
-    assert mechanical.dataframe[0].value[FOUND].tolist() == [0.0]
-    assert list(manual.dataframe[0].value.columns) == [
+    assert _metric_tables(manual)[0].value[FOUND].tolist() == [1.0]
+    assert _metric_tables(mechanical)[0].value[FOUND].tolist() == [0.0]
+    assert list(_metric_tables(manual)[0].value.columns) == [
         "Configuration", "Name", FOUND, NOT_FOOLED, "Questions",
         "Questions with a right passage", "Questions with a similar filing"]
     # These rows kept no retrieved passages, so there is no rank to count and
@@ -138,17 +145,17 @@ def test_results_ui_splits_legacy_scores_generation_and_hard_negatives(tmp_path,
     assert not app.get("vega_lite_chart")
     assert all(any("saved no per-question results" in caption.value for caption in tab.caption)
                for tab in app.tabs)
-    assert mechanical.dataframe[0].value[NOT_FOOLED].tolist() == [0.0]
-    assert manual.dataframe[1].value[REFUSED].tolist() == [0.0]
-    assert mechanical.dataframe[1].value[REFUSED].tolist() == [1.0]
-    assert manual.dataframe[1].value["Answered by the language model"].tolist() == [1]
-    assert mechanical.dataframe[1].value["Answered by the language model"].tolist() == [0]
+    assert _metric_tables(mechanical)[0].value[NOT_FOOLED].tolist() == [0.0]
+    assert _metric_tables(manual)[1].value[REFUSED].tolist() == [0.0]
+    assert _metric_tables(mechanical)[1].value[REFUSED].tolist() == [1.0]
+    assert _metric_tables(manual)[1].value["Answered by the language model"].tolist() == [1]
+    assert _metric_tables(mechanical)[1].value["Answered by the language model"].tolist() == [0]
 
     (run / "C4" / "questions.jsonl").write_text(
         json.dumps({"question_id": "manual", "recall": 0.25}), encoding="utf-8")
     app.button[0].click().run()
     assert not app.exception
-    assert app.tabs[0].dataframe[0].value[FOUND].tolist() == [0.25]
+    assert _metric_tables(app.tabs[0])[0].value[FOUND].tolist() == [0.25]
 
 
 def test_malformed_summary_does_not_hide_valid_runs(tmp_path):
@@ -173,7 +180,7 @@ def test_hard_negative_only_run_is_visible(monkeypatch):
     }]}])
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     assert not app.exception
-    assert app.tabs[0].dataframe[0].value[NOT_FOOLED].tolist() == [1.0]
+    assert _metric_tables(app.tabs[0])[0].value[NOT_FOOLED].tolist() == [1.0]
 
 
 def test_reload_discovers_first_run(tmp_path, monkeypatch):
@@ -226,8 +233,8 @@ def test_answer_model_only_run_shows_its_results_without_saying_there_are_none(t
     _read_results_from(monkeypatch, tmp_path)
     app = AppTest.from_file(PROJECT_ROOT / "src/app/app_pages/results.py", default_timeout=30).run()
     assert not app.exception and not app.info
-    assert app.tabs[0].dataframe[0].value[REFUSED].tolist() == [0.0]
-    assert app.tabs[1].dataframe[0].value[REFUSED].tolist() == [1.0]
+    assert _metric_tables(app.tabs[0])[0].value[REFUSED].tolist() == [0.0]
+    assert _metric_tables(app.tabs[1])[0].value[REFUSED].tolist() == [1.0]
 
 
 def test_a_stopped_or_unreadable_run_says_its_scores_are_partial(tmp_path, monkeypatch):
@@ -253,6 +260,16 @@ def test_a_stopped_or_unreadable_run_says_its_scores_are_partial(tmp_path, monke
     assert len(app.warning) == 1
     assert "G1 (stopped at q002)" in app.warning[0].value
     assert "C4 (2 of 3 question rows could be read)" in app.warning[0].value
+    # Partial scores must still be warned about before any story or hidden tables.
+    elements = list(app)
+    picker = next(i for i, item in enumerate(elements)
+                  if item.type == "selectbox" and item.label == "Run")
+    warning = next(i for i, item in enumerate(elements) if item.type == "warning")
+    story = next(i for i, item in enumerate(elements)
+                 if item.type == "subheader" and item.value == "Worked Example")
+    full = next(i for i, item in enumerate(elements)
+                if item.type == "expander" and item.label == "Full metrics")
+    assert picker < warning < story < full
 
 
 def test_rows_from_the_real_writer_split_by_their_saved_source(tmp_path):
@@ -311,7 +328,7 @@ def test_two_folders_with_one_saved_run_id_can_both_be_opened(tmp_path, monkeypa
     for name, recall in (("sweep", 1), ("sweep-copy", 0)):
         app.selectbox[0].select(name).run()
         assert not app.exception
-        assert app.tabs[0].dataframe[0].value[FOUND].tolist() == [recall]
+        assert _metric_tables(app.tabs[0])[0].value[FOUND].tolist() == [recall]
 
 
 def test_a_configuration_id_cannot_read_outside_its_run(tmp_path):
@@ -404,7 +421,7 @@ def test_matrix_answer_quality_shows_on_the_team_tab(tmp_path, monkeypatch):
     assert not app.exception
     team, mechanical = app.tabs
     assert "Answer quality" in [header.value for header in team.subheader]
-    quality = team.dataframe[1].value
+    quality = _metric_tables(team)[1].value
     assert quality["Correctness"].tolist() == [0.8182]
     assert quality["Correctness scored"].tolist() == [150]
     assert quality["Claim checks"].tolist() == ["not_run 145"]
@@ -427,7 +444,7 @@ def test_a_run_with_answer_quality_but_no_retrieval_scores_still_shows_it(tmp_pa
     assert not app.exception
     team = app.tabs[0]
     assert not team.info
-    assert team.dataframe[0].value["Correctness"].tolist() == [0.5]
+    assert _metric_tables(team)[0].value["Correctness"].tolist() == [0.5]
 
 
 def test_the_team_tab_charts_answer_quality(tmp_path, monkeypatch):
@@ -566,7 +583,7 @@ def _results_page(monkeypatch, root):
 
 def test_the_retrieval_table_says_what_recall_means_at_the_runs_own_cutoff(tmp_path, monkeypatch):
     _scored_run(tmp_path, top_k=16)
-    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    table = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0].value
     assert "Right passages found in the top 16" in table.columns
     assert table["Right passages found in the top 16"].tolist() == [1.0]
 
@@ -575,7 +592,7 @@ def test_the_retrieval_table_says_what_recall_means_at_the_runs_own_cutoff(tmp_p
 @pytest.mark.parametrize("top_k", [None, True, 0])
 def test_a_run_that_saved_no_cutoff_still_says_what_recall_means(tmp_path, monkeypatch, top_k):
     _scored_run(tmp_path, top_k=top_k)
-    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    table = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0].value
     assert "Right passages found among those retrieved" in table.columns
 
 
@@ -587,7 +604,7 @@ def _tooltips(dataframe):
 
 def test_a_plain_label_names_its_technical_metric_in_a_tooltip(tmp_path, monkeypatch):
     _scored_run(tmp_path, top_k=16)
-    tips = _tooltips(_results_page(monkeypatch, tmp_path).tabs[0].dataframe[0])
+    tips = _tooltips(_metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0])
     assert (tips.get("Right passages found in the top 16") or "").startswith("Recall@16")
 
 
@@ -600,7 +617,7 @@ def test_a_plain_label_names_its_technical_metric_in_a_tooltip(tmp_path, monkeyp
 def test_the_retrieval_table_shows_the_median_rank_of_the_first_right_passage(
         tmp_path, monkeypatch, mrrs, shown):
     _scored_run(tmp_path, mrrs=mrrs)
-    table = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0].value
+    table = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0].value
     assert RANK in table.columns
     # A number, so the column sorts as one: 2 before 10.
     assert pd.api.types.is_numeric_dtype(table[RANK])
@@ -616,14 +633,14 @@ def test_a_configuration_without_reciprocal_ranks_has_no_median_beside_one_that_
     manifest["configurations"].append({"config": {"id": "C0"},
                                        "by_benchmark": {"handwritten": {"recall": 0.5}}})
     (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
-    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
+    element = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0]
     table = element.value
     assert table[RANK].iloc[0] == 1 and pd.isna(table[RANK].iloc[1])
     # The grid draws a missing value as None, and the tooltip says what it means.
     assert "None means" in (_tooltips(element).get(RANK) or "")
 
 
-def test_a_tab_without_retrieval_scores_has_no_full_metrics_section(tmp_path, monkeypatch):
+def test_an_answer_only_tab_keeps_its_table_in_full_metrics(tmp_path, monkeypatch):
     run = tmp_path / "answers"
     (run / "G1").mkdir(parents=True)
     (run / "summary.json").write_text(json.dumps({"configurations": [
@@ -631,8 +648,9 @@ def test_a_tab_without_retrieval_scores_has_no_full_metrics_section(tmp_path, mo
     (run / "G1" / "report.json").write_text(json.dumps({"results": [
         {"question_id": "manual", "route": "ollama",
          "answer": {"abstained": False, "latency_ms": 100}}]}), encoding="utf-8")
-    team = _results_page(monkeypatch, tmp_path).tabs[0]
-    assert team.dataframe and not team.expander
+    team, mechanical = _results_page(monkeypatch, tmp_path).tabs
+    assert _metric_tables(team)[0].value[REFUSED].tolist() == [0.0]
+    assert not any(item.label == "Full metrics" for item in mechanical.expander)
 
 
 def test_a_median_question_that_found_no_right_passage_ranks_past_every_number(
@@ -640,7 +658,7 @@ def test_a_median_question_that_found_no_right_passage_ranks_past_every_number(
     """Past the cutoff it sorts after every rank; the grid draws it blank, and
     the tooltip says what a blank means."""
     _scored_run(tmp_path, top_k=16, mrrs=(1.0, 0.0, 0.0))
-    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
+    element = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0]
     assert element.value[RANK].tolist() == [math.inf]
     assert "blank" in (_tooltips(element).get(RANK) or "")
     assert "top 16" in (_tooltips(element).get(RANK) or "")
@@ -649,19 +667,54 @@ def test_a_median_question_that_found_no_right_passage_ranks_past_every_number(
 def test_ndcg_and_mrr_are_kept_to_a_collapsed_full_metrics_section(tmp_path, monkeypatch):
     _scored_run(tmp_path, top_k=16, mrrs=(1.0, 0.5, 0.5))
     team = _results_page(monkeypatch, tmp_path).tabs[0]
-    assert not {"nDCG", "MRR"} & set(team.dataframe[0].value.columns)
+    assert not {"nDCG", "MRR"} & set(_metric_tables(team)[0].value.columns)
     full = [expander for expander in team.expander if expander.label == "Full metrics"]
     assert len(full) == 1 and not full[0].proto.expanded
-    table = full[0].dataframe[0].value
+    table = full[0].dataframe[-1].value
     assert list(table.columns) == [
         "Configuration", "Name", "Questions", "Relevance-scored", "Recall", "nDCG", "MRR",
         "Hard negatives", "Hard Negative Accuracy"]
     assert table["MRR"].tolist() == [pytest.approx(2 / 3)]
 
 
+def test_all_saved_metric_tables_follow_the_story_in_one_collapsed_section(tmp_path, monkeypatch):
+    _scored_run(tmp_path)
+    (tmp_path / "scored" / "answer-summary.json").write_text(json.dumps({
+        "configurations": {"C4": {"questions": 2, "quality": {
+            "correctness": {"mean": 0.75, "scored": 2}}}}}), encoding="utf-8")
+    app = _results_page(monkeypatch, tmp_path)
+    team = app.tabs[0]
+    tables = _metric_tables(team)
+    assert len(tables) == 4
+    summary, models, quality, raw = [item.value for item in tables]
+    assert summary["Right passages found in the top 16"].tolist() == [1.0]
+    assert summary[RANK].tolist() == [2.0]
+    assert models["Typical answer time (ms)"].tolist() == [500]
+    assert models[REFUSED].tolist() == [0.5]
+    assert quality["Correctness"].tolist() == [0.75]
+    assert quality["Correctness scored"].tolist() == [2]
+    assert raw["nDCG"].tolist() == [pytest.approx(2 / 3)]
+    assert raw["MRR"].tolist() == [pytest.approx(2 / 3)]
+    assert raw["Hard Negative Accuracy"].tolist() == [0.5]
+    # Charts, breakdown and before/after remain the story. No metric table
+    # may be copied outside Full metrics or silently replace a story table.
+    elements = list(team)
+    full_index = next(i for i, item in enumerate(elements)
+                      if item.type == "expander" and item.label == "Full metrics")
+    chart = team.get("vega_lite_chart")[0]
+    assert any(item is chart for item in elements[:full_index])
+    assert all(next(i for i, item in enumerate(elements) if item is table) > full_index
+               for table in tables)
+    metric_columns = {"nDCG", "MRR", "Typical answer time (ms)", "Correctness",
+                      "Right passages found in the top 16"}
+    for table in team.dataframe:
+        if metric_columns & set(table.value.columns):
+            assert any(table is hidden for hidden in tables)
+
+
 def test_hard_negative_accuracy_and_the_counts_beside_it_read_in_plain_words(tmp_path, monkeypatch):
     _scored_run(tmp_path, top_k=16)
-    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[0]
+    element = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[0]
     table, tips = element.value, _tooltips(element)
     assert list(table.columns) == [
         "Configuration", "Name", "Right passages found in the top 16", RANK, NOT_FOOLED,
@@ -674,7 +727,7 @@ def test_hard_negative_accuracy_and_the_counts_beside_it_read_in_plain_words(tmp
 
 def test_the_answer_model_table_reads_in_plain_words(tmp_path, monkeypatch):
     _scored_run(tmp_path)
-    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[1]
+    element = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[1]
     table, tips = element.value, _tooltips(element)
     assert {REFUSED, "Typical answer time (ms)",
             "Answered by the language model"} <= set(table.columns)
@@ -698,7 +751,7 @@ def test_every_answer_quality_column_explains_itself_in_a_tooltip(tmp_path, monk
         "citation_recall")}
     (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
         "questions": 2, "checks": {"not_run": 3}, "quality": quality}}}), encoding="utf-8")
-    element = _results_page(monkeypatch, tmp_path).tabs[0].dataframe[1]
+    element = _metric_tables(_results_page(monkeypatch, tmp_path).tabs[0])[1]
     tips = _tooltips(element)
     assert "Citation precision" in element.value.columns
     assert [column for column in element.value.columns[2:] if not tips.get(column)] == []
