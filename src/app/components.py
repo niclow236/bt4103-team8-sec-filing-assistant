@@ -271,18 +271,10 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
     if not retrieval and model_table.empty and quality.empty:
         st.info("No saved results for this benchmark.")
         return False
-    top_k = _cutoff(run)
-    if retrieval:
-        _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
-    # #202's table keeps the scores in plain words; its bars of the same three
-    # metrics give way to one chart of one of them (#166).
+    # Lead with the visual summary; exact tables remain below the story (#171).
     _render_found_chart(run, benchmark, outcomes)
-    if not model_table.empty:
-        st.subheader("Answer-model ablation")
-        _plain_dataframe(model_table, top_k)
     if not quality.empty:
         st.subheader("Answer quality")
-        _plain_dataframe(quality, top_k)
         quality_chart = report.quality_chart_rows(run, benchmark)
         if quality_chart:
             st.bar_chart(pd.DataFrame(quality_chart).pivot(
@@ -515,11 +507,26 @@ def _render_breakdown(run: Mapping[str, Any], benchmark: str,
                          column_config={"Score": _SCORE_BAR}, width="stretch", hide_index=True)
 
 
-def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> None:
-    """The retrieval table under the report's own names, nDCG and MRR among
-    them, collapsed below the rest of the tab (#164, #171)."""
-    if retrieval:
-        with st.expander("Full metrics"):
+def _render_full_metrics(retrieval: list[dict[str, Any]], run: Mapping[str, Any],
+                         benchmark: str) -> None:
+    """Keep every saved metric table, collapsed below the story (#171)."""
+    model_table = _results_model_table(run["configurations"], benchmark)
+    quality = pd.DataFrame(report.answer_quality_table(run, benchmark))
+    if not retrieval and model_table.empty and quality.empty:
+        return
+    top_k = _cutoff(run)
+    with st.expander("Full metrics", expanded=False):
+        if retrieval:
+            st.subheader("Retrieval summary")
+            _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
+        if not model_table.empty:
+            st.subheader("Answer-model ablation")
+            _plain_dataframe(model_table, top_k)
+        if not quality.empty:
+            st.subheader("Answer quality metrics")
+            _plain_dataframe(quality, top_k)
+        if retrieval:
+            st.subheader("All retrieval metrics")
             st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
 
 
@@ -669,7 +676,7 @@ def render_results(runs: list[dict[str, Any]], *,
             if saved:
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
-                _render_full_metrics(matching, kind)
+                _render_full_metrics(matching, selected, kind)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
