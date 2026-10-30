@@ -309,7 +309,7 @@ def _headline_value(tile: headlines.Headline) -> str:
     """Counts stay counts, correctness stays a mean, milliseconds become seconds."""
     if tile.count is not None:
         return f"{tile.count} of {tile.scored}"
-    return f"{tile.value:.2f} s" if tile.key == "latency" else f"{tile.value:.2f} / 1"
+    return f"{tile.value:.2f}" if tile.key == "latency" else f"{tile.value:.2f} / 1"
 
 
 def _headline_delta(tile: headlines.Headline) -> str | None:

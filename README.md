@@ -1990,7 +1990,10 @@ headline tiles precede the tables for the app's default configuration
 questions finding a right passage in the top 10 (not mean Recall), mean answer
 correctness out of 1 (partial credit, never a count of correct answers), actual
 refusals, and median saved generation-call time in seconds. Time excludes
-retrieval and judging; refusal rate alone does not measure a correct decision.
+retrieval and judging, and zero-time refusals made before calling a model.
+Timed model refusals and genuine zero-time answers still count. The time
+unit appears in the label and delta, not twice in the label and value.
+Refusal rate alone does not measure a correct decision.
 Missing measures are hidden, while a real zero is displayed. C0 deltas require
 exactly the same scored question IDs for that measure; proportions use
 percentage points, correctness uses score units and latency uses seconds.

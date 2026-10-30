@@ -64,7 +64,7 @@ def test_headlines_render_before_tables_with_help_deltas_and_ten_icons(tmp_path,
     metrics = _metrics(app.tabs[0])
     assert {label: item.value for label, item in metrics.items()} == {
         breakdown.FOUND.title: "2 of 3", "Answer correctness (0–1)": "0.75 / 1",
-        "Refused rather than guessed": "1 of 3", "Typical answer time (s)": "2.00 s"}
+        "Refused rather than guessed": "1 of 3", "Typical answer time (s)": "2.00"}
     assert metrics[breakdown.FOUND.title].delta == "+33.3 pp vs C0"
     assert metrics["Answer correctness (0–1)"].delta == "+0.25 vs C0"
     assert metrics["Typical answer time (s)"].delta == "-4.00 s vs C0"
@@ -130,10 +130,39 @@ def test_actual_zero_latency_is_available(tmp_path):
     assert _tiles(tmp_path)["latency"].value == 0
 
 
+def test_a_refusal_that_called_no_model_has_no_answer_time(tmp_path):
+    """The harness saves 0 ms for a refusal made before any model call."""
+    _save_run(tmp_path, {"C4": {"answers": [_answer("q1", 1, latency=3000),
+                                            _answer("q2", 0, abstained=True, latency=0)]}})
+    tiles = _tiles(tmp_path)
+    assert tiles["latency"].value == 3 and tiles["latency"].scored == 1
+    assert tiles["refused"].count == 1
+
+
+def test_only_zero_time_refusals_hide_the_time_tile(tmp_path, monkeypatch):
+    _save_run(tmp_path, {"C4": {"answers": [_answer("q1", 0, abstained=True, latency=0)]}})
+    metrics = _metrics(_open(monkeypatch, tmp_path).tabs[0])
+    assert "Typical answer time (s)" not in metrics
+    assert metrics["Refused rather than guessed"].value == "1 of 1"
+
+
+def test_model_declines_are_timed_but_untimed_refusals_do_not_affect_the_delta(tmp_path, monkeypatch):
+    _save_run(tmp_path, {
+        "C0": {"answers": [_answer("q1", 0, abstained=True, latency=5000),
+                           _answer("q2", 0, abstained=True, latency=0)]},
+        "C4": {"answers": [_answer("q1", 0, abstained=True, latency=3000),
+                           _answer("q2", 0, abstained=True, latency=0)]}})
+    tile = _tiles(tmp_path)["latency"]
+    assert tile.value == 3 and tile.delta == -2 and tile.scored == 1
+    metric = _metrics(_open(monkeypatch, tmp_path).tabs[0])["Typical answer time (s)"]
+    assert metric.value == "3.00" and metric.delta == "-2.00 s vs C0"
+    assert "Based on 1 scored questions" in metric.proto.help
+
+
 def test_answer_observations_without_retrieval_do_not_claim_no_results(tmp_path, monkeypatch):
     _save_run(tmp_path, {"C4": {"answers": [_answer("q1", 0.5, latency=0)]}})
     app = _open(monkeypatch, tmp_path)
-    assert _metrics(app.tabs[0])["Typical answer time (s)"].value == "0.00 s"
+    assert _metrics(app.tabs[0])["Typical answer time (s)"].value == "0.00"
     assert not any("No saved results" in info.value for info in app.tabs[0].info)
 
 
@@ -216,4 +245,6 @@ def test_headlines_precede_the_merged_worked_example(tmp_path, monkeypatch):
     first_metric = next(index for index, item in enumerate(elements) if item.type == "metric")
     worked_example = next(index for index, item in enumerate(elements)
                           if item.type == "subheader" and item.value == "Worked Example")
-    assert first_metric < worked_example
+    failure_example = next(index for index, item in enumerate(elements)
+                           if item.type == "markdown" and item.value == "### Failure example")
+    assert first_metric < worked_example < failure_example

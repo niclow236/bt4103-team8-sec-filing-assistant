@@ -376,8 +376,12 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         answer = answer if isinstance(answer, dict) else {}
         abstained = answer.get("abstained")
         latency = answer.get("latency_ms")
+        # The harness saves 0 ms for a refusal before any model call: there
+        # is no generation call to time. A timed model decline still counts,
+        # as does an answered row whose saved time is genuinely zero.
         valid_latency = (isinstance(latency, (int, float)) and not isinstance(latency, bool)
-                         and 0 <= latency <= float_info.max)
+                         and 0 <= latency <= float_info.max
+                         and not (abstained is True and latency == 0))
         outcomes[str(question_id)] = outcome._replace(
             correctness=saved_score(correctness),
             abstained=abstained if isinstance(abstained, bool) else None,
