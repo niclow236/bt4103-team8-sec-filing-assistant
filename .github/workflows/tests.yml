@@ -5,6 +5,8 @@
 # Face Hub, unauthenticated, to check the table budget against the real encoder
 # (#64). A runner that cannot download it fails that test rather than skipping
 # it, so a Hub outage shows up as a red check rather than as 1 skipped.
+# Likewise the case-variant --out test fails here, rather than skipping, without
+# the case-insensitive folder the job mounts for it.
 name: tests
 
 on:
@@ -57,6 +59,22 @@ jobs:
 
       - name: Install the pinned dependencies
         run: python -m pip install -r requirements.txt
+
+      # The results report's --out guard compares folders by file identity, so
+      # that on a case-insensitive filesystem results/MATRIX/report is still
+      # inside the run results/matrix. The runner's ext4 is case-sensitive, and
+      # a symlink is no stand-in, since realpath resolves it, so this mounts a
+      # small casefolded ext4 image for that test (#201).
+      - name: Make a case-insensitive folder
+        run: |
+          truncate -s 64M "$RUNNER_TEMP/casefold.img"
+          mkfs.ext4 -q -O casefold "$RUNNER_TEMP/casefold.img"
+          sudo mkdir /mnt/casefold
+          sudo mount -o loop "$RUNNER_TEMP/casefold.img" /mnt/casefold
+          sudo mkdir /mnt/casefold/tmp
+          sudo chattr +F /mnt/casefold/tmp
+          sudo chown "$(id -u):$(id -g)" /mnt/casefold/tmp
+          echo "CASE_INSENSITIVE_DIR=/mnt/casefold/tmp" >> "$GITHUB_ENV"
 
       - name: Run the suite
         run: python -m pytest

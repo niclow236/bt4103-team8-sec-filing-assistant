@@ -326,7 +326,11 @@ Hugging Face Hub. On a laptop that cannot download it the test skips, since
 there is nothing to count against. In CI it fails instead, because there a
 skip would leave both checks green with the regression it guards (#64)
 unchecked (#143). `CI` is what tells the two apart, and GitHub Actions sets it
-on every runner.
+on every runner. The same goes for the test of a case-variant `--out` for the
+results report, which needs a folder that does not tell `MATRIX` from `matrix`:
+a Mac's default filesystem is one, a Linux one is not. Where it finds none, it
+skips on a laptop and fails in CI. CI's Linux jobs mount one for it and name it
+in `CASE_INSENSITIVE_DIR` (#201).
 
 What the suite holds in place, and where (#49):
 
