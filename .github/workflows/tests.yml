@@ -3,8 +3,11 @@
 #
 # One test reaches the network: it downloads the bge tokenizer from the Hugging
 # Face Hub, unauthenticated, to check the table budget against the real encoder
-# (#64). A runner that cannot download it fails that test rather than skipping
-# it, so a Hub outage shows up as a red check rather than as 1 skipped.
+# (#64). The job caches the tokenizer under ~/.cache/huggingface, keyed by the
+# embedding model it belongs to, so most runs restore it and never ask the Hub
+# (#200). A runner that misses the cache and cannot reach the Hub fails that
+# test rather than skipping it, so a Hub outage shows up as a red check rather
+# than as 1 skipped.
 # Likewise the case-variant --out test fails here, rather than skipping, without
 # the case-insensitive folder the job mounts for it.
 name: tests
@@ -75,6 +78,36 @@ jobs:
           sudo chattr +F /mnt/casefold/tmp
           sudo chown "$(id -u):$(id -g)" /mnt/casefold/tmp
           echo "CASE_INSENSITIVE_DIR=/mnt/casefold/tmp" >> "$GITHUB_ENV"
+
+      # Which tokenizer the cache is for. Read with sed rather than Python,
+      # since the key is wanted whether or not the dependencies installed, and
+      # the value is the one bge_token_counter passes to the Hub. Should the
+      # constant ever be written another way, the empty read stops the job
+      # here, rather than caching every model under one blank key.
+      - name: Name the tokenizer the cache holds
+        id: tokenizer
+        run: |
+          model=$(sed -n 's/^EMBED_MODEL = "\(.*\)"$/\1/p' src/retrieval/constants.py)
+          test -n "$model"
+          echo "embed-model=$model" >> "$GITHUB_OUTPUT"
+
+      # Restored before the suite and saved after it, by the action's own post
+      # step, on a miss. The key carries the embedding model's name, so moving
+      # EMBED_MODEL to another encoder misses this entry rather than restoring
+      # the tokenizer of the model the run is no longer using. No restore-keys
+      # for that reason: a prefix key would match the old model's entry, which
+      # is the one case this must not restore.
+      #
+      # Both Python jobs share the key, since the tokenizer file does not depend
+      # on the Python running it. On the first run after a model change they
+      # both miss and both download, and whichever finishes second logs that it
+      # could not reserve the key. That warning is the cache working: the entry
+      # the other job saved is the one both jobs restore from then on.
+      - name: Restore the tokenizer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-${{ runner.os }}-${{ steps.tokenizer.outputs.embed-model }}
 
       - name: Run the suite
         run: python -m pytest
