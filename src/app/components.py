@@ -1403,7 +1403,8 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
             key=key,
         )
         if config_id not in runs:
-            st.caption("No run under results/ has measured this configuration yet.")
+            st.caption("No run under results/ has measured this configuration as the app "
+                       "builds it yet.")
         if not STACKS[config_id].metadata_filter:
             st.caption("This configuration was measured without the metadata filter, so "
                        "it searches every filing and the filters above are not applied.")
@@ -1550,7 +1551,7 @@ def answer_track_record(runs: Sequence[Mapping[str, Any]],
                         outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]], *,
                         config_id: str, question_type: str, answer: Answer) -> None:
     """One line under an answer: how this configuration did on questions read
-    the same way, in the newest saved run that scored its answers (#168).
+    the same way, in the newest saved run that holds a record of them (#168).
 
     Nothing is drawn unless there is a figure worth standing behind: a saved
     run, this configuration's own questions in it, and enough of this type
@@ -1568,16 +1569,14 @@ def answer_track_record(runs: Sequence[Mapping[str, Any]],
     """
     if not runs or _writer(answer) == "facts" or answer.sub_questions:
         return
-    # Runs come newest first, and a retrieval-only run saved after the one
-    # that scored answers (a chunk or rerank sweep) has no answers to report.
-    newest = next((run for run in runs
-                   if config_id in breakdown.configurations_read(run, report.TEAM)
-                   and any(outcome.benchmark == report.TEAM and outcome.correctness is not None
-                           for outcome in outcomes(run["run_dir"], config_id).values())), None)
-    if newest is None:
-        return
-    record = breakdown.track_record(newest, report.TEAM, outcomes,
-                                    config_id=config_id, question_type=question_type)
+    # Runs come newest first, and one saved later can hold no record of this
+    # type: a retrieval sweep scored no answers, and a short run can score too
+    # few of them.
+    records = ((run, breakdown.track_record(run, report.TEAM, outcomes, config_id=config_id,
+                                            question_type=question_type))
+               for run in runs)
+    newest, record = next(((run, record) for run, record in records if record is not None),
+                          (None, None))
     if record is None:
         return
     # A mean, said as one. The judge scores an answer from 0 to 1 and gives

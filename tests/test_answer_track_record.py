@@ -212,6 +212,26 @@ def test_the_ask_page_says_nothing_for_a_type_with_no_record(tmp_path, monkeypat
     assert not _said(ui)
 
 
+def test_the_sidebar_does_not_deny_the_run_the_line_quotes(tmp_path, monkeypatch):
+    """Judged answers are saved by full-matrix runs alone, marked evaluation_only,
+    and the sidebar's list of measured configurations skips those runs. Beside a
+    line quoting one, the sidebar must not say that no run measured it."""
+    from src.stack import measured_runs
+
+    numeric_rows, numeric_answers = _typed("n", 12, "numeric", 0.75)
+    _save_run(tmp_path, {DEFAULT_STACK: {"questions": numeric_rows,
+                                         "answers": numeric_answers}}, evaluation_only=True)
+    # The sidebar's list leaves this run out, as _standing_in's empty list does.
+    assert not measured_runs(tmp_path)
+
+    ui = _ask(monkeypatch, tmp_path)
+    said = _said(ui)
+    assert said and "run run" in said[0]
+    sidebar = [caption.value for caption in ui.sidebar.caption]
+    assert ("No run under results/ has measured this configuration as the app builds "
+            "it yet.") in sidebar
+
+
 def test_a_retrieval_only_run_saved_later_does_not_hide_the_record(tmp_path, monkeypatch):
     """Runs are read newest first, and a chunk or rerank sweep saves no answers."""
     import os
@@ -224,3 +244,19 @@ def test_a_retrieval_only_run_saved_later_does_not_hide_the_record(tmp_path, mon
 
     said = _said(_ask(monkeypatch, tmp_path))
     assert said and "run run" in said[0]
+
+
+def test_a_short_scored_run_saved_later_does_not_hide_the_record(tmp_path, monkeypatch):
+    """A short run with a judge, saved later, can score too few of the type
+    for a record, while an older run still holds one."""
+    import os
+    import time
+
+    _run(tmp_path)
+    numeric_rows, numeric_answers = _typed("n", MIN_GROUP_QUESTIONS - 1, "numeric", 0.0)
+    later = _save_run(tmp_path, {DEFAULT_STACK: {"questions": numeric_rows,
+                                                 "answers": numeric_answers}}, name="later")
+    os.utime(later, (time.time() + 60, time.time() + 60))
+
+    said = _said(_ask(monkeypatch, tmp_path))
+    assert said and "run run" in said[0] and "0.75 out of 1" in said[0]

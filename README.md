@@ -2190,8 +2190,8 @@ pieces from #38.
 - `answer_summary(answer, config, seconds)` is the row above an answer.
 - `answer_track_record(runs, outcomes, config_id=..., question_type=..., answer=...)`
   is the line under one, saying how that configuration's answers to questions
-  read the same way scored in the newest saved run that scored its answers
-  (#168), so a retrieval-only sweep saved later does not hide it. It draws
+  read the same way scored in the newest saved run that holds a record of them
+  (#168), so a retrieval sweep or short run saved later does not hide it. It draws
   nothing unless there is a figure worth standing behind: a saved run, that
   configuration's own questions in it, and at least `MIN_GROUP_QUESTIONS` of the
   type among them. Nor under an answer the facts store wrote or one searched
