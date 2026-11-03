@@ -1,9 +1,8 @@
 """A saved run's scores split by question type and by difficulty (#170).
 
 The Results page shows each group's score beside its question count, and the
-Ask page's track record (#168) reads the same groups through
-:func:`default_breakdown`, so both pick the same configuration, the same
-benchmark's questions and the same scores. Nothing here reads files: the
+Ask page's track record (#168) scores its groups through :func:`group_scores`
+on the same questions, so both use one calculation. Nothing here reads files: the
 caller hands over a run's summary and its reader of one configuration's
 saved questions, as ``src/app/state.py`` provides them.
 """
@@ -79,12 +78,9 @@ FOUND = Measure(f"Found the right passage in the top {FOUND_WITHIN}", found)
 # right, so not "judged" correctness alone.
 CORRECTNESS = Measure("Answer correctness", attrgetter("correctness"))
 MEASURES = (FOUND, CORRECTNESS)
-# How the questions are split: the words a headline uses, and a question's
-# label. The type is named, because the Ask page's track record asks for that
-# grouping by name rather than taking whichever comes first (#168).
-TYPE_GROUPING = "question type"
+# How the questions are split: the words a headline uses, and a question's label.
 _QUESTION_TYPE = attrgetter("question_type")
-GROUPINGS = ((TYPE_GROUPING, _QUESTION_TYPE),
+GROUPINGS = (("question type", _QUESTION_TYPE),
              ("difficulty", attrgetter("difficulty")))
 
 
@@ -135,18 +131,17 @@ def _benchmark_questions(run: Mapping[str, Any], benchmark: str,
             if outcome.benchmark == benchmark]
 
 
-def configuration_breakdown(run: Mapping[str, Any], benchmark: str,
-                            outcomes: Callable[[str, str], Mapping[str, Any]],
-                            config_id: str) -> list[Split]:
-    """``config_id``'s questions on ``benchmark``, split by each grouping and
-    scored on each measure, in that order.
+def default_breakdown(run: Mapping[str, Any], benchmark: str,
+                      outcomes: Callable[[str, str], Mapping[str, Any]]) -> list[Split]:
+    """The default configuration's questions on ``benchmark``, split by each
+    grouping and scored on each measure, in that order.
 
     ``outcomes(run_dir, config_id)`` reads one configuration's saved
-    questions. Empty unless that configuration's questions on ``benchmark``
-    were read. A split with a single group, or with no question scored, is
-    left out, since it has no strong or weak side.
+    questions. Empty unless the default configuration's questions on
+    ``benchmark`` were read. A split with a single group, or with no question
+    scored, is left out, since it has no strong or weak side.
     """
-    questions = _benchmark_questions(run, benchmark, outcomes, config_id)
+    questions = _benchmark_questions(run, benchmark, outcomes, DEFAULT_STACK)
     if questions is None:
         return []
     splits = []
@@ -158,17 +153,9 @@ def configuration_breakdown(run: Mapping[str, Any], benchmark: str,
     return splits
 
 
-def default_breakdown(run: Mapping[str, Any], benchmark: str,
-                      outcomes: Callable[[str, str], Mapping[str, Any]]) -> list[Split]:
-    """The default configuration's breakdown, which is what the Results page
-    shows (#170)."""
-    return configuration_breakdown(run, benchmark, outcomes, DEFAULT_STACK)
-
-
 def track_record(run: Mapping[str, Any], benchmark: str,
                  outcomes: Callable[[str, str], Mapping[str, Any]], *,
-                 config_id: str, question_type: str,
-                 measure: Measure = CORRECTNESS) -> Group | None:
+                 config_id: str, question_type: str) -> Group | None:
     """How ``config_id`` scored on ``benchmark``'s ``question_type`` questions,
     for the Ask page's line under an answer of that type (#168).
 
@@ -177,9 +164,12 @@ def track_record(run: Mapping[str, Any], benchmark: str,
     scored, or too few were for the mean to mean anything -- the same cutoff
     the Results page marks a group too few to read at.
 
-    Scored through :func:`group_scores` on the same measure as the Results
-    page, so the line under an answer and the table there cannot score a
-    question differently. Not through :func:`configuration_breakdown`, which
+    Scored on answer correctness, through the :func:`group_scores` the Results
+    page scores that measure with, so the line under an answer and the table
+    there cannot score a question differently. Correctness and not a choice of
+    measure: the line the caller writes says "out of 1 for correctness", so a
+    second measure would need its own sentence rather than this one. Not
+    through :func:`default_breakdown`, which
     drops a grouping that holds one group: a run of numeric questions alone
     has nothing to compare on that page and still has a record to report
     here.
@@ -187,7 +177,7 @@ def track_record(run: Mapping[str, Any], benchmark: str,
     questions = _benchmark_questions(run, benchmark, outcomes, config_id)
     if questions is None:
         return None
-    for group in group_scores(questions, _QUESTION_TYPE, measure.score):
+    for group in group_scores(questions, _QUESTION_TYPE, CORRECTNESS.score):
         if group.name == question_type:
             return group if group.readable and group.score is not None else None
     return None

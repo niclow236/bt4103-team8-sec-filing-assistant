@@ -1566,25 +1566,30 @@ def answer_track_record(runs: Sequence[Mapping[str, Any]],
     Nothing under an answer the facts store wrote, or one searched filing by
     filing: a saved run measures every configuration with the facts route and
     per-filing search off, so its record is for model answers from one search.
+    Nothing under an abstention either, since there is no answer to trust.
     """
-    if not runs or _writer(answer) == "facts" or answer.sub_questions:
+    if not runs or _writer(answer) == "facts" or answer.sub_questions or answer.abstained:
         return
     # Runs come newest first, and one saved later can hold no record of this
     # type: a retrieval sweep scored no answers, and a short run can score too
-    # few of them.
+    # few of them. A run stopped part way is passed over too: it holds a prefix
+    # of the questions, so its mean is not the configuration's.
     records = ((run, breakdown.track_record(run, report.TEAM, outcomes, config_id=config_id,
                                             question_type=question_type))
-               for run in runs)
+               for run in runs if report.unanswered(run, config_id) is None)
     newest, record = next(((run, record) for run, record in records if record is not None),
                           (None, None))
     if record is None:
         return
     # A mean, said as one. The judge scores an answer from 0 to 1 and gives
-    # partial credit, so "right 20 of 28 times" is not a number this has.
+    # partial credit, so "right 20 of 28 times" is not a number this has. The
+    # model is named because the one picked in the sidebar need not be the one
+    # the run measured.
+    model = f"answered by {newest['answered_by']}, " if newest.get("answered_by") else ""
     st.caption(
         f":material/history: In testing, {config_id}'s answers to {record.name} questions "
         f"scored {record.score:.2f} out of 1 for correctness, averaged over "
-        f"{record.scored} scored answers (run {newest['run_id']}, team benchmark)."
+        f"{record.scored} scored answers (run {newest['run_id']}, {model}team benchmark)."
     )
 
 

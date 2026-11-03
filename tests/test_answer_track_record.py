@@ -4,14 +4,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from src.app.state import question_outcomes
-from src.evaluation.breakdown import (
-    CORRECTNESS,
-    FOUND,
-    MIN_GROUP_QUESTIONS,
-    configuration_breakdown,
-    default_breakdown,
-    track_record,
-)
+from src.evaluation.breakdown import MIN_GROUP_QUESTIONS, track_record
 from src.evaluation.report import TEAM, read_runs
 from src.stack import DEFAULT_STACK
 from tests.test_app_live import APP, _standing_in
@@ -37,10 +30,10 @@ def _run(root, *, numeric=12, factual=12, config_ids=(DEFAULT_STACK,), correctne
         for config_id in config_ids})
 
 
-def _record(root, *, config_id=DEFAULT_STACK, question_type="numeric", measure=CORRECTNESS):
+def _record(root, *, config_id=DEFAULT_STACK, question_type="numeric"):
     run = read_runs(root)[0]
     return track_record(run, TEAM, question_outcomes,
-                        config_id=config_id, question_type=question_type, measure=measure)
+                        config_id=config_id, question_type=question_type)
 
 
 # --- the calculation ------------------------------------------------------
@@ -94,33 +87,17 @@ def test_the_mechanical_benchmark_is_not_read_for_a_typed_record(tmp_path):
     assert _record(tmp_path) is None
 
 
-def test_the_default_breakdown_is_the_shared_one(tmp_path):
-    """#170's view and this line read the same function, so a question cannot
-    be scored one way on the Results page and another under an answer."""
-    _run(tmp_path)
-    run = read_runs(tmp_path)[0]
-    assert (default_breakdown(run, TEAM, question_outcomes)
-            == configuration_breakdown(run, TEAM, question_outcomes, DEFAULT_STACK))
-
-
-def test_another_measure_can_be_asked_for(tmp_path):
-    """Correctness is a judged mean; the top-10 rate is a count. The line uses
-    the first, and the second is here so that choice stays a choice."""
-    _run(tmp_path)
-    assert _record(tmp_path, measure=FOUND).score == pytest.approx(1.0)
-
-
 # --- on the page ----------------------------------------------------------
 
-def _ask(monkeypatch, root, question="What was Apple's total revenue in FY2024?"):
-    """Ask one question of the real page, answered by the stand-in stack the
-    live tests use, with ``root`` as the saved runs it reads."""
+def _ask(monkeypatch, root, question="What was Apple's total revenue in FY2024?", page=APP):
+    """Ask one question of ``page``, answered by the stand-in stack the live
+    tests use, with ``root`` as the saved runs it reads."""
     import src.app.state as state_module
     _standing_in(monkeypatch)
     state_module.result_runs.clear()
     state_module.question_outcomes.clear()
     monkeypatch.setattr(state_module, "result_runs", lambda: read_runs(root))
-    ui = AppTest.from_file(APP, default_timeout=30).run()
+    ui = AppTest.from_file(page, default_timeout=30).run()
     assert not ui.exception
     ui.text_input[0].set_value(question).run()
     ui.button[0].click().run()
@@ -176,7 +153,6 @@ def test_no_record_under_an_answer_searched_filing_by_filing(tmp_path, monkeypat
 def test_each_side_of_compare_carries_its_own_record(tmp_path, monkeypatch):
     """The two sides are different configurations. One record under both would
     credit one of them with the other's answers."""
-    import src.app.state as state_module
     from tests.test_compare_page import PAGE
 
     # The page opens on C1 against C4, which is what the fixture saves.
@@ -186,18 +162,9 @@ def test_each_side_of_compare_carries_its_own_record(tmp_path, monkeypatch):
                "answers": [_answer_row(f"n{index:02}", 0.10) for index in range(12)]},
         DEFAULT_STACK: {"questions": numeric,
                         "answers": [_answer_row(f"n{index:02}", 0.90) for index in range(12)]}})
-    _standing_in(monkeypatch)
-    state_module.result_runs.clear()
-    state_module.question_outcomes.clear()
-    monkeypatch.setattr(state_module, "result_runs", lambda: read_runs(tmp_path))
 
-    ui = AppTest.from_file(PAGE, default_timeout=30).run()
     # A numeric question, since that is the type the run holds a record for.
-    ui.text_input[0].set_value("What was Apple's total revenue in FY2024?").run()
-    ui.button[0].click().run()
-    assert not ui.exception
-
-    said = _said(ui)
+    said = _said(_ask(monkeypatch, tmp_path, page=PAGE))
     assert len(said) == 2, said
     assert "C1's answers" in said[0] and "0.10 out of 1" in said[0]
     assert f"{DEFAULT_STACK}'s answers" in said[1] and "0.90 out of 1" in said[1]
@@ -260,3 +227,60 @@ def test_a_short_scored_run_saved_later_does_not_hide_the_record(tmp_path, monke
 
     said = _said(_ask(monkeypatch, tmp_path))
     assert said and "run run" in said[0] and "0.75 out of 1" in said[0]
+
+
+def test_the_line_names_the_model_the_run_measured(tmp_path, monkeypatch):
+    """The sidebar can pick another model than the run was judged on, so the
+    line must say whose answers it is scoring."""
+    import json
+
+    run = _run(tmp_path)
+    (run / "answers-config.json").write_text(json.dumps(
+        {"generation": {"provider": "mistral", "model": "saved-model"}}), encoding="utf-8")
+
+    said = _said(_ask(monkeypatch, tmp_path))
+    assert said and "answered by saved-model" in said[0]
+
+
+def test_no_record_under_an_abstention(tmp_path, monkeypatch):
+    """There is no answer there to trust, however the type has scored."""
+    from dataclasses import replace
+
+    from tests.sample_answers import sample_answer
+    from tests.test_app_live import FakeStack
+
+    monkeypatch.setattr(FakeStack, "answer", lambda self, question, **overrides: replace(
+        sample_answer(question), abstained=True))
+    _run(tmp_path)
+    assert not _said(_ask(monkeypatch, tmp_path))
+
+
+def test_a_run_stopped_part_way_does_not_replace_the_record(tmp_path, monkeypatch):
+    """Answers are saved one at a time in a fixed order, so a stopped run holds a
+    prefix, and enough of a type can be scored for its mean to read as a record."""
+    import os
+    import time
+
+    from tests.test_results_report import _answer_row as _scorable_row
+
+    _run(tmp_path)
+    numeric_rows, _ = _typed("n", 28, "numeric", 0.0)
+    answers = [_scorable_row(f"n{index:02}", 1.0) for index in range(10)]
+    later = _save_run(tmp_path, {DEFAULT_STACK: {"questions": numeric_rows,
+                                                 "answers": answers}}, name="later")
+    os.utime(later, (time.time() + 60, time.time() + 60))
+
+    said = _said(_ask(monkeypatch, tmp_path))
+    assert said and "run run" in said[0] and "0.75 out of 1" in said[0]
+
+
+@pytest.mark.parametrize("saved", ["null", "5"])
+def test_a_malformed_run_folder_does_not_break_the_ask_page(tmp_path, monkeypatch, saved):
+    """Ask now reads every run under results/ after the model has answered."""
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "summary.json").write_text('{"configurations": %s}' % saved, encoding="utf-8")
+    _run(tmp_path)
+
+    said = _said(_ask(monkeypatch, tmp_path))
+    assert said and "run run" in said[0]

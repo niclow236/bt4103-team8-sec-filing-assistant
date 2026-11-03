@@ -2196,7 +2196,9 @@ pieces from #38.
   configuration's own questions in it, and at least `MIN_GROUP_QUESTIONS` of the
   type among them. Nor under an answer the facts store wrote or one searched
   filing by filing, since a saved run measures every configuration with the
-  facts route and per-filing search off.
+  facts route and per-filing search off, under an abstention, or from a run
+  stopped part way. The line names the model that run measured, since the one
+  picked in the sidebar need not be it.
   The record is the configuration's own, not the default's, because the Compare
   page shows two configurations at once and the default's numbers under the
   other side's answer would be the wrong claim. It reads the team benchmark
