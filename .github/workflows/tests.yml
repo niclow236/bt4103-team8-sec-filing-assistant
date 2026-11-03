@@ -100,9 +100,11 @@ jobs:
       #
       # Both Python jobs share the key, since the tokenizer file does not depend
       # on the Python running it. On the first run after a model change they
-      # both miss and both download, and whichever finishes second logs that it
-      # could not reserve the key. That warning is the cache working: the entry
-      # the other job saved is the one both jobs restore from then on.
+      # both miss and both download, and whichever finishes second prints
+      # "Failed to save: Unable to reserve cache with key ..., another job may
+      # be creating this cache." Nothing failed: the other job saved the entry
+      # both jobs restore from then on. Seen on this branch's first run, where
+      # the 3.12 job saved it and the 3.10 job printed that line, both green.
       - name: Restore the tokenizer
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
