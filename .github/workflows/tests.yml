@@ -4,10 +4,12 @@
 # One test reaches the network: it downloads the bge tokenizer from the Hugging
 # Face Hub, unauthenticated, to check the table budget against the real encoder
 # (#64). The job caches the tokenizer under ~/.cache/huggingface, keyed by the
-# embedding model it belongs to, so most runs restore it and never ask the Hub
-# (#200). A runner that misses the cache and cannot reach the Hub fails that
-# test rather than skipping it, so a Hub outage shows up as a red check rather
-# than as 1 skipped.
+# embedding model it belongs to, so most runs restore it and download nothing
+# (#200). They still ask the Hub once whether the file changed, and use the
+# restored copy when that check is refused, rate-limited or unreachable. A
+# runner that misses the cache and cannot reach the Hub fails that test rather
+# than skipping it, so a Hub outage shows up as a red check rather than as 1
+# skipped.
 # Likewise the case-variant --out test fails here, rather than skipping, without
 # the case-insensitive folder the job mounts for it.
 name: tests
@@ -92,7 +94,8 @@ jobs:
           echo "embed-model=$model" >> "$GITHUB_OUTPUT"
 
       # Restored before the suite and saved after it, by the action's own post
-      # step, on a miss. The key carries the embedding model's name, so moving
+      # step, on a miss and only when the job passed (the action's post-if is
+      # success()). The key carries the embedding model's name, so moving
       # EMBED_MODEL to another encoder misses this entry rather than restoring
       # the tokenizer of the model the run is no longer using. No restore-keys
       # for that reason: a prefix key would match the old model's entry, which
