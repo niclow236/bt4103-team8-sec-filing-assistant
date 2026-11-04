@@ -60,20 +60,21 @@ _ITEM_MENTION = re.compile(
 
 
 # What each column of the Results page means to a user (#164), keyed by the
-# name ``report`` gives it, which the Full metrics section keeps: its label,
-# and a tooltip naming the technical metric, so an assessor can match it to
+# name ``report`` gives it (or the tile's own name for measures absent from
+# ``report``): its label and a tooltip naming the technical metric, so an assessor can match it to
 # the report. ``{top}`` and ``{at}`` are the cutoff the run scored at, as in
 # "in the top 16" and "Recall@16"; a run that saved none has neither.
 _RESULT_METRIC_LABELS = {
     breakdown.FOUND.title: (breakdown.FOUND.title,
                            "Count of questions with at least one supporting passage in the "
-                           "top 10, not mean Recall. Questions without labelled evidence or "
-                           "readable ranks are excluded."),
+                           f"top {breakdown.FOUND_WITHIN}, not mean Recall. Questions without "
+                           "labelled evidence or readable ranks are excluded."),
     "Headline correctness": ("Answer correctness (0–1)",
                              "Mean saved correctness score, including partial credit and "
                              "automatically scored abstentions; not a count of correct answers."),
-    "Headline latency": ("Typical answer time (s)",
-                         "Median of saved generation-call latencies in seconds."),
+    "Headline latency": ("Typical generation time (s)",
+                         "Median of saved generation-call latencies in seconds. Leaves out "
+                         "answers that called no model, unlike the table's answer time."),
     "Relevance-scored": ("Questions with a right passage",
                          "How many of the questions name a passage that answers them: "
                          "the scores of finding it are worked out over these."),
@@ -316,10 +317,12 @@ def _headline_delta(tile: headlines.Headline) -> str | None:
     """A same-cohort C0 difference, with units that match the displayed measure."""
     if tile.delta is None:
         return None
-    if tile.key in {"found", "refused"}:
-        return f"{tile.delta * 100:+.1f} pp vs {breakdown.BASELINE}"
-    unit = " s" if tile.key == "latency" else ""
-    return f"{tile.delta:+.2f}{unit} vs {breakdown.BASELINE}"
+    points = tile.key in {"found", "refused"}
+    shown, digits = (tile.delta * 100, 1) if points else (tile.delta, 2)
+    unit = " pp" if points else " s" if tile.key == "latency" else ""
+    # st.metric reads direction from the string's sign, so a tie carries none.
+    number = f"{0:.{digits}f}" if round(shown, digits) == 0 else f"{shown:+.{digits}f}"
+    return f"{number}{unit} vs {breakdown.BASELINE}"
 
 
 def _headline_icons(tile: headlines.Headline) -> str:
@@ -333,9 +336,9 @@ def _headline_icons(tile: headlines.Headline) -> str:
     for index in range(10):
         filled = min(1.0, max(0.0, tile.value * 10 - index)) * 100
         icons.append('<span aria-hidden="true" style="display:inline-block;'
-                     'width:1.1rem;height:1.1rem;border:1px solid #6b7280;'
+                     f'width:1.1rem;height:1.1rem;border:1px solid {_FOUND_COLOURS["other"]};'
                      'border-radius:50%;margin-right:0.25rem;'
-                     f'background:linear-gradient(to right,#3b82f6 {filled:.2f}%,'
+                     f'background:linear-gradient(to right,{_FOUND_COLOURS["default"]} {filled:.2f}%,'
                      f'transparent {filled:.2f}%);"></span>')
     label = (f"Found a right passage in the top {breakdown.FOUND_WITHIN} for "
              f"{tile.count} of {tile.scored} scored questions. Ten circles show the proportion.")
@@ -360,17 +363,22 @@ def _render_headlines(run: Mapping[str, Any], benchmark: str,
             heading = headings[_HEADLINE_COLUMNS[tile.key]]
             help_text = heading.tooltip + f" Based on {tile.scored} scored questions."
             if tile.delta is None:
-                help_text += " No C0 delta: matching per-question observations are unavailable."
+                help_text += " No C0 delta: scored question IDs differ or matching observations are unavailable."
             else:
                 help_text += " Compared with C0 on exactly the same scored question IDs; pp means percentage points."
             if tile.key == "latency":
                 help_text += " Saved generation-call time only; excludes retrieval and judging, not end-to-end latency."
             if tile.key == "refused":
                 help_text += " A refusal is not necessarily the correct decision; a higher rate is not inherently better."
+            delta = _headline_delta(tile)
+            tied = delta is not None and delta[0] not in "+-"
             with column:
-                st.metric(heading.label, _headline_value(tile), delta=_headline_delta(tile),
-                          delta_color="off" if tile.key == "refused" else
-                          "inverse" if tile.key == "latency" else "normal", help=help_text)
+                st.metric(heading.label, _headline_value(tile), delta=delta,
+                          delta_color="off" if tied or tile.key == "refused" else
+                          "inverse" if tile.key == "latency" else "normal",
+                          delta_arrow="off" if tied else "auto", help=help_text)
+                if tile.count is None:
+                    st.caption(f"Over {tile.scored} scored questions")
         found = next((tile for tile in tiles if tile.key == "found"), None)
         if found is not None:
             st.html(_headline_icons(found))

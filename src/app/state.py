@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 import streamlit as st
 
 from src.pipeline.chunk import iter_chunks
-from src.rag.constants import DEFAULT_PROVIDER, PROVIDERS
+from src.rag.constants import DEFAULT_PROVIDER, FACTS_PROVIDER, PROVIDERS
 from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
 from src.stack import DEFAULT_STACK, RESULTS_ROOT, build_stack, measured_runs
 
@@ -378,10 +378,12 @@ def question_outcomes(run_dir: str, config_id: str) -> dict[str, QuestionOutcome
         latency = answer.get("latency_ms")
         # The harness saves 0 ms for a refusal before any model call: there
         # is no generation call to time. A timed model decline still counts,
-        # as does an answered row whose saved time is genuinely zero.
+        # as does an answered row whose saved time is genuinely zero. A facts
+        # lookup calls no model at all, so its measured time is not one either.
         valid_latency = (isinstance(latency, (int, float)) and not isinstance(latency, bool)
                          and 0 <= latency <= float_info.max
-                         and not (abstained is True and latency == 0))
+                         and not (abstained is True and latency == 0)
+                         and row.get("route") != FACTS_PROVIDER)
         outcomes[str(question_id)] = outcome._replace(
             correctness=saved_score(correctness),
             abstained=abstained if isinstance(abstained, bool) else None,

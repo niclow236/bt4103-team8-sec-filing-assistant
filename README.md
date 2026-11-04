@@ -1990,13 +1990,21 @@ headline tiles precede the tables for the app's default configuration
 questions finding a right passage in the top 10 (not mean Recall), mean answer
 correctness out of 1 (partial credit, never a count of correct answers), actual
 refusals, and median saved generation-call time in seconds. Time excludes
-retrieval and judging, and zero-time refusals made before calling a model.
+retrieval and judging, facts lookups, and zero-time refusals made before calling
+a model.
 Timed model refusals and genuine zero-time answers still count. The time
 unit appears in the label and delta, not twice in the label and value.
 Refusal rate alone does not measure a correct decision.
 Missing measures are hidden, while a real zero is displayed. C0 deltas require
 exactly the same scored question IDs for that measure; proportions use
 percentage points, correctness uses score units and latency uses seconds.
+The generation-time tile is distinct from the table's answer-time statistic,
+which also includes calls that did not reach a model. Mean and median tiles
+show their scored question count visibly. Exact ties and differences that round
+to zero are neutral, without a directional arrow. If excluding model-free rows
+leaves different timed question IDs for C0 and the default, the generation-time
+delta is omitted rather than comparing a smaller intersection; its tooltip
+explains why.
 A saved correctness summary can supply its mean and scored count, but cannot
 supply an ID-matched delta. Ten fractionally filled circles visualise the
 passage-found proportion alongside its exact accessible count.

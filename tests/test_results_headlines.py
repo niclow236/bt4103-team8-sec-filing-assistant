@@ -4,10 +4,12 @@ import json
 
 from bs4 import BeautifulSoup
 import pytest
+from streamlit.proto.Metric_pb2 import Metric as MetricProto
 
 from src.app import state
 from src.app.components import _headline_icons
 from src.evaluation import breakdown, headlines, report
+from src.rag.constants import FACTS_PROVIDER
 from tests.test_results_comparison import _answer_row, _open, _retrieval_row, _save_run
 
 
@@ -40,7 +42,7 @@ def _tiles(root, benchmark=report.TEAM):
 
 def _metrics(tab):
     labels = {breakdown.FOUND.title, "Answer correctness (0–1)",
-              "Refused rather than guessed", "Typical answer time (s)"}
+              "Refused rather than guessed", "Typical generation time (s)"}
     return {item.label: item for item in tab.metric if item.label in labels}
 
 
@@ -64,11 +66,11 @@ def test_headlines_render_before_tables_with_help_deltas_and_ten_icons(tmp_path,
     metrics = _metrics(app.tabs[0])
     assert {label: item.value for label, item in metrics.items()} == {
         breakdown.FOUND.title: "2 of 3", "Answer correctness (0–1)": "0.75 / 1",
-        "Refused rather than guessed": "1 of 3", "Typical answer time (s)": "2.00"}
+        "Refused rather than guessed": "1 of 3", "Typical generation time (s)": "2.00"}
     assert metrics[breakdown.FOUND.title].delta == "+33.3 pp vs C0"
     assert metrics["Answer correctness (0–1)"].delta == "+0.25 vs C0"
-    assert metrics["Typical answer time (s)"].delta == "-4.00 s vs C0"
-    assert "not end-to-end" in metrics["Typical answer time (s)"].proto.help
+    assert metrics["Typical generation time (s)"].delta == "-4.00 s vs C0"
+    assert "not end-to-end" in metrics["Typical generation time (s)"].proto.help
     assert all(item.proto.help for item in metrics.values())
     # Traversal order pins the tile section above the first table.
     kinds = [element.type for element in app.tabs[0]]
@@ -142,7 +144,7 @@ def test_a_refusal_that_called_no_model_has_no_answer_time(tmp_path):
 def test_only_zero_time_refusals_hide_the_time_tile(tmp_path, monkeypatch):
     _save_run(tmp_path, {"C4": {"answers": [_answer("q1", 0, abstained=True, latency=0)]}})
     metrics = _metrics(_open(monkeypatch, tmp_path).tabs[0])
-    assert "Typical answer time (s)" not in metrics
+    assert "Typical generation time (s)" not in metrics
     assert metrics["Refused rather than guessed"].value == "1 of 1"
 
 
@@ -154,7 +156,7 @@ def test_model_declines_are_timed_but_untimed_refusals_do_not_affect_the_delta(t
                            _answer("q2", 0, abstained=True, latency=0)]}})
     tile = _tiles(tmp_path)["latency"]
     assert tile.value == 3 and tile.delta == -2 and tile.scored == 1
-    metric = _metrics(_open(monkeypatch, tmp_path).tabs[0])["Typical answer time (s)"]
+    metric = _metrics(_open(monkeypatch, tmp_path).tabs[0])["Typical generation time (s)"]
     assert metric.value == "3.00" and metric.delta == "-2.00 s vs C0"
     assert "Based on 1 scored questions" in metric.proto.help
 
@@ -162,7 +164,7 @@ def test_model_declines_are_timed_but_untimed_refusals_do_not_affect_the_delta(t
 def test_answer_observations_without_retrieval_do_not_claim_no_results(tmp_path, monkeypatch):
     _save_run(tmp_path, {"C4": {"answers": [_answer("q1", 0.5, latency=0)]}})
     app = _open(monkeypatch, tmp_path)
-    assert _metrics(app.tabs[0])["Typical answer time (s)"].value == "0.00"
+    assert _metrics(app.tabs[0])["Typical generation time (s)"].value == "0.00"
     assert not any("No saved results" in info.value for info in app.tabs[0].info)
 
 
@@ -203,7 +205,7 @@ def test_icons_show_exact_count_accessibly_and_do_not_round_96_percent_to_all(tm
 
 def test_reload_and_switching_runs_refresh_the_headlines(tmp_path, monkeypatch):
     run = _fixture(tmp_path, name="first")
-    _save_run(tmp_path, {"C4": {"questions": [_retrieval_row("other", None)]}}, name="second")
+    _save_run(tmp_path, {"C4": {"questions": [_retrieval_row("other", 1)]}}, name="second")
     app = _open(monkeypatch, tmp_path)
     app.selectbox[0].select("first").run()
     assert _metrics(app.tabs[0])[breakdown.FOUND.title].value == "2 of 3"
@@ -214,7 +216,7 @@ def test_reload_and_switching_runs_refresh_the_headlines(tmp_path, monkeypatch):
     assert _metrics(app.tabs[0])[breakdown.FOUND.title].value == "0 of 1"
     app.selectbox[0].select("second").run()
     assert not app.exception
-    assert _metrics(app.tabs[0])[breakdown.FOUND.title].value == "0 of 1"
+    assert _metrics(app.tabs[0])[breakdown.FOUND.title].value == "1 of 1"
 
 
 @pytest.mark.parametrize("before,after,delta", [(1, 0, -1), (0, 1, 1), (0, 0, 0), (1, 1, 0)])
@@ -248,3 +250,87 @@ def test_headlines_precede_the_merged_worked_example(tmp_path, monkeypatch):
     failure_example = next(index for index, item in enumerate(elements)
                            if item.type == "markdown" and item.value == "### Failure example")
     assert first_metric < worked_example < failure_example
+
+
+def test_a_facts_lookup_has_no_generation_time(tmp_path):
+    """A facts-routed row calls no model, whatever time its lookup took."""
+    _save_run(tmp_path, {"C4": {"answers": [_answer("q1", 1, latency=3000),
+                                            _answer("q2", 1, latency=1, route=FACTS_PROVIDER)]}})
+    tile = _tiles(tmp_path)["latency"]
+    assert tile.value == 3 and tile.scored == 1
+
+
+def test_each_tile_shows_its_direction_colour_and_caveats(tmp_path, monkeypatch):
+    _fixture(tmp_path)
+    metrics = _metrics(_open(monkeypatch, tmp_path).tabs[0])
+    colours = {label: metric.proto.color for label, metric in metrics.items()}
+    assert colours == {breakdown.FOUND.title: MetricProto.MetricColor.GREEN,
+                       "Answer correctness (0–1)": MetricProto.MetricColor.GREEN,
+                       "Refused rather than guessed": MetricProto.MetricColor.GRAY,
+                       "Typical generation time (s)": MetricProto.MetricColor.GREEN}
+    assert "not inherently better" in metrics["Refused rather than guessed"].proto.help
+    assert "exactly the same scored question IDs" in metrics[breakdown.FOUND.title].proto.help
+
+
+def test_a_missing_baseline_says_why_there_is_no_delta(tmp_path, monkeypatch):
+    _save_run(tmp_path, {"C4": {"questions": [_retrieval_row("q1", 1)]}})
+    metric = _metrics(_open(monkeypatch, tmp_path).tabs[0])[breakdown.FOUND.title]
+    assert not metric.delta and "No C0 delta" in metric.proto.help
+
+
+def test_a_tie_with_the_baseline_shows_no_change(tmp_path, monkeypatch):
+    rows = {"questions": [_retrieval_row("q1", 1)], "answers": [_answer("q1", 0.5, latency=2000)]}
+    _save_run(tmp_path, {"C0": rows, "C4": rows})
+    metrics = _metrics(_open(monkeypatch, tmp_path).tabs[0])
+    assert {label: metric.delta for label, metric in metrics.items()} == {
+        breakdown.FOUND.title: "0.0 pp vs C0", "Answer correctness (0–1)": "0.00 vs C0",
+        "Refused rather than guessed": "0.0 pp vs C0", "Typical generation time (s)": "0.00 s vs C0"}
+    for metric in metrics.values():
+        assert metric.proto.color == MetricProto.MetricColor.GRAY
+        assert metric.proto.direction == MetricProto.MetricDirection.NONE
+
+
+def test_a_rounded_tie_shows_no_change_either(tmp_path, monkeypatch):
+    before = {"answers": [_answer("q1", 0.5, latency=2000)]}
+    after = {"answers": [_answer("q1", 0.5, latency=1999)]}
+    _save_run(tmp_path, {"C0": before, "C4": after})
+    metric = _metrics(_open(monkeypatch, tmp_path).tabs[0])["Typical generation time (s)"]
+    assert metric.delta == "0.00 s vs C0"
+    assert metric.proto.direction == MetricProto.MetricDirection.NONE
+
+
+def test_a_mean_tile_shows_its_denominator(tmp_path, monkeypatch):
+    _fixture(tmp_path)
+    captions = [caption.value for caption in _open(monkeypatch, tmp_path).tabs[0].caption]
+    assert "Over 3 scored questions" in captions
+
+
+def test_facts_only_run_hides_generation_time_but_keeps_answer_measures(tmp_path, monkeypatch):
+    _save_run(tmp_path, {"C4": {"answers": [
+        _answer("q1", 1, latency=1, route=FACTS_PROVIDER)]}})
+    metrics = _metrics(_open(monkeypatch, tmp_path).tabs[0])
+    assert "Typical generation time (s)" not in metrics
+    assert metrics["Answer correctness (0–1)"].value == "1.00 / 1"
+    assert metrics["Refused rather than guessed"].value == "0 of 1"
+
+
+def test_different_timed_cohorts_do_not_silently_compare_the_intersection(tmp_path, monkeypatch):
+    _save_run(tmp_path, {
+        "C0": {"answers": [_answer("q1", 1, latency=1000), _answer("q2", 1, latency=9000)]},
+        "C4": {"answers": [_answer("q1", 1, latency=3000),
+                           _answer("q2", 0, abstained=True, latency=0)]}})
+    tile = _tiles(tmp_path)["latency"]
+    assert tile.value == 3 and tile.scored == 1 and tile.delta is None
+    metric = _metrics(_open(monkeypatch, tmp_path).tabs[0])["Typical generation time (s)"]
+    assert metric.value == "3.00" and not metric.delta
+    assert "No C0 delta" in metric.proto.help
+
+
+def test_summary_only_correctness_shows_its_saved_denominator(tmp_path, monkeypatch):
+    run = _save_run(tmp_path, {"C4": {"questions": [_retrieval_row("q1", 1)]}})
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {"C4": {
+        "questions": 150, "quality": {"correctness": {"mean": 0.3145333, "scored": 150}}}}}),
+        encoding="utf-8")
+    tab = _open(monkeypatch, tmp_path).tabs[0]
+    assert _metrics(tab)["Answer correctness (0–1)"].value == "0.31 / 1"
+    assert "Over 150 scored questions" in [caption.value for caption in tab.caption]
