@@ -137,6 +137,39 @@ def test_diagnostic_subset_is_explicitly_recorded_without_claiming_the_decision_
     assert not declaration['required'] and not declaration['matches_decision_benchmark']
 
 
+def test_the_frozen_matrix_records_the_release_tag_it_was_produced_from(runner,checkout):
+    checkout.tag('v1.0')
+    matrix.retrieval(runner.args)
+    assert json.loads((runner.directory/'config.json').read_text())['provenance']['source_tag']=='v1.0'
+
+
+def test_the_matrix_summary_records_the_release_tag_its_rankings_were_measured_at(runner,checkout):
+    checkout.tag('v1.0')
+    matrix.retrieval(runner.args)
+    for table in ('summary.json','by-benchmark/summary.json'):
+        assert json.loads((runner.directory/table).read_text())['source_tag']=='v1.0'
+
+
+def test_resuming_a_complete_matrix_keeps_the_release_tag_it_was_measured_at(runner,checkout):
+    checkout.tag('v1.0')
+    matrix.retrieval(runner.args)
+    checkout.git('tag','-d','v1.0')
+    runner.args.resume=True
+    matrix.retrieval(runner.args)
+    assert json.loads((runner.directory/'summary.json').read_text())['source_tag']=='v1.0'
+
+
+def test_tagging_the_commit_while_the_matrix_is_interrupted_does_not_block_its_resume(runner,checkout):
+    runner.fail_after=1
+    with pytest.raises(OSError,match='interrupted measurement'):
+        matrix.retrieval(runner.args)
+    checkout.tag('v1.0')
+    runner.fail_after=None
+    runner.args.resume=True
+    matrix.retrieval(runner.args)
+    assert json.loads((runner.directory/'summary.json').read_text())['source_tag'] is None
+
+
 @pytest.mark.parametrize('count',[0,1])
 def test_retrieval_runs_and_resumes_the_actual_transaction_loop(runner,count):
     runner.fail_after=count
@@ -553,6 +586,25 @@ def test_answer_resume_allows_os_path_and_workload_changes_but_records_them(answ
     assert runtime['source']['corpus']['processed_dir']==str(state.args.processed_dir)
     assert runtime['workload_note']==state.args.workload_note
     assert runtime['configurations']==list(matrix.MATRIX)
+
+
+def test_a_rescored_matrix_records_the_release_tag_its_rankings_were_measured_at(checkout,runner):
+    checkout.tag('v1.0')
+    matrix.retrieval(runner.args)
+    checkout.git('tag','-d','v1.0')
+    for cid in matrix.MATRIX:
+        matrix.write_rows(runner.directory/cid/'answers.jsonl',[answer_row(q) for q in runner.questions])
+    matrix.rescore(SimpleNamespace(run_dir=runner.directory,configurations=None))
+    assert json.loads((runner.directory/'rescored/summary.json').read_text())['source_tag']=='v1.0'
+
+
+def test_tagging_the_commit_between_answer_segments_does_not_block_their_resume(checkout,answer_run):
+    state=answer_run
+    matrix.answers(state.args)
+    checkout.tag('v1.0')
+    matrix.answers(state.args)
+    assert json.loads((state.args.run_dir/'answers-config.json').read_text())['source']['source_tag'] is None
+    assert json.loads((state.args.run_dir/'answers-runtime-0001.json').read_text())['source']['source_tag']=='v1.0'
 
 
 @pytest.mark.parametrize('answer_run',[

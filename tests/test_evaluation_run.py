@@ -101,6 +101,61 @@ def test_run_ablation_writes_all_rows_and_summary_table(tmp_path):
         assert len(list(csv.DictReader(stream))) == 5
 
 
+def test_a_run_records_the_release_tag_it_was_produced_from(tmp_path, checkout):
+    checkout.tag("v1.0")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0"
+
+
+def test_a_run_from_a_commit_after_the_tag_records_none(tmp_path, checkout):
+    checkout.tag("v1.0")
+    checkout.commit()
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] is None
+
+
+def test_a_run_from_an_edited_tagged_checkout_records_the_tag_as_dirty(tmp_path, checkout):
+    checkout.tag("v1.0")
+    checkout.edit()
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0-dirty"
+
+
+def test_a_data_snapshot_tag_is_not_taken_for_a_release_tag(tmp_path, checkout):
+    checkout.tag("data/evaluation-v1")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] is None
+
+
+def test_a_tag_made_while_a_run_is_going_is_not_credited_to_it(tmp_path, checkout):
+    class TaggingRetriever(FakeRetriever):
+        def search(self, query, k=None):
+            if not checkout_tagged:
+                checkout.tag("v1.0")
+                checkout_tagged.append(True)
+            return super().search(query, k)
+
+    checkout_tagged = []
+    retrievers = {config_id: TaggingRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert checkout_tagged
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] is None
+
+
 def test_rerunning_an_existing_run_id_is_refused(tmp_path):
     retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
     run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)

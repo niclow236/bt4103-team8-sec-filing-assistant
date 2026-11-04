@@ -406,6 +406,9 @@ def _comparable_manifest(manifest: dict) -> dict:
     # original note in config and record the new one in runtime history.
     provenance = result["provenance"]
     provenance.pop("workload_note", None)
+    # A tag names the commit, which source_commit already pins, so tagging it
+    # while a run is interrupted does not stop the run resuming (#50).
+    provenance.pop("source_tag", None)
     provenance.get("environment", {}).pop("platform", None)
     provenance.get("corpus", {}).pop("processed_dir", None)
     if "inputs" in provenance:

@@ -34,6 +34,16 @@ def _git(*args: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def source_tag() -> str | None:
+    """The release tag on the checked-out commit, or None when it carries none (#50).
+
+    Edits to committed files that are not committed yet add ``-dirty``, since
+    the code that ran is then not quite the tagged code. Tags under ``data/``
+    name releases of the evaluation data, not of the code, and are passed over.
+    """
+    return _git("describe", "--tags", "--exact-match", "--dirty", "--exclude", "data/*")
+
+
 def corpus_records_sha256(chunks: Sequence[dict]) -> str:
     """Fingerprint text and metadata, including the gold evidence's scope."""
     return hashlib.sha256(json.dumps(
@@ -77,6 +87,7 @@ def record_provenance(
             packages[package] = None
     return {
         "source_commit": _git("rev-parse", "HEAD"),
+        "source_tag": source_tag(),
         "source_files_sha256": {
             path.relative_to(PROJECT_ROOT).as_posix(): sha256(path)
             for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))

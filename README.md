@@ -2671,8 +2671,15 @@ G3 needs `SOCLAAS_API_KEY`.
 
 Each run writes `report.json` for each configuration and a `summary.csv` and
 `summary.json` under `results/<run-id>/`. C, E and G runners share the table
-writer and JSON format (`run_id`, `top_k`, `configurations` with configuration
-objects). Model-specific columns extend the common C-row columns. Reports
+writer and JSON format (`run_id`, `top_k`, `source_tag`, `configurations` with
+configuration objects). Model-specific columns extend the common C-row columns.
+`source_tag` names the release tag on the commit the run started from, so a
+number in the report can be traced to the code that produced it (#50). It is
+read when the run starts, not when it ends; it ends in `-dirty` when committed
+files had uncommitted edits, and it is `null` when the commit carries no tag.
+Tags under `data/` name evaluation-data releases and are not counted. The full
+matrix and the C5 reference also freeze it in `config.json`, beside
+`source_commit`. Reports
 retain retrieved chunk IDs and scores for inspection and rescoring. A missing
 index or key fails before any question is measured or run directory is created.
 A stopped or interrupted provider run saves completed answers, its stop reason

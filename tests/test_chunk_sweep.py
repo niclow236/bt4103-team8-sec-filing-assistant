@@ -581,6 +581,16 @@ def test_narrowing_the_corpus_narrows_the_questions(sources, fake_model):
     assert all(build["n_filings"] == 1 for build in manifest["builds"])
 
 
+def test_a_sweep_records_the_release_tag_it_was_produced_from(sources, checkout):
+    checkout.tag("v1.0")
+
+    run_chunk_sweep(run_id="tagged", budgets=SIZES[:1], retrievers=["bm25"], per_filing=1,
+                    tickers=["aaa"], fiscal_years=[2024], **sources)
+
+    saved = json.loads((sources["results_root"] / "tagged" / "summary.json").read_text())
+    assert saved["source_tag"] == "v1.0"
+
+
 def test_bm25_alone_encodes_nothing(sources, fake_model):
     manifest = run_chunk_sweep(
         run_id="keywords", budgets=SIZES, retrievers=["bm25"], per_filing=0, **sources)

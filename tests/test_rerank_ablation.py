@@ -471,6 +471,21 @@ def test_resume_allows_paths_and_os_build_to_change_but_preserves_history(tmp_pa
     assert json.loads((out / "config.json").read_text())["provenance"] == provenance
 
 
+def test_tagging_the_commit_while_a_run_is_interrupted_does_not_block_its_resume(tmp_path):
+    provenance = {"questions": 2, "source_commit": "abc", "source_tag": None,
+                  "inputs": [{"path": "x", "sha256": "same"}], "corpus": {"records_sha256": "same"},
+                  "environment": {"machine": "arm64", "packages": {"torch": "1"}}}
+    qs, pool, chunks, reranker, out = completed_run(tmp_path, provenance)
+    pairs = read_pairs(out / "pairs.jsonl.gz")
+    with gzip.open(out / "pairs.jsonl.gz", "wt") as stream:
+        stream.write(json.dumps(pairs[0]) + "\n")
+    tagged = {**deepcopy(provenance), "source_tag": "v1.0"}
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance=tagged, chunks=chunks,
+              top_k=2, resume=True)
+    assert len(read_pairs(out / "pairs.jsonl.gz")) == 2
+    assert json.loads((out / "config.json").read_text())["provenance"]["source_tag"] is None
+
+
 @pytest.mark.parametrize("field", ["input", "corpus", "package", "machine", "python"])
 def test_resume_still_refuses_changed_result_identity(tmp_path, field):
     provenance = {"questions": 2, "inputs": [{"path": "x", "sha256": "same"}],

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -176,6 +177,52 @@ def _no_local_settings(monkeypatch):
     _mistral_client.cache_clear()
     _ollama_client.cache_clear()
     _soclaas_client.cache_clear()
+
+
+class Checkout:
+    """A git repository of one committed file, for a run to read its source from."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.git("init", "-q")
+        (root / "code.py").write_text("measured = True\n")
+        self.git("add", "code.py")
+        self.git("commit", "-q", "-m", "measured code")
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    def tag(self, name: str) -> None:
+        self.git("tag", "-a", name, "-m", name)
+
+    def commit(self) -> None:
+        """Commit a change on top, so the checkout is no longer at its tag."""
+        (self.root / "code.py").write_text("measured = 'later'\n")
+        self.git("commit", "-q", "-am", "later code")
+
+    def edit(self) -> None:
+        """Leave a committed file changed, as a run started mid-edit would."""
+        (self.root / "code.py").write_text("measured = False\n")
+
+
+@pytest.fixture
+def checkout(tmp_path_factory, monkeypatch) -> Checkout:
+    """Point every git call at a fresh repository instead of this clone (#50).
+
+    A run reads its release tag from git, and the clone the tests run in has
+    whatever tags its owner made, so git is sent here through GIT_DIR and
+    GIT_WORK_TREE. The owner's own git settings are left out, so commit
+    signing or hooks set there do not run on these commits.
+    """
+    root = tmp_path_factory.mktemp("checkout")
+    for name, value in {
+        "GIT_DIR": str(root / ".git"), "GIT_WORK_TREE": str(root),
+        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.com",
+    }.items():
+        monkeypatch.setenv(name, value)
+    return Checkout(root)
 
 
 @pytest.fixture(autouse=True)
