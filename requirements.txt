@@ -23,8 +23,8 @@ chromadb==1.5.9
 # What the embedding and reranking models run on, and the arrays the scores come
 # back in. Both are installed as dependencies of sentence-transformers, which
 # accepts a range of each; pinned here at the versions the reported results were
-# measured with (results/*/config.json records both), since embed, rerank and
-# the C5 run use them directly (#50). numpy 2.3 and later need Python 3.11, so
+# measured with (docs/evaluation/full-matrix-20261021-manifest.json records
+# both), since embed, rerank and the C5 run use them directly (#50). numpy 2.3 and later need Python 3.11, so
 # 3.10 gets the last release that supports it. CI installs torch from PyTorch's
 # CPU index before this file, reading its version from the line below.
 torch==2.14.0
