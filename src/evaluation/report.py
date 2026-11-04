@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 from html import escape
 from math import inf, isnan
 from pathlib import Path
@@ -444,6 +445,12 @@ def unanswered(run: dict[str, Any], config_id: str) -> tuple[int, int] | None:
 def run_warnings(run: dict[str, Any]) -> list[str]:
     """What a reader must know before trusting a run's tables, page and report alike."""
     warnings = []
+    repeated = [config_id for config_id, count in
+                Counter(item["config_id"] for item in run["configurations"]).items() if count > 1]
+    if repeated:
+        warnings.append("Duplicate configuration IDs: " + ", ".join(repeated)
+                        + ". Full metrics keeps every table row; the answer-quality chart "
+                        "uses the first value per configuration and metric. Check the saved summary.")
     unsplit = [item["config_id"] for item in run["configurations"]
                if not keyed_as_tabs(item)]
     if unsplit:

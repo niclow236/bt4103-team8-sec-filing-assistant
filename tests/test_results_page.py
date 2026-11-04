@@ -20,9 +20,9 @@ REFUSED = "Refused rather than guessed"
 
 
 def _metric_tables(tab):
-    """Find saved metric tables within their collapsed section, not story tables."""
+    """Find saved metric tables within Full metrics, not story tables."""
     sections = [item for item in tab.expander if item.label == "Full metrics"]
-    assert len(sections) == 1 and not sections[0].proto.expanded
+    assert len(sections) == 1
     return sections[0].dataframe
 
 
@@ -235,6 +235,8 @@ def test_answer_model_only_run_shows_its_results_without_saying_there_are_none(t
     assert not app.exception and not app.info
     assert _metric_tables(app.tabs[0])[0].value[REFUSED].tolist() == [0.0]
     assert _metric_tables(app.tabs[1])[0].value[REFUSED].tolist() == [1.0]
+    assert all(item.proto.expanded for tab in app.tabs for item in tab.expander
+               if item.label == "Full metrics")
 
 
 def test_a_stopped_or_unreadable_run_says_its_scores_are_partial(tmp_path, monkeypatch):
@@ -269,7 +271,8 @@ def test_a_stopped_or_unreadable_run_says_its_scores_are_partial(tmp_path, monke
                  if item.type == "subheader" and item.value == "Worked Example")
     full = next(i for i, item in enumerate(elements)
                 if item.type == "expander" and item.label == "Full metrics")
-    assert picker < warning < story < full
+    # Examples may move below the tabs with #208; warnings precede both.
+    assert picker < warning < min(story, full)
 
 
 def test_rows_from_the_real_writer_split_by_their_saved_source(tmp_path):
@@ -710,6 +713,37 @@ def test_all_saved_metric_tables_follow_the_story_in_one_collapsed_section(tmp_p
     for table in team.dataframe:
         if metric_columns & set(table.value.columns):
             assert any(table is hidden for hidden in tables)
+
+
+def test_answer_quality_with_nothing_to_chart_leaves_no_empty_heading(tmp_path, monkeypatch):
+    _scored_run(tmp_path)
+    (tmp_path / "scored" / "answer-summary.json").write_text(json.dumps({"configurations": {
+        "C4": {"questions": 2, "checks": {"not_run": 2}}}}), encoding="utf-8")
+    team = _results_page(monkeypatch, tmp_path).tabs[0]
+    assert "Answer quality" not in [header.value for header in team.subheader]
+    assert _metric_tables(team)[2].value["Claim checks"].tolist() == ["not_run 2"]
+
+
+def test_duplicate_configurations_warn_without_hiding_metric_tables(tmp_path, monkeypatch):
+    _scored_run(tmp_path)
+    run = tmp_path / "scored"
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    manifest["configurations"].append(manifest["configurations"][0])
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run / "answer-summary.json").write_text(json.dumps({"configurations": {
+        "C4": {"questions": 2, "quality": {"correctness": {"mean": 0.75, "scored": 2}}}}}),
+        encoding="utf-8")
+    app = _results_page(monkeypatch, tmp_path)
+    warning = next(item for item in app.warning if "Duplicate configuration IDs: C4" in item.value)
+    assert "first value" in warning.value
+    tables = _metric_tables(app.tabs[0])
+    assert tables[0].value["Configuration"].tolist() == ["C4", "C4"]
+    assert tables[2].value["Correctness"].tolist() == [0.75, 0.75]
+    assert tables[-1].value["Configuration"].tolist() == ["C4", "C4"]
+    assert len(app.tabs[0].get("vega_lite_chart")) == 2
+    elements = list(app)
+    assert next(i for i, item in enumerate(elements) if item is warning) < next(
+        i for i, item in enumerate(elements) if item.type == "expander" and item.label == "Full metrics")
 
 
 def test_hard_negative_accuracy_and_the_counts_beside_it_read_in_plain_words(tmp_path, monkeypatch):
