@@ -168,7 +168,8 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
         return None
     rescored = _rescored_splits(run_dir / "rescored" / SUMMARY)
     configurations = []
-    for summary in manifest.get("configurations", ()):
+    saved = manifest.get("configurations")
+    for summary in saved if isinstance(saved, list) else ():
         if not isinstance(summary, dict):
             continue
         config = summary.get("config") or {}
@@ -222,7 +223,19 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
             answer_quality[config_id] = quality
     return {"run_id": run_dir.name, "run_dir": str(run_dir), "top_k": manifest.get("top_k"),
             "configurations": configurations,
-            "answer_quality": answer_quality, "unscored_answers": unscored}
+            "answer_quality": answer_quality, "unscored_answers": unscored,
+            "answered_by": _answered_by(run_dir / "answers-config.json")}
+
+
+def _answered_by(path: Path) -> str | None:
+    """The model a run's answers were written with, as it froze that setting."""
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    generation = saved.get("generation") if isinstance(saved, dict) else None
+    model = generation.get("model") if isinstance(generation, dict) else None
+    return model if isinstance(model, str) and model else None
 
 
 def _answered(path: Path) -> dict[str, Any] | None:
@@ -416,6 +429,18 @@ def keyed_as_tabs(item: dict[str, Any]) -> bool:
     return any(kind in item["benchmark_metrics"] for _, kind in BENCHMARKS)
 
 
+def unanswered(run: dict[str, Any], config_id: str) -> tuple[int, int] | None:
+    """(answered, retrieved) team questions where ``config_id``'s saved answers
+    stop short of the questions it retrieved for, otherwise None."""
+    for item in run["configurations"]:
+        if item["config_id"] == config_id:
+            answered = run.get("answer_quality", {}).get(config_id, {}).get("questions")
+            retrieved = item["benchmark_metrics"].get(TEAM, {}).get("questions")
+            if isinstance(answered, int) and isinstance(retrieved, int) and answered < retrieved:
+                return answered, retrieved
+    return None
+
+
 def run_warnings(run: dict[str, Any]) -> list[str]:
     """What a reader must know before trusting a run's tables, page and report alike."""
     warnings = []
@@ -432,20 +457,19 @@ def run_warnings(run: dict[str, Any]) -> list[str]:
     if partial:
         warnings.append("Incomplete results: " + ", ".join(partial)
                         + ". These scores are partial and are not comparable to a complete run.")
-    unanswered = []
+    short = []
     for item in run["configurations"]:
-        answered = run.get("answer_quality", {}).get(item["config_id"], {}).get("questions")
-        retrieved = item["benchmark_metrics"].get(TEAM, {}).get("questions")
-        if isinstance(answered, int) and isinstance(retrieved, int) and answered < retrieved:
-            unanswered.append(f"{item['config_id']} ({answered} of {retrieved} team questions answered)")
+        counts = unanswered(run, item["config_id"])
+        if counts:
+            short.append(f"{item['config_id']} ({counts[0]} of {counts[1]} team questions answered)")
     unscored = run.get("unscored_answers", [])
     if unscored:
         warnings.append("Unscored answers: " + ", ".join(unscored)
                         + ". Their answers.jsonl could not be read or scored, so their answer "
                         "quality is the saved answer-summary.json, which may be out of date, "
                         "or is not shown.")
-    if unanswered:
-        warnings.append("Incomplete answers: " + ", ".join(unanswered)
+    if short:
+        warnings.append("Incomplete answers: " + ", ".join(short)
                         + ". Their answer quality is partial and is not comparable to a complete run.")
     return warnings
 

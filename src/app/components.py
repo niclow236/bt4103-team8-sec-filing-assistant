@@ -1410,7 +1410,8 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
             key=key,
         )
         if config_id not in runs:
-            st.caption("No run under results/ has measured this configuration yet.")
+            st.caption("No run under results/ has measured this configuration as the app "
+                       "builds it yet.")
         if not STACKS[config_id].metadata_filter:
             st.caption("This configuration was measured without the metadata filter, so "
                        "it searches every filing and the filters above are not applied.")
@@ -1551,6 +1552,52 @@ def answer_summary(answer: Answer, config: StackConfig, seconds: float) -> None:
         # The first Ask of a process includes loading the indexes, and a
         # repeated question takes none.
         st.caption(f"Query completed in {seconds:.2f}s", width="content")
+
+
+def answer_track_record(runs: Sequence[Mapping[str, Any]],
+                        outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]], *,
+                        config_id: str, question_type: str, answer: Answer) -> None:
+    """One line under an answer: how this configuration did on questions read
+    the same way, in the newest saved run that holds a record of them (#168).
+
+    Nothing is drawn unless there is a figure worth standing behind: a saved
+    run, this configuration's own questions in it, and enough of this type
+    among them. The record is this configuration's, not the default's, since
+    on the Compare page the two sides are different configurations and the
+    default's numbers under the other side's answer would be the wrong claim.
+
+    The team benchmark only. The mechanical set is generated from the facts
+    store and is numeric throughout, so its record for a numeric question says
+    little about one a person typed.
+
+    Nothing under an answer the facts store wrote, or one searched filing by
+    filing: a saved run measures every configuration with the facts route and
+    per-filing search off, so its record is for model answers from one search.
+    Nothing under an abstention either, since there is no answer to trust.
+    """
+    if not runs or _writer(answer) == "facts" or answer.sub_questions or answer.abstained:
+        return
+    # Runs come newest first, and one saved later can hold no record of this
+    # type: a retrieval sweep scored no answers, and a short run can score too
+    # few of them. A run stopped part way is passed over too: it holds a prefix
+    # of the questions, so its mean is not the configuration's.
+    records = ((run, breakdown.track_record(run, report.TEAM, outcomes, config_id=config_id,
+                                            question_type=question_type))
+               for run in runs if report.unanswered(run, config_id) is None)
+    newest, record = next(((run, record) for run, record in records if record is not None),
+                          (None, None))
+    if record is None:
+        return
+    # A mean, said as one. The judge scores an answer from 0 to 1 and gives
+    # partial credit, so "right 20 of 28 times" is not a number this has. The
+    # model is named because the one picked in the sidebar need not be the one
+    # the run measured.
+    model = f"answered by {newest['answered_by']}, " if newest.get("answered_by") else ""
+    st.caption(
+        f":material/history: In testing, {config_id}'s answers to {record.name} questions "
+        f"scored {record.score:.2f} out of 1 for correctness, averaged over "
+        f"{record.scored} scored answers (run {newest['run_id']}, {model}team benchmark)."
+    )
 
 
 def trace_rows(answer: Answer) -> list[dict[str, object]]:
@@ -1824,6 +1871,7 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
 
 __all__ = [
     "abstention_notice", "answer_card", "answer_card_html", "answer_summary",
+    "answer_track_record",
     "comparison_evidence", "comparison_overlap", "comparison_rows",
     "configuration_picker", "corpus_passage", "corpus_passage_page", "corpus_picker",
     "CorpusSelection", "filter_sidebar", "passage_labels", "provider_error", "provider_message",
