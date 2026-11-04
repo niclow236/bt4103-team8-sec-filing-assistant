@@ -1,9 +1,8 @@
 """A saved run's scores split by question type and by difficulty (#170).
 
 The Results page shows each group's score beside its question count, and the
-Ask page's track record (#168) reads the same groups through
-:func:`default_breakdown`, so both pick the same configuration, the same
-benchmark's questions and the same scores. Nothing here reads files: the
+Ask page's track record (#168) scores its groups through :func:`group_scores`
+on the same questions, so both use one calculation. Nothing here reads files: the
 caller hands over a run's summary and its reader of one configuration's
 saved questions, as ``src/app/state.py`` provides them.
 """
@@ -80,7 +79,8 @@ FOUND = Measure(f"Found the right passage in the top {FOUND_WITHIN}", found)
 CORRECTNESS = Measure("Answer correctness", attrgetter("correctness"))
 MEASURES = (FOUND, CORRECTNESS)
 # How the questions are split: the words a headline uses, and a question's label.
-GROUPINGS = (("question type", attrgetter("question_type")),
+_QUESTION_TYPE = attrgetter("question_type")
+GROUPINGS = (("question type", _QUESTION_TYPE),
              ("difficulty", attrgetter("difficulty")))
 
 
@@ -121,6 +121,16 @@ def configurations_read(run: Mapping[str, Any], benchmark: str) -> list[str]:
             if item.get("questions_read") and benchmark in item["benchmark_metrics"]]
 
 
+def _benchmark_questions(run: Mapping[str, Any], benchmark: str,
+                         outcomes: Callable[[str, str], Mapping[str, Any]],
+                         config_id: str) -> list[Any] | None:
+    """``config_id``'s saved questions on ``benchmark``, or None when they were not read."""
+    if config_id not in configurations_read(run, benchmark):
+        return None
+    return [outcome for outcome in outcomes(run["run_dir"], config_id).values()
+            if outcome.benchmark == benchmark]
+
+
 def default_breakdown(run: Mapping[str, Any], benchmark: str,
                       outcomes: Callable[[str, str], Mapping[str, Any]]) -> list[Split]:
     """The default configuration's questions on ``benchmark``, split by each
@@ -131,10 +141,9 @@ def default_breakdown(run: Mapping[str, Any], benchmark: str,
     ``benchmark`` were read. A split with a single group, or with no question
     scored, is left out, since it has no strong or weak side.
     """
-    if DEFAULT_STACK not in configurations_read(run, benchmark):
+    questions = _benchmark_questions(run, benchmark, outcomes, DEFAULT_STACK)
+    if questions is None:
         return []
-    questions = [outcome for outcome in outcomes(run["run_dir"], DEFAULT_STACK).values()
-                 if outcome.benchmark == benchmark]
     splits = []
     for measure in MEASURES:
         for grouping, label in GROUPINGS:
@@ -142,6 +151,36 @@ def default_breakdown(run: Mapping[str, Any], benchmark: str,
             if len(groups) > 1 and any(group.scored for group in groups):
                 splits.append(Split(measure, grouping, groups))
     return splits
+
+
+def track_record(run: Mapping[str, Any], benchmark: str,
+                 outcomes: Callable[[str, str], Mapping[str, Any]], *,
+                 config_id: str, question_type: str) -> Group | None:
+    """How ``config_id`` scored on ``benchmark``'s ``question_type`` questions,
+    for the Ask page's line under an answer of that type (#168).
+
+    None where there is nothing worth showing: the configuration saved no
+    questions here, the benchmark holds none of that type, none of them was
+    scored, or too few were for the mean to mean anything -- the same cutoff
+    the Results page marks a group too few to read at.
+
+    Scored on answer correctness, through the :func:`group_scores` the Results
+    page scores that measure with, so the line under an answer and the table
+    there cannot score a question differently. Correctness and not a choice of
+    measure: the line the caller writes says "out of 1 for correctness", so a
+    second measure would need its own sentence rather than this one. Not
+    through :func:`default_breakdown`, which
+    drops a grouping that holds one group: a run of numeric questions alone
+    has nothing to compare on that page and still has a record to report
+    here.
+    """
+    questions = _benchmark_questions(run, benchmark, outcomes, config_id)
+    if questions is None:
+        return None
+    for group in group_scores(questions, _QUESTION_TYPE, CORRECTNESS.score):
+        if group.name == question_type:
+            return group if group.readable and group.score is not None else None
+    return None
 
 
 class ConfigurationScore(NamedTuple):

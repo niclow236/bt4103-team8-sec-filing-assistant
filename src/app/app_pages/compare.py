@@ -4,8 +4,8 @@ import streamlit as st
 
 from src.app import state
 from src.app.components import (
-    answer_card, answer_summary, comparison_evidence, comparison_overlap, configuration_picker,
-    filter_sidebar, provider_message, provider_picker, resolved_filters,
+    answer_card, answer_summary, answer_track_record, comparison_evidence, comparison_overlap,
+    configuration_picker, filter_sidebar, provider_message, provider_picker, resolved_filters,
 )
 from src.rag.generate import ProviderUnavailable
 from src.rag.query import parse_question
@@ -79,8 +79,8 @@ if shown is not None:
         st.caption(f"{shared} shared passages · {only_left} only left · {only_right} only right")
     st.caption("Timings include loading, answering and verification for each side. "
                "Configurations run in order and can share warmed indexes or cached answers.")
-    for column, config, heading, result, other, side in zip(
-        st.columns(2), configs, headings, shown, (right, left), ("left", "right")
+    for column, config, heading, reading, result, other, side in zip(
+        st.columns(2), configs, headings, scoped, shown, (right, left), ("left", "right")
     ):
         with column:
             st.subheader(heading, anchor=False)
@@ -90,6 +90,13 @@ if shown is not None:
             else:
                 answer_summary(result.answer, config, result.seconds)
                 answer_card(result.answer, key=f"compare:{side}:answer", show_question=False)
+                # Each side's own record: the sides are different
+                # configurations, so one record would be wrong under one of them.
+                if reading is not None:
+                    answer_track_record(state.result_runs(), state.question_outcomes,
+                                        config_id=config.id,
+                                        question_type=reading.question_type,
+                                        answer=result.answer)
                 comparison_evidence(result.answer, other, side=side)
 elif question and left_id != right_id:
     st.info("Select Compare to run both configurations for the current question and settings.")
