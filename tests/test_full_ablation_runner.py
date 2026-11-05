@@ -19,7 +19,7 @@ from src.rag.records import Answer, GenerationConfig
 from src.retrieval.hybrid import HybridRetriever
 from src.retrieval.rerank import CrossEncoderReranker
 from conftest import RerankModel
-from test_full_ablation import Part, chunk, question
+from test_full_ablation import Part, _under_an_ascii_locale, chunk, question
 
 
 def artifacts(directory):
@@ -589,22 +589,23 @@ def test_answer_resume_allows_os_path_and_workload_changes_but_records_them(answ
     assert runtime['configurations']==list(matrix.MATRIX)
 
 
-def test_a_rescored_matrix_records_the_release_tag_its_rankings_were_measured_at(checkout,runner):
-    checkout.tag('v1.0')
+def _answered_matrix(checkout,runner,tag):
+    """A complete matrix run measured at ``tag``, with every row's answers saved."""
+    checkout.tag(tag)
     matrix.retrieval(runner.args)
-    checkout.git('tag','-d','v1.0')
     for cid in matrix.MATRIX:
         matrix.write_rows(runner.directory/cid/'answers.jsonl',[answer_row(q) for q in runner.questions])
+
+
+def test_a_rescored_matrix_records_the_release_tag_its_rankings_were_measured_at(checkout,runner):
+    _answered_matrix(checkout,runner,'v1.0')
+    checkout.git('tag','-d','v1.0')
     matrix.rescore(SimpleNamespace(run_dir=runner.directory,configurations=None))
     assert json.loads((runner.directory/'rescored/summary.json').read_text())['source_tag']=='v1.0'
 
 
 def test_a_run_with_a_non_ascii_tag_can_be_rescored_whatever_the_locale(checkout,runner):
-    from test_full_ablation import _under_an_ascii_locale
-    checkout.tag('v1-é')
-    matrix.retrieval(runner.args)
-    for cid in matrix.MATRIX:
-        matrix.write_rows(runner.directory/cid/'answers.jsonl',[answer_row(q) for q in runner.questions])
+    _answered_matrix(checkout,runner,'v1-é')
     _under_an_ascii_locale(f"""
 from pathlib import Path
 from types import SimpleNamespace

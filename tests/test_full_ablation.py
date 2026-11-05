@@ -131,7 +131,7 @@ def _under_an_ascii_locale(script):
 
     tests = Path(__file__).parent
     ascii_locale = {**os.environ, 'LC_ALL': 'C', 'LANG': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0'}
-    subprocess.run([sys.executable, '-c', f"import sys; sys.path.insert(0, {str(tests)!r})\n" + script],
+    subprocess.run([sys.executable, '-c', f"import sys; sys.path.insert(0, {ascii(str(tests))})\n" + script],
                    cwd=tests.parent, env=ascii_locale, check=True)
 
 
@@ -145,7 +145,7 @@ from src.evaluation import full_ablation as matrix
 from src.retrieval.records import Query
 q = question()
 rows = {{cid: matrix.ranking(q, Query(q.question), [], cid, 10.0) for cid in matrix.MATRIX}}
-matrix.export_retrieval(Path({str(tmp_path)!r}), [{{'question': q.to_dict(), 'rows': rows}}], 1)
+matrix.export_retrieval(Path({ascii(str(tmp_path))}), [{{'question': q.to_dict(), 'rows': rows}}], 1)
 """)
     assert json.loads((tmp_path/'summary.json').read_text(encoding='utf-8'))['source_tag']=='v1-é'
 
