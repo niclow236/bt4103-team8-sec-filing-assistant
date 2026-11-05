@@ -118,6 +118,35 @@ def test_a_run_on_an_untagged_commit_still_records_the_commit_it_ran(tmp_path, c
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_commit"] == checkout.head
 
 
+def test_a_checkout_switched_while_the_source_is_read_never_pairs_two_commits(
+        tmp_path, checkout, monkeypatch):
+    import subprocess
+
+    checkout.tag("v1.0")
+    tagged = checkout.head
+    checkout.commit()
+    untagged = checkout.head
+    run = subprocess.run
+    switched = []
+
+    def another_session_switches(command, *args, **kwargs):
+        # Another process checks out the tagged commit just after HEAD is read.
+        result = run(command, *args, **kwargs)
+        if command[:3] == ["git", "rev-parse", "HEAD"] and not switched:
+            switched.append(True)
+            checkout.git("checkout", "-q", tagged)
+        return result
+
+    monkeypatch.setattr(subprocess, "run", another_session_switches)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert switched
+    assert (saved["source_commit"], saved["source_tag"]) in {(untagged, None), (tagged, "v1.0")}
+
+
 def test_a_run_from_a_commit_after_the_tag_records_none(tmp_path, checkout):
     checkout.tag("v1.0")
     checkout.commit()
@@ -136,6 +165,26 @@ def test_a_run_from_an_edited_tagged_checkout_records_the_tag_as_dirty(tmp_path,
     run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
 
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0-dirty"
+
+
+def test_a_file_git_does_not_track_leaves_the_tag_clean(tmp_path, checkout):
+    checkout.tag("v1.0")
+    (checkout.root / "notes.txt").write_text("scratch\n")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0"
+
+
+def test_a_run_where_git_cannot_be_read_records_no_source(tmp_path, checkout, monkeypatch):
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "no-repository"))
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
 def test_a_data_snapshot_tag_is_not_taken_for_a_release_tag(tmp_path, checkout):

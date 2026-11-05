@@ -34,16 +34,6 @@ def _git(*args: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def source_tag() -> str | None:
-    """The release tag on the checked-out commit, or None when it carries none (#50).
-
-    Edits to committed files that are not committed yet add ``-dirty``, since
-    the code that ran is then not quite the tagged code. Tags under ``data/``
-    name releases of the evaluation data, not of the code, and are passed over.
-    """
-    return _git("describe", "--tags", "--exact-match", "--dirty", "--exclude", "data/*")
-
-
 @dataclass(frozen=True)
 class RunSource:
     """The code a run measured: its commit, and the release tag on it (#50).
@@ -51,6 +41,11 @@ class RunSource:
     Read once, when the run starts, since it is the code that process loaded
     that the numbers come from. The commit is kept beside the tag so a run on
     an untagged commit can still be traced, and matched to a tag made later.
+
+    The tag is None when the commit carries none. Edits to committed files
+    that are not committed yet add ``-dirty``, since the code that ran is then
+    not quite the tagged code. Tags under ``data/`` name releases of the
+    evaluation data, not of the code, and are passed over.
     """
 
     commit: str | None
@@ -58,7 +53,17 @@ class RunSource:
 
     @classmethod
     def read(cls) -> RunSource:
-        return cls(_git("rev-parse", "HEAD"), source_tag())
+        # HEAD is read once and the tag looked up on that commit, so a checkout
+        # switched by another process in between cannot pair one commit with
+        # another's tag. describe takes no --dirty with a commit named, so the
+        # edits are asked of status, which refreshes the index as --dirty does.
+        commit = _git("rev-parse", "HEAD")
+        if commit is None:
+            return cls(None, None)
+        tag = _git("describe", "--tags", "--exact-match", "--exclude", "data/*", commit)
+        if tag is not None and _git("status", "--porcelain", "--untracked-files=no"):
+            tag += "-dirty"
+        return cls(commit, tag)
 
     @classmethod
     def frozen(cls, provenance: Mapping[str, Any]) -> RunSource:
