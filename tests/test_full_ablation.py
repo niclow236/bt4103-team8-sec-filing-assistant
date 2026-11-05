@@ -118,32 +118,44 @@ def test_summary_exposes_denominators(tmp_path):
         matrix.export_retrieval(tmp_path,[],1)
 
 
-def test_the_summary_reads_its_frozen_tag_as_utf8_whatever_the_locale(tmp_path):
-    # config.json is written as UTF-8; read back by an ASCII or Latin-1 locale
-    # a tag such as "v1-é" stopped the run or was recorded garbled (#50).
+def _under_an_ascii_locale(script):
+    """Run ``script`` in a Python whose locale decodes only ASCII, as a run
+    started under ``LC_ALL=C`` without UTF-8 mode does: config.json is written
+    as UTF-8 and holds a non-ASCII tag when the release tag has one (#50)."""
     import os
     import subprocess
     import sys
-    import textwrap
     from pathlib import Path
 
+    tests = Path(__file__).parent
+    ascii_locale = {**os.environ, 'LC_ALL': 'C', 'LANG': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0'}
+    subprocess.run([sys.executable, '-c', f"import sys; sys.path.insert(0, {str(tests)!r})\n" + script],
+                   cwd=tests.parent, env=ascii_locale, check=True)
+
+
+def test_the_summary_reads_its_frozen_tag_as_utf8_whatever_the_locale(tmp_path):
     (tmp_path/'config.json').write_text(json.dumps(
         {'provenance':{'source_commit':'abc','source_tag':'v1-é'}}, ensure_ascii=False), encoding='utf-8')
-    tests = Path(__file__).parent
-    script = textwrap.dedent(f"""
-        import sys
-        sys.path.insert(0, {str(tests)!r})
-        from pathlib import Path
-        from test_full_ablation import question
-        from src.evaluation import full_ablation as matrix
-        from src.retrieval.records import Query
-        q = question()
-        rows = {{cid: matrix.ranking(q, Query(q.question), [], cid, 10.0) for cid in matrix.MATRIX}}
-        matrix.export_retrieval(Path({str(tmp_path)!r}), [{{'question': q.to_dict(), 'rows': rows}}], 1)
-    """)
-    ascii_locale = {**os.environ, 'LC_ALL': 'C', 'LANG': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0'}
-    subprocess.run([sys.executable, '-c', script], cwd=tests.parent, env=ascii_locale, check=True)
+    _under_an_ascii_locale(f"""
+from pathlib import Path
+from test_full_ablation import question
+from src.evaluation import full_ablation as matrix
+from src.retrieval.records import Query
+q = question()
+rows = {{cid: matrix.ranking(q, Query(q.question), [], cid, 10.0) for cid in matrix.MATRIX}}
+matrix.export_retrieval(Path({str(tmp_path)!r}), [{{'question': q.to_dict(), 'rows': rows}}], 1)
+""")
     assert json.loads((tmp_path/'summary.json').read_text(encoding='utf-8'))['source_tag']=='v1-é'
+
+
+def test_a_run_with_a_non_ascii_tag_can_be_resumed_whatever_the_locale(tmp_path):
+    config = {'provenance':{'source_commit':'abc','source_tag':'v1-é'}}
+    matrix.dump(tmp_path/'config.json', config)
+    _under_an_ascii_locale(f"""
+from pathlib import Path
+from src.evaluation import full_ablation as matrix
+assert matrix.frozen_manifest_matches(Path({str(tmp_path/'config.json')!r}), {config!r})
+""")
 
 
 def test_retrieval_reports_one_team_slice_beside_the_xbrl_set(tmp_path):

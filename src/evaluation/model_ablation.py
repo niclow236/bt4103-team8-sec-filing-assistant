@@ -29,6 +29,7 @@ from src.retrieval.embedding_config import EmbeddingConfig
 from src.retrieval.facts import FACTS_FILE
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 
+from .artifacts import read_json
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate, logger as harness_log
 from .metrics import score_question
@@ -325,7 +326,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
                          f"which stays on the machine that ran it, so copy it here first")
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
-    config = json.loads((run_dir / "config.json").read_text())
+    config = read_json(run_dir / "config.json")
     if not isinstance(config, dict) or config.get("schema") not in REPLAYABLE_SCHEMAS:
         raise ValueError(f"{run_dir} is not a full-matrix run: its config.json does not record "
                          f"one of the schemas {REPLAYABLE_SCHEMAS!r}")
@@ -354,7 +355,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     if any(question.question_id not in measured for question in team):
         raise ValueError("the run's team retrieval is incomplete")
     answers_config = run_dir / "answers-config.json"
-    answered = json.loads(answers_config.read_text())
+    answered = read_json(answers_config)
     for name in ("judge_rubric", "generation"):
         if not isinstance(answered, dict) or name not in answered:
             raise ValueError(f"{answers_config} does not record {name!r}, which a complete "
