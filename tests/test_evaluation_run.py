@@ -188,14 +188,15 @@ def test_a_run_where_git_cannot_be_read_records_no_source(tmp_path, checkout, mo
     assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
-def test_a_project_folder_named_with_a_trailing_space_still_records_its_source(
-        tmp_path, checkout, monkeypatch):
+@pytest.mark.parametrize("name", ["project ", "project\r", "pro\rject"])
+def test_a_project_folder_named_with_odd_whitespace_still_records_its_source(
+        tmp_path, checkout, monkeypatch, name):
     from conftest import Checkout
     from src.evaluation import provenance
 
     monkeypatch.delenv("GIT_DIR")
     monkeypatch.delenv("GIT_WORK_TREE")
-    folder = tmp_path / "project "
+    folder = tmp_path / name
     folder.mkdir()
     project = Checkout(folder)
     project.tag("v1.0")

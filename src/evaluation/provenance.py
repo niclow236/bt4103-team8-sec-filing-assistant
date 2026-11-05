@@ -35,26 +35,16 @@ def _run_git(*args: str) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
-def _same_folder(first: str | Path, second: str | Path) -> bool:
-    try:
-        return os.path.samefile(first, second)
-    except OSError:
-        return False
-
-
 def _git(*args: str) -> str | None:
     # Only the project's own repository counts. A copy without its own .git
     # that sits inside another repository would otherwise read as that one
     # (#50). GIT_CEILING_DIRECTORIES cannot say this for a path with a ":" in
-    # it, so the repository git finds is checked for its top level instead. A
+    # it, so git is asked how far its top level is above the project folder,
+    # which it answers with nothing at all when the project is the top level.
+    # No path is printed or compared, so no spelling of one can mislead. A
     # GIT_DIR set by the caller still wins.
-    if "GIT_DIR" not in os.environ:
-        top = _run_git("rev-parse", "--show-toplevel")
-        # Only git's own newline is taken off, since a folder name may end in a
-        # space, and the folders are compared as files: a case-insensitive disk
-        # gives one folder spellings that compare unequal as paths.
-        if top is None or not _same_folder(top.removesuffix("\n"), PROJECT_ROOT):
-            return None
+    if "GIT_DIR" not in os.environ and _run_git("rev-parse", "--show-cdup") != "\n":
+        return None
     output = _run_git(*args)
     return output.strip() if output is not None else None
 
