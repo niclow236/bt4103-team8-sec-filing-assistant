@@ -8,6 +8,7 @@ import pytest
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.run import CONFIGURATIONS, run_ablation, run_configuration
 from src.retrieval.records import Query, RetrievedPassage
+from test_results_report import case_insensitive_tmp  # noqa: F401  (a fixture, #201)
 
 
 def _question(question_id="q001", **overrides):
@@ -185,6 +186,48 @@ def test_a_run_where_git_cannot_be_read_records_no_source(tmp_path, checkout, mo
 
     saved = json.loads((tmp_path / "run" / "summary.json").read_text())
     assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+def test_a_project_folder_named_with_a_trailing_space_still_records_its_source(
+        tmp_path, checkout, monkeypatch):
+    from conftest import Checkout
+    from src.evaluation import provenance
+
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    folder = tmp_path / "project "
+    folder.mkdir()
+    project = Checkout(folder)
+    project.tag("v1.0")
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", folder)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (project.head, "v1.0")
+
+
+def test_a_project_reached_by_another_spelling_of_its_folder_still_records_its_source(
+        tmp_path, checkout, monkeypatch, case_insensitive_tmp):
+    from conftest import Checkout
+    from src.evaluation import provenance
+
+    # On a case-insensitive filesystem, as a Mac's is, Python can import the
+    # project through a spelling git does not print back for it.
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    folder = case_insensitive_tmp / "project"
+    folder.mkdir()
+    project = Checkout(folder)
+    project.tag("v1.0")
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", case_insensitive_tmp / "PROJECT")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (project.head, "v1.0")
 
 
 def test_a_copy_in_no_repository_at_all_records_no_source(tmp_path, checkout, monkeypatch):

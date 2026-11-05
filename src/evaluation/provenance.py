@@ -32,7 +32,14 @@ def _run_git(*args: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return result.stdout.strip() if result.returncode == 0 else None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _same_folder(first: str | Path, second: str | Path) -> bool:
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return False
 
 
 def _git(*args: str) -> str | None:
@@ -43,9 +50,13 @@ def _git(*args: str) -> str | None:
     # GIT_DIR set by the caller still wins.
     if "GIT_DIR" not in os.environ:
         top = _run_git("rev-parse", "--show-toplevel")
-        if top is None or Path(top).resolve() != PROJECT_ROOT.resolve():
+        # Only git's own newline is taken off, since a folder name may end in a
+        # space, and the folders are compared as files: a case-insensitive disk
+        # gives one folder spellings that compare unequal as paths.
+        if top is None or not _same_folder(top.removesuffix("\n"), PROJECT_ROOT):
             return None
-    return _run_git(*args)
+    output = _run_git(*args)
+    return output.strip() if output is not None else None
 
 
 @dataclass(frozen=True)
