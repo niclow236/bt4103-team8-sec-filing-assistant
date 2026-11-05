@@ -189,9 +189,11 @@ def _tells_case_apart(folder):
 def case_insensitive(folder, tells_case_apart=_tells_case_apart):
     """``folder``, once it is found not to tell MATRIX from matrix.
 
-    Only such a folder gives one run two spellings that ``realpath`` leaves
-    apart; a symlink does not, since ``realpath`` resolves it, so the test below
-    needs one to catch a guard that compares paths again. A Mac's default
+    Only such a folder gives one folder two spellings that ``realpath`` leaves
+    apart; a symlink does not, since ``realpath`` resolves it, so a test of a
+    guard that must treat both spellings as one folder needs it: the results
+    report's case-variant ``--out`` guard, and the check that git found the
+    project's own repository (#50). A Mac's default
     filesystem is case-insensitive and a Linux one is not. On a laptop with no
     such folder the test skips. In CI it fails instead: there a skip would report
     ``1 skipped`` and leave the guard unchecked (#201). ``CI`` tells the two
@@ -199,8 +201,8 @@ def case_insensitive(folder, tells_case_apart=_tells_case_apart):
     """
     if tells_case_apart(folder):
         if os.environ.get("CI"):
-            raise AssertionError(f"{folder} tells MATRIX from matrix in CI, so the "
-                                 "case-variant --out guard went unchecked")
+            raise AssertionError(f"{folder} tells MATRIX from matrix in CI, so a "
+                                 "case-variant path guard went unchecked")
         pytest.skip(f"{folder} tells MATRIX from matrix")
     return folder
 
