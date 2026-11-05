@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
 from collections import Counter
@@ -25,9 +26,14 @@ def sha256(path: Path) -> str:
 
 
 def _git(*args: str) -> str | None:
+    # Git is not let search past the project folder, so a copy without its own
+    # .git that sits inside another repository reads as no repository rather
+    # than as that one (#50). A GIT_DIR set by the caller still wins.
+    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(PROJECT_ROOT.parent)}
     try:
         result = subprocess.run(
             ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -187,6 +187,26 @@ def test_a_run_where_git_cannot_be_read_records_no_source(tmp_path, checkout, mo
     assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
+def test_a_copy_without_its_own_git_inside_another_repository_records_no_source(
+        tmp_path, checkout, monkeypatch):
+    from src.evaluation import provenance
+
+    # The checkout stands in for some other project's repository, with the
+    # copy of this one in a folder of it that git does not track.
+    checkout.tag("v9.9-other")
+    copy = checkout.root / "copy"
+    copy.mkdir()
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", copy)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
 def test_a_data_snapshot_tag_is_not_taken_for_a_release_tag(tmp_path, checkout):
     checkout.tag("data/evaluation-v1")
     retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
