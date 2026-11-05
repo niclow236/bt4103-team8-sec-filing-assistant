@@ -121,7 +121,9 @@ def test_summary_exposes_denominators(tmp_path):
 def _under_an_ascii_locale(script):
     """Run ``script`` in a Python whose locale decodes only ASCII, as a run
     started under ``LC_ALL=C`` without UTF-8 mode does: config.json is written
-    as UTF-8 and holds a non-ASCII tag when the release tag has one (#50)."""
+    as UTF-8 and holds a non-ASCII tag when the release tag has one (#50).
+    The script itself must be ASCII, since such a Python on Linux cannot
+    decode anything else from its command line: embed values with ascii()."""
     import os
     import subprocess
     import sys
@@ -154,7 +156,7 @@ def test_a_run_with_a_non_ascii_tag_can_be_resumed_whatever_the_locale(tmp_path)
     _under_an_ascii_locale(f"""
 from pathlib import Path
 from src.evaluation import full_ablation as matrix
-assert matrix.frozen_manifest_matches(Path({str(tmp_path/'config.json')!r}), {config!r})
+assert matrix.frozen_manifest_matches(Path({ascii(str(tmp_path/'config.json'))}), {ascii(config)})
 """)
 
 

@@ -599,6 +599,22 @@ def test_a_rescored_matrix_records_the_release_tag_its_rankings_were_measured_at
     assert json.loads((runner.directory/'rescored/summary.json').read_text())['source_tag']=='v1.0'
 
 
+def test_a_run_with_a_non_ascii_tag_can_be_rescored_whatever_the_locale(checkout,runner):
+    from test_full_ablation import _under_an_ascii_locale
+    checkout.tag('v1-é')
+    matrix.retrieval(runner.args)
+    for cid in matrix.MATRIX:
+        matrix.write_rows(runner.directory/cid/'answers.jsonl',[answer_row(q) for q in runner.questions])
+    _under_an_ascii_locale(f"""
+from pathlib import Path
+from types import SimpleNamespace
+from src.evaluation import full_ablation as matrix
+matrix.rescore(SimpleNamespace(run_dir=Path({ascii(str(runner.directory))}), configurations=None))
+""")
+    saved=json.loads((runner.directory/'rescored/summary.json').read_text(encoding='utf-8'))
+    assert saved['source_tag']=='v1-é'
+
+
 def test_tagging_the_commit_between_answer_segments_does_not_block_their_resume(checkout,answer_run):
     state=answer_run
     matrix.answers(state.args)
