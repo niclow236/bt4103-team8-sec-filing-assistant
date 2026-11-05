@@ -25,19 +25,27 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _git(*args: str) -> str | None:
-    # Git is not let search past the project folder, so a copy without its own
-    # .git that sits inside another repository reads as no repository rather
-    # than as that one (#50). A GIT_DIR set by the caller still wins.
-    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(PROJECT_ROOT.parent)}
+def _run_git(*args: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30,
-            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _git(*args: str) -> str | None:
+    # Only the project's own repository counts. A copy without its own .git
+    # that sits inside another repository would otherwise read as that one
+    # (#50). GIT_CEILING_DIRECTORIES cannot say this for a path with a ":" in
+    # it, so the repository git finds is checked for its top level instead. A
+    # GIT_DIR set by the caller still wins.
+    if "GIT_DIR" not in os.environ:
+        top = _run_git("rev-parse", "--show-toplevel")
+        if top is None or Path(top).resolve() != PROJECT_ROOT.resolve():
+            return None
+    return _run_git(*args)
 
 
 @dataclass(frozen=True)
