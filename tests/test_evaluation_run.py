@@ -2,12 +2,17 @@
 
 import csv
 import json
+import os
 
 import pytest
 
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.run import CONFIGURATIONS, run_ablation, run_configuration
 from src.retrieval.records import Query, RetrievedPassage
+
+# Windows cannot create a folder whose name ends in a space or holds a carriage
+# return or a ":"; these cases need a filesystem that can.
+WINDOWS = pytest.mark.skipif(os.name == "nt", reason="Windows cannot create this folder name")
 
 
 def _question(question_id="q001", **overrides):
@@ -246,7 +251,8 @@ def test_a_run_where_git_cannot_be_read_records_no_source(tmp_path, checkout, mo
     assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
-@pytest.mark.parametrize("name", ["project ", "project\r", "pro\rject"])
+@pytest.mark.parametrize("name", [pytest.param(name, marks=WINDOWS)
+                                  for name in ("project ", "project\r", "pro\rject")])
 def test_a_project_folder_named_with_odd_whitespace_still_records_its_source(
         tmp_path, checkout, monkeypatch, name):
     from conftest import Checkout
@@ -306,7 +312,7 @@ def test_a_copy_in_no_repository_at_all_records_no_source(tmp_path, checkout, mo
     assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
-@pytest.mark.parametrize("folder", ["copy", "a:b/copy"])
+@pytest.mark.parametrize("folder", ["copy", pytest.param("a:b/copy", marks=WINDOWS)])
 def test_a_copy_without_its_own_git_inside_another_repository_records_no_source(
         tmp_path, checkout, monkeypatch, folder):
     from src.evaluation import provenance
