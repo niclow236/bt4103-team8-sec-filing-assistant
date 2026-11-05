@@ -424,7 +424,9 @@ def export_retrieval(
 
 def frozen_source(config_file: Path) -> RunSource:
     """The commit and release tag a run froze when it started (#50)."""
-    return RunSource.frozen(json.loads(config_file.read_text())["provenance"])
+    # Read as the UTF-8 it is written in, not by the locale, which could stop
+    # the run or garble a non-ASCII tag.
+    return RunSource.frozen(json.loads(config_file.read_text(encoding="utf-8"))["provenance"])
 
 
 def verified_baseline(run_dir: Path, snapshot: Sequence[dict], fixed: FixedSizeBM25Retriever | None = None) -> list[dict]:
