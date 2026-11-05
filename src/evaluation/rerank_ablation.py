@@ -23,7 +23,7 @@ from src.retrieval.constants import CANDIDATE_K, FINAL_K
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from src.stack import RESULTS_ROOT, build_retriever
 
-from .artifacts import dump_json as _dump, read_jsonl
+from .artifacts import dump_json as _dump, read_json, read_jsonl
 from .benchmark import load_questions
 from .metrics import RETRIEVAL_METRICS, score_question
 from .provenance import (RunSource, corpus_records_sha256, question_records_sha256,
@@ -467,7 +467,7 @@ def _run_pairs_locked(
     repair_needed = False
     indexes = _index_manifests(hybrid)
     if resume:
-        original = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+        original = read_json(output_dir / "config.json")
         if _comparable_manifest(original) != _comparable_manifest(manifest):
             raise ValueError("resume requires identical source, inputs, corpus, settings and policy")
         source = RunSource.frozen(original["provenance"])
@@ -482,7 +482,7 @@ def _run_pairs_locked(
         verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
         runtime_path = output_dir / "runtime.json"
         if runtime_path.exists():
-            original_runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            original_runtime = read_json(runtime_path)
             if any(original_runtime.get(key) != value for key, value in indexes.items()):
                 raise ValueError("resume requires identical dense and BM25 index manifests")
         elif rows:
@@ -613,7 +613,7 @@ def main(argv: list[str] | None = None) -> None:
     sensitivity.add_argument("--top-k", type=int)
     args = parser.parse_args(argv)
     if args.action in ("rescore", "table-boost-sensitivity"):
-        manifest = json.loads((args.run_dir / "config.json").read_text(encoding="utf-8"))
+        manifest = read_json(args.run_dir / "config.json")
         k = manifest["top_k"] if args.top_k is None else args.top_k
         if not 0 < k <= manifest["top_k"]:
             parser.error("rescoring k must be positive and no greater than stored final k")
