@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from src.config import PROJECT_ROOT
 from src.pipeline.chunk import iter_chunks
@@ -24,14 +25,83 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _git(*args: str) -> str | None:
+def _run_git(*args: str) -> str | None:
+    """git's raw output in the project folder, or None if it fails; no checks."""
     try:
         result = subprocess.run(
-            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30,
+            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, check=False, timeout=30,
+            # git prints names the user chose, a branch's among them, as raw
+            # bytes; decoding them by the locale could stop the run (#50).
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return result.stdout.strip() if result.returncode == 0 else None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _git(*args: str) -> str | None:
+    """git's stripped output for the project's own repository, or None.
+
+    None also when the repository git finds is not the project's own, as for a
+    copy without its .git inside another repository. Every caller that reads
+    where a run's code came from goes through here, not ``_run_git``.
+    """
+    # Only the project's own repository counts. A copy without its own .git
+    # that sits inside another repository would otherwise read as that one
+    # (#50). GIT_CEILING_DIRECTORIES cannot say this for a path with a ":" in
+    # it, so git is asked how far its top level is above the project folder,
+    # which it answers with nothing at all when the project is the top level.
+    # No path is printed or compared, so no spelling of one can mislead. A
+    # GIT_DIR set by the caller still wins.
+    if "GIT_DIR" not in os.environ and _run_git("rev-parse", "--show-cdup") != "\n":
+        return None
+    output = _run_git(*args)
+    return output.strip() if output is not None else None
+
+
+@dataclass(frozen=True)
+class RunSource:
+    """The code a run measured: its commit, and the release tag on it (#50).
+
+    Read once, when the run starts, since it is the code that process loaded
+    that the numbers come from. The commit is kept beside the tag so a run on
+    an untagged commit can still be traced, and matched to a tag made later.
+
+    The tag is None when the commit carries none. Edits to committed files
+    that are not committed yet add ``-dirty``, since the code that ran is then
+    not quite the tagged code. Tags under ``data/`` name releases of the
+    evaluation data, not of the code, and are passed over.
+    """
+
+    commit: str | None
+    tag: str | None
+
+    @classmethod
+    def read(cls) -> RunSource:
+        # One status call says both which commit is checked out and whether
+        # committed files have edits, so a checkout switched by another process
+        # cannot pair one commit with another's edits; the tag is then looked
+        # up on that commit, not on HEAD again. status refreshes the index as
+        # describe --dirty does, and leaves untracked files out as it does.
+        # A status that fails names no commit, so the run records no source
+        # rather than a tag whose edits were never checked.
+        status = _git("status", "--porcelain=v2", "--branch", "--untracked-files=no")
+        lines = (status or "").splitlines()
+        commit = next((line.split()[2] for line in lines if line.startswith("# branch.oid ")), None)
+        if commit in (None, "(initial)"):
+            return cls(None, None)
+        tag = _git("describe", "--tags", "--exact-match", "--exclude", "data/*", commit)
+        if tag is not None and any(not line.startswith("#") for line in lines):
+            tag += "-dirty"
+        return cls(commit, tag)
+
+    @classmethod
+    def frozen(cls, provenance: Mapping[str, Any]) -> RunSource:
+        """The source a run froze in its config; runs from before #50 have no tag."""
+        return cls(provenance.get("source_commit"), provenance.get("source_tag"))
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {"source_commit": self.commit, "source_tag": self.tag}
 
 
 def corpus_records_sha256(chunks: Sequence[dict]) -> str:
@@ -76,7 +146,7 @@ def record_provenance(
         except PackageNotFoundError:
             packages[package] = None
     return {
-        "source_commit": _git("rev-parse", "HEAD"),
+        **RunSource.read().to_dict(),
         "source_files_sha256": {
             path.relative_to(PROJECT_ROOT).as_posix(): sha256(path)
             for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))

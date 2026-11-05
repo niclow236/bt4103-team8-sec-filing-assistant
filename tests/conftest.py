@@ -13,6 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -176,6 +179,98 @@ def _no_local_settings(monkeypatch):
     _mistral_client.cache_clear()
     _ollama_client.cache_clear()
     _soclaas_client.cache_clear()
+
+
+def _tells_case_apart(folder):
+    (folder / "probe").mkdir()
+    return not (folder / "PROBE").exists()
+
+
+def case_insensitive(folder, tells_case_apart=_tells_case_apart):
+    """``folder``, once it is found not to tell MATRIX from matrix.
+
+    Only such a folder gives one folder two spellings that ``realpath`` leaves
+    apart; a symlink does not, since ``realpath`` resolves it, so a test of a
+    guard that must treat both spellings as one folder needs it: the results
+    report's case-variant ``--out`` guard, and the check that git found the
+    project's own repository (#50). A Mac's default
+    filesystem is case-insensitive and a Linux one is not. On a laptop with no
+    such folder the test skips. In CI it fails instead: there a skip would report
+    ``1 skipped`` and leave the guard unchecked (#201). ``CI`` tells the two
+    apart, as for the tokenizer test in test_verify.py.
+    """
+    if tells_case_apart(folder):
+        if os.environ.get("CI"):
+            raise AssertionError(f"{folder} tells MATRIX from matrix in CI, so a "
+                                 "case-variant path guard went unchecked")
+        pytest.skip(f"{folder} tells MATRIX from matrix")
+    return folder
+
+
+@pytest.fixture
+def case_insensitive_tmp(tmp_path):
+    """A fresh case-insensitive folder: under CASE_INSENSITIVE_DIR when it is set,
+    as the CI workflow sets it to a casefolded mount, otherwise tmp_path."""
+    shared = os.environ.get("CASE_INSENSITIVE_DIR")
+    if not shared:
+        yield case_insensitive(tmp_path)
+        return
+    folder = Path(tempfile.mkdtemp(dir=shared))
+    try:
+        yield case_insensitive(folder)
+    finally:
+        shutil.rmtree(folder)
+
+
+class Checkout:
+    """A git repository of one committed file, for a run to read its source from."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.git("init", "-q")
+        (root / "code.py").write_text("measured = True\n")
+        self.git("add", "code.py")
+        self.git("commit", "-q", "-m", "measured code")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    @property
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD")
+
+    def tag(self, name: str) -> None:
+        self.git("tag", "-a", name, "-m", name)
+
+    def commit(self) -> None:
+        """Commit a change on top, so the checkout is no longer at its tag."""
+        (self.root / "code.py").write_text("measured = 'later'\n")
+        self.git("commit", "-q", "-am", "later code")
+
+    def edit(self) -> None:
+        """Leave a committed file changed, as a run started mid-edit would."""
+        (self.root / "code.py").write_text("measured = False\n")
+
+
+@pytest.fixture
+def checkout(tmp_path_factory, monkeypatch) -> Checkout:
+    """Point every git call at a fresh repository instead of this clone (#50).
+
+    A run reads its release tag from git, and the clone the tests run in has
+    whatever tags its owner made, so git is sent here through GIT_DIR and
+    GIT_WORK_TREE. The owner's own git settings are left out, so commit
+    signing or hooks set there do not run on these commits.
+    """
+    root = tmp_path_factory.mktemp("checkout")
+    for name, value in {
+        "GIT_DIR": str(root / ".git"), "GIT_WORK_TREE": str(root),
+        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.com",
+    }.items():
+        monkeypatch.setenv(name, value)
+    return Checkout(root)
 
 
 @pytest.fixture(autouse=True)

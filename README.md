@@ -2671,8 +2671,24 @@ G3 needs `SOCLAAS_API_KEY`.
 
 Each run writes `report.json` for each configuration and a `summary.csv` and
 `summary.json` under `results/<run-id>/`. C, E and G runners share the table
-writer and JSON format (`run_id`, `top_k`, `configurations` with configuration
-objects). Model-specific columns extend the common C-row columns. Reports
+writer and JSON format (`run_id`, `top_k`, `source_commit`, `source_tag`,
+`configurations` with configuration objects). Model-specific columns extend the
+common C-row columns. `source_commit` and `source_tag` name the commit the run
+started from and the release tag on it, so a number in the report can be
+traced to the code that produced it (#50). Both are read when the run starts,
+not when it ends. The tag ends in `-dirty` when committed files had
+uncommitted edits, and is `null` when the commit carries no tag; the commit
+then still names the code the run started from, and matches a tag made later.
+Uncommitted edits on an untagged commit leave no mark in these two fields. The
+chunk sweep's own `commit` (`git describe --dirty`) ends in `-dirty` for them,
+and the full matrix and the C5 reference catch edits to `src/` through
+`source_files_sha256` in `config.json`; even so, a run meant for the report
+should start from a clean checkout of its tag. Both are `null` when
+git cannot be read, as in a copy without its `.git` folder, even one that sits
+inside another repository. Tags under `data/`
+name evaluation-data releases and are not counted. The full matrix and the C5
+reference also freeze both in `config.json`, and write them into their own
+`summary.json` from there. Reports
 retain retrieved chunk IDs and scores for inspection and rescoring. A missing
 index or key fails before any question is measured or run directory is created.
 A stopped or interrupted provider run saves completed answers, its stop reason

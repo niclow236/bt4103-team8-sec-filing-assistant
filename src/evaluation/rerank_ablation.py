@@ -23,10 +23,11 @@ from src.retrieval.constants import CANDIDATE_K, FINAL_K
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from src.stack import RESULTS_ROOT, build_retriever
 
-from .artifacts import dump_json as _dump, read_jsonl
+from .artifacts import dump_json as _dump, read_json, read_jsonl
 from .benchmark import load_questions
 from .metrics import RETRIEVAL_METRICS, score_question
-from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
+from .provenance import (RunSource, corpus_records_sha256, question_records_sha256,
+                         record_provenance, sha256)
 from .records import TEAM, XBRL, BenchmarkQuestion, BenchmarkValidationError, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
@@ -170,6 +171,14 @@ def paired_metric(
             "C5": mean(b for _, _, b in selected), "delta": mean(diffs),
             "wins": sum(d > 1e-12 for d in diffs), "losses": sum(d < -1e-12 for d in diffs),
             "ties": sum(abs(d) <= 1e-12 for d in diffs), "ci95": ci, "clusters": len(values)}
+
+
+def _sourced_summary(
+    source: RunSource, rows: Sequence[dict], k: int, policy: dict = POLICY, *,
+    candidate_k: int = CANDIDATE_K,
+) -> dict:
+    """The summary of a run's rows, headed by the source it froze (#50)."""
+    return {**source.to_dict(), **summarize(rows, k, policy, candidate_k=candidate_k)}
 
 
 def summarize(
@@ -406,6 +415,9 @@ def _comparable_manifest(manifest: dict) -> dict:
     # original note in config and record the new one in runtime history.
     provenance = result["provenance"]
     provenance.pop("workload_note", None)
+    # A tag names the commit, which source_commit already pins, so tagging it
+    # while a run is interrupted does not stop the run resuming (#50).
+    provenance.pop("source_tag", None)
     provenance.get("environment", {}).pop("platform", None)
     provenance.get("corpus", {}).pop("processed_dir", None)
     if "inputs" in provenance:
@@ -447,15 +459,18 @@ def _run_pairs_locked(
     manifest = {"provenance": provenance, "reranker": reranker.config.to_dict(),
                 "top_k": top_k, "policy": POLICY, "query_policy": "C4 evaluation.run._query"}
     manifest = json.loads(json.dumps(manifest))
+    # The source the run froze when it started; a resume keeps the original's.
+    source = RunSource.frozen(manifest["provenance"])
     pairs_path = output_dir / "pairs.jsonl.gz"
     rows = []
     original_runtime = {}
     repair_needed = False
     indexes = _index_manifests(hybrid)
     if resume:
-        original = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+        original = read_json(output_dir / "config.json")
         if _comparable_manifest(original) != _comparable_manifest(manifest):
             raise ValueError("resume requires identical source, inputs, corpus, settings and policy")
+        source = RunSource.frozen(original["provenance"])
         if pairs_path.exists():
             try:
                 rows = read_pairs(pairs_path)
@@ -467,7 +482,7 @@ def _run_pairs_locked(
         verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
         runtime_path = output_dir / "runtime.json"
         if runtime_path.exists():
-            original_runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            original_runtime = read_json(runtime_path)
             if any(original_runtime.get(key) != value for key, value in indexes.items()):
                 raise ValueError("resume requires identical dense and BM25 index manifests")
         elif rows:
@@ -475,7 +490,7 @@ def _run_pairs_locked(
         if len(rows) == len(questions):
             if repair_needed:
                 _repair_pairs(pairs_path, rows)
-            report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
+            report = _sourced_summary(source, rows, top_k, candidate_k=reranker.config.candidate_k)
             _dump(output_dir / "summary.json", report)
             return report
     else:
@@ -548,7 +563,7 @@ def _run_pairs_locked(
             if i % 25 == 0 or i == len(questions):
                 print(f"paired C4/C5: {i}/{len(questions)}", flush=True)
     verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
-    report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
+    report = _sourced_summary(source, rows, top_k, candidate_k=reranker.config.candidate_k)
     _dump(output_dir / "summary.json", report)
     return report
 
@@ -598,7 +613,7 @@ def main(argv: list[str] | None = None) -> None:
     sensitivity.add_argument("--top-k", type=int)
     args = parser.parse_args(argv)
     if args.action in ("rescore", "table-boost-sensitivity"):
-        manifest = json.loads((args.run_dir / "config.json").read_text(encoding="utf-8"))
+        manifest = read_json(args.run_dir / "config.json")
         k = manifest["top_k"] if args.top_k is None else args.top_k
         if not 0 < k <= manifest["top_k"]:
             parser.error("rescoring k must be positive and no greater than stored final k")
@@ -638,7 +653,8 @@ def main(argv: list[str] | None = None) -> None:
                 rows, list(iter_chunks(processed_dir=args.processed_dir)),
                 manifest["provenance"].get("corpus", {}).get("records_sha256"),
             )
-        report = summarize(rows, k, manifest["policy"], candidate_k=manifest["reranker"]["candidate_k"])
+        report = _sourced_summary(RunSource.frozen(manifest["provenance"]), rows, k, manifest["policy"],
+                                  candidate_k=manifest["reranker"]["candidate_k"])
         if enrichment is not None:
             report["gold_diagnostics_provenance"] = enrichment
         _dump(args.run_dir / f"rescored-k{k}.json", report)

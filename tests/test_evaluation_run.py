@@ -2,12 +2,17 @@
 
 import csv
 import json
+import os
 
 import pytest
 
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.run import CONFIGURATIONS, run_ablation, run_configuration
 from src.retrieval.records import Query, RetrievedPassage
+
+# Windows cannot create a folder whose name ends in a space or holds a carriage
+# return or a ":"; these cases need a filesystem that can.
+WINDOWS = pytest.mark.skipif(os.name == "nt", reason="Windows cannot create this folder name")
 
 
 def _question(question_id="q001", **overrides):
@@ -99,6 +104,260 @@ def test_run_ablation_writes_all_rows_and_summary_table(tmp_path):
     }
     with (run_dir / "summary.csv").open(newline="") as stream:
         assert len(list(csv.DictReader(stream))) == 5
+
+
+def test_a_run_records_the_release_tag_it_was_produced_from(tmp_path, checkout):
+    checkout.tag("v1.0")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0"
+
+
+def test_a_run_on_an_untagged_commit_still_records_the_commit_it_ran(tmp_path, checkout):
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_commit"] == checkout.head
+
+
+@pytest.mark.parametrize("start_tagged, then_edit", [(False, False), (True, True)])
+def test_a_checkout_switched_while_the_source_is_read_never_mixes_two_commits(
+        tmp_path, checkout, monkeypatch, start_tagged, then_edit):
+    import subprocess
+
+    checkout.tag("v1.0")
+    tagged = checkout.head
+    checkout.commit()
+    untagged = checkout.head
+    start, other = (tagged, untagged) if start_tagged else (untagged, tagged)
+    checkout.git("checkout", "-q", start)
+    run = subprocess.run
+    switched = []
+
+    def another_session_switches(command, *args, **kwargs):
+        # Another process checks out the other commit, and may edit it, just
+        # after the run's first question to git.
+        result = run(command, *args, **kwargs)
+        if command[0] == "git" and not switched:
+            switched.append(True)
+            checkout.git("checkout", "-q", other)
+            if then_edit:
+                checkout.edit()
+        return result
+
+    monkeypatch.setattr(subprocess, "run", another_session_switches)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert switched
+    dirty = "-dirty" if then_edit else ""
+    either = {(start, "v1.0" if start == tagged else None),
+              (other, "v1.0" + dirty if other == tagged else None)}
+    assert (saved["source_commit"], saved["source_tag"]) in either
+
+
+def test_a_run_that_cannot_tell_whether_files_were_edited_records_no_source(
+        tmp_path, checkout):
+    # A corrupt index stops git status, though the tag could still be read:
+    # recording it clean would claim edits were checked that were not.
+    checkout.tag("v1.0")
+    checkout.edit()
+    (checkout.root / ".git" / "index").write_bytes(b"DIRCgarbage")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+def test_a_repository_with_no_commit_yet_records_no_source(tmp_path, checkout, monkeypatch):
+    import subprocess
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    subprocess.run(["git", "init", "-q"], cwd=empty, check=True)
+    assert (empty / ".git" / "HEAD").exists()
+    monkeypatch.setenv("GIT_DIR", str(empty / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(empty))
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+def test_a_branch_name_that_is_not_utf8_does_not_stop_the_run(tmp_path, checkout):
+    # git prints the branch name with the commit; a name of raw bytes, which
+    # git allows, must not stop the run. packed-refs holds it, since some
+    # filesystems refuse such a file name.
+    checkout.tag("v1.0")
+    git = checkout.root / ".git"
+    (git / "packed-refs").write_bytes(checkout.head.encode() + b" refs/heads/feat-\xff\n")
+    (git / "HEAD").write_bytes(b"ref: refs/heads/feat-\xff\n")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
+
+
+def test_a_run_from_a_commit_after_the_tag_records_none(tmp_path, checkout):
+    checkout.tag("v1.0")
+    checkout.commit()
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] is None
+
+
+def test_a_run_from_an_edited_tagged_checkout_records_the_tag_as_dirty(tmp_path, checkout):
+    checkout.tag("v1.0")
+    checkout.edit()
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0-dirty"
+
+
+def test_a_file_git_does_not_track_leaves_the_tag_clean(tmp_path, checkout):
+    checkout.tag("v1.0")
+    (checkout.root / "notes.txt").write_text("scratch\n")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0"
+
+
+def test_a_run_where_git_cannot_be_read_records_no_source(tmp_path, checkout, monkeypatch):
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "no-repository"))
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+@pytest.mark.parametrize("name", [pytest.param(name, marks=WINDOWS)
+                                  for name in ("project ", "project\r", "pro\rject")])
+def test_a_project_folder_named_with_odd_whitespace_still_records_its_source(
+        tmp_path, checkout, monkeypatch, name):
+    from conftest import Checkout
+    from src.evaluation import provenance
+
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    folder = tmp_path / name
+    folder.mkdir()
+    project = Checkout(folder)
+    project.tag("v1.0")
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", folder)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (project.head, "v1.0")
+
+
+def test_a_project_reached_by_another_spelling_of_its_folder_still_records_its_source(
+        tmp_path, checkout, monkeypatch, case_insensitive_tmp):
+    from conftest import Checkout
+    from src.evaluation import provenance
+
+    # On a case-insensitive filesystem, as a Mac's is, Python can import the
+    # project through a spelling git does not print back for it.
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    folder = case_insensitive_tmp / "project"
+    folder.mkdir()
+    project = Checkout(folder)
+    project.tag("v1.0")
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", case_insensitive_tmp / "PROJECT")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (project.head, "v1.0")
+
+
+def test_a_copy_in_no_repository_at_all_records_no_source(tmp_path, checkout, monkeypatch):
+    from src.evaluation import provenance
+
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", copy)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+@pytest.mark.parametrize("folder", ["copy", pytest.param("a:b/copy", marks=WINDOWS)])
+def test_a_copy_without_its_own_git_inside_another_repository_records_no_source(
+        tmp_path, checkout, monkeypatch, folder):
+    from src.evaluation import provenance
+
+    # The checkout stands in for some other project's repository, with the
+    # copy of this one in a folder of it that git does not track. A ":" in a
+    # folder above the copy is legal on a Mac and Linux.
+    checkout.tag("v9.9-other")
+    copy = checkout.root / folder
+    copy.mkdir(parents=True)
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    monkeypatch.setattr(provenance, "PROJECT_ROOT", copy)
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+def test_a_data_snapshot_tag_is_not_taken_for_a_release_tag(tmp_path, checkout):
+    checkout.tag("data/evaluation-v1")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] is None
+
+
+def test_a_tag_made_while_a_run_is_going_is_not_credited_to_it(tmp_path, checkout):
+    class TaggingRetriever(FakeRetriever):
+        def search(self, query, k=None):
+            if not checkout_tagged:
+                checkout.tag("v1.0")
+                checkout_tagged.append(True)
+            return super().search(query, k)
+
+    checkout_tagged = []
+    retrievers = {config_id: TaggingRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert checkout_tagged
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] is None
 
 
 def test_rerunning_an_existing_run_id_is_refused(tmp_path):

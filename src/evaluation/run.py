@@ -19,6 +19,7 @@ from src.stack import RESULTS_ROOT, STACKS, build_retriever
 
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .metrics import RETRIEVAL_METRICS, score_question
+from .provenance import RunSource
 from .records import BenchmarkQuestion, RunResult
 from .results import _safe_run_id, available_run_dir, write_comparison
 
@@ -141,6 +142,7 @@ def run_ablation(
 ) -> dict[str, Any]:
     """Run selected C0-C4 rows and write ``results/<run-id>/``."""
     run_dir = available_run_dir(results_root, run_id)
+    source = RunSource.read()
     summaries: list[dict[str, Any]] = []
     for config_id in configurations:
         if config_id not in CONFIGURATIONS:
@@ -158,7 +160,8 @@ def run_ablation(
             )
         )
 
-    return write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries)
+    return write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
+                            source=source)
 
 
 class FixedSizeBM25Retriever:

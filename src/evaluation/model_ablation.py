@@ -29,9 +29,11 @@ from src.retrieval.embedding_config import EmbeddingConfig
 from src.retrieval.facts import FACTS_FILE
 from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 
+from .artifacts import read_json
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate, logger as harness_log
 from .metrics import score_question
+from .provenance import RunSource
 from .records import UNANSWERABLE, BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
 from .run import _query, _safe_run_id, _summary, question_fields
@@ -127,6 +129,7 @@ def run_embedding_ablation(
     if top_k < 1:
         raise ValueError("top_k must be positive")
     run_dir = available_run_dir(results_root, run_id)
+    source = RunSource.read()
     stacks = [(experiment, stack_factory(experiment)) for experiment in EMBEDDING_EXPERIMENTS]
     run_dir.mkdir(parents=True)
     summaries = []
@@ -166,7 +169,7 @@ def run_embedding_ablation(
             summaries.append(summary)
             _write_report(run_dir, config_id, {**summary, "results": result_rows})
     return write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
-                            extra_fields=MODEL_FIELDS, matrix="embedding")
+                            extra_fields=MODEL_FIELDS, matrix="embedding", source=source)
 
 
 def _generation_summary(experiment: GenerationExperiment, report: dict[str, Any]) -> dict[str, Any]:
@@ -194,6 +197,7 @@ def run_generation_ablation(
 ) -> dict[str, Any]:
     """Measure every provider with each stack's complete answer settings."""
     run_dir = available_run_dir(results_root, run_id)
+    source = RunSource.read()
     stacks = [(experiment, stack_factory(experiment)) for experiment in GENERATION_EXPERIMENTS]
     if len({stack.config.top_k for _, stack in stacks}) != 1:
         raise ValueError("generation stacks must use the same top_k")
@@ -224,7 +228,7 @@ def run_generation_ablation(
         if stopped is not None:
             break
     manifest = write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
-                                extra_fields=GENERATION_FIELDS, matrix="generation")
+                                extra_fields=GENERATION_FIELDS, matrix="generation", source=source)
     if stopped is not None:
         raise stopped
     return manifest
@@ -322,7 +326,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
                          f"which stays on the machine that ran it, so copy it here first")
     if not (run_dir / "config.json").is_file():
         raise ValueError(f"{run_dir} is not a full-matrix run: it has no {run_dir / 'config.json'}")
-    config = json.loads((run_dir / "config.json").read_text())
+    config = read_json(run_dir / "config.json")
     if not isinstance(config, dict) or config.get("schema") not in REPLAYABLE_SCHEMAS:
         raise ValueError(f"{run_dir} is not a full-matrix run: its config.json does not record "
                          f"one of the schemas {REPLAYABLE_SCHEMAS!r}")
@@ -351,7 +355,7 @@ def recorded_answers(run_dir: Path, *, processed_dir: Path = PROCESSED_DIR,
     if any(question.question_id not in measured for question in team):
         raise ValueError("the run's team retrieval is incomplete")
     answers_config = run_dir / "answers-config.json"
-    answered = json.loads(answers_config.read_text())
+    answered = read_json(answers_config)
     for name in ("judge_rubric", "generation"):
         if not isinstance(answered, dict) or name not in answered:
             raise ValueError(f"{answers_config} does not record {name!r}, which a complete "
@@ -539,6 +543,7 @@ def run_generation_replay(
     from src.rag.generate import checked_model
 
     run_dir = available_run_dir(results_root, run_id)
+    source = RunSource.read()
     llm_for = llm_for or checked_model
     judge = judge if judge is not None else LLMJudge(recorded.generation)
     recorded_model = (recorded.generation.provider, recorded.generation.model)
@@ -593,7 +598,7 @@ def run_generation_replay(
             break
     manifest = write_comparison(
         run_dir, run_id=run_id, top_k=stack.top_k, summaries=summaries,
-        extra_fields=REPLAY_FIELDS, matrix="generation-replay",
+        extra_fields=REPLAY_FIELDS, matrix="generation-replay", source=source,
         evidence={"run": recorded.run_dir.name, "row": REPLAY_ROW}, judge=judge.to_dict(),
     )
     if stopped is not None:

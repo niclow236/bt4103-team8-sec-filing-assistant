@@ -20,6 +20,18 @@ rank-bm25==0.2.2
 sentence-transformers==6.0.1
 chromadb==1.5.9
 
+# What the embedding and reranking models run on, and the arrays the scores come
+# back in. Both are installed as dependencies of sentence-transformers, which
+# accepts a range of each; pinned here at the versions the reported results were
+# measured with (docs/evaluation/full-matrix-20261021-manifest.json records
+# both), since embed, rerank and the C5 run use them directly (#50). numpy 2.3
+# and later need Python 3.11, so 3.10 gets the last release that supports it.
+# CI installs torch from PyTorch's CPU index before this file, reading its
+# version from the line below.
+torch==2.14.0
+numpy==2.5.3; python_version >= "3.11"
+numpy==2.2.6; python_version < "3.11"
+
 # The embedding model's tokenizer on its own, without torch, so verify can
 # count every passage in the model's tokens in seconds. Already installed as a
 # dependency of sentence-transformers; pinned here because verify uses it
@@ -88,6 +100,18 @@ streamlit==1.64.0
 # st.bar_chart, so its bars can be coloured and labelled one at a time (#166).
 # Streamlit installs altair anyway; pinned because components.py imports it.
 altair==6.2.2
+
+# Tables: the facts store is a parquet file, and the app, the benchmark and the
+# answer checks read it as a DataFrame. edgartools and streamlit install both
+# anyway; pinned because the code imports pandas, and the tests build a table
+# with pyarrow (#50). pandas 3 needs Python 3.11, so 3.10 gets the last 2.x.
+pandas==3.0.5; python_version >= "3.11"
+pandas==2.3.3; python_version < "3.11"
+pyarrow==25.0.1
+
+# Tests read the HTML the app renders with BeautifulSoup. edgartools installs
+# it anyway; pinned because the tests import it (#50).
+beautifulsoup4==4.15.0
 
 # Test coverage: python -m pytest --cov, with the settings in .coveragerc.
 # pytest-cov runs coverage inside pytest. coverage is pinned as well, because

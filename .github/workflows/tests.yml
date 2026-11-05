@@ -58,9 +58,16 @@ jobs:
       # sentence-transformers pulls in torch, and on Linux the default wheel
       # brings the CUDA libraries with it, a few gigabytes nothing here uses.
       # Installing the CPU build first means requirements.txt finds torch
-      # already there.
+      # already there. The version is read from requirements.txt (#50): an
+      # unpinned install takes the CPU index's newest, which requirements.txt
+      # would then replace with PyPI's CUDA build of the pinned one. A 2.14.0
+      # requirement accepts the index's 2.14.0+cpu. Should the line ever be
+      # written another way, the empty read stops the job here.
       - name: Install torch, CPU build
-        run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+        run: |
+          torch=$(grep '^torch==' requirements.txt)
+          test -n "$torch"
+          python -m pip install "$torch" --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install the pinned dependencies
         run: python -m pip install -r requirements.txt

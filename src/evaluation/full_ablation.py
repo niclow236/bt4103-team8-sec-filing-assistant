@@ -33,10 +33,11 @@ from src.retrieval.records import Query, RetrievedPassage
 from src.retrieval.rerank import CrossEncoderReranker, RerankConfig
 from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 
-from .artifacts import dump_json as dump, read_jsonl
+from .artifacts import dump_json as dump, read_json, read_jsonl
 from .benchmark import load_questions
 from .metrics import MEDIAN_RANK, RETRIEVAL_METRICS, median_rank, score_question
-from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
+from .provenance import (RunSource, corpus_records_sha256, question_records_sha256,
+                         record_provenance, sha256)
 from .records import TEAM, BenchmarkQuestion, RunResult, benchmark_of
 from .rerank_ablation import POLICY, _comparable_manifest, _index_manifests, read_pairs, verify_rankings
 from .results import _safe_run_id, write_comparison
@@ -163,7 +164,7 @@ def declare_benchmark(questions: Sequence[BenchmarkQuestion], *, required: bool 
 
 def frozen_manifest_matches(path: Path, config: dict) -> bool:
     """Keep measurement identity, allowing runtime observations/paths to differ."""
-    frozen = json.loads(path.read_text())
+    frozen = read_json(path)
     return comparable_config(frozen) == comparable_config(json.loads(json.dumps(config)))
 
 
@@ -216,8 +217,8 @@ def reference_rows(
     actual_digest = sha256(path / "pairs.jsonl.gz")
     if actual_digest != expected_pairs_sha256.lower():
         raise ValueError("reference pairs differ from the archived digest")
-    config = json.loads((path / "config.json").read_text())
-    runtime = json.loads((path / "runtime.json").read_text())
+    config = read_json(path / "config.json")
+    runtime = read_json(path / "runtime.json")
     original = config["provenance"]
     for key in ("question_records_sha256", "retrieval_settings"):
         if original[key] != provenance[key]:
@@ -412,11 +413,18 @@ def export_retrieval(
         benchmarks += [{"config": summary["config"], "benchmark": name, **g} for name,g in groups.items()]
     cutoff=summaries[0]["config"]["top_k"]
     identifier=run_id or run_dir.name
+    source=frozen_source(run_dir/config_file)
     write_comparison(run_dir, run_id=identifier, top_k=cutoff, summaries=summaries,
                      extra_fields=("median_latency_ms",), phase="retrieval", complete=True,
-                     config_file=config_file, evaluation_only=True)
+                     config_file=config_file, evaluation_only=True, source=source)
     write_comparison(run_dir / "by-benchmark", run_id=identifier, top_k=cutoff,
-                     summaries=benchmarks, extra_fields=("benchmark",), complete=True, evaluation_only=True)
+                     summaries=benchmarks, extra_fields=("benchmark",), complete=True, evaluation_only=True,
+                     source=source)
+
+
+def frozen_source(config_file: Path) -> RunSource:
+    """The commit and release tag a run froze when it started (#50)."""
+    return RunSource.frozen(read_json(config_file)["provenance"])
 
 
 def verified_baseline(run_dir: Path, snapshot: Sequence[dict], fixed: FixedSizeBM25Retriever | None = None) -> list[dict]:
@@ -475,7 +483,7 @@ def retrieval(args: argparse.Namespace) -> None:
         else:
             write_rows(run_dir / "baseline.jsonl", baseline)
         runtime_path = run_dir / "runtime.json"
-        previous = json.loads(runtime_path.read_text())["identity"] if runtime_path.exists() else None
+        previous = read_json(runtime_path)["identity"] if runtime_path.exists() else None
         indexes = _index_manifests(hybrid)
         if args.resume:
             if previous is not None and any(previous.get(key) != value for key, value in indexes.items()):
@@ -595,7 +603,7 @@ def finish_pending_judge(path: Path, question: BenchmarkQuestion, judge: Any) ->
     from .harness import _ModelCalls
     from .quality import JudgeInvalid, query_cost
 
-    row=json.loads(path.read_text())
+    row=read_json(path)
     answer=saved_answer(row["answer"])
     if row["question_id"] != question.question_id:
         raise ValueError("pending judge question differs")
@@ -626,7 +634,7 @@ def answers(args: argparse.Namespace) -> None:
     from src.rag.generate import config_from_env, checked_model, check_provider
 
     run_dir = args.run_dir
-    original = json.loads((run_dir / "config.json").read_text())
+    original = read_json(run_dir / "config.json")
     questions = [BenchmarkQuestion.from_mapping(r) for r in read_rows(run_dir / "benchmark.jsonl")]
     validate_snapshot(original,questions)
     available = tuple(original.get("matrix", MATRIX))
@@ -689,7 +697,7 @@ def answers(args: argparse.Namespace) -> None:
                 raise ValueError("answer rows are not the exact team prefix")
             pending = directory / "pending-judge.json"
             if pending.exists() and any(
-                row["question_id"] == json.loads(pending.read_text())["question_id"] for row in stored
+                row["question_id"] == read_json(pending)["question_id"] for row in stored
             ):
                 pending.unlink()
             write_rows(path,stored)
@@ -725,7 +733,7 @@ def answers(args: argparse.Namespace) -> None:
         answered = [cid for cid in available if (run_dir/cid/"answer-summary.json").exists()]
         dump(run_dir/"answer-summary.json",{
             "complete":answered==list(available), "team_questions":len(team),
-            "configurations":{cid:json.loads((run_dir/cid/"answer-summary.json").read_text())
+            "configurations":{cid:read_json(run_dir/cid/"answer-summary.json")
                               for cid in answered},
         })
 
@@ -733,7 +741,7 @@ def answers(args: argparse.Namespace) -> None:
 def rescore(args: argparse.Namespace) -> None:
     """Recompute recorded retrieval and answer aggregates without any model."""
     directory=args.run_dir
-    config=json.loads((directory/"config.json").read_text())
+    config=read_json(directory/"config.json")
     available = tuple(config.get("matrix", MATRIX))
     questions=[BenchmarkQuestion.from_mapping(q) for q in read_rows(directory/"benchmark.jsonl")]
     validate_snapshot(config,questions)

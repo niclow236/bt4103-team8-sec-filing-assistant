@@ -105,7 +105,7 @@ from src.stack import RESULTS_ROOT, RETRIEVERS, build_retriever
 from src.utils import start_run_log
 
 from .benchmark import generate_xbrl_questions
-from .provenance import _git
+from .provenance import RunSource, _git
 from .metrics import RETRIEVAL_METRICS, score_question
 from .records import BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
@@ -831,7 +831,7 @@ def run_chunk_sweep(
     run_dir = available_run_dir(results_root, run_id)
     # Read now and not when the run is written, hours later: it is the code
     # this process loaded that the numbers come from.
-    commit = _commit()
+    commit, source = _commit(), RunSource.read()
 
     paths = filings_in_scope(interim_dir, tickers, fiscal_years)
     if not facts_file.exists():
@@ -919,6 +919,7 @@ def run_chunk_sweep(
         extra_fields=SWEEP_FIELDS, matrix="chunk-size",
         measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         commit=commit,
+        source=source,
         embedding_model=EMBED_MODEL if dense else None,
         context_chars=CONTEXT_CHARS,
         reference_budget=reference,

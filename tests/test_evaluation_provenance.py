@@ -19,13 +19,12 @@ def test_git_unavailable_records_unknown_commit(monkeypatch, error):
     assert _git("rev-parse", "HEAD") is None
 
 
-def test_provenance_tracks_benchmark_text_and_corpus_metadata(monkeypatch, tmp_path):
+def test_provenance_tracks_benchmark_text_and_corpus_metadata(monkeypatch, tmp_path, checkout):
     path = tmp_path / "questions.jsonl"
     path.write_text("original input")
     chunk = {"chunk_id": "chunk", "text": "$100", "accession_no": "filing",
              "ticker": "AAPL", "chunk_budget": 1800, "chunk_overlap": 200}
     monkeypatch.setattr("src.evaluation.provenance.iter_chunks", lambda **kwargs: [chunk])
-    monkeypatch.setattr("src.evaluation.provenance._git", lambda *args: "commit")
     question = BenchmarkQuestion(
         question_id="q", question="Revenue?", expected_answer="$100",
         supporting_chunk_ids=("chunk",), hard_negative_chunk_ids=(),
@@ -33,7 +32,7 @@ def test_provenance_tracks_benchmark_text_and_corpus_metadata(monkeypatch, tmp_p
         difficulty="easy", source="handwritten",
     )
     first = record_provenance([path], [question], tmp_path)
-    assert first["source_commit"] == "commit"
+    assert first["source_commit"] == checkout.head
     assert first["by_benchmark"] == {"team": 1}
     assert first["corpus"]["n_passages"] == first["corpus"]["n_filings"] == 1
     assert first["retrieval_settings"]["BM25_K1"] == constants.BM25_K1
