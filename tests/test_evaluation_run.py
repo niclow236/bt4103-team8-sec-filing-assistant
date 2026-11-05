@@ -110,6 +110,14 @@ def test_a_run_records_the_release_tag_it_was_produced_from(tmp_path, checkout):
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_tag"] == "v1.0"
 
 
+def test_a_run_on_an_untagged_commit_still_records_the_commit_it_ran(tmp_path, checkout):
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_commit"] == checkout.head
+
+
 def test_a_run_from_a_commit_after_the_tag_records_none(tmp_path, checkout):
     checkout.tag("v1.0")
     checkout.commit()

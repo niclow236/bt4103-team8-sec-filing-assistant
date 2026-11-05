@@ -189,8 +189,13 @@ class Checkout:
         self.git("add", "code.py")
         self.git("commit", "-q", "-m", "measured code")
 
-    def git(self, *args: str) -> None:
-        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    @property
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD")
 
     def tag(self, name: str) -> None:
         self.git("tag", "-a", name, "-m", name)

@@ -7,7 +7,10 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .provenance import RunSource
 
 COMPARISON_FIELDS = (
     "config", "name", "questions", "recall", "ndcg", "mrr",
@@ -31,7 +34,7 @@ def available_run_dir(results_root: Path, run_id: str) -> Path:
 
 def write_comparison(
     run_dir: Path, *, run_id: str, top_k: int,
-    summaries: Sequence[Mapping[str, Any]], source_tag: str | None,
+    summaries: Sequence[Mapping[str, Any]], source: RunSource,
     extra_fields: Sequence[str] = (), **metadata: Any,
 ) -> dict[str, Any]:
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -45,7 +48,7 @@ def write_comparison(
             if stopped := summary.get("stopped"):
                 row["stopped"] = f"{stopped['question_id']}: {stopped['error']}"
             writer.writerow(row)
-    manifest = {"run_id": run_id, "top_k": top_k, "source_tag": source_tag,
+    manifest = {"run_id": run_id, "top_k": top_k, **source.to_dict(),
                 "configurations": list(summaries), **metadata}
     (run_dir / "summary.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

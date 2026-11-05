@@ -588,7 +588,7 @@ def test_a_sweep_records_the_release_tag_it_was_produced_from(sources, checkout)
                     tickers=["aaa"], fiscal_years=[2024], **sources)
 
     saved = json.loads((sources["results_root"] / "tagged" / "summary.json").read_text())
-    assert saved["source_tag"] == "v1.0"
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
 
 
 def test_bm25_alone_encodes_nothing(sources, fake_model):

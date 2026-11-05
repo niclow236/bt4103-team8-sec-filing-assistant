@@ -90,7 +90,8 @@ def test_an_embedding_matrix_records_the_release_tag_it_was_produced_from(tmp_pa
 
     run_embedding_ablation([_question()], _stack, run_id="tagged", results_root=tmp_path)
 
-    assert json.loads((tmp_path / "tagged" / "summary.json").read_text())["source_tag"] == "v1.0"
+    saved = json.loads((tmp_path / "tagged" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
 
 
 def test_generation_matrix_compares_the_local_and_both_hosted_providers(monkeypatch, tmp_path):
@@ -122,7 +123,8 @@ def test_a_generation_matrix_records_the_release_tag_it_was_produced_from(
 
     run_generation_ablation([_question()], _stack, run_id="tagged", results_root=tmp_path)
 
-    assert json.loads((tmp_path / "tagged" / "summary.json").read_text())["source_tag"] == "v1.0"
+    saved = json.loads((tmp_path / "tagged" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
 
 
 def test_embedding_and_generation_writers_preserve_benchmark_metadata(monkeypatch, tmp_path):
@@ -669,7 +671,8 @@ def test_a_replay_records_the_release_tag_it_was_produced_from(monkeypatch, tmp_
     run_generation_replay(recorded, [GENERATION_EXPERIMENTS[2]], run_id="tagged",
                           results_root=tmp_path, llm_for=lambda config: None, judge=judge)
 
-    assert json.loads((tmp_path / "tagged" / "summary.json").read_text())["source_tag"] == "v1.0"
+    saved = json.loads((tmp_path / "tagged" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
 
 
 def test_the_replay_summary_counts_what_163_compares_generators_on(tmp_path):

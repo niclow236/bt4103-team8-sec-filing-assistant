@@ -7,10 +7,10 @@ import json
 import platform
 import subprocess
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from src.config import PROJECT_ROOT
 from src.pipeline.chunk import iter_chunks
@@ -42,6 +42,31 @@ def source_tag() -> str | None:
     name releases of the evaluation data, not of the code, and are passed over.
     """
     return _git("describe", "--tags", "--exact-match", "--dirty", "--exclude", "data/*")
+
+
+@dataclass(frozen=True)
+class RunSource:
+    """The code a run measured: its commit, and the release tag on it (#50).
+
+    Read once, when the run starts, since it is the code that process loaded
+    that the numbers come from. The commit is kept beside the tag so a run on
+    an untagged commit can still be traced, and matched to a tag made later.
+    """
+
+    commit: str | None
+    tag: str | None
+
+    @classmethod
+    def read(cls) -> RunSource:
+        return cls(_git("rev-parse", "HEAD"), source_tag())
+
+    @classmethod
+    def frozen(cls, provenance: Mapping[str, Any]) -> RunSource:
+        """The source a run froze in its config; runs from before #50 have no tag."""
+        return cls(provenance.get("source_commit"), provenance.get("source_tag"))
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {"source_commit": self.commit, "source_tag": self.tag}
 
 
 def corpus_records_sha256(chunks: Sequence[dict]) -> str:
@@ -86,8 +111,7 @@ def record_provenance(
         except PackageNotFoundError:
             packages[package] = None
     return {
-        "source_commit": _git("rev-parse", "HEAD"),
-        "source_tag": source_tag(),
+        **RunSource.read().to_dict(),
         "source_files_sha256": {
             path.relative_to(PROJECT_ROOT).as_posix(): sha256(path)
             for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))

@@ -36,7 +36,8 @@ from src.stack import RESULTS_ROOT, STACKS, StackConfig, build_retriever
 from .artifacts import dump_json as dump, read_jsonl
 from .benchmark import load_questions
 from .metrics import MEDIAN_RANK, RETRIEVAL_METRICS, median_rank, score_question
-from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
+from .provenance import (RunSource, corpus_records_sha256, question_records_sha256,
+                         record_provenance, sha256)
 from .records import TEAM, BenchmarkQuestion, RunResult, benchmark_of
 from .rerank_ablation import POLICY, _comparable_manifest, _index_manifests, read_pairs, verify_rankings
 from .results import _safe_run_id, write_comparison
@@ -412,18 +413,18 @@ def export_retrieval(
         benchmarks += [{"config": summary["config"], "benchmark": name, **g} for name,g in groups.items()]
     cutoff=summaries[0]["config"]["top_k"]
     identifier=run_id or run_dir.name
-    source_tag=frozen_tag(run_dir/config_file)
+    source=frozen_source(run_dir/config_file)
     write_comparison(run_dir, run_id=identifier, top_k=cutoff, summaries=summaries,
                      extra_fields=("median_latency_ms",), phase="retrieval", complete=True,
-                     config_file=config_file, evaluation_only=True, source_tag=source_tag)
+                     config_file=config_file, evaluation_only=True, source=source)
     write_comparison(run_dir / "by-benchmark", run_id=identifier, top_k=cutoff,
                      summaries=benchmarks, extra_fields=("benchmark",), complete=True, evaluation_only=True,
-                     source_tag=source_tag)
+                     source=source)
 
 
-def frozen_tag(config_file: Path) -> str | None:
-    """The release tag a run froze when it started; runs from before #50 have none."""
-    return json.loads(config_file.read_text())["provenance"].get("source_tag")
+def frozen_source(config_file: Path) -> RunSource:
+    """The commit and release tag a run froze when it started (#50)."""
+    return RunSource.frozen(json.loads(config_file.read_text())["provenance"])
 
 
 def verified_baseline(run_dir: Path, snapshot: Sequence[dict], fixed: FixedSizeBM25Retriever | None = None) -> list[dict]:

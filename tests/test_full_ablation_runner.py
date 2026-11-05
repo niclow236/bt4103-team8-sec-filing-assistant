@@ -147,7 +147,8 @@ def test_the_matrix_summary_records_the_release_tag_its_rankings_were_measured_a
     checkout.tag('v1.0')
     matrix.retrieval(runner.args)
     for table in ('summary.json','by-benchmark/summary.json'):
-        assert json.loads((runner.directory/table).read_text())['source_tag']=='v1.0'
+        saved=json.loads((runner.directory/table).read_text())
+        assert (saved['source_commit'],saved['source_tag'])==(checkout.head,'v1.0')
 
 
 def test_resuming_a_complete_matrix_keeps_the_release_tag_it_was_measured_at(runner,checkout):

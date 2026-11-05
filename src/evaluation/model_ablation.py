@@ -32,7 +32,7 @@ from src.stack import RESULTS_ROOT, build_retriever, build_stack, stack_config
 from .benchmark import DEFAULT_QUESTIONS_PATH, load_questions
 from .harness import RunInterrupted, RunStopped, evaluate, logger as harness_log
 from .metrics import score_question
-from .provenance import source_tag
+from .provenance import RunSource
 from .records import UNANSWERABLE, BenchmarkQuestion, RunResult
 from .results import available_run_dir, write_comparison
 from .run import _query, _safe_run_id, _summary, question_fields
@@ -128,7 +128,7 @@ def run_embedding_ablation(
     if top_k < 1:
         raise ValueError("top_k must be positive")
     run_dir = available_run_dir(results_root, run_id)
-    tag = source_tag()
+    source = RunSource.read()
     stacks = [(experiment, stack_factory(experiment)) for experiment in EMBEDDING_EXPERIMENTS]
     run_dir.mkdir(parents=True)
     summaries = []
@@ -168,7 +168,7 @@ def run_embedding_ablation(
             summaries.append(summary)
             _write_report(run_dir, config_id, {**summary, "results": result_rows})
     return write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
-                            extra_fields=MODEL_FIELDS, matrix="embedding", source_tag=tag)
+                            extra_fields=MODEL_FIELDS, matrix="embedding", source=source)
 
 
 def _generation_summary(experiment: GenerationExperiment, report: dict[str, Any]) -> dict[str, Any]:
@@ -196,7 +196,7 @@ def run_generation_ablation(
 ) -> dict[str, Any]:
     """Measure every provider with each stack's complete answer settings."""
     run_dir = available_run_dir(results_root, run_id)
-    tag = source_tag()
+    source = RunSource.read()
     stacks = [(experiment, stack_factory(experiment)) for experiment in GENERATION_EXPERIMENTS]
     if len({stack.config.top_k for _, stack in stacks}) != 1:
         raise ValueError("generation stacks must use the same top_k")
@@ -227,7 +227,7 @@ def run_generation_ablation(
         if stopped is not None:
             break
     manifest = write_comparison(run_dir, run_id=run_id, top_k=top_k, summaries=summaries,
-                                extra_fields=GENERATION_FIELDS, matrix="generation", source_tag=tag)
+                                extra_fields=GENERATION_FIELDS, matrix="generation", source=source)
     if stopped is not None:
         raise stopped
     return manifest
@@ -542,7 +542,7 @@ def run_generation_replay(
     from src.rag.generate import checked_model
 
     run_dir = available_run_dir(results_root, run_id)
-    tag = source_tag()
+    source = RunSource.read()
     llm_for = llm_for or checked_model
     judge = judge if judge is not None else LLMJudge(recorded.generation)
     recorded_model = (recorded.generation.provider, recorded.generation.model)
@@ -597,7 +597,7 @@ def run_generation_replay(
             break
     manifest = write_comparison(
         run_dir, run_id=run_id, top_k=stack.top_k, summaries=summaries,
-        extra_fields=REPLAY_FIELDS, matrix="generation-replay", source_tag=tag,
+        extra_fields=REPLAY_FIELDS, matrix="generation-replay", source=source,
         evidence={"run": recorded.run_dir.name, "row": REPLAY_ROW}, judge=judge.to_dict(),
     )
     if stopped is not None:
