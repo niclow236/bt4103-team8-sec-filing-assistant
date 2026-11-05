@@ -173,6 +173,14 @@ def paired_metric(
             "ties": sum(abs(d) <= 1e-12 for d in diffs), "ci95": ci, "clusters": len(values)}
 
 
+def _sourced_summary(
+    source: RunSource, rows: Sequence[dict], k: int, policy: dict = POLICY, *,
+    candidate_k: int = CANDIDATE_K,
+) -> dict:
+    """The summary of a run's rows, headed by the source it froze (#50)."""
+    return {**source.to_dict(), **summarize(rows, k, policy, candidate_k=candidate_k)}
+
+
 def summarize(
     rows: Sequence[dict], k: int, policy: dict = POLICY, *, candidate_k: int = CANDIDATE_K,
 ) -> dict:
@@ -482,8 +490,7 @@ def _run_pairs_locked(
         if len(rows) == len(questions):
             if repair_needed:
                 _repair_pairs(pairs_path, rows)
-            report = {**source.to_dict(),
-                      **summarize(rows, top_k, candidate_k=reranker.config.candidate_k)}
+            report = _sourced_summary(source, rows, top_k, candidate_k=reranker.config.candidate_k)
             _dump(output_dir / "summary.json", report)
             return report
     else:
@@ -556,7 +563,7 @@ def _run_pairs_locked(
             if i % 25 == 0 or i == len(questions):
                 print(f"paired C4/C5: {i}/{len(questions)}", flush=True)
     verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
-    report = {**source.to_dict(), **summarize(rows, top_k, candidate_k=reranker.config.candidate_k)}
+    report = _sourced_summary(source, rows, top_k, candidate_k=reranker.config.candidate_k)
     _dump(output_dir / "summary.json", report)
     return report
 
@@ -646,8 +653,8 @@ def main(argv: list[str] | None = None) -> None:
                 rows, list(iter_chunks(processed_dir=args.processed_dir)),
                 manifest["provenance"].get("corpus", {}).get("records_sha256"),
             )
-        report = {**RunSource.frozen(manifest["provenance"]).to_dict(),
-                  **summarize(rows, k, manifest["policy"], candidate_k=manifest["reranker"]["candidate_k"])}
+        report = _sourced_summary(RunSource.frozen(manifest["provenance"]), rows, k, manifest["policy"],
+                                  candidate_k=manifest["reranker"]["candidate_k"])
         if enrichment is not None:
             report["gold_diagnostics_provenance"] = enrichment
         _dump(args.run_dir / f"rescored-k{k}.json", report)
