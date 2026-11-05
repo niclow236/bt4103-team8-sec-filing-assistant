@@ -75,15 +75,20 @@ class RunSource:
 
     @classmethod
     def read(cls) -> RunSource:
-        # HEAD is read once and the tag looked up on that commit, so a checkout
-        # switched by another process in between cannot pair one commit with
-        # another's tag. describe takes no --dirty with a commit named, so the
-        # edits are asked of status, which refreshes the index as --dirty does.
-        commit = _git("rev-parse", "HEAD")
-        if commit is None:
+        # One status call says both which commit is checked out and whether
+        # committed files have edits, so a checkout switched by another process
+        # cannot pair one commit with another's edits; the tag is then looked
+        # up on that commit, not on HEAD again. status refreshes the index as
+        # describe --dirty does, and leaves untracked files out as it does.
+        # A status that fails names no commit, so the run records no source
+        # rather than a tag whose edits were never checked.
+        status = _git("status", "--porcelain=v2", "--branch", "--untracked-files=no")
+        lines = (status or "").splitlines()
+        commit = next((line.split()[2] for line in lines if line.startswith("# branch.oid ")), None)
+        if commit in (None, "(initial)"):
             return cls(None, None)
         tag = _git("describe", "--tags", "--exact-match", "--exclude", "data/*", commit)
-        if tag is not None and _git("status", "--porcelain", "--untracked-files=no"):
+        if tag is not None and any(not line.startswith("#") for line in lines):
             tag += "-dirty"
         return cls(commit, tag)
 

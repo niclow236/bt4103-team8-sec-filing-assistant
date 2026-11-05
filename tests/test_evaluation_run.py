@@ -118,23 +118,29 @@ def test_a_run_on_an_untagged_commit_still_records_the_commit_it_ran(tmp_path, c
     assert json.loads((tmp_path / "run" / "summary.json").read_text())["source_commit"] == checkout.head
 
 
-def test_a_checkout_switched_while_the_source_is_read_never_pairs_two_commits(
-        tmp_path, checkout, monkeypatch):
+@pytest.mark.parametrize("start_tagged, then_edit", [(False, False), (True, True)])
+def test_a_checkout_switched_while_the_source_is_read_never_mixes_two_commits(
+        tmp_path, checkout, monkeypatch, start_tagged, then_edit):
     import subprocess
 
     checkout.tag("v1.0")
     tagged = checkout.head
     checkout.commit()
     untagged = checkout.head
+    start, other = (tagged, untagged) if start_tagged else (untagged, tagged)
+    checkout.git("checkout", "-q", start)
     run = subprocess.run
     switched = []
 
     def another_session_switches(command, *args, **kwargs):
-        # Another process checks out the tagged commit just after HEAD is read.
+        # Another process checks out the other commit, and may edit it, just
+        # after the run's first question to git.
         result = run(command, *args, **kwargs)
-        if command[:3] == ["git", "rev-parse", "HEAD"] and not switched:
+        if command[0] == "git" and not switched:
             switched.append(True)
-            checkout.git("checkout", "-q", tagged)
+            checkout.git("checkout", "-q", other)
+            if then_edit:
+                checkout.edit()
         return result
 
     monkeypatch.setattr(subprocess, "run", another_session_switches)
@@ -144,7 +150,44 @@ def test_a_checkout_switched_while_the_source_is_read_never_pairs_two_commits(
 
     saved = json.loads((tmp_path / "run" / "summary.json").read_text())
     assert switched
-    assert (saved["source_commit"], saved["source_tag"]) in {(untagged, None), (tagged, "v1.0")}
+    dirty = "-dirty" if then_edit else ""
+    either = {(start, "v1.0" if start == tagged else None),
+              (other, "v1.0" + dirty if other == tagged else None)}
+    assert (saved["source_commit"], saved["source_tag"]) in either
+
+
+def test_a_run_that_cannot_tell_whether_files_were_edited_records_no_source(
+        tmp_path, checkout):
+    # A corrupt index stops git status, though the tag could still be read:
+    # recording it clean would claim edits were checked that were not.
+    checkout.tag("v1.0")
+    checkout.edit()
+    (checkout.root / ".git" / "index").write_bytes(b"DIRCgarbage")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
+
+
+def test_a_repository_with_no_commit_yet_records_no_source(tmp_path, checkout, monkeypatch):
+    import subprocess
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    subprocess.run(["git", "init", "-q"], cwd=empty, check=True)
+    assert (empty / ".git" / "HEAD").exists()
+    monkeypatch.setenv("GIT_DIR", str(empty / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(empty))
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
 def test_a_run_from_a_commit_after_the_tag_records_none(tmp_path, checkout):
