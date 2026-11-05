@@ -8,7 +8,6 @@ import pytest
 from src.evaluation.records import BenchmarkQuestion
 from src.evaluation.run import CONFIGURATIONS, run_ablation, run_configuration
 from src.retrieval.records import Query, RetrievedPassage
-from test_results_report import case_insensitive_tmp  # noqa: F401  (a fixture, #201)
 
 
 def _question(question_id="q001", **overrides):

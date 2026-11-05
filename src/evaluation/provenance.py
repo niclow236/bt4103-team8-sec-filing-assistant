@@ -26,6 +26,7 @@ def sha256(path: Path) -> str:
 
 
 def _run_git(*args: str) -> str | None:
+    """git's raw output in the project folder, or None if it fails; no checks."""
     try:
         result = subprocess.run(
             ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30,
@@ -36,6 +37,12 @@ def _run_git(*args: str) -> str | None:
 
 
 def _git(*args: str) -> str | None:
+    """git's stripped output for the project's own repository, or None.
+
+    None also when the repository git finds is not the project's own, as for a
+    copy without its .git inside another repository. Every caller that reads
+    where a run's code came from goes through here, not ``_run_git``.
+    """
     # Only the project's own repository counts. A copy without its own .git
     # that sits inside another repository would otherwise read as that one
     # (#50). GIT_CEILING_DIRECTORIES cannot say this for a path with a ":" in
