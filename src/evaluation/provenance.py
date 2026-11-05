@@ -29,7 +29,10 @@ def _run_git(*args: str) -> str | None:
     """git's raw output in the project folder, or None if it fails; no checks."""
     try:
         result = subprocess.run(
-            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30,
+            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, check=False, timeout=30,
+            # git prints names the user chose, a branch's among them, as raw
+            # bytes; decoding them by the locale could stop the run (#50).
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return None

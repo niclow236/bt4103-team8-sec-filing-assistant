@@ -190,6 +190,22 @@ def test_a_repository_with_no_commit_yet_records_no_source(tmp_path, checkout, m
     assert (saved["source_commit"], saved["source_tag"]) == (None, None)
 
 
+def test_a_branch_name_that_is_not_utf8_does_not_stop_the_run(tmp_path, checkout):
+    # git prints the branch name with the commit; a name of raw bytes, which
+    # git allows, must not stop the run. packed-refs holds it, since some
+    # filesystems refuse such a file name.
+    checkout.tag("v1.0")
+    git = checkout.root / ".git"
+    (git / "packed-refs").write_bytes(checkout.head.encode() + b" refs/heads/feat-\xff\n")
+    (git / "HEAD").write_bytes(b"ref: refs/heads/feat-\xff\n")
+    retrievers = {config_id: FakeRetriever() for config_id in CONFIGURATIONS}
+
+    run_ablation([_question()], retrievers, run_id="run", results_root=tmp_path)
+
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
+
+
 def test_a_run_from_a_commit_after_the_tag_records_none(tmp_path, checkout):
     checkout.tag("v1.0")
     checkout.commit()
