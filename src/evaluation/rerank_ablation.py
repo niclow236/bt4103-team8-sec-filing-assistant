@@ -26,7 +26,8 @@ from src.stack import RESULTS_ROOT, build_retriever
 from .artifacts import dump_json as _dump, read_jsonl
 from .benchmark import load_questions
 from .metrics import RETRIEVAL_METRICS, score_question
-from .provenance import corpus_records_sha256, question_records_sha256, record_provenance, sha256
+from .provenance import (RunSource, corpus_records_sha256, question_records_sha256,
+                         record_provenance, sha256)
 from .records import TEAM, XBRL, BenchmarkQuestion, BenchmarkValidationError, RunResult, benchmark_of
 from .results import _safe_run_id
 from .run import _query
@@ -450,6 +451,8 @@ def _run_pairs_locked(
     manifest = {"provenance": provenance, "reranker": reranker.config.to_dict(),
                 "top_k": top_k, "policy": POLICY, "query_policy": "C4 evaluation.run._query"}
     manifest = json.loads(json.dumps(manifest))
+    # The source the run froze when it started; a resume keeps the original's.
+    source = RunSource.frozen(manifest["provenance"])
     pairs_path = output_dir / "pairs.jsonl.gz"
     rows = []
     original_runtime = {}
@@ -459,6 +462,7 @@ def _run_pairs_locked(
         original = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
         if _comparable_manifest(original) != _comparable_manifest(manifest):
             raise ValueError("resume requires identical source, inputs, corpus, settings and policy")
+        source = RunSource.frozen(original["provenance"])
         if pairs_path.exists():
             try:
                 rows = read_pairs(pairs_path)
@@ -478,7 +482,8 @@ def _run_pairs_locked(
         if len(rows) == len(questions):
             if repair_needed:
                 _repair_pairs(pairs_path, rows)
-            report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
+            report = {**source.to_dict(),
+                      **summarize(rows, top_k, candidate_k=reranker.config.candidate_k)}
             _dump(output_dir / "summary.json", report)
             return report
     else:
@@ -551,7 +556,7 @@ def _run_pairs_locked(
             if i % 25 == 0 or i == len(questions):
                 print(f"paired C4/C5: {i}/{len(questions)}", flush=True)
     verify_rankings(rows, top_k, candidate_k=reranker.config.candidate_k)
-    report = summarize(rows, top_k, candidate_k=reranker.config.candidate_k)
+    report = {**source.to_dict(), **summarize(rows, top_k, candidate_k=reranker.config.candidate_k)}
     _dump(output_dir / "summary.json", report)
     return report
 
@@ -641,7 +646,8 @@ def main(argv: list[str] | None = None) -> None:
                 rows, list(iter_chunks(processed_dir=args.processed_dir)),
                 manifest["provenance"].get("corpus", {}).get("records_sha256"),
             )
-        report = summarize(rows, k, manifest["policy"], candidate_k=manifest["reranker"]["candidate_k"])
+        report = {**RunSource.frozen(manifest["provenance"]).to_dict(),
+                  **summarize(rows, k, manifest["policy"], candidate_k=manifest["reranker"]["candidate_k"])}
         if enrichment is not None:
             report["gold_diagnostics_provenance"] = enrichment
         _dump(args.run_dir / f"rescored-k{k}.json", report)

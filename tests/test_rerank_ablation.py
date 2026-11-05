@@ -471,6 +471,24 @@ def test_resume_allows_paths_and_os_build_to_change_but_preserves_history(tmp_pa
     assert json.loads((out / "config.json").read_text())["provenance"] == provenance
 
 
+def test_the_summary_and_its_rescore_record_the_commit_and_tag_the_run_froze(tmp_path):
+    provenance = {"questions": 2, "source_commit": "abc", "source_tag": "v1.0"}
+    out = completed_run(tmp_path, provenance)[-1]
+    main(["rescore", str(out)])
+    for report in ("summary.json", "rescored-k2.json"):
+        saved = json.loads((out / report).read_text())
+        assert (saved["source_commit"], saved["source_tag"]) == ("abc", "v1.0")
+
+
+def test_resuming_a_complete_run_keeps_the_source_in_its_summary(tmp_path):
+    provenance = {"questions": 2, "source_commit": "abc", "source_tag": "v1.0"}
+    qs, pool, chunks, reranker, out = completed_run(tmp_path, provenance)
+    run_pairs(qs, Inner(pool), reranker, output_dir=out, provenance=provenance, chunks=chunks,
+              top_k=2, resume=True)
+    summary = json.loads((out / "summary.json").read_text())
+    assert (summary.get("source_commit"), summary.get("source_tag")) == ("abc", "v1.0")
+
+
 def test_tagging_the_commit_while_a_run_is_interrupted_does_not_block_its_resume(tmp_path):
     provenance = {"questions": 2, "source_commit": "abc", "source_tag": None,
                   "inputs": [{"path": "x", "sha256": "same"}], "corpus": {"records_sha256": "same"},
@@ -484,6 +502,7 @@ def test_tagging_the_commit_while_a_run_is_interrupted_does_not_block_its_resume
               top_k=2, resume=True)
     assert len(read_pairs(out / "pairs.jsonl.gz")) == 2
     assert json.loads((out / "config.json").read_text())["provenance"]["source_tag"] is None
+    assert json.loads((out / "summary.json").read_text())["source_tag"] is None
 
 
 @pytest.mark.parametrize("field", ["input", "corpus", "package", "machine", "python"])

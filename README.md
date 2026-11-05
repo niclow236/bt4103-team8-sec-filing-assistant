@@ -2678,10 +2678,13 @@ started from and the release tag on it, so a number in the report can be
 traced to the code that produced it (#50). Both are read when the run starts,
 not when it ends. The tag ends in `-dirty` when committed files had
 uncommitted edits, and is `null` when the commit carries no tag; the commit
-still says which code ran, and matches a tag made later. Both are `null` when
+then still names the code the run started from, and matches a tag made later.
+Uncommitted edits on an untagged commit are marked nowhere, so a run meant for
+the report should start from a clean checkout of its tag. Both are `null` when
 git cannot be read, as in a copy without its `.git` folder. Tags under `data/`
 name evaluation-data releases and are not counted. The full matrix and the C5
-reference also freeze both in `config.json`. Reports
+reference also freeze both in `config.json`, and write them into their own
+`summary.json` from there. Reports
 retain retrieved chunk IDs and scores for inspection and rescoring. A missing
 index or key fails before any question is measured or run directory is created.
 A stopped or interrupted provider run saves completed answers, its stop reason

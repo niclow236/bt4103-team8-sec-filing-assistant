@@ -121,9 +121,11 @@ retriever adapter has been removed.
 - `pairs.jsonl.gz`: each full benchmark question and parsed query, both ranked
   ID/score lists and metrics, and all candidate logits, token lengths, metadata
   and source provenance;
-- `summary.json`: paired metrics, benchmark/type/evidence-kind breakdowns, wins,
-  losses, ties, cluster counts, uncertainty, truncation and timing diagnostics,
-  plus the decision and any failed criteria.
+- `summary.json`: the commit and release tag the run froze in `config.json`
+  (`source_commit`, `source_tag`, #50), paired metrics,
+  benchmark/type/evidence-kind breakdowns, wins, losses, ties, cluster counts,
+  uncertainty, truncation and timing diagnostics, plus the decision and any
+  failed criteria. A `rescored-k*.json` carries the same two fields.
 
 Outputs stream to disk. Graceful interruptions preserve completed pairs. To
 resume, repeat the identical run command with `--resume`; changed inputs,
