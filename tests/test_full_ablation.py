@@ -105,24 +105,26 @@ def test_transaction_reader_recovers_only_the_unfinished_tail(tmp_path):
 
 
 def test_summary_exposes_denominators(tmp_path):
+    (tmp_path/'config.json').write_text(json.dumps({'provenance':{}}))
     q=question(); rows={}
     for cid in matrix.MATRIX:
         rows[cid]=matrix.ranking(q,Query(q.question),[],cid,10.0)
-    matrix.export_retrieval(tmp_path,[{'question':q.to_dict(),'rows':rows}],1,source_tag=None)
+    matrix.export_retrieval(tmp_path,[{'question':q.to_dict(),'rows':rows}],1)
     report=json.loads((tmp_path/'summary.json').read_text())
     assert report['complete'] and len(report['configurations'])==7
     assert report['configurations'][0]['metric_denominators']['recall']==1
     assert report['configurations'][0]['metric_denominators']['hard_negative_accuracy']==0
     with pytest.raises(ValueError,match='incomplete'):
-        matrix.export_retrieval(tmp_path,[],1,source_tag=None)
+        matrix.export_retrieval(tmp_path,[],1)
 
 
 def test_retrieval_reports_one_team_slice_beside_the_xbrl_set(tmp_path):
+    (tmp_path/'config.json').write_text(json.dumps({'provenance':{}}))
     transactions=[]
     for q in (question('t1',None),question('t2',None),question('x','xbrl')):
         transactions.append({'question':q.to_dict(),
                              'rows':{cid:matrix.ranking(q,Query(q.question),[],cid,10.0) for cid in matrix.MATRIX}})
-    matrix.export_retrieval(tmp_path,transactions,3,source_tag=None)
+    matrix.export_retrieval(tmp_path,transactions,3)
     c0=json.loads((tmp_path/'C0/summary.json').read_text())
     assert {name:group['questions'] for name,group in c0['by_benchmark'].items()}=={'team':2,'xbrl':1}
     split=json.loads((tmp_path/'by-benchmark/summary.json').read_text())['configurations']

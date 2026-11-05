@@ -389,8 +389,8 @@ def measure_question(
 
 
 def export_retrieval(
-    run_dir: Path, transactions: Sequence[dict], expected: int, *, source_tag: str | None,
-    run_id: str | None = None, config_file: str = "config.json", write_question_outputs: bool = True,
+    run_dir: Path, transactions: Sequence[dict], expected: int, *, run_id: str | None = None,
+    config_file: str = "config.json", write_question_outputs: bool = True,
     configurations: Sequence[str] | None = None,
 ) -> None:
     if len(transactions) != expected:
@@ -412,6 +412,7 @@ def export_retrieval(
         benchmarks += [{"config": summary["config"], "benchmark": name, **g} for name,g in groups.items()]
     cutoff=summaries[0]["config"]["top_k"]
     identifier=run_id or run_dir.name
+    source_tag=frozen_tag(run_dir/config_file)
     write_comparison(run_dir, run_id=identifier, top_k=cutoff, summaries=summaries,
                      extra_fields=("median_latency_ms",), phase="retrieval", complete=True,
                      config_file=config_file, evaluation_only=True, source_tag=source_tag)
@@ -490,8 +491,7 @@ def retrieval(args: argparse.Namespace) -> None:
                 raise ValueError("cannot verify resumed indexes without the original runtime.json")
         if len(transactions) == len(questions):
             write_rows(run_dir / "pairs.jsonl", transactions)
-            export_retrieval(run_dir, transactions, len(questions), configurations=configuration_ids,
-                             source_tag=frozen_tag(run_dir / "config.json"))
+            export_retrieval(run_dir, transactions, len(questions), configurations=configuration_ids)
             return
         # Warm the encoders on a real nonempty pool, outside measured rows.
         warm_started = perf_counter()
@@ -536,8 +536,7 @@ def retrieval(args: argparse.Namespace) -> None:
                 transactions.append(transaction)
                 if (i + 1) % 25 == 0 or i + 1 == len(questions):
                     print(f"{'/'.join(configuration_ids)}: {i + 1}/{len(questions)}", flush=True)
-        export_retrieval(run_dir, transactions, len(questions), configurations=configuration_ids,
-                         source_tag=frozen_tag(run_dir / "config.json"))
+        export_retrieval(run_dir, transactions, len(questions), configurations=configuration_ids)
 
 
 class ReplayRetriever:
@@ -759,8 +758,7 @@ def rescore(args: argparse.Namespace) -> None:
     target=directory/"rescored"
     target.mkdir(exist_ok=True)
     export_retrieval(target,transactions,len(questions),run_id=directory.name,config_file="../config.json",
-                     write_question_outputs=False,configurations=available,
-                     source_tag=frozen_tag(directory/"config.json"))
+                     write_question_outputs=False,configurations=available)
     team=team_questions(questions)
     configuration_ids = selected_configurations(args, available=available)
     summaries={}
