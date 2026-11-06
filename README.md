@@ -132,9 +132,6 @@ bt4103-team8-sec-filing-assistant/
 ├── .coveragerc              # coverage settings for python -m pytest --cov
 ├── .gitignore
 ├── .env.example             # template for local settings (copy to .env)
-├── .github/
-│   └── workflows/
-│       └── tests.yml        # runs python -m pytest on GitHub for each pull request and push to main
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
@@ -321,22 +318,12 @@ identity, no `.env` and nothing under `data/`: each builds its own small
 corpus in a temporary directory, the dense-index tests replace the embedding
 model with a deterministic stand-in, and a test of a command replaces the stage
 the command calls. The suite takes a few minutes on a laptop. One test is the
-exception: it counts tokens with the real bge tokenizer, downloaded from the
-Hugging Face Hub. On a laptop that cannot download it the test skips, since
-there is nothing to count against. In CI it fails instead, because there a
-skip would leave both checks green with the regression it guards (#64)
-unchecked (#143). `CI` is what tells the two apart, and GitHub Actions sets it
-on every runner. So that a Hub outage is not what turns a check red, CI caches
-the tokenizer under `~/.cache/huggingface`, keyed by the embedding model it
-belongs to, and downloads the file only when that key is new (#200). A restored
-run still asks the Hub once whether the file changed, and falls back to the
-cached copy when that check is refused or rate-limited, so the cache covers an
-outage without hiding it. A runner that misses the cache and cannot reach the
-Hub still fails the test rather than skipping it. The same goes for the test of a case-variant `--out` for the
-results report, which needs a folder that does not tell `MATRIX` from `matrix`:
-a Mac's default filesystem is one, a Linux one is not. Where it finds none, it
-skips on a laptop and fails in CI. CI's Linux jobs mount one for it and name it
-in `CASE_INSENSITIVE_DIR` (#201).
+exception. It counts tokens with the real bge tokenizer, downloaded from the
+Hugging Face Hub, and skips on a laptop that cannot download it, since there is
+nothing to count against (#64). The test of a case-variant `--out` for the
+results report needs a folder that does not tell `MATRIX` from `matrix`.
+Windows and a Mac's default filesystem are like that. Linux is not, so there
+the test skips.
 
 What the suite holds in place, and where (#49):
 

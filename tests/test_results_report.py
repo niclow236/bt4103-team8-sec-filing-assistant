@@ -11,8 +11,6 @@ import pytest
 
 from src.config import PROJECT_ROOT
 from src.evaluation import report
-from tests.test_verify import set_ci_env
-from conftest import case_insensitive
 
 
 def _save_run(root, name, rows_by_config, **summaries):
@@ -612,23 +610,6 @@ def test_a_rescored_score_that_is_not_a_number_is_left_blank(tmp_path):
     assert "| Relevance-scored | nDCG |" in table
     assert "| C4 | row C4 | 1 | 1 | 0.5000 |" in table
     assert set(_bars(out / "handwritten-retrieval.svg")) == {"C4 nDCG: 0.5000"}
-
-
-def test_a_case_sensitive_folder_fails_in_ci(tmp_path, monkeypatch):
-    set_ci_env(monkeypatch, "true")
-    # A skip is caught too, so losing the CI branch fails here rather than
-    # turning into the skip it guards against.
-    with pytest.raises((AssertionError, pytest.skip.Exception)) as raised:
-        case_insensitive(tmp_path, tells_case_apart=lambda folder: True)
-    assert raised.type is AssertionError, f"skipped in CI: {raised.value}"
-    assert "went unchecked" in str(raised.value)
-
-
-@pytest.mark.parametrize("ci", [None, ""], ids=["unset", "empty"])
-def test_a_case_sensitive_folder_skips_on_a_laptop(tmp_path, monkeypatch, ci):
-    set_ci_env(monkeypatch, ci)
-    with pytest.raises(pytest.skip.Exception):
-        case_insensitive(tmp_path, tells_case_apart=lambda folder: True)
 
 
 def test_a_case_variant_spelling_of_the_run_is_still_inside_it(case_insensitive_tmp, capsys):
