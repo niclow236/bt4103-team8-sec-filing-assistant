@@ -412,9 +412,11 @@ def test_the_run_is_written_in_the_table_the_other_runners_share(finished):
 
 
 def test_a_sweep_row_is_not_offered_as_a_configuration_the_app_can_build(finished):
-    """The app labels a configuration with the run that measured it, read from
-    the same ``results/``. A sweep row was measured on a build of its own under
-    ``data/sweep/``, which the app does not search, so it must not be offered."""
+    """The app identifies measured configurations from the same ``results/``.
+
+    A sweep row was measured on a build of its own under ``data/sweep/``, which
+    the app does not search, so it must not be offered.
+    """
     results_root = finished["run_dir"].parent
     saved = json.loads((finished["run_dir"] / "summary.json").read_text(encoding="utf-8"))
     assert len(saved["configurations"]) == len(SIZES) * 3

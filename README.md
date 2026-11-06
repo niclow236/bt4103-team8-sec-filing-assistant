@@ -2505,9 +2505,9 @@ model, since the facts lookup needs the company and year the filter applies.
 the report records the configuration it answered with, including any override,
 under `stack`. The app's sidebar offers the same configurations and builds
 them through the same function, so the system on screen is the system a number
-in `results/` describes; a row a run has measured is labelled there with the
-run that measured it. `C0`, the fixed-size baseline, is built by the ablation
-runner only and cannot be selected.
+in `results/` describes. The sidebar notes when no run under `results/` has
+measured the selected configuration. `C0`, the fixed-size baseline, is built by
+the ablation runner only and cannot be selected.
 
 `--no-refusal` searches and asks a model about every question, instead of
 refusing one the parser reads as asking for advice or a prediction, or for a

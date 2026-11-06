@@ -528,7 +528,8 @@ def measured() -> list[tuple[str, str]]:
 
     Read from the result files rather than listed here, so a configuration is
     offered because a run measured it. Several runs can measure the same row;
-    the most recent run's label is the one shown.
+    the most recent run's label is retained as the value. The app's pickers use
+    the ids to decide whether the selected configuration has been measured.
     """
     seen: dict[str, str] = {}
     for run in measured_runs():

@@ -1485,18 +1485,18 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
                          label: str = "Configuration", default: str = DEFAULT_STACK) -> str:
     """Pick one of the configurations ``src/stack.py`` can build, in the sidebar.
 
-    In the registry's order, each labelled with the run that measured it
-    (``runs``, id to label, from ``state.measured``), so a page can be set to
-    the configuration a reported number came from. Returns the id.
+    In the registry's order, each labelled with its id and name. ``runs`` is
+    keyed by the ids a saved run has measured; an unmeasured pick gets a
+    caption. Returns the id.
     """
     with st.sidebar:
         config_id = st.selectbox(
             label, SELECTABLE,
             index=SELECTABLE.index(default),
-            format_func=lambda option: runs.get(option, f"{option} — {STACKS[option].name}"),
+            format_func=lambda option: f"{option} — {STACKS[option].name}",
             help="Named in src/stack.py and built the same way the evaluation "
-                 "command builds it. A row measured under results/ is labelled "
-                 "with the run that measured it.",
+                 "command builds it. Saved runs under results/ determine whether "
+                 "a configuration has been measured.",
             key=key,
         )
         if config_id not in runs:
