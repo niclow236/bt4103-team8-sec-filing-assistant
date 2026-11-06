@@ -187,7 +187,7 @@ def test_loader_reports_line_numbers_with_windows_line_endings(tmp_path):
 
 def _committed_questions():
     # Read directly, not through load_questions, which needs the processed
-    # corpus to resolve chunk IDs and CI has none.
+    # corpus to resolve chunk IDs and a fresh clone has none.
     with DEFAULT_QUESTIONS_PATH.open(encoding="utf-8") as stream:
         return [json.loads(line) for line in stream if line.strip()]
 
@@ -198,7 +198,7 @@ def test_committed_question_reads_as_its_metadata_says(row):
     # score for the route the engine took. The evaluator overrides the parsed
     # ticker and year with the row's, so a question that does not name them
     # itself would be scored on context a user never typed. The facts store is
-    # left out because CI has none; it changes no label in this file.
+    # left out because a fresh clone has none. It changes no label in this file.
     parsed = parse_question(row["question"], facts_file=None)
 
     assert parsed.question_type == row["question_type"]

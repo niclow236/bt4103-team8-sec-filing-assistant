@@ -32,7 +32,7 @@ import streamlit as st
 import pandas as pd
 
 from src.config import read_tickers
-from src.evaluation import breakdown, report
+from src.evaluation import breakdown, headlines, report
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
 from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
@@ -60,11 +60,21 @@ _ITEM_MENTION = re.compile(
 
 
 # What each column of the Results page means to a user (#164), keyed by the
-# name ``report`` gives it, which the Full metrics section keeps: its label,
-# and a tooltip naming the technical metric, so an assessor can match it to
+# name ``report`` gives it (or the tile's own name for measures absent from
+# ``report``): its label and a tooltip naming the technical metric, so an assessor can match it to
 # the report. ``{top}`` and ``{at}`` are the cutoff the run scored at, as in
 # "in the top 16" and "Recall@16"; a run that saved none has neither.
 _RESULT_METRIC_LABELS = {
+    breakdown.FOUND.title: (breakdown.FOUND.title,
+                           "Count of questions with at least one supporting passage in the "
+                           f"top {breakdown.FOUND_WITHIN}, not mean Recall. Questions without "
+                           "labelled evidence or readable ranks are excluded."),
+    "Headline correctness": ("Answer correctness (0–1)",
+                             "Mean saved correctness score, including partial credit and "
+                             "automatically scored abstentions; not a count of correct answers."),
+    "Headline latency": ("Typical generation time (s)",
+                         "Median of saved generation-call latencies in seconds. Leaves out "
+                         "answers that called no model, unlike the table's answer time."),
     "Relevance-scored": ("Questions with a right passage",
                          "How many of the questions name a passage that answers them: "
                          "the scores of finding it are worked out over these."),
@@ -267,7 +277,8 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
                               ) -> bool:
     """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
-    if not retrieval and model_table.empty and quality.empty:
+    headline_shown = _render_headlines(run, benchmark, outcomes)
+    if not retrieval and model_table.empty and quality.empty and not headline_shown:
         st.info("No saved results for this benchmark.")
         return False
     # Lead with the visual summary; exact tables remain below the story (#171).
@@ -283,6 +294,90 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
             # in Full metrics, but draw only the first bar for each metric.
             st.bar_chart(quality_chart.drop_duplicates(["Configuration", "Metric"]).pivot(
                 index="Configuration", columns="Metric", values="Value"), stack=False)
+    return True
+
+
+_HEADLINE_COLUMNS = {"found": breakdown.FOUND.title,
+                     "correctness": "Headline correctness",
+                     "refused": "Abstention rate", "latency": "Headline latency"}
+
+
+def _headline_value(tile: headlines.Headline) -> str:
+    """Counts stay counts, correctness stays a mean, milliseconds become seconds."""
+    if tile.count is not None:
+        return f"{tile.count} of {tile.scored}"
+    return f"{tile.value:.2f}" if tile.key == "latency" else f"{tile.value:.2f} / 1"
+
+
+def _headline_delta(tile: headlines.Headline) -> str | None:
+    """A same-cohort C0 difference, with units that match the displayed measure."""
+    if tile.delta is None:
+        return None
+    points = tile.key in {"found", "refused"}
+    shown, digits = (tile.delta * 100, 1) if points else (tile.delta, 2)
+    unit = " pp" if points else " s" if tile.key == "latency" else ""
+    # st.metric reads direction from the string's sign, so a tie carries none.
+    number = f"{0:.{digits}f}" if round(shown, digits) == 0 else f"{shown:+.{digits}f}"
+    return f"{number}{unit} vs {breakdown.BASELINE}"
+
+
+def _headline_icons(tile: headlines.Headline) -> str:
+    """Ten proportionally filled circles with an exact accessible count.
+
+    Fractional fill avoids claiming 10 out of 10 when 96% were found. The
+    real count is printed in the tile and its accessible name, not inferred
+    by counting rounded icons. Fixed colours remain visible in either theme.
+    """
+    icons = []
+    for index in range(10):
+        filled = min(1.0, max(0.0, tile.value * 10 - index)) * 100
+        icons.append('<span aria-hidden="true" style="display:inline-block;'
+                     f'width:1.1rem;height:1.1rem;border:1px solid {_FOUND_COLOURS["other"]};'
+                     'border-radius:50%;margin-right:0.25rem;'
+                     f'background:linear-gradient(to right,{_FOUND_COLOURS["default"]} {filled:.2f}%,'
+                     f'transparent {filled:.2f}%);"></span>')
+    label = (f"Found a right passage in the top {breakdown.FOUND_WITHIN} for "
+             f"{tile.count} of {tile.scored} scored questions. Ten circles show the proportion.")
+    return f'<div role="img" aria-label="{label}">{"".join(icons)}</div>'
+
+
+def _render_headlines(run: Mapping[str, Any], benchmark: str,
+                      outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]]) -> bool:
+    """Headline the selected run's app default before tables; never load live models."""
+    tiles = headlines.headline_tiles(run, benchmark, outcomes)
+    if not tiles:
+        return False
+    headings = _headings(_cutoff(run))
+    with st.container(key=f"results_headlines_{benchmark}"):
+        st.markdown(f"**At a glance — {DEFAULT_STACK}, the app's default configuration**")
+        # Two per row: four columns truncate the plain-language labels at
+        # the app's normal content width, defeating the headline's purpose.
+        columns = []
+        for start in range(0, len(tiles), 2):
+            columns.extend(st.columns(min(2, len(tiles) - start)))
+        for column, tile in zip(columns, tiles):
+            heading = headings[_HEADLINE_COLUMNS[tile.key]]
+            help_text = heading.tooltip + f" Based on {tile.scored} scored questions."
+            if tile.delta is None:
+                help_text += " No C0 delta: scored question IDs differ or matching observations are unavailable."
+            else:
+                help_text += " Compared with C0 on exactly the same scored question IDs; pp means percentage points."
+            if tile.key == "latency":
+                help_text += " Saved generation-call time only; excludes retrieval and judging, not end-to-end latency."
+            if tile.key == "refused":
+                help_text += " A refusal is not necessarily the correct decision; a higher rate is not inherently better."
+            delta = _headline_delta(tile)
+            tied = delta is not None and delta[0] not in "+-"
+            with column:
+                st.metric(heading.label, _headline_value(tile), delta=delta,
+                          delta_color="off" if tied or tile.key == "refused" else
+                          "inverse" if tile.key == "latency" else "normal",
+                          delta_arrow="off" if tied else "auto", help=help_text)
+                if tile.count is None:
+                    st.caption(f"Over {tile.scored} scored questions")
+        found = next((tile for tile in tiles if tile.key == "found"), None)
+        if found is not None:
+            st.html(_headline_icons(found))
     return True
 
 
@@ -668,8 +763,6 @@ def render_results(runs: list[dict[str, Any]], *,
     selected = next(run for run in runs if run["run_id"] == run_id)
     for warning in report.run_warnings(selected):
         st.warning(warning)
-    _render_worked_example(selected, examples)
-    _render_failure_example(selected, failures)
     for tab, (title, kind) in zip(st.tabs([title for title, _ in report.BENCHMARKS]),
                                 report.BENCHMARKS):
         with tab:
@@ -682,6 +775,10 @@ def render_results(runs: list[dict[str, Any]], *,
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
                 _render_full_metrics(matching, selected, kind, model_table, quality)
+    # Lead with statistics (#165), then let the saved walkthrough explain
+    # an individual answer without pushing the headline tiles off screen.
+    _render_worked_example(selected, examples)
+    _render_failure_example(selected, failures)
 
 
 def _scope(query: Query) -> list[tuple[list[str], str]]:
@@ -1400,18 +1497,18 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
                          label: str = "Configuration", default: str = DEFAULT_STACK) -> str:
     """Pick one of the configurations ``src/stack.py`` can build, in the sidebar.
 
-    In the registry's order, each labelled with the run that measured it
-    (``runs``, id to label, from ``state.measured``), so a page can be set to
-    the configuration a reported number came from. Returns the id.
+    In the registry's order, each labelled with its id and name. ``runs`` is
+    keyed by the ids a saved run has measured; an unmeasured pick gets a
+    caption. Returns the id.
     """
     with st.sidebar:
         config_id = st.selectbox(
             label, SELECTABLE,
             index=SELECTABLE.index(default),
-            format_func=lambda option: runs.get(option, f"{option} — {STACKS[option].name}"),
+            format_func=lambda option: f"{option} — {STACKS[option].name}",
             help="Named in src/stack.py and built the same way the evaluation "
-                 "command builds it. A row measured under results/ is labelled "
-                 "with the run that measured it.",
+                 "command builds it. Saved runs under results/ determine whether "
+                 "a configuration has been measured.",
             key=key,
         )
         if config_id not in runs:

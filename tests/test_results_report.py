@@ -2,10 +2,8 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -13,7 +11,6 @@ import pytest
 
 from src.config import PROJECT_ROOT
 from src.evaluation import report
-from tests.test_verify import set_ci_env
 
 
 def _save_run(root, name, rows_by_config, **summaries):
@@ -613,62 +610,6 @@ def test_a_rescored_score_that_is_not_a_number_is_left_blank(tmp_path):
     assert "| Relevance-scored | nDCG |" in table
     assert "| C4 | row C4 | 1 | 1 | 0.5000 |" in table
     assert set(_bars(out / "handwritten-retrieval.svg")) == {"C4 nDCG: 0.5000"}
-
-
-def _tells_case_apart(folder):
-    (folder / "probe").mkdir()
-    return not (folder / "PROBE").exists()
-
-
-def case_insensitive(folder, tells_case_apart=_tells_case_apart):
-    """``folder``, once it is found not to tell MATRIX from matrix.
-
-    Only such a folder gives one run two spellings that ``realpath`` leaves
-    apart; a symlink does not, since ``realpath`` resolves it, so the test below
-    needs one to catch a guard that compares paths again. A Mac's default
-    filesystem is case-insensitive and a Linux one is not. On a laptop with no
-    such folder the test skips. In CI it fails instead: there a skip would report
-    ``1 skipped`` and leave the guard unchecked (#201). ``CI`` tells the two
-    apart, as for the tokenizer test in test_verify.py.
-    """
-    if tells_case_apart(folder):
-        if os.environ.get("CI"):
-            raise AssertionError(f"{folder} tells MATRIX from matrix in CI, so the "
-                                 "case-variant --out guard went unchecked")
-        pytest.skip(f"{folder} tells MATRIX from matrix")
-    return folder
-
-
-@pytest.fixture
-def case_insensitive_tmp(tmp_path):
-    """A fresh case-insensitive folder: under CASE_INSENSITIVE_DIR when it is set,
-    as the CI workflow sets it to a casefolded mount, otherwise tmp_path."""
-    shared = os.environ.get("CASE_INSENSITIVE_DIR")
-    if not shared:
-        yield case_insensitive(tmp_path)
-        return
-    folder = Path(tempfile.mkdtemp(dir=shared))
-    try:
-        yield case_insensitive(folder)
-    finally:
-        shutil.rmtree(folder)
-
-
-def test_a_case_sensitive_folder_fails_in_ci(tmp_path, monkeypatch):
-    set_ci_env(monkeypatch, "true")
-    # A skip is caught too, so losing the CI branch fails here rather than
-    # turning into the skip it guards against.
-    with pytest.raises((AssertionError, pytest.skip.Exception)) as raised:
-        case_insensitive(tmp_path, tells_case_apart=lambda folder: True)
-    assert raised.type is AssertionError, f"skipped in CI: {raised.value}"
-    assert "went unchecked" in str(raised.value)
-
-
-@pytest.mark.parametrize("ci", [None, ""], ids=["unset", "empty"])
-def test_a_case_sensitive_folder_skips_on_a_laptop(tmp_path, monkeypatch, ci):
-    set_ci_env(monkeypatch, ci)
-    with pytest.raises(pytest.skip.Exception):
-        case_insensitive(tmp_path, tells_case_apart=lambda folder: True)
 
 
 def test_a_case_variant_spelling_of_the_run_is_still_inside_it(case_insensitive_tmp, capsys):

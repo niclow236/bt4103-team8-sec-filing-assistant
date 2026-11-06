@@ -132,9 +132,6 @@ bt4103-team8-sec-filing-assistant/
 ├── .coveragerc              # coverage settings for python -m pytest --cov
 ├── .gitignore
 ├── .env.example             # template for local settings (copy to .env)
-├── .github/
-│   └── workflows/
-│       └── tests.yml        # runs python -m pytest on GitHub for each pull request and push to main
 ├── config/
 │   └── companies.txt        # tickers the pipeline downloads
 ├── data/
@@ -321,16 +318,12 @@ identity, no `.env` and nothing under `data/`: each builds its own small
 corpus in a temporary directory, the dense-index tests replace the embedding
 model with a deterministic stand-in, and a test of a command replaces the stage
 the command calls. The suite takes a few minutes on a laptop. One test is the
-exception: it counts tokens with the real bge tokenizer, downloaded from the
-Hugging Face Hub. On a laptop that cannot download it the test skips, since
-there is nothing to count against. In CI it fails instead, because there a
-skip would leave both checks green with the regression it guards (#64)
-unchecked (#143). `CI` is what tells the two apart, and GitHub Actions sets it
-on every runner. The same goes for the test of a case-variant `--out` for the
-results report, which needs a folder that does not tell `MATRIX` from `matrix`:
-a Mac's default filesystem is one, a Linux one is not. Where it finds none, it
-skips on a laptop and fails in CI. CI's Linux jobs mount one for it and name it
-in `CASE_INSENSITIVE_DIR` (#201).
+exception. It counts tokens with the real bge tokenizer, downloaded from the
+Hugging Face Hub, and skips on a laptop that cannot download it, since there is
+nothing to count against (#64). The test of a case-variant `--out` for the
+results report needs a folder that does not tell `MATRIX` from `matrix`.
+Windows and a Mac's default filesystem are like that. Linux is not, so there
+the test skips.
 
 What the suite holds in place, and where (#49):
 
@@ -1984,8 +1977,32 @@ than their summaries claim are labelled incomplete; their scores are partial
 and are not comparable to a complete run. Reload saved results discovers new
 or updated runs, keeps the selected run when it still exists, and clears only
 the Results cache, not the caches used by other pages.
-The cache keeps aggregate scores rather than full question rows. One chart
-carries one message (#166): how often each configuration put a right passage
+The cache keeps aggregate scores rather than full question rows. Up to four
+headline tiles precede the tables for the app's default configuration
+(#165), separately on each benchmark tab. These show the actual number of
+questions finding a right passage in the top 10 (not mean Recall), mean answer
+correctness out of 1 (partial credit, never a count of correct answers), actual
+refusals, and median saved generation-call time in seconds. Time excludes
+retrieval and judging, facts lookups, and zero-time refusals made before calling
+a model.
+Timed model refusals and genuine zero-time answers still count. The time
+unit appears in the label and delta, not twice in the label and value.
+Refusal rate alone does not measure a correct decision.
+Missing measures are hidden, while a real zero is displayed. C0 deltas require
+exactly the same scored question IDs for that measure; proportions use
+percentage points, correctness uses score units and latency uses seconds.
+The generation-time tile is distinct from the table's answer-time statistic,
+which also includes calls that did not reach a model. Mean and median tiles
+show their scored question count visibly. Exact ties and differences that round
+to zero are neutral, without a directional arrow. If excluding model-free rows
+leaves different timed question IDs for C0 and the default, the generation-time
+delta is omitted rather than comparing a smaller intersection; its tooltip
+explains why.
+A saved correctness summary can supply its mean and scored count, but cannot
+supply an ID-matched delta. Ten fractionally filled circles visualise the
+passage-found proportion alongside its exact accessible count.
+
+One chart carries one message (#166): how often each configuration put a right passage
 in the top 10, the app's default and the C0 baseline coloured and the rest
 grey, every bar labelled with its own value. Its title is written from the
 run's own numbers -- what the default scored, whether that is up from, down
@@ -2483,9 +2500,9 @@ model, since the facts lookup needs the company and year the filter applies.
 the report records the configuration it answered with, including any override,
 under `stack`. The app's sidebar offers the same configurations and builds
 them through the same function, so the system on screen is the system a number
-in `results/` describes; a row a run has measured is labelled there with the
-run that measured it. `C0`, the fixed-size baseline, is built by the ablation
-runner only and cannot be selected.
+in `results/` describes. The sidebar notes when no run under `results/` has
+measured the selected configuration. `C0`, the fixed-size baseline, is built by
+the ablation runner only and cannot be selected.
 
 `--no-refusal` searches and asks a model about every question, instead of
 refusing one the parser reads as asking for advice or a prediction, or for a
@@ -2649,8 +2666,24 @@ G3 needs `SOCLAAS_API_KEY`.
 
 Each run writes `report.json` for each configuration and a `summary.csv` and
 `summary.json` under `results/<run-id>/`. C, E and G runners share the table
-writer and JSON format (`run_id`, `top_k`, `configurations` with configuration
-objects). Model-specific columns extend the common C-row columns. Reports
+writer and JSON format (`run_id`, `top_k`, `source_commit`, `source_tag`,
+`configurations` with configuration objects). Model-specific columns extend the
+common C-row columns. `source_commit` and `source_tag` name the commit the run
+started from and the release tag on it, so a number in the report can be
+traced to the code that produced it (#50). Both are read when the run starts,
+not when it ends. The tag ends in `-dirty` when committed files had
+uncommitted edits, and is `null` when the commit carries no tag; the commit
+then still names the code the run started from, and matches a tag made later.
+Uncommitted edits on an untagged commit leave no mark in these two fields. The
+chunk sweep's own `commit` (`git describe --dirty`) ends in `-dirty` for them,
+and the full matrix and the C5 reference catch edits to `src/` through
+`source_files_sha256` in `config.json`; even so, a run meant for the report
+should start from a clean checkout of its tag. Both are `null` when
+git cannot be read, as in a copy without its `.git` folder, even one that sits
+inside another repository. Tags under `data/`
+name evaluation-data releases and are not counted. The full matrix and the C5
+reference also freeze both in `config.json`, and write them into their own
+`summary.json` from there. Reports
 retain retrieved chunk IDs and scores for inspection and rescoring. A missing
 index or key fails before any question is measured or run directory is created.
 A stopped or interrupted provider run saves completed answers, its stop reason

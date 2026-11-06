@@ -88,7 +88,8 @@ def _open(monkeypatch, root):
 
 def _counts(tab):
     """Each count the comparison shows in ``tab``, as (label, value) in order."""
-    return [(metric.label, metric.value) for metric in tab.metric]
+    return [(metric.label, metric.value) for metric in tab.metric
+            if metric.label in {":green[Improved]", ":red[Worse]", "Unchanged"}]
 
 
 def test_counts_which_questions_found_the_right_passage_in_the_top_10_against_c0(
@@ -256,7 +257,7 @@ def test_two_configurations_with_no_question_in_common_say_so_instead_of_countin
     app = _open(monkeypatch, tmp_path)
     team = app.tabs[0]
 
-    assert not team.metric
+    assert not _counts(team)
     assert any("C0 and C4" in info.value for info in team.info)
 
 
@@ -581,7 +582,7 @@ def test_a_lone_readable_configuration_still_says_why_the_other_is_not_offered(
     app = _open(monkeypatch, tmp_path)
     team = app.tabs[0]
 
-    assert not team.selectbox and not team.metric
+    assert not team.selectbox and not _counts(team)
     assert any("Not offered" in caption.value and "C0" in caption.value
                for caption in team.caption)
 

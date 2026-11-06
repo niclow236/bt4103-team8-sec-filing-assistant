@@ -17,6 +17,15 @@ def dump_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
+def read_json(path: Path) -> Any:
+    """What ``dump_json`` wrote, read as the UTF-8 it is written in.
+
+    Read by the locale, a non-ASCII value, such as a release tag (#50), stops
+    the reader under an ASCII locale and is garbled under any other.
+    """
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def read_jsonl(stream: TextIO, *, recover: bool = False) -> list[dict]:
     """Recover only completed lines before an unfinished row or gzip footer.
 

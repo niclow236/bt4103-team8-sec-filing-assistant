@@ -412,9 +412,11 @@ def test_the_run_is_written_in_the_table_the_other_runners_share(finished):
 
 
 def test_a_sweep_row_is_not_offered_as_a_configuration_the_app_can_build(finished):
-    """The app labels a configuration with the run that measured it, read from
-    the same ``results/``. A sweep row was measured on a build of its own under
-    ``data/sweep/``, which the app does not search, so it must not be offered."""
+    """The app identifies measured configurations from the same ``results/``.
+
+    A sweep row was measured on a build of its own under ``data/sweep/``, which
+    the app does not search, so it must not be offered.
+    """
     results_root = finished["run_dir"].parent
     saved = json.loads((finished["run_dir"] / "summary.json").read_text(encoding="utf-8"))
     assert len(saved["configurations"]) == len(SIZES) * 3
@@ -579,6 +581,16 @@ def test_narrowing_the_corpus_narrows_the_questions(sources, fake_model):
     assert manifest["questions"]["filings"] == 1
     assert manifest["questions"]["asked"] == PARAGRAPHS + TABLE_ROWS
     assert all(build["n_filings"] == 1 for build in manifest["builds"])
+
+
+def test_a_sweep_records_the_release_tag_it_was_produced_from(sources, checkout):
+    checkout.tag("v1.0")
+
+    run_chunk_sweep(run_id="tagged", budgets=SIZES[:1], retrievers=["bm25"], per_filing=1,
+                    tickers=["aaa"], fiscal_years=[2024], **sources)
+
+    saved = json.loads((sources["results_root"] / "tagged" / "summary.json").read_text())
+    assert (saved["source_commit"], saved["source_tag"]) == (checkout.head, "v1.0")
 
 
 def test_bm25_alone_encodes_nothing(sources, fake_model):

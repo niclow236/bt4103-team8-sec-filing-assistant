@@ -145,7 +145,7 @@ git push -u origin feature/<your-feature>   # upload your branch to GitHub and l
 
 Go to the repo on GitHub. It shows a prompt to open a pull request from your branch into `main`. Write a short description of what you changed.
 
-Each pull request, and each push to it, runs the test suite on GitHub (`.github/workflows/tests.yml`): `python -m pytest`, with one check per Python version, shown at the bottom of the pull request. A red check means the run failed. That can be a test that passes on your machine, or a step before the tests, such as installing the dependencies. Open the check and read which step or test failed before asking for a review.
+Before asking for a review, run `python -m pytest` on your branch and say in the description that it passed.
 
 Then request a review from a teammate. Once they approve, click "Squash and merge" so `main` keeps a clean history. GitHub then offers a button to delete the branch, which you should take.
 

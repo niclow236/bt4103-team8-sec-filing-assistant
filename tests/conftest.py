@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -176,6 +177,74 @@ def _no_local_settings(monkeypatch):
     _mistral_client.cache_clear()
     _ollama_client.cache_clear()
     _soclaas_client.cache_clear()
+
+
+@pytest.fixture
+def case_insensitive_tmp(tmp_path):
+    """tmp_path, once it is found not to tell MATRIX from matrix, or a skip.
+
+    Only such a folder gives one folder two spellings that ``realpath`` leaves
+    apart. A symlink does not, since ``realpath`` resolves it. So a test of a
+    guard that must treat both spellings as one folder needs it, as do the
+    results report's case-variant ``--out`` guard and the check that git found
+    the project's own repository (#50). Windows and a Mac's default filesystem
+    are case-insensitive. A Linux one is not, and there the test skips.
+    """
+    (tmp_path / "probe").mkdir()
+    if not (tmp_path / "PROBE").exists():
+        pytest.skip(f"{tmp_path} tells MATRIX from matrix")
+    return tmp_path
+
+
+class Checkout:
+    """A git repository of one committed file, for a run to read its source from."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.git("init", "-q")
+        (root / "code.py").write_text("measured = True\n")
+        self.git("add", "code.py")
+        self.git("commit", "-q", "-m", "measured code")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    @property
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD")
+
+    def tag(self, name: str) -> None:
+        self.git("tag", "-a", name, "-m", name)
+
+    def commit(self) -> None:
+        """Commit a change on top, so the checkout is no longer at its tag."""
+        (self.root / "code.py").write_text("measured = 'later'\n")
+        self.git("commit", "-q", "-am", "later code")
+
+    def edit(self) -> None:
+        """Leave a committed file changed, as a run started mid-edit would."""
+        (self.root / "code.py").write_text("measured = False\n")
+
+
+@pytest.fixture
+def checkout(tmp_path_factory, monkeypatch) -> Checkout:
+    """Point every git call at a fresh repository instead of this clone (#50).
+
+    A run reads its release tag from git, and the clone the tests run in has
+    whatever tags its owner made, so git is sent here through GIT_DIR and
+    GIT_WORK_TREE. The owner's own git settings are left out, so commit
+    signing or hooks set there do not run on these commits.
+    """
+    root = tmp_path_factory.mktemp("checkout")
+    for name, value in {
+        "GIT_DIR": str(root / ".git"), "GIT_WORK_TREE": str(root),
+        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.com",
+    }.items():
+        monkeypatch.setenv(name, value)
+    return Checkout(root)
 
 
 @pytest.fixture(autouse=True)

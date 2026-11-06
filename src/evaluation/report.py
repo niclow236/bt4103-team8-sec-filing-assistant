@@ -18,6 +18,7 @@ from statistics import mean, median
 from typing import Any
 
 from src.config import PROJECT_ROOT
+from src.evaluation.artifacts import read_json
 from src.evaluation.harness import answer_scores
 from src.evaluation.metrics import MEDIAN_RANK, RETRIEVAL_METRICS, median_rank
 
@@ -60,7 +61,7 @@ def read_result_rows(path: Path) -> list[dict[str, Any]]:
         return []
     try:
         if path.name == "report.json":
-            loaded = json.loads(path.read_text(encoding="utf-8"))
+            loaded = read_json(path)
             rows = loaded.get("results", []) if isinstance(loaded, dict) else []
             return [row for row in rows if isinstance(row, dict)]
         rows = []
@@ -145,7 +146,7 @@ def _saved_split(by_benchmark: Any) -> dict[str, dict[str, Any]]:
 def _rescored_splits(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
     """Each configuration's benchmark split from full_ablation rescore's summary."""
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest = read_json(path)
     except (OSError, ValueError):
         return {}
     configurations = manifest.get("configurations") if isinstance(manifest, dict) else None
@@ -162,7 +163,7 @@ def _rescored_splits(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
 def read_run(run_dir: Path) -> dict[str, Any] | None:
     """One saved run, or None when its folder holds no readable configurations."""
     try:
-        manifest = json.loads((run_dir / SUMMARY).read_text(encoding="utf-8"))
+        manifest = read_json(run_dir / SUMMARY)
     except (OSError, ValueError):
         return None
     if not isinstance(manifest, dict):
@@ -231,7 +232,7 @@ def read_run(run_dir: Path) -> dict[str, Any] | None:
 def _answered_by(path: Path) -> str | None:
     """The model a run's answers were written with, as it froze that setting."""
     try:
-        saved = json.loads(path.read_text(encoding="utf-8"))
+        saved = read_json(path)
     except (OSError, ValueError):
         return None
     generation = saved.get("generation") if isinstance(saved, dict) else None
@@ -262,7 +263,7 @@ def _answered(path: Path) -> dict[str, Any] | None:
 
 def _answer_quality(path: Path) -> dict[str, dict[str, Any]]:
     try:
-        saved = json.loads(path.read_text(encoding="utf-8"))
+        saved = read_json(path)
     except (OSError, ValueError):
         return {}
     configurations = saved.get("configurations") if isinstance(saved, dict) else None

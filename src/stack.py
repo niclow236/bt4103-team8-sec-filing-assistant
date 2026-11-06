@@ -399,7 +399,7 @@ class MeasuredRun:
 
     @property
     def label(self) -> str:
-        """How the app names it: the run it came from, then the row."""
+        """A compact saved-run label: the run it came from, then the row."""
         return f"{self.run_id} · {self.config_id} — {self.name}"
 
 
