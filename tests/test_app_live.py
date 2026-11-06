@@ -120,12 +120,14 @@ def test_live_app_says_when_a_row_does_not_apply_the_filters(monkeypatch):
     assert any("filters above are not applied" in c.value for c in ui.sidebar.caption)
 
 
-def test_live_app_labels_a_configuration_with_the_run_that_measured_it(monkeypatch):
+def test_live_app_keeps_the_run_out_of_a_measured_configuration_label(monkeypatch):
     # Criterion: a configuration named in results/ can be selected in the app.
     _standing_in(monkeypatch, runs=[("C1", "nightly-7 · C1 — section-aware BM25")])
     ui = AppTest.from_file(APP).run(timeout=30)
     assert not ui.exception
-    assert "nightly-7 · C1 — section-aware BM25" in list(ui.sidebar.selectbox[0].options)
+    options = list(ui.sidebar.selectbox[0].options)
+    assert "C1 — section-aware BM25" in options
+    assert not any("nightly-7" in option for option in options)
     # The default row has no run, so the app says so rather than implying one.
     assert any("No run under results/" in caption.value for caption in ui.sidebar.caption)
 
