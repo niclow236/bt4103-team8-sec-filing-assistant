@@ -130,6 +130,10 @@ def test_live_app_keeps_the_run_out_of_a_measured_configuration_label(monkeypatc
     assert not any("nightly-7" in option for option in options)
     # The default row has no run, so the app says so rather than implying one.
     assert any("No run under results/" in caption.value for caption in ui.sidebar.caption)
+    # Selecting the measured row proves state.measured() still reaches the
+    # picker even though its saved-run label is no longer displayed.
+    ui.sidebar.selectbox[0].set_value("C1").run()
+    assert not any("No run under results/" in caption.value for caption in ui.sidebar.caption)
 
 
 def test_selecting_a_measured_configuration_builds_that_configuration(monkeypatch):

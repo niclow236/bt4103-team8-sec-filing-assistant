@@ -1485,10 +1485,9 @@ def configuration_picker(runs: Mapping[str, str], *, key: str = "configuration",
                          label: str = "Configuration", default: str = DEFAULT_STACK) -> str:
     """Pick one of the configurations ``src/stack.py`` can build, in the sidebar.
 
-    In the registry's order, each labelled with its id and name. ``runs`` maps
-    ids to the saved runs that measured them, so the picker can distinguish
-    measured configurations without putting the run id in the visible label.
-    Returns the id.
+    In the registry's order, each labelled with its id and name. ``runs`` is
+    keyed by the ids a saved run has measured; an unmeasured pick gets a
+    caption. Returns the id.
     """
     with st.sidebar:
         config_id = st.selectbox(
