@@ -283,17 +283,12 @@ def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
         return False
     # Lead with the visual summary; exact tables remain below the story (#171).
     _render_found_chart(run, benchmark, outcomes)
-    if not quality.empty:
-        quality_chart = quality.melt(id_vars=["Configuration"],
-                                    value_vars=[label for label in report.QUALITY_LABELS.values()
-                                                if label in quality.columns],
-                                    var_name="Metric", value_name="Value").dropna(subset=["Value"])
-        if not quality_chart.empty:
-            st.subheader("Answer quality")
-            # Duplicate IDs are warned about above the page. Keep every row
-            # in Full metrics, but draw only the first bar for each metric.
-            st.bar_chart(quality_chart.drop_duplicates(["Configuration", "Metric"]).pivot(
-                index="Configuration", columns="Metric", values="Value"), stack=False)
+    # The report draws the same rows, so page and report cannot disagree.
+    quality_chart = report.quality_chart_rows(run, benchmark)
+    if quality_chart:
+        st.subheader("Answer quality")
+        st.bar_chart(pd.DataFrame(quality_chart).pivot(
+            index="Configuration", columns="Metric", values="Value"), stack=False)
     return True
 
 
@@ -610,6 +605,9 @@ def _render_full_metrics(retrieval: list[dict[str, Any]], run: Mapping[str, Any]
                          benchmark: str, model_table: pd.DataFrame,
                          quality: pd.DataFrame) -> None:
     """Keep every saved metric table below the story (#171)."""
+    if not retrieval and model_table.empty and quality.empty:
+        # Headline-only results (#165) have no detailed table to display.
+        return
     top_k = _cutoff(run)
     # Without retrieval scores the tables are the tab's main results.
     with st.expander("Full metrics", expanded=not retrieval):

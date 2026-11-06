@@ -2022,7 +2022,8 @@ quality with its scored counts. Values, column tooltips and benchmark separation
 are unchanged. With no retrieval scores, Full metrics starts open so answer-only
 runs show their tables immediately; empty tabs have no section.
 Duplicate configuration IDs are warned about above the page. Their table rows
-remain visible; the answer-quality chart draws the first bar per ID and metric.
+remain visible; the page and generated report share one answer-quality chart
+data source, drawing one bar per configuration ID and metric.
 The run picker and incomplete-run warnings remain at the top of the page.
 `python -m src.evaluation.report` still writes the grouped bar chart for report files.
 Each retrieval table gives the number of questions its means cover: those

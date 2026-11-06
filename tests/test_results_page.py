@@ -735,7 +735,7 @@ def test_duplicate_configurations_warn_without_hiding_metric_tables(tmp_path, mo
         encoding="utf-8")
     app = _results_page(monkeypatch, tmp_path)
     warning = next(item for item in app.warning if "Duplicate configuration IDs: C4" in item.value)
-    assert "first value" in warning.value
+    assert "one bar per configuration and metric" in warning.value
     tables = _metric_tables(app.tabs[0])
     assert tables[0].value["Configuration"].tolist() == ["C4", "C4"]
     assert tables[2].value["Correctness"].tolist() == [0.75, 0.75]

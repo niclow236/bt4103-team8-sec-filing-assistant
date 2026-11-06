@@ -166,6 +166,7 @@ def test_answer_observations_without_retrieval_do_not_claim_no_results(tmp_path,
     app = _open(monkeypatch, tmp_path)
     assert _metrics(app.tabs[0])["Typical generation time (s)"].value == "0.00"
     assert not any("No saved results" in info.value for info in app.tabs[0].info)
+    assert not any(item.label == "Full metrics" for item in app.tabs[0].expander)
 
 
 def test_missing_refusal_flag_is_not_counted_as_an_answer(tmp_path):
