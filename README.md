@@ -121,12 +121,13 @@ Ollama is not a Python package, so it is installed separately; see [Setting up O
 
 ## Repository structure
 
-This is the planned layout. Not every folder exists on day one; they are added as the work reaches each part.
+The layout on `main`. Folders marked git-ignored exist only once a command has written them.
 
 ```
 bt4103-team8-sec-filing-assistant/
 ├── README.md
 ├── GIT_WORKFLOW.md          # branching workflow and Git setup
+├── AGENTS.md                # where coding agents find the issue tracker, labels and domain docs
 ├── requirements.txt
 ├── pytest.ini               # test settings: python -m pytest from the project root
 ├── .coveragerc              # coverage settings for python -m pytest --cov
@@ -155,16 +156,18 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── chunk.py         #   stage 3
 │   │   ├── passages.py      #   read passages back, for spot-checking
 │   │   └── verify.py        #   gate: is the corpus fit to index?
-│   ├── retrieval/           # BM25, dense, hybrid
+│   ├── retrieval/           # BM25, dense, hybrid, and the opt-in reranker experiment
 │   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
 │   │   ├── cli.py           #   the command line: embed, bm25, facts, check, benchmark
 │   │   ├── base.py          #   the Retriever contract, the metadata pre-filter, ranking helpers
 │   │   ├── constants.py     #   models, k values and fusion constants, in one place
 │   │   ├── records.py       #   Query, RetrievedPassage, and what an index says of itself
+│   │   ├── embedding_config.py #   the encoder settings passed together through index building and retrieval
 │   │   ├── embed.py         #   builds the dense index, incrementally
 │   │   ├── dense.py         #   searches the dense index
 │   │   ├── bm25.py          #   builds and searches the BM25 index
 │   │   ├── hybrid.py        #   fuses BM25 and dense results by reciprocal rank
+│   │   ├── rerank.py        #   opt-in cross-encoder for the C5 experiment (#154); C4 stays the default
 │   │   └── facts.py         #   XBRL figures from EDGAR into a table
 │   ├── rag/                 # RAG engine and citations
 │   │   ├── query.py         #   reads a question into a Query: tickers, fiscal years, question type
@@ -177,15 +180,23 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── answer.py        #   the entry point: route, retrieve, abstain or answer
 │   │   ├── constants.py     #   company aliases, cue words, the prompt template, generation settings
 │   │   └── records.py       #   GroundedAnswer, Generation, Answer, Citation and GenerationConfig
-│   ├── evaluation/          # benchmark, metrics and the two evaluation commands
+│   ├── evaluation/          # benchmark, metrics, and the evaluation and ablation commands
 │   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
 │   │   ├── cli.py           #   python -m src.evaluation: answers a benchmark, reports abstentions
 │   │   ├── harness.py       #   evaluate(): one configuration end to end through answer_question
 │   │   ├── run.py           #   python -m src.evaluation.run: the C0-C4 retrieval ablation
+│   │   ├── full_ablation.py #   python -m src.evaluation.full_ablation: the complete C0-C6 matrix (#44, #176)
+│   │   ├── rerank_ablation.py #   python -m src.evaluation.rerank_ablation: the paired C4/C5 reranker experiment (#154)
+│   │   ├── model_ablation.py #   python -m src.evaluation.model_ablation: E1-E3 embeddings and G1-G3 providers
 │   │   ├── chunk_sweep.py   #   python -m src.evaluation.chunk_sweep: retrieval at four passage sizes
 │   │   ├── report.py        #   python -m src.evaluation.report: a run's tables and charts, as Results shows them
+│   │   ├── headlines.py     #   headline statistics from one saved run, never from live model calls (#165)
 │   │   ├── breakdown.py     #   a run's scores by question type and difficulty (Results, #168)
+│   │   ├── results.py       #   shared run-directory checks and the C/E/G comparison files
 │   │   ├── metrics.py       #   Recall@k, nDCG, reciprocal rank, hard-negative accuracy
+│   │   ├── quality.py       #   answer metrics (#47), with semantic judgement kept explicit
+│   │   ├── provenance.py    #   the inputs and settings needed to reproduce a retrieval measurement
+│   │   ├── artifacts.py     #   atomic JSON writes and reading plain or gzipped JSONL
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
 │   ├── stack.py             # the named configurations, and the one way to build one
@@ -193,6 +204,7 @@ bt4103-team8-sec-filing-assistant/
 │       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
 │       ├── app_pages/       #   one script per page
 │       │   ├── ask.py       #     Ask: question, resolved filters, answer, retrieval trace
+│       │   ├── compare.py   #     Compare: one question through two configurations, side by side (#39)
 │       │   ├── browse.py    #     Browse: company/year/Item passage explorer
 │       │   └── results.py   #     Results: saved benchmark metrics and ablation tables
 │       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
@@ -211,8 +223,18 @@ bt4103-team8-sec-filing-assistant/
 │   ├── questions.jsonl      #   team benchmark: the team's 150 questions
 │   └── generated.jsonl      #   mechanical XBRL questions (git-ignored, regenerated)
 ├── results/                 # one folder per --run-id; git-ignored, except the two chunk-size sweep summaries
-└── docs/                    # reports, minutes, references
-    └── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
+├── tools/                   # standalone scripts, run from the project root
+│   ├── verify_data_snapshot.py #   checks an extracted frozen data snapshot, standard library only
+│   ├── report_c6_rebase.py  #   publishes the paired C6 acceptance study (#173) from its frozen run
+│   └── report_full_matrix.py #   audits and publishes the complete C0-C6 matrix (#176) after rescore
+└── docs/                    # reports, measurements and references
+    ├── full-ablation.md     #   the complete C0-C6 matrix: results, reproduction, limitations
+    ├── c5-reranking.md      #   the C5 reranker experiment: protocol, gates and results
+    ├── app-cold-start.md    #   how long the Streamlit app takes to open
+    ├── mistral-free-tier-evaluation.md   # the hosted-model test behind the model choice
+    ├── issue-46-review-resolution.md     # how the PR 114 review findings were resolved
+    ├── evaluation/          #   published run summaries, manifests and the archived matrix report
+    └── agents/              #   issue tracker, label and domain-doc conventions for coding agents
 ```
 
 ### How the pipeline is put together
