@@ -90,6 +90,90 @@ Published v1 assets stay frozen. A changed corpus or question set gets a new
 snapshot/release version and updated hashes, so everyone can name exactly
 which dataset their results use.
 
+### Final handover: clean rebuild and reported-result reproduction
+
+There are two different reproducibility tasks. A **clean rebuild** downloads
+the filings that EDGAR serves now and proves the pipeline can recreate a valid
+corpus. An **exact audit of the reported results** uses the frozen evaluation
+snapshot and the final handover archive; rebuilding from the live service is
+not an exact substitute for the inputs that were measured.
+
+To rebuild the corpus from an empty checkout, replace `RELEASE_TAG` with the
+final release tag and set the contact identity required by SEC EDGAR:
+
+```bash
+git clone https://github.com/niclow236/bt4103-team8-sec-filing-assistant.git
+cd bt4103-team8-sec-filing-assistant
+git checkout RELEASE_TAG
+python -m venv .venv
+# macOS/Linux: source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+cp .env.example .env                 # Windows: copy .env.example .env
+# Edit .env and set EDGAR_IDENTITY="Name email@example.com"
+python -u -m src.pipeline rebuild --clean
+python -u -m src.retrieval facts --refresh
+python -u -m src.retrieval benchmark
+python -u -m src.retrieval bm25
+python -u -m src.retrieval embed
+python -u -m src.retrieval check
+```
+
+`rebuild --clean` removes only the three generated corpus stages under `data/`,
+then downloads, parses, chunks, and runs the corpus gate. The generated XBRL
+benchmark is tied to those passages. A different live filing or parser output
+therefore creates a new data identity and must use a new run ID; do not label it
+as a byte-for-byte reproduction of the published matrix.
+
+For the reported **`full-matrix-20261021`** figures, start from a clean clone,
+download and verify the [evaluation data v1 release](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/releases/tag/data/evaluation-v1)
+as described above, then build and check the local indexes. Run the frozen
+protocol at its two recorded source commits:
+
+```bash
+git checkout 9e63d5f5af58f5427a5f2e4951795774b2e7876b
+HF_HUB_OFFLINE=1 python -u -m src.evaluation.full_ablation retrieval \
+  benchmark/questions.jsonl benchmark/generated.jsonl \
+  --require-decision-benchmark --run-id NEW_RUN_ID --device cpu \
+  --workload-note "describe hardware and concurrent work"
+
+git checkout cfcb8861e3fe32075d8ef753b4022ccb2b9880fb
+python -u -m src.evaluation.full_ablation answers results/NEW_RUN_ID \
+  --provider soclaas --model qwen3.6:35b \
+  --judge-provider mistral --judge-model ministral-8b-2512
+python -m src.evaluation.full_ablation rescore results/NEW_RUN_ID
+```
+
+Use `--device mps` on the Apple measurement machine. Both API keys must be in
+the local `.env`; they are never written to results. This reruns the same
+experiment, but hosted generation and judging are nondeterministic, so answer
+metrics need not be byte-identical. The exact published native outputs are in
+the final handover release asset and are checked against the 48 hashes in
+`docs/evaluation/full-matrix-20261021-manifest.json`. Its aggregate summary is
+`docs/evaluation/full-matrix-20261021-summary.json`; limitations are recorded
+both there and in [`results/README.md`](results/README.md).
+
+Release maintainers create the archive only from a clean checkout of the tag,
+with the frozen `benchmark/generated.jsonl`, native result directory, and built
+indexes restored:
+
+```bash
+git checkout RELEASE_TAG
+python tools/archive_handover.py create --tag RELEASE_TAG \
+  --output dist/final-handover.tar.gz
+python tools/archive_handover.py verify \
+  dist/final-handover.tar.gz \
+  --tag RELEASE_TAG --commit "$(git rev-parse RELEASE_TAG^{commit})"
+```
+
+The creator refuses a tag that is not checked out, tracked changes, a missing or
+changed native result, a missing benchmark, or a missing index manifest. It
+exports the BM25 manifest without archiving the 40 MB sparse index and includes
+the dense manifest; both index binaries remain rebuildable outputs. Upload the
+`.tar.gz` and adjacent `.sha256` to the GitHub release for the same tag. A
+downloaded archive can be verified with the standard-library-only `verify`
+command before any project dependency is installed.
+
 ## Approach
 
 The system is evaluated as a comparative study of at least two configurations, a baseline against the proposed solution. The main elements are document parsing with section-aware chunking, retrieval modelling that compares BM25 with dense and hybrid search, RAG generation with automated citations, and reliability techniques such as reranking and hallucination detection. Performance is measured on a manually built benchmark of representative questions paired with validated supporting passages.
