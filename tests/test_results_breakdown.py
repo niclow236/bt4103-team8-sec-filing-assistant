@@ -12,6 +12,16 @@ from tests.test_results_comparison import _answer_row, _open, _retrieval_row, _s
 BREAKDOWN = "By question type and difficulty"
 
 
+def test_full_metrics_follows_the_breakdown_and_the_before_and_after_view(tmp_path, monkeypatch):
+    _fixture_run(tmp_path)
+    elements = list(_open(monkeypatch, tmp_path).tabs[0])
+    full = next(i for i, item in enumerate(elements)
+                if item.type == "expander" and item.label == "Full metrics")
+    for heading in ("Before and after", BREAKDOWN):
+        assert next(i for i, item in enumerate(elements)
+                    if item.type == "subheader" and item.value == heading) < full
+
+
 def _row(question_id, rank, question_type, difficulty, **fields):
     return _retrieval_row(question_id, rank, question_type=question_type,
                           difficulty=difficulty, **fields)

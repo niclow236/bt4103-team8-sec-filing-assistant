@@ -202,6 +202,23 @@ def test_matrix_answer_quality_is_reported_with_its_scored_counts(tmp_path):
             "| 0.4385 | 145 | 0.7945 | 146 | mismatch 22, unverified 54 |") in table
 
 
+def test_a_duplicated_configuration_is_warned_about_and_charted_once(tmp_path):
+    run = _save_run(tmp_path / "results", "matrix", {"C4": [{"question_id": "q1", "recall": 1.0}]})
+    manifest = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    manifest["configurations"].append(manifest["configurations"][0])
+    (run / "summary.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _save_answers(run, C4={"questions": 150, "quality": {"correctness": _quality(0.75, 150)}})
+    out = tmp_path / "report"
+
+    report.main([str(run), "--out", str(out)])
+
+    table = (out / "ablation.md").read_text(encoding="utf-8")
+    assert "> **Warning:** Duplicate configuration IDs: C4." in table
+    assert "Full metrics" not in table
+    assert report.quality_chart_rows(report.read_run(run), "handwritten") == [
+        {"Configuration": "C4", "Metric": "Correctness", "Value": 0.75}]
+
+
 def test_a_summary_only_matrix_reports_its_saved_team_and_xbrl_split(tmp_path):
     run = tmp_path / "results" / "matrix"
     run.mkdir(parents=True)

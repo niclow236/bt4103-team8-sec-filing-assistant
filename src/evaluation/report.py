@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 from html import escape
 from math import inf, isnan
 from pathlib import Path
@@ -407,10 +408,16 @@ def chart_rows(configurations: list[dict[str, Any]], benchmark: str) -> list[dic
 
 
 def quality_chart_rows(run: dict[str, Any], benchmark: str) -> list[dict[str, Any]]:
-    """The judged answer-quality means of ``answer_quality_table``, one row per bar."""
-    return [{"Configuration": row["Configuration"], "Metric": label, "Value": row[label]}
+    """Judged means, one bar per configuration and metric for page and report.
+
+    Duplicate configuration IDs read the same keyed answer-quality entry.
+    Keep the table rows intact, but draw each bar only once.
+    """
+    bars = {(row["Configuration"], label): row[label]
             for row in answer_quality_table(run, benchmark)
-            for label in QUALITY_LABELS.values() if row.get(label) is not None]
+            for label in QUALITY_LABELS.values() if row.get(label) is not None}
+    return [{"Configuration": configuration, "Metric": label, "Value": value}
+            for (configuration, label), value in bars.items()]
 
 
 def retrieval_configurations(configurations: list[dict[str, Any]],
@@ -445,6 +452,12 @@ def unanswered(run: dict[str, Any], config_id: str) -> tuple[int, int] | None:
 def run_warnings(run: dict[str, Any]) -> list[str]:
     """What a reader must know before trusting a run's tables, page and report alike."""
     warnings = []
+    repeated = [config_id for config_id, count in
+                Counter(item["config_id"] for item in run["configurations"]).items() if count > 1]
+    if repeated:
+        warnings.append("Duplicate configuration IDs: " + ", ".join(repeated)
+                        + ". Every table keeps each saved row; a chart draws one bar per "
+                        "configuration and metric. Check the saved summary.")
     unsplit = [item["config_id"] for item in run["configurations"]
                if not keyed_as_tabs(item)]
     if unsplit:

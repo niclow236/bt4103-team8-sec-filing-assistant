@@ -2014,9 +2014,18 @@ the labels print to -- reads as level rather than as a difference the chart
 cannot draw. The rate is counted from each question's saved rank, the same
 measure as the breakdown below it (#170), so the two cannot disagree about a
 question; a run that saved only its means has no ranks to count and says so in
-place of the chart. The metrics themselves stay in the table above it, in the
-plain words #164 gave them, and `python -m src.evaluation.report` still writes
-them as a grouped bar chart for the report files.
+place of the chart. Each benchmark tab keeps all its metric tables in a
+collapsed **Full metrics** section below the visual summary, breakdown and
+before-and-after view (#171): the plain-language retrieval summary, all raw
+retrieval metrics including nDCG and MRR, the answer-model ablation, and answer
+quality with its scored counts. Values, column tooltips and benchmark separation
+are unchanged. With no retrieval scores, Full metrics starts open so answer-only
+runs show their tables immediately; empty tabs have no section.
+Duplicate configuration IDs are warned about above the page. Their table rows
+remain visible; the page and generated report share one answer-quality chart
+data source, drawing one bar per configuration ID and metric.
+The run picker and incomplete-run warnings remain at the top of the page.
+`python -m src.evaluation.report` still writes the grouped bar chart for report files.
 Each retrieval table gives the number of questions its means cover: those
 with a gold passage (Relevance-scored) and those with hard negatives. A matrix
 run's saved answers add an Answer quality table and chart to the Team tab:
@@ -2036,7 +2045,7 @@ its judged scores is unreadable, as it is to rescore, and is named in the
 every table and chart through `src/evaluation/report.py`, so the page and a
 generated report cannot disagree.
 
-Under each benchmark's tables, "By question type and difficulty" splits the
+Under each benchmark's chart, "By question type and difficulty" splits the
 default configuration's (C4's) questions into groups and scores each one, on
 whether the right passage was found in the top 10 and, where the run saved
 judged answers, on answer correctness. Every group shows its question count

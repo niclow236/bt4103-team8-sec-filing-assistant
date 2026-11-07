@@ -273,31 +273,22 @@ def _render_found_chart(run: Mapping[str, Any], benchmark: str,
 def _render_results_benchmark(title: str, retrieval: list[dict[str, Any]],
                               run: dict[str, Any], benchmark: str,
                               outcomes: Callable[[str, str], Mapping[str, QuestionOutcome]],
+                              model_table: pd.DataFrame, quality: pd.DataFrame,
                               ) -> bool:
     """Draw one benchmark's scores, and say whether the run saved any for it."""
     st.subheader(title)
     headline_shown = _render_headlines(run, benchmark, outcomes)
-    model_table = _results_model_table(run["configurations"], benchmark)
-    quality = pd.DataFrame(report.answer_quality_table(run, benchmark))
     if not retrieval and model_table.empty and quality.empty and not headline_shown:
         st.info("No saved results for this benchmark.")
         return False
-    top_k = _cutoff(run)
-    if retrieval:
-        _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
-    # #202's table keeps the scores in plain words; its bars of the same three
-    # metrics give way to one chart of one of them (#166).
+    # Lead with the visual summary; exact tables remain below the story (#171).
     _render_found_chart(run, benchmark, outcomes)
-    if not model_table.empty:
-        st.subheader("Answer-model ablation")
-        _plain_dataframe(model_table, top_k)
-    if not quality.empty:
+    # The report draws the same rows, so page and report cannot disagree.
+    quality_chart = report.quality_chart_rows(run, benchmark)
+    if quality_chart:
         st.subheader("Answer quality")
-        _plain_dataframe(quality, top_k)
-        quality_chart = report.quality_chart_rows(run, benchmark)
-        if quality_chart:
-            st.bar_chart(pd.DataFrame(quality_chart).pivot(
-                index="Configuration", columns="Metric", values="Value"), stack=False)
+        st.bar_chart(pd.DataFrame(quality_chart).pivot(
+            index="Configuration", columns="Metric", values="Value"), stack=False)
     return True
 
 
@@ -532,10 +523,10 @@ def _render_question_changes(run: Mapping[str, Any], benchmark: str,
         _render_change_counts(measure, changes, answered)
         if measure is _TOP_10 and scored_at is not None and scored_at >= first_left_out:
             # The cutoff stays the issue's top 10, and this says why the
-            # counts can disagree with the scores above them (#169).
+            # counts can disagree with the retrieval summary (#169, #171).
             ranks = (f"{first_left_out}" if scored_at == first_left_out
                      else f"{first_left_out} to {scored_at}")
-            st.caption(f"The scores above count a right passage in this run's top "
+            st.caption(f"The retrieval summary in Full metrics counts a right passage in this run's top "
                        f"{scored_at}, so one ranked {ranks} counts there but not here.")
     filters = {f"{change.capitalize()}: {measure.column.lower()}": (measure.column, change)
                for measure, _ in counts for change in (_IMPROVED, _WORSE)}
@@ -610,11 +601,27 @@ def _render_breakdown(run: Mapping[str, Any], benchmark: str,
                          column_config={"Score": _SCORE_BAR}, width="stretch", hide_index=True)
 
 
-def _render_full_metrics(retrieval: list[dict[str, Any]], benchmark: str) -> None:
-    """The retrieval table under the report's own names, nDCG and MRR among
-    them, collapsed below the rest of the tab (#164, #171)."""
-    if retrieval:
-        with st.expander("Full metrics"):
+def _render_full_metrics(retrieval: list[dict[str, Any]], run: Mapping[str, Any],
+                         benchmark: str, model_table: pd.DataFrame,
+                         quality: pd.DataFrame) -> None:
+    """Keep every saved metric table below the story (#171)."""
+    if not retrieval and model_table.empty and quality.empty:
+        # Headline-only results (#165) have no detailed table to display.
+        return
+    top_k = _cutoff(run)
+    # Without retrieval scores the tables are the tab's main results.
+    with st.expander("Full metrics", expanded=not retrieval):
+        if retrieval:
+            st.subheader("Retrieval summary")
+            _plain_dataframe(_main_results_table(retrieval, benchmark), top_k)
+        if not model_table.empty:
+            st.subheader("Answer-model ablation")
+            _plain_dataframe(model_table, top_k)
+        if not quality.empty:
+            st.subheader("Answer quality metrics")
+            _plain_dataframe(quality, top_k)
+        if retrieval:
+            st.subheader("All retrieval metrics")
             st.dataframe(_results_table(retrieval, benchmark), width="stretch", hide_index=True)
 
 
@@ -758,11 +765,14 @@ def render_results(runs: list[dict[str, Any]], *,
                                 report.BENCHMARKS):
         with tab:
             matching = report.retrieval_configurations(selected["configurations"], kind)
-            saved = _render_results_benchmark(title, matching, selected, kind, outcomes)
+            model_table = _results_model_table(selected["configurations"], kind)
+            quality = pd.DataFrame(report.answer_quality_table(selected, kind))
+            saved = _render_results_benchmark(title, matching, selected, kind, outcomes,
+                                              model_table, quality)
             if saved:
                 _render_breakdown(selected, kind, outcomes)
                 _render_question_changes(selected, kind, outcomes)
-                _render_full_metrics(matching, kind)
+                _render_full_metrics(matching, selected, kind, model_table, quality)
     # Lead with statistics (#165), then let the saved walkthrough explain
     # an individual answer without pushing the headline tiles off screen.
     _render_worked_example(selected, examples)

@@ -502,8 +502,8 @@ def test_a_run_scored_at_11_names_the_one_rank_the_view_leaves_out(tmp_path, mon
 
     assert [caption.value for caption in app.tabs[0].caption
             if "but not here" in caption.value] == [
-        "The scores above count a right passage in this run's top 11, so one ranked 11 "
-        "counts there but not here."]
+        "The retrieval summary in Full metrics counts a right passage in this run's top 11, "
+        "so one ranked 11 counts there but not here."]
 
 
 # Text is a malformed row. A NaN, which json reads, would count as unchanged
