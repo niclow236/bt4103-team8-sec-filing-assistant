@@ -15,7 +15,7 @@ Contents:
 - `docs/evaluation/`: the aggregate summary and provenance manifest;
 - `results/README.md`: the limitations attached to each reported result.
 
-Verify the archive before using it:
+Verify the archive from a clean checkout of the release tag before using it:
 
 ```bash
 python tools/archive_handover.py verify \
@@ -23,8 +23,12 @@ python tools/archive_handover.py verify \
   --tag RELEASE_TAG --commit RELEASE_COMMIT
 ```
 
-The verifier uses only Python's standard library. It rejects extra, missing,
-renamed, truncated, or changed files and unsafe archive paths.
+`tools/archive_handover.py` comes from the tagged checkout rather than from the
+archive it is verifying. It uses only Python's standard library in `verify`
+mode, so project dependencies do not need to be installed. It rejects extra,
+missing, renamed, truncated, or changed files and unsafe archive paths, checks
+the 48 native results against the archived study manifest, and requires that
+manifest to match the checkout's committed copy.
 
 The archive preserves manifests, not the built indexes. After obtaining the
 matching frozen corpus, rebuild and check the indexes with:

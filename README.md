@@ -147,22 +147,25 @@ python -m src.evaluation.full_ablation rescore results/NEW_RUN_ID
 Use `--device mps` on the Apple measurement machine. Both API keys must be in
 the local `.env`; they are never written to results. This reruns the same
 experiment, but hosted generation and judging are nondeterministic, so answer
-metrics need not be byte-identical. The exact published native outputs are in
-the final handover release asset and are checked against the 48 hashes in
+metrics need not be byte-identical. The exact published native outputs will be
+included in the final handover release asset and checked against the 48 hashes in
 `docs/evaluation/full-matrix-20261021-manifest.json`. Its aggregate summary is
 `docs/evaluation/full-matrix-20261021-summary.json`; limitations are recorded
 both there and in [`results/README.md`](results/README.md).
 
-Release maintainers create the archive only from a clean checkout of the tag,
-with the frozen `benchmark/generated.jsonl`, native result directory, and built
-indexes restored:
+Release maintainers create the archive only from a clean checkout of the tag.
+Restore the originals from the
+[`data/full-matrix-20261021-v1`](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/releases/tag/data/full-matrix-20261021-v1)
+supporting release first. Its `ORIGINALS_README.md` gives the download,
+checksum, standalone verification, and extraction commands. Extract only into
+the clean tagged checkout, not over another local corpus or index. Then run:
 
 ```bash
 git checkout RELEASE_TAG
-python tools/archive_handover.py create --tag RELEASE_TAG \
-  --output dist/final-handover.tar.gz
+python tools/archive_handover.py create --tag RELEASE_TAG
+# The command prints the exact archive path. Use that path as ARCHIVE below.
 python tools/archive_handover.py verify \
-  dist/final-handover.tar.gz \
+  ARCHIVE \
   --tag RELEASE_TAG --commit "$(git rev-parse RELEASE_TAG^{commit})"
 ```
 
@@ -170,9 +173,13 @@ The creator refuses a tag that is not checked out, tracked changes, a missing or
 changed native result, a missing benchmark, or a missing index manifest. It
 exports the BM25 manifest without archiving the 40 MB sparse index and includes
 the dense manifest; both index binaries remain rebuildable outputs. Upload the
-`.tar.gz` and adjacent `.sha256` to the GitHub release for the same tag. A
-downloaded archive can be verified with the standard-library-only `verify`
-command before any project dependency is installed.
+`.tar.gz` and adjacent `.sha256` to the GitHub release for the same tag. The
+default archive name is
+`dist/sec-filing-assistant-handover-<safe-tag>.tar.gz`; characters such as `/`
+in a tag become `-`. Verify a downloaded archive from a clean checkout of that
+tag: the verifier binds the archived study manifest to the checkout's committed
+copy. The command uses only Python's standard library, so project dependencies
+do not need to be installed.
 
 ## Approach
 
