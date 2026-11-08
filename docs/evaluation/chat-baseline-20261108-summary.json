@@ -1,0 +1,96 @@
+{
+  "judge": {
+    "provider": "mistral",
+    "model": "ministral-8b-2512",
+    "prompt_template_id": "grounded_v4",
+    "temperature": 0.0
+  },
+  "subset": {
+    "Q01": "daryl-28",
+    "Q02": "anqi-14",
+    "Q03": "callista-07",
+    "Q04": "tingyi-06",
+    "Q05": "daryl-06",
+    "Q06": "callista-12",
+    "Q07": "callista-23",
+    "Q08": "anqi-05",
+    "Q09": "nicholas-06",
+    "Q10": "callista-05",
+    "Q11": "tingyi-18",
+    "Q12": "daryl-17",
+    "Q13": "nicholas-03",
+    "Q14": "callista-22",
+    "Q15": "jarren-12",
+    "Q16": "jarren-16",
+    "Q17": "jarren-17",
+    "Q18": "jarren-18",
+    "Q19": "jarren-23",
+    "Q20": "callista-25"
+  },
+  "chat": {
+    "questions": 20,
+    "mean_correctness": 0.755,
+    "declined": 2,
+    "answered_with_a_source": 18,
+    "answered_citing_sec_gov": 18,
+    "by_question_type": {
+      "comparative": {
+        "n": 4,
+        "mean_correctness": 0.775
+      },
+      "factual": {
+        "n": 4,
+        "mean_correctness": 0.775
+      },
+      "numeric": {
+        "n": 8,
+        "mean_correctness": 0.7000000000000001
+      },
+      "temporal": {
+        "n": 2,
+        "mean_correctness": 0.65
+      },
+      "unanswerable": {
+        "n": 2,
+        "mean_correctness": 1.0
+      }
+    }
+  },
+  "matrix_same_20": {
+    "C0": {
+      "mean_correctness": 0.4025,
+      "scored": 20,
+      "of": 20
+    },
+    "C1": {
+      "mean_correctness": 0.415,
+      "scored": 20,
+      "of": 20
+    },
+    "C2": {
+      "mean_correctness": 0.6125,
+      "scored": 20,
+      "of": 20
+    },
+    "C3": {
+      "mean_correctness": 0.6365,
+      "scored": 20,
+      "of": 20
+    },
+    "C4": {
+      "mean_correctness": 0.8225,
+      "scored": 20,
+      "of": 20
+    },
+    "C5": {
+      "mean_correctness": 0.77,
+      "scored": 20,
+      "of": 20
+    },
+    "C6": {
+      "mean_correctness": 0.77,
+      "scored": 20,
+      "of": 20
+    }
+  }
+}
