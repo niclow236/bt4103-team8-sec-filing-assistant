@@ -57,6 +57,7 @@ from .constants import (
 from .embed import (
     check_index,
     chunk_from_record,
+    encoder_revision,
     manifest_file_for,
     open_collection,
     read_manifest,
@@ -192,14 +193,13 @@ class DenseRetriever:
     def runtime_info(self) -> dict[str, str | None]:
         """Loaded encoder device/revision without triggering a model load.
 
-        Keep knowledge of SentenceTransformer's model structure here instead
-        of making evaluation runners inspect the retriever's private cache.
+        Evaluation runners read this rather than the retriever's private
+        cache, and the revision is read by ``embed.encoder_revision``, the
+        same reader the builder records each vector's revision with.
         """
         if self._model is None:
             return {"device": None, "revision": None}
-        config = getattr(getattr(self._model[0], "auto_model", None), "config", None)
-        return {"device": str(self._model.device),
-                "revision": getattr(config, "_commit_hash", None)}
+        return {"device": str(self._model.device), "revision": encoder_revision(self._model)}
 
     def search(self, query: Query, k: int | None = None) -> list[RetrievedPassage]:
         """The passages closest to the query, best first, inside its filters.

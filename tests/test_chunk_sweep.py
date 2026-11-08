@@ -768,6 +768,31 @@ def test_a_build_already_indexed_takes_the_copy_in_place_of_its_stale_vector(
     assert embed.check_index(target.chroma_dir, target.processed_dir) == []
 
 
+def test_a_vector_encoded_at_another_revision_is_not_copied(sources, fake_model, monkeypatch):
+    """Its digest matches, since a digest covers the text and not the weights."""
+    donor, target = _two_builds(sources)
+    with monkeypatch.context() as patch:
+        patch.setattr(embed, "requested_revision", lambda name: "0" * 40)
+        embed.build(chroma_dir=donor.chroma_dir, processed_dir=donor.processed_dir)
+    assert _shared(donor, target)
+    assert seed_vectors(target.chroma_dir, target.processed_dir, [donor.chroma_dir]) == 0
+
+
+def test_a_build_encoded_at_another_revision_takes_no_copies(sources, fake_model, monkeypatch):
+    donor, target = _two_builds(sources)
+    embed.build(chroma_dir=donor.chroma_dir, processed_dir=donor.processed_dir)
+    with monkeypatch.context() as patch:
+        patch.setattr(embed, "requested_revision", lambda name: "0" * 40)
+        embed.build(chroma_dir=target.chroma_dir, processed_dir=target.processed_dir)
+    missing = sorted(_shared(donor, target))[0]
+    embed.open_collection(target.chroma_dir, create=False).delete(ids=[missing])
+    before = _held(target)
+
+    with pytest.raises(embed.MixedIndexError, match="at revision 0000000, and this build"):
+        seed_vectors(target.chroma_dir, target.processed_dir, [donor.chroma_dir])
+    assert _held(target) == before
+
+
 def _indexed_another_way(sources, fake_model, **how) -> tuple[SweepBuild, SweepBuild, str]:
     """A donor a sweep built, and a target indexed some other way that has since
     lost one vector the donor holds."""

@@ -291,10 +291,11 @@ def _donor(chroma_dir: Path):
 def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) -> int:
     """Copy from other indexes every vector this one needs and they already hold.
 
-    A vector is a function of the text it was encoded from and of nothing
-    else, and each one stores the digest of that text and the passage's id. So
-    where a donor holds a vector under the digest a passage of this corpus
-    has, encoding the passage again would only produce that vector again.
+    A vector is a function of the text it was encoded from and of the weights
+    that encoded it, and each one stores the digest of that text, the
+    passage's id and the weights' revision. So where a donor holds a vector
+    under the digest a passage of this corpus has, from the same weights,
+    encoding the passage again would only produce that vector again.
     Copying it takes milliseconds, and encoding it took a laptop CPU from
     under half a second at 1,200 characters to a second at 4,000. A copy
     matches its original to the last place a 32-bit float holds, since Chroma
@@ -306,16 +307,18 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
     or a table small enough not to be cut: on the fifteen FY2025 filings, 6%
     of the 1,200-character build, 18% of the 2,400 and 31% of the 4,000.
 
-    Only the vector and its token count are taken from the donor. The text and
+    Only the vector, its token count and its revision are taken from the
+    donor, and a donor vector recorded at another revision than the one
+    ``embed`` encodes at is not taken. The text and
     the metadata stored with it come from this corpus, and the digest is
     computed again from the row being written, so a copied vector is held to
     exactly what an encoded one is. Returns how many were copied; ``embed``
     then encodes the rest and writes the manifest.
 
-    An index that already holds vectors made another way, by another model or
-    under another token limit, is refused before it is changed
-    (``embed.MixedIndexError``): its manifest and its vectors are left as they
-    were.
+    An index that already holds vectors made another way, by another model, at
+    another revision of it or under another token limit, is refused before it
+    is changed (``embed.MixedIndexError``): its manifest and its vectors are
+    left as they were.
     """
     donors = [donor for donor in donors if donor.resolve() != chroma_dir.resolve()]
     if not donors:
@@ -328,9 +331,11 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
     # It reads the token limit off the manifest, which is removed below, so
     # left to ``embed.build`` a target encoded under another limit took the
     # donor's vectors and was then recorded as encoded under this one.
+    wanted_revision = embed_stage.requested_revision(EMBED_MODEL)
     embed_stage.refuse_mixed_index(
         held, embed_stage.read_manifest(embed_stage.manifest_file_for(chroma_dir)),
         chroma_dir=chroma_dir, model_name=EMBED_MODEL, max_tokens=EMBED_MAX_TOKENS,
+        revision=wanted_revision,
     )
     needed = {
         chunk_id: digest for chunk_id, digest in wanted.items()
@@ -343,8 +348,9 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
         collection = _donor(donor)
         if collection is None:
             continue
-        for chunk_id, (digest, _, model) in embed_stage._scan(collection).items():
+        for chunk_id, (digest, _, model, revision) in embed_stage._scan(collection).items():
             if (chunk_id not in sources and model == EMBED_MODEL
+                    and revision in (None, wanted_revision)
                     and needed.get(chunk_id) == digest):
                 sources[chunk_id] = collection
     if not sources:
@@ -388,6 +394,8 @@ def seed_vectors(chroma_dir: Path, processed_dir: Path, donors: Sequence[Path]) 
                     embed_stage.DIGEST_FIELD: digest,
                     embed_stage.TOKENS_FIELD: metadata[embed_stage.TOKENS_FIELD],
                     embed_stage.MODEL_FIELD: EMBED_MODEL,
+                    **({embed_stage.REVISION_FIELD: metadata[embed_stage.REVISION_FIELD]}
+                       if metadata.get(embed_stage.REVISION_FIELD) else {}),
                 })
             if not ids:
                 continue
