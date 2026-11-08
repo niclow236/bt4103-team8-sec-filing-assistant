@@ -379,3 +379,37 @@ def test_verify_rejects_an_unmanifested_file(tmp_path: Path):
 
     with pytest.raises(HandoverError, match="file set mismatch"):
         verify_archive(changed)
+
+
+def test_create_takes_tracked_inputs_as_committed_on_a_crlf_checkout(tmp_path: Path):
+    """Git for Windows checks text out with CRLF by default (core.autocrlf=true)."""
+    root, commit = _release_checkout(tmp_path)
+    _git(root, "config", "core.autocrlf", "true")
+    tracked = ("benchmark/questions.jsonl", "docs/evaluation/full-matrix-20261021-manifest.json")
+    for relative in tracked:
+        (root / relative).unlink()
+    _git(root, "checkout", "--", *tracked)
+    assert b"\r\n" in (root / "benchmark/questions.jsonl").read_bytes()
+
+    archive = create_archive(root, "final/v1", "full-matrix-20261021", Path("crlf.tar.gz"))
+    files = verify_archive(archive, expected_commit=commit, checkout=root)["files"]
+    for relative in tracked:
+        committed = subprocess.run(
+            ["git", "show", f"{commit}:{relative}"], cwd=root, check=True, capture_output=True
+        ).stdout
+        assert files[relative]["sha256"] == hashlib.sha256(committed).hexdigest()
+
+
+def test_the_bm25_export_is_what_the_pickle_stored(tmp_path: Path):
+    """A field IndexManifest gains after the study must not change the export."""
+    from tools.archive_handover import read_bm25_manifest
+
+    record = IndexManifest(
+        index_type="bm25", path="data/index/bm25.pkl", corpus_fingerprint="b" * 64,
+        n_passages=1, n_filings=1, built_at="2026-01-01T00:00:00+00:00",
+    )
+    # As if max_tokens had been added to the class after this pickle was written.
+    object.__delattr__(record, "max_tokens")
+    stored = dict(vars(record))
+    index = _write(tmp_path / "bm25.pkl", pickle.dumps({"manifest": record}))
+    assert read_bm25_manifest(index) == stored
