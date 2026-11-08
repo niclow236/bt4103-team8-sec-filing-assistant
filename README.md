@@ -2222,7 +2222,7 @@ it starts (#51). It is pinned in `src/demo/snapshot.py`:
 | Configuration | C4, hybrid retrieval with the metadata filter, the row the app opens on |
 | Corpus | the [evaluation data v1 release](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/releases/tag/data/evaluation-v1): 28,289 passages from 75 filings, archive sha256 `a716519e…` |
 | BM25 index | corpus fingerprint `94c37f13…`, the index the final study searched |
-| Dense index | corpus fingerprint `865f2e8d…`, `bge-base-en-v1.5` at 768 dimensions |
+| Dense index | corpus fingerprint `865f2e8d…`, every vector encoded by `bge-base-en-v1.5` at revision `a5beb1e`, 768 dimensions |
 | Facts store | the release's `facts.parquet`, sha256 `fead73bf…` |
 | Encoder | `BAAI/bge-base-en-v1.5` at revision `a5beb1e`, the revision every run recorded |
 | Answer model | SOCLAAS `qwen3.6:35b`, with Mistral `ministral-8b-2512` as the fallback (#179) |
@@ -2231,10 +2231,12 @@ The index fingerprints are the ones `docs/evaluation/full-matrix-20261021-manife
 recorded, so the demo shows the system the reported numbers describe. An index
 is pinned by what it was built from rather than by its files' bytes: Chroma's
 files differ between two builds of the same corpus, and the fingerprint does
-not. Running the pipeline does not reproduce the corpus exactly (the team
-laptop's own corpus, built from EDGAR in September, differs from it in 21 of
-the 28,289 passages), which is why the snapshot takes the corpus from the
-release rather than rebuilding it.
+not. A fingerprint covers the passages and not the weights that encoded them,
+so the dense index is also held to the encoder its vectors record, the model
+and its Hugging Face revision. Running the pipeline does not reproduce the
+corpus exactly (the team laptop's own corpus, built from EDGAR in September,
+differs from it in 21 of the 28,289 passages), which is why the snapshot
+takes the corpus from the release rather than rebuilding it.
 
 Before the day, on the machine that will present, run once:
 
@@ -2251,20 +2253,32 @@ took 6.6 hours on a laptop CPU before the length sort (see
 [Building the retrieval indexes](#building-the-retrieval-indexes)); a stopped run resumes where it
 left off. `--archive <path>` uses a copy of the archive you already have.
 
+A dense index is updated in place only when every vector in it records the
+pinned encoder. If any vector was encoded another way, by another model, at
+another revision or under another token limit, `prepare` copies the old index
+into `data/replaced-<time>/` and encodes every passage again, because a
+passage's digest covers its text and not the weights, so an update in place
+would keep those vectors. Vectors record their revision only since #51, so an
+index built before then records none and is re-encoded once in the same way,
+which takes hours on a laptop CPU. `prepare` also stops before changing
+anything if the code no longer builds what the snapshot pins, such as a
+changed `EMBED_REVISION`.
+
 A corpus or facts store already on the machine that is not the frozen one is
 never overwritten. `prepare` stops and says so, and `prepare --replace` moves
 it into `data/replaced-<time>/`, with copies of both indexes, before putting
-the frozen one in its place. The dense index is then updated in place, so a
-corpus that differs by a few passages costs minutes, not hours. To go back,
-move the folders in `data/replaced-<time>/` back to `data/`.
+the frozen one in its place. When the dense index records the pinned encoder,
+it is then updated in place, so a corpus that differs by a few passages costs
+minutes, not hours. To go back, move the folders in `data/replaced-<time>/`
+back to `data/`.
 
 ```bash
 python -m src.demo check
 ```
 
 says whether the machine holds every part of the snapshot, one line each, and
-sends nothing over the network. It reads every vector's digest from the dense
-index, so it takes a few seconds. It also checks the code still builds what
+sends nothing over the network. It reads every vector's digest and encoder
+revision from the dense index, so it takes a few seconds. It also checks the code still builds what
 is pinned (a changed `EMBED_MODEL` or default model fails it) and that
 `.env` has a SOCLAAS key. A missing Mistral key is a warning: the demo starts,
 but has no fallback. Only the settings are checked, not whether SOCLAAS

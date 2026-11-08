@@ -20,15 +20,19 @@ reader is worse than none. The header exists in the vector and nowhere else.
 
 **Every vector records what it was encoded from.** Beside the citation
 metadata, each one stores the digest of its ``embed_text`` (``digest``), how
-many tokens that text ran to (``n_tokens``), and the model that encoded it
-(``embed_model``). That is what makes the index checkable one passage at a time
-against the corpus on disk, with or without a manifest:
+many tokens that text ran to (``n_tokens``), the model that encoded it
+(``embed_model``), and the Hugging Face commit that model's weights were loaded
+from (``embed_revision``, absent on vectors written before #51 recorded it).
+That is what makes the index checkable one passage at a time against the corpus
+on disk, with or without a manifest:
 
 - A resumed build compares digests, so a passage whose text changed since its
   vector was written is re-encoded rather than skipped because its id survived.
 - A truncated vector is marked on the vector itself, so the truncation report
   is read back from the index and cannot lose entries to a resume.
-- An index encoded by a different model is refused rather than extended.
+- An index encoded by a different model, or at a different revision of it, is
+  refused rather than extended. A digest covers the text and not the weights,
+  so only the vector itself can say which weights made it.
 
 Because the header reaches the encoder, the digest covers metadata as well as
 text: rename a company in the ticker map and each of its vectors is correctly
@@ -54,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -100,7 +105,8 @@ METADATA_FIELDS = (
 DIGEST_FIELD = "digest"
 TOKENS_FIELD = "n_tokens"
 MODEL_FIELD = "embed_model"
-INDEX_FIELDS = (DIGEST_FIELD, TOKENS_FIELD, MODEL_FIELD)
+REVISION_FIELD = "embed_revision"
+INDEX_FIELDS = (DIGEST_FIELD, TOKENS_FIELD, MODEL_FIELD, REVISION_FIELD)
 
 # What metadata_for drops as empty, and what an iter_chunks row holds in its
 # place, so a stored record can be turned back into that row exactly.
@@ -270,6 +276,45 @@ def _use_threads(threads: int | None) -> int | None:
     return resolved
 
 
+def requested_revision(model_name: str) -> str | None:
+    """The checkpoint ``model_name`` is loaded at: the pinned commit for the
+    project's encoder, and None, meaning the model as published, for any other."""
+    return EMBED_REVISION if model_name == EMBED_MODEL else None
+
+
+def encoder_revision(model: Any) -> str | None:
+    """The Hugging Face commit a loaded encoder's weights came from, or None.
+
+    transformers stamps each config it loads with the commit it resolved. This
+    is the one place that knows where SentenceTransformer keeps it, so the
+    builder and ``DenseRetriever.runtime_info`` cannot read it differently.
+    """
+    try:
+        first = model[0]
+    except (TypeError, IndexError, KeyError):
+        return None
+    config = getattr(getattr(first, "auto_model", None), "config", None)
+    revision = getattr(config, "_commit_hash", None)
+    return revision if isinstance(revision, str) and revision else None
+
+
+def _revision_of(model: Any, model_name: str) -> str | None:
+    """The revision the vectors this model writes are recorded at.
+
+    What was loaded when the library says, and otherwise what was asked for,
+    which for a commit is exact. A model loaded at another commit than the one
+    asked for stops the build before it writes anything.
+    """
+    asked = requested_revision(model_name)
+    loaded = encoder_revision(model)
+    if asked and loaded and loaded != asked:
+        raise RuntimeError(
+            f"{model_name} was asked for at revision {asked[:7]} but loaded {loaded[:7]}. "
+            f"Nothing was written."
+        )
+    return loaded or asked
+
+
 def _load_model(
     threads: int | None = None,
     model_name: str = EMBED_MODEL,
@@ -294,9 +339,7 @@ def _load_model(
         ) from error
 
     used = _use_threads(threads)
-    # The project's encoder at its pinned checkpoint; any other model as published.
-    revision = EMBED_REVISION if model_name == EMBED_MODEL else None
-    model = SentenceTransformer(model_name, revision=revision)
+    model = SentenceTransformer(model_name, revision=requested_revision(model_name))
     # Renamed in sentence-transformers 6.0; the old name still works but warns.
     # Asked for by name so the module runs on either side of that rename, since
     # requirements.txt pins a version but a teammate's venv may predate it.
@@ -388,16 +431,16 @@ def open_collection(chroma_dir: Path = CHROMA_DIR, rebuild: bool = False, create
     return collection
 
 
-def _scan(collection) -> dict[str, tuple[str | None, str | None, str | None]]:
-    """What every vector says about itself: digest, filing, and model.
+def _scan(collection) -> dict[str, tuple[str | None, str | None, str | None, str | None]]:
+    """What every vector says about itself: digest, filing, model and revision.
 
-    Read in pages, keeping three short strings per vector rather than full
+    Read in pages, keeping four short strings per vector rather than full
     metadata, so this costs a few megabytes and is released before the model
     loads. Nothing here swallows a read failure: "the index is empty" and "the
     index could not be read" would otherwise look identical, and the second
     would cost a full re-encode.
     """
-    held: dict[str, tuple[str | None, str | None, str | None]] = {}
+    held: dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
     total = collection.count()
     for offset in range(0, total, SCAN_PAGE):
         page = collection.get(limit=SCAN_PAGE, offset=offset, include=["metadatas"])
@@ -407,6 +450,7 @@ def _scan(collection) -> dict[str, tuple[str | None, str | None, str | None]]:
                 metadata.get(DIGEST_FIELD),
                 metadata.get("accession_no"),
                 metadata.get(MODEL_FIELD),
+                metadata.get(REVISION_FIELD),
             )
     return held
 
@@ -457,12 +501,13 @@ class MixedIndexError(RuntimeError):
 
 
 def refuse_mixed_index(
-    held: Mapping[str, tuple[str | None, str | None, str | None]],
+    held: Mapping[str, tuple[str | None, str | None, str | None, str | None]],
     manifest: IndexManifest | None,
     *,
     chroma_dir: Path,
     model_name: str,
     max_tokens: int | None,
+    revision: str | None = None,
 ) -> None:
     """Refuse to add vectors to an index that holds vectors made another way.
 
@@ -473,6 +518,13 @@ def refuse_mixed_index(
     already there were encoded under, so once it is gone a build under another
     limit has nothing to be refused by, and the manifest written at the end
     would vouch for all of them at the new one.
+
+    ``revision`` is the commit the new vectors will be encoded at, or None when
+    that is not known yet. A vector recording another commit is refused, since
+    its digest still matches and an incremental build would keep it. A vector
+    recording none was written before #51 and is not refused, because nothing
+    says which commit made it. It stays as it was, and a check that pins a
+    revision reports it.
 
     Refused rather than repaired: every vector would change, with another
     model possibly its width too, and that is a decision to make on purpose.
@@ -487,6 +539,17 @@ def refuse_mixed_index(
             f"one index makes their scores incomparable. Rebuild it:\n"
             f"  python -m src.retrieval embed --rebuild"
         )
+    if revision is not None:
+        others = sorted({entry[3] for entry in held.values() if entry[3] not in (None, revision)})
+        if others:
+            count = sum(1 for entry in held.values() if entry[3] in others)
+            raise MixedIndexError(
+                f"{count:,} of the {len(held):,} vectors in {chroma_dir} were encoded by "
+                f"{model_name} at revision {', '.join(other[:7] for other in others)}, and "
+                f"this build encodes at {revision[:7]}. Their digests still match, since a "
+                f"digest covers the text and not the weights, so only a full re-encode "
+                f"replaces them. Rebuild it:\n  python -m src.retrieval embed --rebuild"
+            )
     if (held and manifest is not None and manifest.max_tokens is not None
             and max_tokens is not None and max_tokens != manifest.max_tokens):
         raise MixedIndexError(
@@ -548,8 +611,8 @@ def build(
     So an interrupted build is resumed by running it again, and that is correct
     even if the corpus was re-chunked in between: nothing is trusted because its
     id survived. ``rebuild`` drops the collection first, for when every vector
-    should be re-encoded regardless -- a changed model, for one, which this
-    refuses to mix into an existing index.
+    should be re-encoded regardless -- a changed model or revision, for one,
+    which this refuses to mix into an existing index.
 
     The corpus is walked twice rather than held in memory. Reading it into a
     list costs a few hundred megabytes that are still resident when torch loads
@@ -617,13 +680,13 @@ def build(
     if rebuild:
         invalidate()
         collection = open_collection(chroma_dir, rebuild=True)
-        held: dict[str, tuple[str | None, str | None, str | None]] = {}
+        held: dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
     else:
         collection = open_collection(chroma_dir)
         held = _scan(collection)
         refuse_mixed_index(
             held, previous_manifest, chroma_dir=chroma_dir, model_name=model_name,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens, revision=requested_revision(model_name),
         )
 
     before = _differences(held, corpus)
@@ -649,11 +712,11 @@ def build(
     done = 0
     replaced = 0
     model = None
+    revision: str | None = None
 
     def flush(batch: list[dict]) -> None:
         """Encode one batch and write it, holding nothing after it returns."""
-        nonlocal done, replaced, model, started
-        invalidate()
+        nonlocal done, replaced, model, revision, started
         if model is None:
             # Loaded on the first batch rather than up front, so a run with
             # nothing to do never pays for torch.
@@ -665,8 +728,17 @@ def build(
                 model.max_seq_length = min(
                     max_tokens, int(getattr(model, "max_seq_length", max_tokens))
                 )
-            print(f"encoding on {used_threads} threads")
+            revision = _revision_of(model, model_name)
+            # A model loaded as published names its commit only now, so the
+            # vectors already here are held to it before the first write.
+            refuse_mixed_index(
+                held, previous_manifest, chroma_dir=chroma_dir, model_name=model_name,
+                max_tokens=max_tokens, revision=revision,
+            )
+            at = f" at revision {revision[:7]}" if revision else ""
+            print(f"encoding on {used_threads} threads{at}")
             started = time.perf_counter()
+        invalidate()
 
         texts = [embed_text(row, passage_prefix) for row in batch]
         # Tokenising a batch about to be encoded anyway costs a fraction of the
@@ -696,12 +768,13 @@ def build(
             documents=[row["text"] for row in batch],
             metadatas=[
                 {**metadata_for(row), DIGEST_FIELD: digest,
-                 TOKENS_FIELD: count, MODEL_FIELD: model_name}
+                 TOKENS_FIELD: count, MODEL_FIELD: model_name,
+                 **({REVISION_FIELD: revision} if revision else {})}
                 for row, digest, count in zip(batch, digests, counts)
             ],
         )
         for row, digest in zip(batch, digests):
-            held[row["chunk_id"]] = (digest, row["accession_no"], model_name)
+            held[row["chunk_id"]] = (digest, row["accession_no"], model_name, revision)
         done += len(batch)
         replaced += len(replacing)
 
@@ -802,6 +875,7 @@ def check_index(
     dimensions: int | None = None,
     passage_prefix: str = PASSAGE_PREFIX,
     max_tokens: int | None = None,
+    revision: str | None = None,
 ) -> list[str]:
     """Every reason the index in ``chroma_dir`` should not be searched.
 
@@ -814,6 +888,12 @@ def check_index(
     vectors carry against the corpus on disk (missing, stale and orphaned
     passages, counted exactly), and the manifest against those same digests (a
     manifest that does not describe the index beside it).
+
+    ``revision``, when given, is the encoder commit every vector must record.
+    A vector recording another commit, or none, is reported, since its digest
+    cannot tell its weights from the ones queries are encoded with. The app's
+    retriever leaves it unset, because every index built before #51 records
+    none. The demo, which pins a revision, sets it.
     """
     manifest_file = manifest_file_for(chroma_dir)
     manifest = read_manifest(manifest_file)
@@ -838,6 +918,15 @@ def check_index(
     foreign = sum(1 for entry in held.values() if entry[2] != expected_model)
     if foreign:
         problems.append(f"{foreign:,} vectors were not encoded by {expected_model}")
+    if revision is not None:
+        other = sum(1 for entry in held.values() if entry[3] not in (None, revision))
+        unrecorded = sum(1 for entry in held.values() if entry[3] is None)
+        if other:
+            problems.append(f"{other:,} vectors were encoded at another revision than "
+                            f"{revision[:7]}")
+        if unrecorded:
+            problems.append(f"{unrecorded:,} vectors record no revision (written before #51 "
+                            f"recorded it), so nothing shows they were encoded at {revision[:7]}")
 
     index_fingerprint = fingerprint_of(entry[0] or "" for entry in held.values())
     if index_fingerprint != manifest.corpus_fingerprint:
@@ -849,6 +938,19 @@ def check_index(
     if index_fingerprint != fingerprint_of(corpus.values()):
         problems.append(f"the index does not match the corpus: {_describe(_differences(held, corpus))}")
     return problems
+
+
+def encoders_in(chroma_dir: Path = CHROMA_DIR) -> dict[tuple[str | None, str | None], int]:
+    """How many vectors each encoder wrote, by (model, revision), read off the vectors.
+
+    Empty when there is no index. Read from the vectors rather than the
+    manifest, so the vectors an interrupted build left, with no manifest beside
+    them, are described too.
+    """
+    collection = open_collection(chroma_dir, create=False)
+    if collection is None:
+        return {}
+    return dict(Counter((entry[2], entry[3]) for entry in _scan(collection).values()))
 
 
 def write_truncation_report(

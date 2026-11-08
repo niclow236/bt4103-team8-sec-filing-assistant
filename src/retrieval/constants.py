@@ -58,7 +58,8 @@ EMBED_MODEL = "BAAI/bge-base-en-v1.5"
 # A commit, unlike a branch, resolves from the local cache with no request, which
 # is what lets the demo start with Hugging Face offline (#51). It applies to
 # EMBED_MODEL only: another model, such as e5 in the encoder ablation, loads as
-# published.
+# published. Changing it means re-embedding: every vector records the revision
+# that encoded it, and embed refuses to add vectors at another one beside them.
 EMBED_REVISION = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
 
 # Vector width, written into the IndexManifest so a retriever refuses an index

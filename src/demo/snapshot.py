@@ -11,7 +11,9 @@ made ready for it before the day rather than on it:
   fingerprints the final study recorded for them
   (``docs/evaluation/full-matrix-20261021-manifest.json``), so an index built
   from it today is checked against the one that was measured, not merely
-  against itself;
+  against itself. The dense index is also held to the encoder every vector
+  records, model and revision, because its fingerprint covers the passages
+  and not the weights that encoded them;
 - the facts store: the release's own ``facts.parquet``, by its hash;
 - the encoder: ``bge-base-en-v1.5`` at the revision every run recorded;
 - the answer model: SOCLAAS ``qwen3.6:35b``, with Mistral ``ministral-8b-2512``
@@ -339,20 +341,47 @@ def _dense_item(pin: DemoPin, layout: Layout, check_vectors: bool, run_prepare: 
     if manifest.corpus_fingerprint != pin.dense_fingerprint:
         problems.append(f"fingerprint {manifest.corpus_fingerprint[:12]}, "
                         f"the measured index is {pin.dense_fingerprint[:12]}")
+    problems.extend(_manifest_encoder_problems(pin, manifest))
+    if not problems and check_vectors:
+        # The manifest says what was built; this reads what the vectors hold,
+        # including the revision each was encoded at, which no fingerprint covers.
+        from src.retrieval.embed import check_index
+
+        problems.extend(check_index(
+            layout.chroma_dir, layout.processed_dir, model=pin.encoder,
+            dimensions=pin.dimensions, revision=pin.encoder_revision))
+    if problems:
+        return Item("dense", False, "; ".join(problems) + f". {run_prepare}")
+    return Item("dense", True, f"fingerprint {manifest.corpus_fingerprint[:12]}, "
+                               f"{manifest.n_passages:,} vectors from "
+                               f"{pin.encoder}@{pin.encoder_revision[:7]}")
+
+
+def _manifest_encoder_problems(pin: DemoPin, manifest: Any) -> list[str]:
+    """How the encoder settings the dense manifest records differ from the pin."""
+    problems = []
     if (manifest.model, manifest.dimensions) != (pin.encoder, pin.dimensions):
         problems.append(f"built by {manifest.model} at {manifest.dimensions} dimensions")
     if manifest.max_tokens not in (None, pin.max_tokens):
         problems.append(f"vectors read {manifest.max_tokens} tokens, not {pin.max_tokens}")
-    if not problems and check_vectors:
-        # The manifest says what was built; this reads what the vectors hold.
-        from src.retrieval.embed import check_index
+    return problems
 
-        problems.extend(check_index(
-            layout.chroma_dir, layout.processed_dir, model=pin.encoder, dimensions=pin.dimensions))
-    if problems:
-        return Item("dense", False, "; ".join(problems) + f". {run_prepare}")
-    return Item("dense", True, f"fingerprint {manifest.corpus_fingerprint[:12]}, "
-                               f"{manifest.n_passages:,} vectors")
+
+def _vector_encoder_problems(pin: DemoPin,
+                             encoders: Mapping[tuple[str | None, str | None], int]) -> list[str]:
+    """How the encoders the dense vectors record differ from the pinned one."""
+    problems = []
+    for (model, revision), count in sorted(encoders.items(), key=lambda item: str(item[0])):
+        if (model, revision) == (pin.encoder, pin.encoder_revision):
+            continue
+        if model == pin.encoder and revision is None:
+            problems.append(f"{count:,} vectors record no revision "
+                            f"(written before #51 recorded it)")
+        else:
+            at = revision[:7] if revision else "an unrecorded revision"
+            problems.append(f"{count:,} vectors were encoded by "
+                            f"{model or 'an unrecorded model'} at {at}")
+    return problems
 
 
 def _encoder_item(pin: DemoPin, find_encoder: Callable[[DemoPin], str | None]) -> Item:
@@ -401,17 +430,27 @@ def prepare(
     download: Callable[[str, Path], None] | None = None,
     fetch_encoder: Callable[[DemoPin], Any] | None = None,
     build_bm25: Callable[[Layout], Any] | None = None,
-    build_dense: Callable[[Layout], Any] | None = None,
+    build_dense: Callable[..., Any] | None = None,
     log: Callable[[str], None] = print,
 ) -> None:
     """Make this machine hold the snapshot, doing only what is missing.
 
     A corpus or facts store already here that is not the frozen one is never
     overwritten unless ``replace`` is set, and then it is moved aside into
-    ``data/replaced-<time>/`` with copies of both indexes, not deleted. The
-    dense index is brought up to date in place, so after a small difference
-    only the changed passages are encoded again; a machine with no index at
-    all encodes all 28,289, which takes hours on a laptop CPU.
+    ``data/replaced-<time>/`` with copies of both indexes, not deleted.
+
+    The dense index is brought up to date in place when every vector in it
+    was encoded by the pinned model at the pinned revision, so after a small
+    difference only the changed passages are encoded again. When any vector
+    was encoded another way, by another model, at another revision, under
+    another token limit, or before #51 recorded revisions, every passage is
+    encoded again, after a copy of the old index is kept in
+    ``data/replaced-<time>/``. A digest covers a passage's text and not the
+    encoder, so an update in place would keep those vectors. Encoding all
+    28,289 passages takes hours on a laptop CPU.
+
+    Nothing starts when the code no longer builds what the pin names, since
+    prepare builds with the code's constants.
 
     The steps are parameters so a test can watch them run without a network
     or a model; the defaults are the real ones.
@@ -421,6 +460,12 @@ def prepare(
     build_bm25 = build_bm25 or _build_bm25
     build_dense = build_dense or _build_dense
 
+    code = _code_items(pin)[0]
+    if not code.ok:
+        raise PrepareError(f"the code no longer builds what the snapshot pins: {code.detail}. "
+                           "Nothing was changed.")
+
+    backup: Path | None = None
     corpus_ok = (_has_corpus(layout.processed_dir)
                  and corpus_identity(layout.processed_dir)[0] == pin.bm25_fingerprint)
     facts_ok = layout.facts_file.is_file() and sha256_of(layout.facts_file) == pin.facts_sha256
@@ -447,7 +492,7 @@ def prepare(
         source = archive if archive is not None else _cached_download(pin, layout, download, log)
         _verify_archive(source, pin)
         if differs:
-            _move_aside(layout, corpus_ok, facts_ok, log)
+            backup = _move_aside(layout, corpus_ok, facts_ok, log)
         _extract(source, layout, corpus=not corpus_ok, facts=not facts_ok, log=log)
         fingerprint, passages, filings = corpus_identity(layout.processed_dir)
         if fingerprint != pin.bm25_fingerprint:
@@ -467,38 +512,67 @@ def prepare(
         f"if it is not there yet")
     fetch_encoder(pin)
 
+    from src.retrieval.embed import encoders_in
+
     manifest = dense_manifest(layout.chroma_dir)
-    if manifest is not None and manifest.corpus_fingerprint == pin.dense_fingerprint:
+    # Read off the vectors as well as the manifest, so the vectors a stopped
+    # build left behind, with no manifest yet, are judged by the same rule.
+    reasons = [*(_manifest_encoder_problems(pin, manifest) if manifest is not None else []),
+               *_vector_encoder_problems(pin, encoders_in(layout.chroma_dir))]
+    if reasons:
+        log(f"dense:    {'; '.join(reasons)}. A digest covers a passage's text and not the "
+            f"encoder, so every passage is encoded again at {pin.encoder_revision[:7]}. "
+            f"That takes hours on a laptop CPU; a run that is stopped resumes where it "
+            f"left off")
+        if backup is None:
+            backup = _backup_dir(layout)
+            _copy_indexes(layout, backup, bm25=False)
+            log(f"kept:     a copy of the old dense index is in {backup}")
+        build_dense(layout, rebuild=True)
+    elif manifest is not None and manifest.corpus_fingerprint == pin.dense_fingerprint:
         log("dense:    already the measured index")
     else:
         log("dense:    encoding what differs from the frozen corpus. A machine with no index "
             "encodes every passage, which takes hours on a laptop CPU; a run that is stopped "
             "resumes where it left off")
-        build_dense(layout)
+        build_dense(layout, rebuild=False)
 
 
-def _move_aside(layout: Layout, corpus_ok: bool, facts_ok: bool, log: Callable[[str], None]) -> None:
+def _move_aside(layout: Layout, corpus_ok: bool, facts_ok: bool,
+                log: Callable[[str], None]) -> Path:
     """Move the corpus and facts store that differ out of the way, and copy the
     indexes beside them, so the machine can be put back as it was."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = layout.data_dir / f"replaced-{stamp}"
-    backup.mkdir(parents=True)
+    backup = _backup_dir(layout)
     if not corpus_ok and _has_corpus(layout.processed_dir):
         shutil.move(str(layout.processed_dir), str(backup / "processed"))
     if not facts_ok and layout.facts_file.is_file():
         shutil.move(str(layout.facts_file), str(backup / layout.facts_file.name))
+    _copy_indexes(layout, backup, bm25=True)
+    log(f"moved:    what was here is in {backup}")
+    return backup
+
+
+def _backup_dir(layout: Layout) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = layout.data_dir / f"replaced-{stamp}"
+    backup.mkdir(parents=True)
+    return backup
+
+
+def _copy_indexes(layout: Layout, backup: Path, *, bm25: bool) -> None:
+    """Copy the dense index and its manifest, and the BM25 index when asked,
+    into ``backup/index/``."""
+    from src.retrieval.embed import manifest_file_for
+
     index_copy = backup / "index"
     index_copy.mkdir()
-    if layout.bm25_index.is_file():
+    if bm25 and layout.bm25_index.is_file():
         shutil.copy2(layout.bm25_index, index_copy / layout.bm25_index.name)
     if layout.chroma_dir.is_dir():
         shutil.copytree(layout.chroma_dir, index_copy / layout.chroma_dir.name)
-    from src.retrieval.embed import manifest_file_for
-
     manifest = manifest_file_for(layout.chroma_dir)
     if manifest.is_file():
         shutil.copy2(manifest, index_copy / manifest.name)
-    log(f"moved:    what was here is in {backup}")
 
 
 def _cached_download(pin: DemoPin, layout: Layout, download: Callable[[str, Path], None],
@@ -579,12 +653,18 @@ def _build_bm25(layout: Layout) -> Any:
     return build_index(processed_dir=layout.processed_dir, index_path=layout.bm25_index)
 
 
-def _build_dense(layout: Layout) -> Any:
-    """``python -m src.retrieval embed``, on the snapshot's folders. The model
-    and its settings are the constants, which :func:`check` holds to the pin."""
+def _build_dense(layout: Layout, rebuild: bool = False) -> Any:
+    """``python -m src.retrieval embed``, on the snapshot's folders, with
+    ``--rebuild`` when the index was encoded another way. The model and its
+    settings are the constants, which :func:`prepare` first holds to the pin.
+
+    The token limit is passed rather than left to the build, which would
+    otherwise take the one the old index's manifest records."""
+    from src.retrieval.constants import EMBED_MAX_TOKENS
     from src.retrieval.embed import build
 
-    return build(chroma_dir=layout.chroma_dir, processed_dir=layout.processed_dir)
+    return build(chroma_dir=layout.chroma_dir, processed_dir=layout.processed_dir,
+                 rebuild=rebuild, max_tokens=EMBED_MAX_TOKENS)
 
 
 __all__ = [

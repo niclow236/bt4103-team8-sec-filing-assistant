@@ -8,10 +8,11 @@ import sys
 import tarfile
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from conftest import edit_filing, write_corpus
+from conftest import FakeModel, edit_filing, write_corpus
 from src.config import PROJECT_ROOT
 from src.demo import cli, snapshot
 from src.demo.snapshot import PIN, Layout, PrepareError
@@ -325,7 +326,7 @@ def test_prepare_on_a_ready_machine_does_nothing(ready, monkeypatch):
     layout, pin = ready
     calls = []
     monkeypatch.setattr(snapshot, "_build_bm25", lambda *_: pytest.fail("rebuilt bm25"))
-    monkeypatch.setattr(snapshot, "_build_dense", lambda *_: pytest.fail("rebuilt dense"))
+    monkeypatch.setattr(snapshot, "_build_dense", lambda *_, **__: pytest.fail("rebuilt dense"))
     snapshot.prepare(pin, layout, download=lambda *_: pytest.fail("downloaded"),
                      fetch_encoder=lambda pin: calls.append("encoder"), log=lambda _: None)
     assert calls == ["encoder"]   # a no-op when it is cached, which only the library knows
@@ -418,6 +419,189 @@ def test_unsafe_archive_entries_are_not_extracted(tmp_path):
     link.linkname = "/etc/passwd"
     with pytest.raises(PrepareError, match="unexpected archive entry"):
         list(snapshot._wanted([link], layout, corpus=True, facts=True))
+
+
+# --- the encoder every vector records -----------------------------------------
+
+OTHER = "0" * 40
+
+
+def _encode_at(layout: Layout, monkeypatch, revision: str | None, **build) -> None:
+    """Encode the whole dense index again, as an encoder loaded at ``revision`` would."""
+    with monkeypatch.context() as patch:
+        patch.setattr(embed, "requested_revision", lambda name: revision)
+        embed.build(chroma_dir=layout.chroma_dir, processed_dir=layout.processed_dir,
+                    rebuild=True, **build)
+
+
+def _dense(pin, layout):
+    return _items(snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found))["dense"]
+
+
+def _replace_a_passage(layout: Layout) -> None:
+    first = sorted(layout.processed_dir.rglob("*.json"))[0]
+    edit_filing(first, lambda data: data["chunks"][0].update(text="edited"))
+
+
+def test_every_vector_records_the_revision_that_encoded_it(ready):
+    layout, pin = ready
+    assert embed.encoders_in(layout.chroma_dir) == {(PIN.encoder, PIN.encoder_revision): 90}
+    assert f"{PIN.encoder}@{PIN.encoder_revision[:7]}" in _dense(pin, layout).detail
+
+
+def test_an_index_encoded_at_another_revision_fails_the_check(ready, monkeypatch):
+    """Its fingerprint still matches, since that covers the passages, not the weights."""
+    layout, pin = ready
+    _encode_at(layout, monkeypatch, OTHER)
+    assert snapshot.dense_manifest(layout.chroma_dir).corpus_fingerprint == pin.dense_fingerprint
+    dense = _dense(pin, layout)
+    assert not dense.ok
+    assert "90 vectors were encoded at another revision than a5beb1e" in dense.detail
+    assert "record no revision" not in dense.detail
+
+
+def test_an_index_that_records_no_revision_fails_the_check(ready, monkeypatch):
+    layout, pin = ready
+    _encode_at(layout, monkeypatch, None)
+    dense = _dense(pin, layout)
+    assert not dense.ok
+    assert ("90 vectors record no revision (written before #51 recorded it), so nothing "
+            "shows they were encoded at a5beb1e") in dense.detail
+    assert "another revision" not in dense.detail
+
+
+def test_embed_refuses_to_add_vectors_beside_another_revision(ready, monkeypatch):
+    layout, pin = ready
+    _encode_at(layout, monkeypatch, OTHER)
+    _replace_a_passage(layout)
+    manifest = embed.manifest_file_for(layout.chroma_dir).read_bytes()
+
+    with pytest.raises(embed.MixedIndexError, match="at revision 0000000, and this build "
+                                                    "encodes at a5beb1e"):
+        snapshot._build_dense(layout)
+    assert embed.manifest_file_for(layout.chroma_dir).read_bytes() == manifest
+    assert embed.encoders_in(layout.chroma_dir) == {(PIN.encoder, OTHER): 90}
+
+
+def test_a_model_loaded_as_published_records_and_is_held_to_its_commit(tmp_path, monkeypatch):
+    """Its commit is known only once it loads, and is checked before the first write."""
+    loaded = {"commit": "e5" * 20}
+
+    class Loaded(FakeModel):
+        def __getitem__(self, index):
+            config = SimpleNamespace(_commit_hash=loaded["commit"])
+            return SimpleNamespace(auto_model=SimpleNamespace(config=config))
+
+    monkeypatch.setattr(embed, "_load_model", lambda threads=None, **_: (Loaded(), 1))
+    layout = _layout(tmp_path)
+    write_corpus(layout.processed_dir)
+    build = {"chroma_dir": layout.chroma_dir, "processed_dir": layout.processed_dir,
+             "model_name": "intfloat/e5-base-v2"}
+    embed.build(**build)
+    assert embed.encoders_in(layout.chroma_dir) == {("intfloat/e5-base-v2", "e5" * 20): 90}
+
+    # The model's main branch moves on, and one passage changes.
+    loaded["commit"] = "e6" * 20
+    _replace_a_passage(layout)
+    manifest = embed.manifest_file_for(layout.chroma_dir).read_bytes()
+    with pytest.raises(embed.MixedIndexError, match="at revision e5e5e5e, and this build "
+                                                    "encodes at e6e6e6e"):
+        embed.build(**build)
+    assert embed.manifest_file_for(layout.chroma_dir).read_bytes() == manifest
+
+
+def test_a_model_loaded_at_another_commit_than_asked_writes_nothing(ready, monkeypatch):
+    layout, pin = ready
+    monkeypatch.setattr(embed, "encoder_revision", lambda model: "f" * 40)
+    _replace_a_passage(layout)
+    manifest = embed.manifest_file_for(layout.chroma_dir).read_bytes()
+
+    with pytest.raises(RuntimeError, match="asked for at revision a5beb1e but loaded fffffff"):
+        snapshot._build_dense(layout)
+    assert embed.manifest_file_for(layout.chroma_dir).read_bytes() == manifest
+
+
+def test_the_revision_is_read_where_sentence_transformers_keeps_it():
+    config = SimpleNamespace(_commit_hash=PIN.encoder_revision)
+    assert embed.encoder_revision([SimpleNamespace(auto_model=SimpleNamespace(config=config))]) \
+        == PIN.encoder_revision
+    assert embed.encoder_revision(FakeModel()) is None
+    assert embed.encoder_revision([SimpleNamespace()]) is None
+
+
+def test_prepare_re_encodes_an_index_another_model_built(tmp_path, frozen, fake_model):
+    """Its fingerprint matches, so prepare used to keep it, and check then refused it."""
+    archive, pin = frozen
+    layout = _layout(tmp_path / "machine")
+    snapshot.prepare(pin, layout, archive=archive, fetch_encoder=lambda _: None,
+                     log=lambda _: None)
+    embed.build(chroma_dir=layout.chroma_dir, processed_dir=layout.processed_dir,
+                model_name="intfloat/e5-base-v2", rebuild=True)
+    assert not snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+
+    snapshot.prepare(pin, layout, archive=archive, fetch_encoder=lambda _: None,
+                     log=lambda _: None)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+    assert embed.encoders_in(layout.chroma_dir) == {(PIN.encoder, PIN.encoder_revision): 90}
+
+
+@pytest.mark.parametrize("revision", [OTHER, None], ids=["another revision", "none recorded"])
+def test_prepare_re_encodes_an_index_encoded_at_another_revision(ready, monkeypatch, revision):
+    layout, pin = ready
+    _encode_at(layout, monkeypatch, revision)
+    old = embed.manifest_file_for(layout.chroma_dir).read_bytes()
+    lines = []
+
+    snapshot.prepare(pin, layout, download=lambda *_: pytest.fail("downloaded"),
+                     fetch_encoder=lambda _: None, log=lines.append)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+    assert embed.encoders_in(layout.chroma_dir) == {(PIN.encoder, PIN.encoder_revision): 90}
+    assert any("every passage is encoded again at a5beb1e" in line for line in lines)
+    # The old index is kept, as --replace keeps one; the BM25 index was not touched.
+    kept = list(layout.data_dir.glob("replaced-*/index"))
+    assert len(kept) == 1
+    assert (kept[0] / "chroma.manifest.json").read_bytes() == old
+    assert (kept[0] / "chroma").is_dir() and not (kept[0] / "bm25.pkl").exists()
+
+
+def test_prepare_re_encodes_an_index_read_under_another_token_limit(ready, fake_model):
+    """Left to itself, a rebuild takes the token limit the old manifest records."""
+    layout, pin = ready
+    embed.build(chroma_dir=layout.chroma_dir, processed_dir=layout.processed_dir,
+                rebuild=True, max_tokens=128)
+    assert "vectors read 128 tokens, not 512" in _dense(pin, layout).detail
+    fake_model.max_seq_length = 512   # as a fresh load reads the model's own limit
+
+    snapshot.prepare(pin, layout, download=lambda *_: pytest.fail("downloaded"),
+                     fetch_encoder=lambda _: None, log=lambda _: None)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+    assert snapshot.dense_manifest(layout.chroma_dir).max_tokens == 512
+
+
+def test_prepare_finishes_a_stopped_build_rather_than_starting_again(ready, fake_model):
+    """A stopped build leaves its vectors and no manifest."""
+    layout, pin = ready
+    embed.manifest_file_for(layout.chroma_dir).unlink()
+    calls = fake_model.calls
+
+    snapshot.prepare(pin, layout, download=lambda *_: pytest.fail("downloaded"),
+                     fetch_encoder=lambda _: None, log=lambda _: None)
+    assert fake_model.calls == calls
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+    assert not list(layout.data_dir.glob("replaced-*"))
+
+
+def test_prepare_changes_nothing_when_the_code_no_longer_builds_the_pin(tmp_path, frozen,
+                                                                       monkeypatch):
+    """Prepare encodes with the constants, so it would build what check then refuses."""
+    archive, pin = frozen
+    layout = _layout(tmp_path / "machine")
+    monkeypatch.setattr(retrieval_constants, "EMBED_REVISION", OTHER)
+
+    with pytest.raises(PrepareError, match="EMBED_REVISION"):
+        snapshot.prepare(pin, layout, archive=archive,
+                         fetch_encoder=lambda _: pytest.fail("fetched"), log=lambda _: None)
+    assert not layout.data_dir.exists()
 
 
 # --- the commands -----------------------------------------------------------
