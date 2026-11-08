@@ -199,15 +199,27 @@ def validate_frozen_identities(
     report_manifest: Path,
     dense_manifest: Mapping[str, Any],
     bm25_manifest: Mapping[str, Any],
+    committed: Mapping[str, bytes] | None = None,
 ) -> None:
-    """Match benchmark and index identities to the reported measurement."""
+    """Match benchmark and index identities to the reported measurement.
+
+    ``committed`` holds the release commit's bytes of the tracked inputs, which
+    are hashed instead of the working-tree copies. Git for Windows checks text
+    out with CRLF line endings by default (``core.autocrlf=true``), and the
+    study recorded the hashes of the committed bytes.
+    """
 
     report = _read_json(report_manifest)
     if not isinstance(report, dict):
         raise HandoverError(f"{report_manifest} must contain a JSON object")
+    committed = committed or {}
     for relative, expected in _expected_inputs(report).items():
         path = root / relative
-        if not path.is_file() or sha256_file(path) != expected:
+        if relative in committed:
+            actual = sha256_bytes(committed[relative])
+        else:
+            actual = sha256_file(path) if path.is_file() else None
+        if actual != expected:
             raise HandoverError(
                 f"frozen input {relative} does not match the SHA-256 recorded by {report_manifest}"
             )
