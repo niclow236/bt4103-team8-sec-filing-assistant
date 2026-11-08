@@ -286,7 +286,10 @@ def _is_native_result(relative: Path) -> bool:
 
 def _jsonable(value: Any) -> Any:
     if dataclasses.is_dataclass(value):
-        return {field.name: _jsonable(getattr(value, field.name)) for field in dataclasses.fields(value)}
+        # The fields the pickle stored, not the class's current ones. A field
+        # added to IndexManifest later would otherwise be exported with its
+        # default, and the unchanged frozen bm25.pkl would stop matching.
+        return {str(key): _jsonable(item) for key, item in vars(value).items()}
     if isinstance(value, Mapping):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
