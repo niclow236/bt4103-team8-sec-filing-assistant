@@ -15,11 +15,13 @@ Contents:
 - `docs/evaluation/`: the aggregate summary and provenance manifest;
 - `results/README.md`: the limitations attached to each reported result.
 
-Verify the archive from a clean checkout of the release tag before using it:
+Verify the archive from a clean checkout of the release tag before using it.
+`SAFE_TAG` is the tag as it appears in the file name, with characters such as
+`/` turned into `-` (`final/v1` gives `final-v1`).
 
 ```bash
 python tools/archive_handover.py verify \
-  sec-filing-assistant-handover-RELEASE_TAG.tar.gz \
+  sec-filing-assistant-handover-SAFE_TAG.tar.gz \
   --tag RELEASE_TAG --commit RELEASE_COMMIT
 ```
 
