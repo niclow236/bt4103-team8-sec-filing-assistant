@@ -425,7 +425,7 @@ def _tar_info(name: str, size: int, mtime: int) -> tarfile.TarInfo:
 
 def create_archive(root: Path, tag: str, run_id: str, output: Path | None) -> Path:
     commit, commit_timestamp = resolve_release(tag, root)
-    paths, generated = _archive_inputs(root, run_id)
+    paths, generated = _archive_inputs(root, run_id, commit)
     prefix = f"sec-filing-assistant-handover-{_safe_tag(tag)}"
     if output is None:
         output = root / "dist" / f"{prefix}.tar.gz"
