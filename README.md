@@ -142,6 +142,7 @@ bt4103-team8-sec-filing-assistant/
 │   ├── processed/           # chunks ready for indexing (git-ignored)
 │   ├── index/               # built BM25 and Chroma indexes (git-ignored)
 │   ├── sweep/               # the corpus cut and indexed at each size the sweep measures (git-ignored)
+│   ├── downloads/           # the release archive the demo's prepare fetched (git-ignored)
 │   └── diagnostics/         # why a run did what it did (git-ignored, on demand)
 ├── src/
 │   ├── config.py            # project-wide paths, .env loading, EDGAR identity
@@ -200,6 +201,10 @@ bt4103-team8-sec-filing-assistant/
 │   │   ├── benchmark.py     #   loads benchmark/questions.jsonl, generates the XBRL one
 │   │   └── records.py       #   BenchmarkQuestion and RunResult
 │   ├── stack.py             # the named configurations, and the one way to build one
+│   ├── demo/                # the demo's pinned snapshot: prepare, check, start (#51)
+│   │   ├── __main__.py      #   entry point Python needs; defers to cli.py
+│   │   ├── cli.py           #   python -m src.demo prepare | check | start
+│   │   └── snapshot.py      #   what the demo pins, the offline check, and prepare
 │   └── app/                 # the Streamlit app, and the viewer for saved answers
 │       ├── main.py          #   entry point: streamlit run src/app/main.py; lists the pages
 │       ├── app_pages/       #   one script per page
@@ -2206,6 +2211,82 @@ by SEC column spans are collapsed, so currency signs, amounts and percentages
 remain together instead of appearing as separate columns; a span over several
 distinct figures keeps one column per figure. The exact stored text, as
 retrieval sees it, is in a "Stored text" panel under each table.
+
+### Running the demo
+
+The demo serves one fixed snapshot, so nothing is rebuilt or downloaded when
+it starts (#51). It is pinned in `src/demo/snapshot.py`:
+
+| Part | Pinned to |
+|---|---|
+| Configuration | C4, hybrid retrieval with the metadata filter, the row the app opens on |
+| Corpus | the [evaluation data v1 release](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/releases/tag/data/evaluation-v1): 28,289 passages from 75 filings, archive sha256 `a716519e…` |
+| BM25 index | corpus fingerprint `94c37f13…`, the index the final study searched |
+| Dense index | corpus fingerprint `865f2e8d…`, `bge-base-en-v1.5` at 768 dimensions |
+| Facts store | the release's `facts.parquet`, sha256 `fead73bf…` |
+| Encoder | `BAAI/bge-base-en-v1.5` at revision `a5beb1e`, the revision every run recorded |
+| Answer model | SOCLAAS `qwen3.6:35b`, with Mistral `ministral-8b-2512` as the fallback (#179) |
+
+The index fingerprints are the ones `docs/evaluation/full-matrix-20261021-manifest.json`
+recorded, so the demo shows the system the reported numbers describe. An index
+is pinned by what it was built from rather than by its files' bytes: Chroma's
+files differ between two builds of the same corpus, and the fingerprint does
+not. Running the pipeline does not reproduce the corpus exactly (the team
+laptop's own corpus, built from EDGAR in September, differs from it in 21 of
+the 28,289 passages), which is why the snapshot takes the corpus from the
+release rather than rebuilding it.
+
+Before the day, on the machine that will present, run once:
+
+```bash
+python -m src.demo prepare
+```
+
+It downloads the release archive (about 9 MB, kept in `data/downloads/`),
+checks it against the release's hash, extracts the corpus and facts store,
+builds the BM25 index, caches the encoder at its pinned revision, and brings
+the dense index up to date. It does only what is missing, so running it again
+is quick. A machine with no dense index encodes all 28,289 passages, which
+took 6.6 hours on a laptop CPU before the length sort (see
+[Building the retrieval indexes](#building-the-retrieval-indexes)); a stopped run resumes where it
+left off. `--archive <path>` uses a copy of the archive you already have.
+
+A corpus or facts store already on the machine that is not the frozen one is
+never overwritten. `prepare` stops and says so, and `prepare --replace` moves
+it into `data/replaced-<time>/`, with copies of both indexes, before putting
+the frozen one in its place. The dense index is then updated in place, so a
+corpus that differs by a few passages costs minutes, not hours. To go back,
+move the folders in `data/replaced-<time>/` back to `data/`.
+
+```bash
+python -m src.demo check
+```
+
+says whether the machine holds every part of the snapshot, one line each, and
+sends nothing over the network. It reads every vector's digest from the dense
+index, so it takes a few seconds. It also checks the code still builds what
+is pinned (a changed `EMBED_MODEL` or default model fails it) and that
+`.env` has a SOCLAAS key. A missing Mistral key is a warning: the demo starts,
+but has no fallback. Only the settings are checked, not whether SOCLAAS
+accepts the key, so ask one question before the session.
+
+On the day:
+
+```bash
+python -m src.demo start
+```
+
+runs the check and opens the app only if it passes, answering with SOCLAAS
+`qwen3.6:35b` whatever `.env` names, with Hugging Face set offline
+(`HF_HUB_OFFLINE=1`), so a missing encoder fails at once instead of
+downloading, and with Streamlit's file watcher off. Picking Mistral in the
+sidebar's Answer model box is the fallback. Arguments after `--` go to
+Streamlit, for example `python -m src.demo start -- --server.port 8502`. The
+first question still loads the encoder from the local cache (about 25
+seconds), so ask a throwaway one before the audience arrives.
+
+Generation is the one part that is online by design: the team decided on
+19 Oct 2026 that the demo answers with hosted models (#51, #179).
 
 ### Where things go in `src/app/`
 

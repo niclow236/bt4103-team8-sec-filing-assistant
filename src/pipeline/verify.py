@@ -427,9 +427,9 @@ def bge_token_counter() -> Callable[[list[str]], list[int]]:
     """
     from tokenizers import Tokenizer
 
-    from ..retrieval.constants import EMBED_MODEL
+    from ..retrieval.constants import EMBED_MODEL, EMBED_REVISION
 
-    tokenizer = Tokenizer.from_pretrained(EMBED_MODEL)
+    tokenizer = Tokenizer.from_pretrained(EMBED_MODEL, revision=EMBED_REVISION)
     tokenizer.no_truncation()
     tokenizer.no_padding()
     return lambda texts: [len(encoding.ids) for encoding in tokenizer.encode_batch(texts)]

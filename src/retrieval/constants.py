@@ -51,6 +51,16 @@ RETRIEVERS = (BM25, DENSE, HYBRID)
 # separately from the corpus fingerprint.
 EMBED_MODEL = "BAAI/bge-base-en-v1.5"
 
+# The exact checkpoint of EMBED_MODEL, as a Hugging Face commit. Every reported
+# run recorded this revision (dense_revision in docs/evaluation/), and the
+# encoder is loaded at it rather than at whatever the model's main branch says
+# that day, so a fresh machine encodes with the weights the results came from.
+# A commit, unlike a branch, resolves from the local cache with no request, which
+# is what lets the demo start with Hugging Face offline (#51). It applies to
+# EMBED_MODEL only: another model, such as e5 in the encoder ablation, loads as
+# published.
+EMBED_REVISION = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
+
 # Vector width, written into the IndexManifest so a retriever refuses an index
 # built by a different checkpoint rather than returning nonsense from vectors
 # that do not line up. Fixed by the model above: change one and change both.
@@ -369,7 +379,8 @@ TABLE_BOOST = 1.2
 # wants a directory of its own.
 __all__ = [
     "BM25", "DENSE", "HYBRID", "RETRIEVERS",
-    "EMBED_MODEL", "EMBED_DIMENSIONS", "EMBED_MAX_TOKENS", "EMBED_BATCH_SIZE", "EMBED_SORT_WINDOW",
+    "EMBED_MODEL", "EMBED_REVISION", "EMBED_DIMENSIONS", "EMBED_MAX_TOKENS", "EMBED_BATCH_SIZE",
+    "EMBED_SORT_WINDOW",
     "EMBED_NORMALIZE", "DISTANCE_METRIC", "QUERY_PREFIX", "PASSAGE_PREFIX",
     "CONTEXT_HEADER",
     "BM25_K1", "BM25_B",

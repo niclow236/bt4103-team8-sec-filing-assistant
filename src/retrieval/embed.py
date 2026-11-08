@@ -73,6 +73,7 @@ from .constants import (
     EMBED_MAX_TOKENS,
     EMBED_MODEL,
     EMBED_NORMALIZE,
+    EMBED_REVISION,
     PASSAGE_PREFIX,
 )
 from .records import IndexManifest, Query, fingerprint_of, manifest_path, passage_digest
@@ -293,7 +294,9 @@ def _load_model(
         ) from error
 
     used = _use_threads(threads)
-    model = SentenceTransformer(model_name)
+    # The project's encoder at its pinned checkpoint; any other model as published.
+    revision = EMBED_REVISION if model_name == EMBED_MODEL else None
+    model = SentenceTransformer(model_name, revision=revision)
     # Renamed in sentence-transformers 6.0; the old name still works but warns.
     # Asked for by name so the module runs on either side of that rename, since
     # requirements.txt pins a version but a teammate's venv may predate it.

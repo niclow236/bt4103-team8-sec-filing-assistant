@@ -36,6 +36,12 @@ numpy==2.2.6; python_version < "3.11"
 # directly.
 tokenizers==0.23.2
 
+# Fetches the embedding model at its pinned revision and finds it in the local
+# cache with nothing sent (src/demo/snapshot.py). Already installed as a
+# dependency of sentence-transformers and transformers; pinned here because the
+# demo snapshot uses it directly.
+huggingface-hub==1.30.0
+
 # Process-safe experiment locking; already installed through torch.
 filelock==3.32.6
 
