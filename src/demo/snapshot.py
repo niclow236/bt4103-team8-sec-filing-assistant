@@ -40,13 +40,27 @@ import tarfile
 import urllib.request
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from dataclasses import replace as with_paths
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from src.config import BM25_INDEX_FILE, CHROMA_DIR, DATA_DIR, PROCESSED_DIR, load_env
+from src.retrieval.facts import FACTS_FILE
 
 GITHUB_REPOSITORY = "niclow236/bt4103-team8-sec-filing-assistant"
+
+# What sentence-transformers reads to load bge-base-en-v1.5, so a cache holding
+# all of them loads offline. Measured by recording the files an offline load
+# opens (README.md is the model card), plus the weights, which safetensors reads
+# outside Python's own file calls, and vocab.txt, which a tokenizer reads when
+# it builds from the vocabulary rather than from tokenizer.json.
+ENCODER_FILES = (
+    "modules.json", "config.json", "config_sentence_transformers.json",
+    "sentence_bert_config.json", "1_Pooling/config.json", "model.safetensors",
+    "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.txt",
+    "README.md",
+)
 
 
 @dataclass(frozen=True)
@@ -98,7 +112,7 @@ class Layout:
     processed_dir: Path = PROCESSED_DIR
     bm25_index: Path = BM25_INDEX_FILE
     chroma_dir: Path = CHROMA_DIR
-    facts_file: Path = DATA_DIR / "index" / "facts.parquet"
+    facts_file: Path = FACTS_FILE
     data_dir: Path = DATA_DIR
 
     @property
@@ -186,12 +200,24 @@ def corpus_identity(processed_dir: Path) -> tuple[str, int, int]:
     return fingerprint, counted["passages"], len(filings)
 
 
+def _fingerprint_or_none(processed_dir: Path) -> str | None:
+    """The corpus's fingerprint, or None when a file in it cannot be read."""
+    try:
+        return corpus_identity(processed_dir)[0]
+    except (OSError, ValueError):   # a JSON file a stopped run cut short
+        return None
+
+
 def bm25_fingerprint(index_path: Path) -> str | None:
-    """The corpus fingerprint the BM25 index's manifest records, or None."""
+    """The corpus fingerprint the BM25 index's manifest records, or None when
+    there is no index or it cannot be read."""
     if not index_path.is_file():
         return None
-    with index_path.open("rb") as stream:
-        payload = pickle.load(stream)
+    try:
+        with index_path.open("rb") as stream:
+            payload = pickle.load(stream)
+    except (OSError, EOFError, pickle.UnpicklingError):   # a stopped build cut it short
+        return None
     manifest = payload.get("manifest") if isinstance(payload, dict) else None
     return getattr(manifest, "corpus_fingerprint", None)
 
@@ -206,16 +232,18 @@ def dense_manifest(chroma_dir: Path) -> Any | None:
 def encoder_cached(pin: DemoPin = PIN) -> str | None:
     """Where the pinned encoder sits in the local Hugging Face cache, or None.
 
-    Asked with ``local_files_only``, so nothing is sent: this is how the demo
-    knows, before it starts offline, that it will not need to download.
+    Every file the encoder loads is looked up, since the snapshot folder alone
+    proves nothing: the pipeline's token counter fetches only tokenizer.json
+    into it. Only the local cache is read, so nothing is sent, and this is how
+    the demo knows, before it starts offline, that it will not need to download.
     """
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import try_to_load_from_cache
 
-    try:
-        return snapshot_download(pin.encoder, revision=pin.encoder_revision,
-                                 local_files_only=True)
-    except Exception:   # the library's not-cached error has moved between versions
+    found = {name: try_to_load_from_cache(pin.encoder, name, revision=pin.encoder_revision)
+             for name in ENCODER_FILES}
+    if not all(isinstance(path, str) for path in found.values()):
         return None
+    return str(Path(found["modules.json"]).parent)
 
 
 def demo_environment(pin: DemoPin = PIN, base: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -275,8 +303,16 @@ def _code_items(pin: DemoPin) -> list[Item]:
     config = STACKS.get(pin.config_id)
     if config is None:
         problems.append(f"src/stack.py has no {pin.config_id}")
-    elif (config.retriever, config.metadata_filter) != ("hybrid", True):
-        problems.append(f"{pin.config_id} is no longer hybrid retrieval with the metadata filter")
+    else:
+        if (config.retriever, config.metadata_filter) != ("hybrid", True):
+            problems.append(f"{pin.config_id} is no longer hybrid retrieval with the "
+                            f"metadata filter")
+        # The app's answer stage, which the study's C4 row ran with all three off.
+        off = [name for name in ("use_facts", "use_decomposition", "use_refusal")
+               if not getattr(config, name)]
+        if off:
+            problems.append(f"{pin.config_id} answers with {', '.join(off)} off, and the demo "
+                            f"pins the facts route, decomposition and refusal on")
     if DEFAULT_STACK != pin.config_id:
         problems.append(f"the app opens on {DEFAULT_STACK}, not {pin.config_id}")
     for name, have, want in (
@@ -303,13 +339,18 @@ def _data_items(pin: DemoPin, layout: Layout, check_vectors: bool) -> list[Item]
     if not _has_corpus(layout.processed_dir):
         items.append(Item("corpus", False, f"no corpus in {layout.processed_dir}; {run_prepare}"))
     else:
-        fingerprint, passages, filings = corpus_identity(layout.processed_dir)
-        corpus_ok = fingerprint == pin.bm25_fingerprint
-        detail = f"{passages:,} passages from {filings} filings, fingerprint {fingerprint[:12]}"
-        if not corpus_ok:
-            detail += (f"; not the frozen corpus ({pin.passages:,} passages, "
-                       f"{pin.bm25_fingerprint[:12]}). {run_prepare} --replace")
-        items.append(Item("corpus", corpus_ok, detail))
+        try:
+            fingerprint, passages, filings = corpus_identity(layout.processed_dir)
+        except (OSError, ValueError) as error:   # a JSON file a stopped run cut short
+            items.append(Item("corpus", False, f"cannot read {layout.processed_dir} ({error}); "
+                                               f"{run_prepare} --replace"))
+        else:
+            corpus_ok = fingerprint == pin.bm25_fingerprint
+            detail = f"{passages:,} passages from {filings} filings, fingerprint {fingerprint[:12]}"
+            if not corpus_ok:
+                detail += (f"; not the frozen corpus ({pin.passages:,} passages, "
+                           f"{pin.bm25_fingerprint[:12]}). {run_prepare} --replace")
+            items.append(Item("corpus", corpus_ok, detail))
 
     if not layout.facts_file.is_file():
         items.append(Item("facts", False, f"no facts store at {layout.facts_file}; {run_prepare}"))
@@ -323,7 +364,8 @@ def _data_items(pin: DemoPin, layout: Layout, check_vectors: bool) -> list[Item]
 
     fingerprint = bm25_fingerprint(layout.bm25_index)
     if fingerprint is None:
-        items.append(Item("bm25", False, f"no index at {layout.bm25_index}; {run_prepare}"))
+        items.append(Item("bm25", False, f"no readable index at {layout.bm25_index}; "
+                                         f"{run_prepare}"))
     else:
         ok = fingerprint == pin.bm25_fingerprint
         items.append(Item("bm25", ok, f"fingerprint {fingerprint[:12]}" + (
@@ -466,14 +508,15 @@ def prepare(
                            "Nothing was changed.")
 
     backup: Path | None = None
-    corpus_ok = (_has_corpus(layout.processed_dir)
-                 and corpus_identity(layout.processed_dir)[0] == pin.bm25_fingerprint)
+    corpus_here = _has_corpus(layout.processed_dir)
+    # A corpus that cannot be read counts as not the frozen one, so --replace
+    # can move aside what a stopped run left.
+    corpus_ok = corpus_here and _fingerprint_or_none(layout.processed_dir) == pin.bm25_fingerprint
     facts_ok = layout.facts_file.is_file() and sha256_of(layout.facts_file) == pin.facts_sha256
 
     if corpus_ok and facts_ok:
         log("corpus:   the frozen corpus and facts store are already here")
     else:
-        corpus_here = _has_corpus(layout.processed_dir)
         differs = [
             what for what, here, ok in (
                 (f"the corpus in {layout.processed_dir}", corpus_here, corpus_ok),
@@ -487,19 +530,35 @@ def prepare(
                 "move it aside into data/replaced-<time>/ (nothing is deleted), or prepare "
                 "in a fresh clone."
             )
-        # The archive is fetched and verified before anything here is moved, so
-        # a failed download leaves the machine as it was.
+        # The archive is fetched and verified, and the corpus and facts store
+        # extracted beside their places and checked there, before anything here
+        # is moved. So a failed download or a run stopped part-way leaves the
+        # machine as it was, and the next run starts the extraction again.
         source = archive if archive is not None else _cached_download(pin, layout, download, log)
         _verify_archive(source, pin)
+        staging = with_paths(layout, processed_dir=_partial(layout.processed_dir),
+                             facts_file=_partial(layout.facts_file))
+        shutil.rmtree(staging.processed_dir, ignore_errors=True)
+        staging.facts_file.unlink(missing_ok=True)
+        _extract(source, staging, corpus=not corpus_ok, facts=not facts_ok, log=log)
+        if not corpus_ok:
+            fingerprint = corpus_identity(staging.processed_dir)[0]
+            if fingerprint != pin.bm25_fingerprint:
+                raise PrepareError(f"the extracted corpus has fingerprint {fingerprint[:12]}, "
+                                   f"not {pin.bm25_fingerprint[:12]}")
+            if not corpus_here and _holds_files(layout.processed_dir):
+                raise PrepareError(f"{layout.processed_dir} holds files that are not a corpus. "
+                                   "Nothing was changed. Move them away and run again.")
+        if not facts_ok and sha256_of(staging.facts_file) != pin.facts_sha256:
+            raise PrepareError("the extracted facts store does not match the pinned hash")
         if differs:
             backup = _move_aside(layout, corpus_ok, facts_ok, log)
-        _extract(source, layout, corpus=not corpus_ok, facts=not facts_ok, log=log)
-        fingerprint, passages, filings = corpus_identity(layout.processed_dir)
-        if fingerprint != pin.bm25_fingerprint:
-            raise PrepareError(f"the extracted corpus has fingerprint {fingerprint[:12]}, "
-                               f"not {pin.bm25_fingerprint[:12]}")
-        if sha256_of(layout.facts_file) != pin.facts_sha256:
-            raise PrepareError("the extracted facts store does not match the pinned hash")
+        if not corpus_ok:
+            _remove_empty_folders(layout.processed_dir)
+            staging.processed_dir.rename(layout.processed_dir)
+        if not facts_ok:
+            staging.facts_file.replace(layout.facts_file)
+        _, passages, filings = corpus_identity(layout.processed_dir)
         log(f"corpus:   {passages:,} passages from {filings} filings, the frozen corpus")
 
     if bm25_fingerprint(layout.bm25_index) == pin.bm25_fingerprint:
@@ -538,25 +597,56 @@ def prepare(
         build_dense(layout, rebuild=False)
 
 
+def _partial(path: Path) -> Path:
+    """Where ``path`` is extracted before it takes its place: beside it, on the
+    same disk, so moving it in is a rename."""
+    return path.with_name(path.name + ".partial")
+
+
+def _holds_files(folder: Path) -> bool:
+    return folder.is_dir() and any(path.is_file() for path in folder.rglob("*"))
+
+
+def _remove_empty_folders(folder: Path) -> None:
+    """Remove a folder that holds only empty folders. rmdir refuses anything
+    that holds a file, so nothing can be lost here."""
+    if not folder.is_dir():
+        return
+    for path in sorted(folder.rglob("*"), key=lambda path: len(path.parts), reverse=True):
+        path.rmdir()
+    folder.rmdir()
+
+
 def _move_aside(layout: Layout, corpus_ok: bool, facts_ok: bool,
                 log: Callable[[str], None]) -> Path:
     """Move the corpus and facts store that differ out of the way, and copy the
-    indexes beside them, so the machine can be put back as it was."""
+    indexes beside them, so the machine can be put back as it was.
+
+    The backup is laid out like ``data/``: ``processed/`` is the corpus, and
+    ``index/`` holds the facts store beside the copies of both indexes.
+    """
     backup = _backup_dir(layout)
     if not corpus_ok and _has_corpus(layout.processed_dir):
         shutil.move(str(layout.processed_dir), str(backup / "processed"))
-    if not facts_ok and layout.facts_file.is_file():
-        shutil.move(str(layout.facts_file), str(backup / layout.facts_file.name))
     _copy_indexes(layout, backup, bm25=True)
+    if not facts_ok and layout.facts_file.is_file():
+        shutil.move(str(layout.facts_file), str(backup / "index" / layout.facts_file.name))
     log(f"moved:    what was here is in {backup}")
     return backup
 
 
 def _backup_dir(layout: Layout) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = layout.data_dir / f"replaced-{stamp}"
-    backup.mkdir(parents=True)
-    return backup
+    """A new ``data/replaced-<time>/``, never one an earlier run made."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    attempt = 1
+    while True:
+        backup = layout.data_dir / (f"replaced-{stamp}" if attempt == 1
+                                    else f"replaced-{stamp}-{attempt}")
+        try:
+            backup.mkdir(parents=True)
+            return backup
+        except FileExistsError:
+            attempt += 1
 
 
 def _copy_indexes(layout: Layout, backup: Path, *, bm25: bool) -> None:
@@ -565,7 +655,7 @@ def _copy_indexes(layout: Layout, backup: Path, *, bm25: bool) -> None:
     from src.retrieval.embed import manifest_file_for
 
     index_copy = backup / "index"
-    index_copy.mkdir()
+    index_copy.mkdir(exist_ok=True)
     if bm25 and layout.bm25_index.is_file():
         shutil.copy2(layout.bm25_index, index_copy / layout.bm25_index.name)
     if layout.chroma_dir.is_dir():

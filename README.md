@@ -2219,7 +2219,7 @@ it starts (#51). It is pinned in `src/demo/snapshot.py`:
 
 | Part | Pinned to |
 |---|---|
-| Configuration | C4, hybrid retrieval with the metadata filter, the row the app opens on |
+| Configuration | C4, hybrid retrieval with the metadata filter, the row the app opens on, answering with the facts route, decomposition and refusal on |
 | Corpus | the [evaluation data v1 release](https://github.com/niclow236/bt4103-team8-sec-filing-assistant/releases/tag/data/evaluation-v1): 28,289 passages from 75 filings, archive sha256 `a716519e…` |
 | BM25 index | corpus fingerprint `94c37f13…`, the index the final study searched |
 | Dense index | corpus fingerprint `865f2e8d…`, every vector encoded by `bge-base-en-v1.5` at revision `a5beb1e`, 768 dimensions |
@@ -2228,7 +2228,11 @@ it starts (#51). It is pinned in `src/demo/snapshot.py`:
 | Answer model | SOCLAAS `qwen3.6:35b`, with Mistral `ministral-8b-2512` as the fallback (#179) |
 
 The index fingerprints are the ones `docs/evaluation/full-matrix-20261021-manifest.json`
-recorded, so the demo shows the system the reported numbers describe. An index
+recorded, so the demo searches the indexes the reported numbers were measured
+on, with the same encoder and answer models. Its answer stage is the app's C4,
+which looks figures up in the facts store, splits a question across filings
+and refuses what no filing answers, while the study's C4 row ran with all
+three off. `check` holds the app to that answer stage as well. An index
 is pinned by what it was built from rather than by its files' bytes: Chroma's
 files differ between two builds of the same corpus, and the fingerprint does
 not. A fingerprint covers the passages and not the weights that encoded them,
@@ -2267,10 +2271,14 @@ changed `EMBED_REVISION`.
 A corpus or facts store already on the machine that is not the frozen one is
 never overwritten. `prepare` stops and says so, and `prepare --replace` moves
 it into `data/replaced-<time>/`, with copies of both indexes, before putting
-the frozen one in its place. When the dense index records the pinned encoder,
-it is then updated in place, so a corpus that differs by a few passages costs
-minutes, not hours. To go back, move the folders in `data/replaced-<time>/`
-back to `data/`.
+the frozen one in its place. The frozen corpus and facts store are extracted
+beside their places and checked there before anything is moved, so a
+`prepare` stopped part-way leaves the machine as it was. When the dense index
+records the pinned encoder, it is then updated in place, so a corpus that
+differs by a few passages costs minutes, not hours. To go back, move
+`data/replaced-<time>/processed/` back to `data/processed/`, and everything in
+`data/replaced-<time>/index/`, the facts store included, back into
+`data/index/`.
 
 ```bash
 python -m src.demo check
@@ -2279,7 +2287,7 @@ python -m src.demo check
 says whether the machine holds every part of the snapshot, one line each, and
 sends nothing over the network. It reads every vector's digest and encoder
 revision from the dense index, so it takes a few seconds. It also checks the code still builds what
-is pinned (a changed `EMBED_MODEL` or default model fails it) and that
+is pinned (a changed `EMBED_MODEL`, default model or C4 fails it) and that
 `.env` has a SOCLAAS key. A missing Mistral key is a warning: the demo starts,
 but has no fallback. Only the settings are checked, not whether SOCLAAS
 accepts the key, so ask one question before the session.

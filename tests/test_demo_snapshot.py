@@ -104,8 +104,11 @@ def test_the_pin_names_the_indexes_and_encoder_the_final_study_measured():
 
 
 def test_the_code_constants_match_the_pin():
+    from src.retrieval.facts import FACTS_FILE
+
     assert retrieval_constants.EMBED_MODEL == PIN.encoder
     assert retrieval_constants.EMBED_REVISION == PIN.encoder_revision
+    assert Layout().facts_file == FACTS_FILE
     assert _items(snapshot.check(PIN, _layout(Path("missing")), environ=READY_ENV,
                                  find_encoder=_found))["code"].ok
 
@@ -163,6 +166,46 @@ def test_the_vectors_are_read_not_only_the_manifest(ready, monkeypatch):
     assert "3 passages are stale" in items["dense"].detail
 
 
+def test_a_dense_manifest_for_another_model_fails_the_check(ready):
+    layout, pin = ready
+    manifest = embed.manifest_file_for(layout.chroma_dir)
+    written = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest.write_text(json.dumps({**written, "model": "other/model", "dimensions": 384}),
+                        encoding="utf-8")
+    dense = _items(snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found))["dense"]
+    assert not dense.ok
+    assert "built by other/model at 384 dimensions" in dense.detail
+
+
+def test_a_corpus_a_stopped_run_cut_short_fails_the_check_and_replace_recovers(tmp_path,
+                                                                             frozen):
+    archive, pin = frozen
+    layout = _layout(tmp_path / "machine")
+    write_corpus(layout.processed_dir)
+    first = sorted(layout.processed_dir.rglob("*.json"))[0]
+    first.write_bytes(first.read_bytes()[:40])
+    corpus = _items(snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found))["corpus"]
+    assert not corpus.ok
+    assert "cannot read" in corpus.detail and "--replace" in corpus.detail
+
+    with pytest.raises(PrepareError, match="--replace"):
+        snapshot.prepare(pin, layout, archive=archive, log=lambda _: None)
+    snapshot.prepare(pin, layout, archive=archive, replace=True,
+                     fetch_encoder=lambda _: None, log=lambda _: None)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+
+
+def test_a_cut_short_bm25_index_is_rebuilt(ready):
+    layout, pin = ready
+    layout.bm25_index.write_bytes(layout.bm25_index.read_bytes()[:100])
+    bm25 = _items(snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found))["bm25"]
+    assert not bm25.ok and "no readable index" in bm25.detail
+
+    snapshot.prepare(pin, layout, download=lambda *_: pytest.fail("downloaded"),
+                     fetch_encoder=lambda _: None, log=lambda _: None)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+
+
 def test_a_changed_facts_store_fails(ready):
     layout, pin = ready
     layout.facts_file.write_bytes(b"other facts")
@@ -216,6 +259,18 @@ def test_an_app_that_opens_elsewhere_or_a_changed_c4_is_drift(ready, monkeypatch
     assert "no longer hybrid retrieval with the metadata filter" in items["code"].detail
 
 
+@pytest.mark.parametrize("flag", ["use_facts", "use_decomposition", "use_refusal"])
+def test_a_c4_that_answers_another_way_is_drift(ready, monkeypatch, flag):
+    """The study's C4 row ran with these off; the demo shows the app's C4 with them on."""
+    layout, pin = ready
+    from src import stack
+
+    monkeypatch.setitem(stack.STACKS, "C4", replace(stack.STACKS["C4"], **{flag: False}))
+    code = _items(snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found))["code"]
+    assert not code.ok
+    assert f"C4 answers with {flag} off" in code.detail
+
+
 def test_the_check_sends_nothing(ready, monkeypatch):
     layout, pin = ready
 
@@ -229,19 +284,30 @@ def test_the_check_sends_nothing(ready, monkeypatch):
     assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
 
 
-def test_the_cache_lookup_never_downloads(monkeypatch):
-    seen = {}
+def test_a_partly_cached_encoder_is_not_cached(tmp_path, monkeypatch):
+    """The pipeline's token counter leaves tokenizer.json alone in the snapshot
+    folder, and the app could not load the encoder offline from that."""
+    import socket
 
-    def snapshot_download(repo, **kwargs):
-        seen.update(kwargs, repo=repo)
-        raise FileNotFoundError("not cached")
+    import huggingface_hub.constants
 
-    import huggingface_hub
+    def refuse(*args, **kwargs):
+        raise AssertionError("the cache lookup opened a connection")
 
-    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path))
+    folder = tmp_path / "models--BAAI--bge-base-en-v1.5" / "snapshots" / PIN.encoder_revision
+    folder.mkdir(parents=True)
+    (folder / "tokenizer.json").write_text("{}", encoding="utf-8")
     assert snapshot.encoder_cached() is None
-    assert seen == {"repo": PIN.encoder, "revision": PIN.encoder_revision,
-                    "local_files_only": True}
+
+    for name in snapshot.ENCODER_FILES:
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text("{}", encoding="utf-8")
+    assert snapshot.encoder_cached() == str(folder)
+    (folder / "model.safetensors").unlink()
+    assert snapshot.encoder_cached() is None
 
 
 # --- the environment the app runs in ---------------------------------------
@@ -366,7 +432,10 @@ def test_prepare_replace_moves_the_old_corpus_aside_and_keeps_the_index(tmp_path
     backup = backups[0]
     assert "a teammate's edit" in "".join(
         path.read_text(encoding="utf-8") for path in (backup / "processed").rglob("*.json"))
-    assert (backup / "facts.parquet").read_bytes() == b"old facts"
+    # Laid out like data/, so putting it back is moving processed/ and index/ back.
+    assert (backup / "index" / "facts.parquet").read_bytes() == b"old facts"
+    assert not (backup / "facts.parquet").exists()
+    assert not (layout.data_dir / "processed.partial").exists()
     assert (backup / "index" / "bm25.pkl").is_file()
     assert (backup / "index" / "chroma").is_dir()
     assert (backup / "index" / "chroma.manifest.json").is_file()
@@ -402,6 +471,99 @@ def test_a_failed_download_leaves_no_archive_behind(tmp_path, frozen):
     with pytest.raises(OSError):
         snapshot.prepare(pin, layout, download=broken, log=lambda _: None)
     assert not (layout.downloads / pin.corpus_asset).exists()
+
+
+def test_an_extraction_stopped_part_way_leaves_the_machine_as_it_was(tmp_path, frozen,
+                                                                    monkeypatch):
+    """A Ctrl-C or a full disk mid-extraction used to leave a cut-short corpus in
+    data/processed/, which every later check and prepare then failed to read."""
+    archive, pin = frozen
+    layout = _layout(tmp_path / "machine")
+    write_corpus(layout.processed_dir)
+    _replace_a_passage(layout)
+    before = {path: path.read_bytes() for path in layout.data_dir.rglob("*") if path.is_file()}
+    extract = snapshot._extract
+
+    def stopped(path, staged, **kwargs):
+        assert staged.processed_dir.name == "processed.partial"
+        staged.processed_dir.mkdir(parents=True)
+        (staged.processed_dir / "cut.json").write_bytes(b'{"chunks": [')
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(snapshot, "_extract", stopped)
+    with pytest.raises(OSError, match="No space left"):
+        snapshot.prepare(pin, layout, archive=archive, replace=True, log=lambda _: None)
+    after = {path: path.read_bytes() for path in layout.data_dir.rglob("*")
+             if path.is_file() and "processed.partial" not in path.parts}
+    assert after == before
+    assert not list(layout.data_dir.glob("replaced-*"))
+
+    # The next run clears what the stopped one left and finishes.
+    monkeypatch.setattr(snapshot, "_extract", extract)
+    snapshot.prepare(pin, layout, archive=archive, replace=True,
+                     fetch_encoder=lambda _: None, log=lambda _: None)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+    assert not (layout.data_dir / "processed.partial").exists()
+
+
+def test_replace_with_only_the_facts_store_different_keeps_the_corpus(ready, frozen):
+    layout, _ = ready
+    archive, pin = frozen
+    corpus = {path: path.read_bytes() for path in layout.processed_dir.rglob("*.json")}
+    layout.facts_file.write_bytes(b"a teammate's facts")
+
+    snapshot.prepare(pin, layout, archive=archive, replace=True,
+                     fetch_encoder=lambda _: None, log=lambda _: None)
+    assert {path: path.read_bytes() for path in layout.processed_dir.rglob("*.json")} == corpus
+    backup = next(layout.data_dir.glob("replaced-*"))
+    assert not (backup / "processed").exists()
+    assert (backup / "index" / "facts.parquet").read_bytes() == b"a teammate's facts"
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+
+
+def test_an_empty_corpus_folder_is_filled(tmp_path, frozen):
+    """Windows will not rename the extracted corpus onto a folder that exists."""
+    archive, pin = frozen
+    layout = _layout(tmp_path / "machine")
+    (layout.processed_dir / "AAA").mkdir(parents=True)
+    snapshot.prepare(pin, layout, archive=archive, fetch_encoder=lambda _: None,
+                     log=lambda _: None)
+    assert snapshot.check(pin, layout, environ=READY_ENV, find_encoder=_found).ready
+
+
+def test_a_corpus_folder_holding_other_files_is_refused_before_anything_moves(tmp_path,
+                                                                            frozen):
+    archive, pin = frozen
+    layout = _layout(tmp_path / "machine")
+    notes = layout.processed_dir / "notes.txt"
+    notes.parent.mkdir(parents=True)
+    notes.write_text("a teammate's notes", encoding="utf-8")
+
+    with pytest.raises(PrepareError, match="holds files that are not a corpus"):
+        snapshot.prepare(pin, layout, archive=archive, replace=True, log=lambda _: None)
+    assert notes.read_text(encoding="utf-8") == "a teammate's notes"
+    assert not list(layout.data_dir.glob("replaced-*"))
+
+
+def test_two_backups_in_the_same_moment_get_their_own_folders(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    class Stopped(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 8, 7, 51, 15, 123456, tzinfo=tz)
+
+    monkeypatch.setattr(snapshot, "datetime", Stopped)
+    layout = _layout(tmp_path)
+    first, second = snapshot._backup_dir(layout), snapshot._backup_dir(layout)
+    assert first.name == "replaced-20261108T075115123456Z"
+    assert second.name == f"{first.name}-2" and first.is_dir() and second.is_dir()
+
+
+def test_importing_the_command_module_runs_nothing():
+    import importlib
+
+    importlib.import_module("src.demo.__main__")
 
 
 def test_unsafe_archive_entries_are_not_extracted(tmp_path):
@@ -475,6 +637,9 @@ def test_embed_refuses_to_add_vectors_beside_another_revision(ready, monkeypatch
     _encode_at(layout, monkeypatch, OTHER)
     _replace_a_passage(layout)
     manifest = embed.manifest_file_for(layout.chroma_dir).read_bytes()
+    # The pinned encoder's commit is known before it loads, so refusing costs no load.
+    monkeypatch.setattr(embed, "_load_model",
+                        lambda *args, **kwargs: pytest.fail("loaded the encoder to refuse"))
 
     with pytest.raises(embed.MixedIndexError, match="at revision 0000000, and this build "
                                                     "encodes at a5beb1e"):

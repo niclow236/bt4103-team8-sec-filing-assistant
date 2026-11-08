@@ -233,9 +233,11 @@ data/index/
 # indexes: rebuilt from data/interim/ by `python -m src.evaluation.chunk_sweep`.
 data/sweep/
 # The demo snapshot (#51): the release archive `python -m src.demo prepare`
-# downloads, and what `prepare --replace` moved aside (a whole corpus and copies
-# of both indexes, hundreds of MB).
+# downloads, the corpus it extracts before moving it into place, and what
+# `prepare --replace` moved aside (a whole corpus and copies of both indexes,
+# hundreds of MB).
 data/downloads/
+data/processed.partial/
 data/replaced-*/
 # The mechanical XBRL benchmark: regenerated from the facts store by
 # `python -m src.retrieval benchmark`, and every chunk id in it is invalidated
