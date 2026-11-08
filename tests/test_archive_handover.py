@@ -124,7 +124,8 @@ def _release_checkout(tmp_path: Path) -> tuple[Path, str]:
                     },
                     "indexes": {"dense_manifest": dense, "bm25_manifest": bm25},
                 },
-            }
+            },
+            indent=2,
         ),
     )
     _write(root / "docs" / "evaluation" / f"{run_id}-summary.json", '{"limitations":[]}\n')
