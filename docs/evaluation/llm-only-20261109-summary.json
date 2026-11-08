@@ -1,0 +1,31 @@
+{
+  "questions": 150,
+  "mean_correctness": 0.039,
+  "abstained": 143,
+  "by_question_type": {
+    "comparative": {
+      "n": 4,
+      "mean_correctness": 0.0
+    },
+    "factual": {
+      "n": 44,
+      "mean_correctness": 0.04886363636363636
+    },
+    "numeric": {
+      "n": 88,
+      "mean_correctness": 0.007954545454545455
+    },
+    "temporal": {
+      "n": 10,
+      "mean_correctness": 0.0
+    },
+    "unanswerable": {
+      "n": 4,
+      "mean_correctness": 0.75
+    }
+  },
+  "matrix_reference": {
+    "C0 naive BM25 + LLM": 0.3145,
+    "C4 hybrid + filters + LLM (app default)": 0.871
+  }
+}
