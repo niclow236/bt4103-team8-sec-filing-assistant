@@ -384,15 +384,22 @@ def _archive_inputs(
         raise HandoverError("refusing symlinked handover inputs: " + ", ".join(linked))
 
     validate_native_results(run_dir, report_manifest)
+    tracked = set(_git("ls-tree", "-r", "--name-only", commit, root=root).splitlines())
+    committed = {
+        relative: _git_file(commit, relative, root) for relative in paths if relative in tracked
+    }
+    for relative in committed:
+        del paths[relative]
     dense = _read_json(root / "data/index/chroma.manifest.json")
     if not isinstance(dense, dict):
         raise HandoverError("data/index/chroma.manifest.json must contain a JSON object")
     bm25 = read_bm25_manifest(bm25_file)
-    validate_frozen_identities(root, report_manifest, dense, bm25)
+    validate_frozen_identities(root, report_manifest, dense, bm25, committed)
     generated = {
+        **committed,
         "index-manifests/bm25.manifest.json": (
             json.dumps(bm25, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-        ).encode("utf-8")
+        ).encode("utf-8"),
     }
     # Reading these here gives a clearer error if one became invalid JSON.
     _read_json(report_summary)
