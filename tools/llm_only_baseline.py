@@ -20,6 +20,11 @@ Scoring follows src.evaluation.harness:
 - otherwise the judge's correctness.
 Faithfulness and citation scores do not apply: a closed-book answer cites
 nothing. Correctness is a model judgement, as in the matrix.
+
+--adjudications names a JSON list of {"question_id", "correctness", "reason"}
+for judgements a person has overruled. The summary then also gives the mean
+with those applied, beside the judged mean. The judged mean stays the one to
+put beside the matrix, whose rows were not adjudicated.
 """
 from __future__ import annotations
 
@@ -53,8 +58,14 @@ MATRIX_REFERENCE = {  # full-matrix-20261021, team benchmark, judged correctness
 }
 
 
+def read_jsonl(path: Path) -> list[dict]:
+    # As written, UTF-8: Windows' default, cp1252, cannot decode a curly quote,
+    # so a run there could neither finish nor resume.
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
 def load_team(path: Path) -> list[BenchmarkQuestion]:
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = read_jsonl(path)
     questions = [BenchmarkQuestion.from_mapping(row) for row in rows]
     return [q for q in questions if q.benchmark == TEAM]
 
@@ -127,11 +138,27 @@ def score(question: BenchmarkQuestion, text: str, judge, config) -> dict:
     return row
 
 
-def summarize(rows: list[dict]) -> dict:
+def read_adjudications(path: Path, rows: list[dict]) -> dict[str, dict]:
+    """A person's overrides of the judge, keyed by question ID."""
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    known = {r["question_id"] for r in rows}
+    out = {}
+    for entry in entries:
+        qid = entry["question_id"]
+        if qid not in known:
+            raise SystemExit(f"{path} adjudicates {qid}, which this run did not answer")
+        correctness = float(entry["correctness"])
+        if not 0.0 <= correctness <= 1.0 or not str(entry.get("reason", "")).strip():
+            raise SystemExit(f"{path}: {qid} needs a correctness from 0 to 1 and a reason")
+        out[qid] = {"correctness": correctness, "reason": entry["reason"]}
+    return out
+
+
+def summarize(rows: list[dict], adjudications: dict[str, dict] | None = None) -> dict:
     by_type: dict[str, list[float]] = defaultdict(list)
     for row in rows:
         by_type[row["question_type"]].append(row["correctness"])
-    return {
+    summary = {
         "questions": len(rows),
         "mean_correctness": mean(r["correctness"] for r in rows) if rows else None,
         "abstained": sum(r["abstained"] for r in rows),
@@ -139,6 +166,16 @@ def summarize(rows: list[dict]) -> dict:
                              for k, v in sorted(by_type.items())},
         "matrix_reference": MATRIX_REFERENCE,
     }
+    if adjudications:
+        adjusted = [adjudications[r["question_id"]]["correctness"]
+                    if r["question_id"] in adjudications else r["correctness"] for r in rows]
+        summary["adjudicated"] = {
+            "mean_correctness": mean(adjusted),
+            "changes": [{"question_id": r["question_id"], "judged": r["correctness"]}
+                        | adjudications[r["question_id"]]
+                        for r in rows if r["question_id"] in adjudications],
+        }
+    return summary
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -151,6 +188,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--judge-provider", default=MISTRAL)
     parser.add_argument("--judge-model", default="ministral-8b-2512")
     parser.add_argument("--limit", type=int, help="Answer only the first N questions (smoke test)")
+    parser.add_argument("--adjudications", type=Path,
+                        help="JSON list of judgements a person has overruled")
     args = parser.parse_args(argv)
 
     from src.evaluation.quality import LLMJudge
@@ -164,21 +203,22 @@ def main(argv: list[str] | None = None) -> None:
     check_provider(generation)  # refuse a missing key before any call
     check_provider(judging)
 
+    model = plain_model(generation, checked_model(generation))
+    judge = LLMJudge(judging)
+
     run_dir = ROOT / "results" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    config = {"generation": generation.to_dict(), "judge": judging.to_dict(),
+    # The judge's own record: LLMJudge swaps in the rubric as its prompt template.
+    config = {"generation": generation.to_dict(), "judge": judge.to_dict(),
               "system_prompt": SYSTEM, "max_output_tokens": MAX_OUTPUT_TOKENS,
               "questions_file": str(args.questions)}
     config_path = run_dir / "config.json"
-    if config_path.exists() and json.loads(config_path.read_text()) != config:
+    if config_path.exists() and json.loads(config_path.read_text(encoding="utf-8")) != config:
         raise SystemExit(f"{config_path} records different settings; use a new --run-id")
-    config_path.write_text(json.dumps(config, indent=2))
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
     path = run_dir / "answers.jsonl"
-    done = {json.loads(l)["question_id"] for l in path.read_text().splitlines() if l.strip()} \
-        if path.exists() else set()
-    model = plain_model(generation, checked_model(generation))
-    judge = LLMJudge(judging)
+    done = {r["question_id"] for r in read_jsonl(path)} if path.exists() else set()
 
     with path.open("a", encoding="utf-8") as out:
         for n, q in enumerate(questions, 1):
@@ -198,11 +238,15 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{n}/{len(questions)} {q.question_id}: correctness {row['correctness']:.2f}",
                   flush=True)
 
-    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
-    summary = summarize(rows)
-    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    rows = read_jsonl(path)
+    adjudications = read_adjudications(args.adjudications, rows) if args.adjudications else None
+    summary = summarize(rows, adjudications)
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"\nLLM-only mean correctness: {summary['mean_correctness']:.4f} "
           f"over {summary['questions']} questions ({summary['abstained']} declined)")
+    if adjudications:
+        print(f"With {len(adjudications)} judgements overruled: "
+              f"{summary['adjudicated']['mean_correctness']:.4f}")
     for name, value in MATRIX_REFERENCE.items():
         print(f"{name}: {value:.4f}")
     for kind, s in summary["by_question_type"].items():

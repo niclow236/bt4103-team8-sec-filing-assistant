@@ -6,10 +6,13 @@
     "temperature": 0.0
   },
   "judge": {
-    "provider": "mistral",
-    "model": "ministral-8b-2512",
-    "prompt_template_id": "grounded_v4",
-    "temperature": 0.0
+    "rubric": "answer-quality-v1",
+    "config": {
+      "provider": "mistral",
+      "model": "ministral-8b-2512",
+      "prompt_template_id": "answer-quality-v1",
+      "temperature": 0.0
+    }
   },
   "system_prompt": "You are a financial analyst answering questions about US public\ncompanies' annual reports (Form 10-K filed with the SEC). You have no\ndocuments: answer from your own knowledge only. Be concise. Give exact figures\nwith units and the fiscal year where the question asks for a number. If you do\nnot know the answer, or the question cannot be answered from a 10-K filing,\nreply with exactly: I cannot answer this.",
   "max_output_tokens": 1024,

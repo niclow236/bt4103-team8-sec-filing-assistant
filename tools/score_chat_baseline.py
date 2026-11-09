@@ -3,10 +3,11 @@
 The chat session (GPT-5.6 in ChatGPT) answers the prompt in the benchmark
 design doc and returns one JSON Lines block. Save it as a file, then run from
 the repository root, with MISTRAL_API_KEY in .env. The 8 November session's
-answers are committed, and were compared with the archived matrix run:
+answers are committed, and are compared with the reported matrix run, whose
+per-question answers are in the data/full-matrix-20261021-v1 release:
 
     python tools/score_chat_baseline.py docs/evaluation/chat-baseline-20261108-answers.jsonl \
-        --matrix-dir results/full-matrix-20261017
+        --matrix-dir results/full-matrix-20261021
 
 --matrix-dir needs a run that saved each configuration's answers.jsonl.
 
@@ -52,11 +53,14 @@ SUBSET = {  # prompt ID -> benchmark question_id, as in the design doc
 def read_answers(path: Path) -> dict[str, dict]:
     """The chat's JSON Lines block, tolerating code fences and blank lines."""
     rows = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
         if not line or line.startswith("```"):
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"{path} line {number} is not JSON: {error}") from None
         rows[row["id"].strip().upper()] = row
     missing = sorted(set(SUBSET) - set(rows))
     if missing:
@@ -117,8 +121,9 @@ def matrix_means(matrix_dir: Path) -> dict[str, dict]:
     wanted = set(SUBSET.values())
     out = {}
     for config_dir in sorted(p for p in matrix_dir.iterdir() if (p / "answers.jsonl").exists()):
-        rows = [json.loads(l) for l in (config_dir / "answers.jsonl").read_text().splitlines()
-                if l.strip()]
+        # As written: Windows' default, cp1252, cannot decode the run's curly quotes.
+        text = (config_dir / "answers.jsonl").read_text(encoding="utf-8")
+        rows = [json.loads(l) for l in text.splitlines() if l.strip()]
         values = {r["question_id"]: r["quality"]["correctness"] for r in rows
                   if r["question_id"] in wanted}
         scored = [v for v in values.values() if v is not None]
@@ -128,7 +133,8 @@ def matrix_means(matrix_dir: Path) -> dict[str, dict]:
 
 
 def write_source_check(path: Path, rows: list[dict]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as f:
+    # The BOM is what makes Excel read the sheet as UTF-8 rather than cp1252.
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["id", "question", "gold_answer", "chat_answer", "judged_correctness",
                     "source_urls", "source_sections",
@@ -169,7 +175,8 @@ def main(argv: list[str] | None = None) -> None:
     judge = LLMJudge(judging)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    result = {"judge": judging.to_dict(), "subset": SUBSET}
+    # The judge's own record: LLMJudge swaps in the rubric as its prompt template.
+    result = {"judge": judge.to_dict(), "subset": SUBSET}
     rows = score_run(args.answers, questions, judge, judging)
     (args.out / "scored.jsonl").write_text(
         "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")

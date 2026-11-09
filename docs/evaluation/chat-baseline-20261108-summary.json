@@ -1,9 +1,12 @@
 {
   "judge": {
-    "provider": "mistral",
-    "model": "ministral-8b-2512",
-    "prompt_template_id": "grounded_v4",
-    "temperature": 0.0
+    "rubric": "answer-quality-v1",
+    "config": {
+      "provider": "mistral",
+      "model": "ministral-8b-2512",
+      "prompt_template_id": "answer-quality-v1",
+      "temperature": 0.0
+    }
   },
   "subset": {
     "Q01": "daryl-28",
@@ -58,37 +61,37 @@
   },
   "matrix_same_20": {
     "C0": {
-      "mean_correctness": 0.4025,
-      "scored": 20,
-      "of": 20
-    },
-    "C1": {
       "mean_correctness": 0.415,
       "scored": 20,
       "of": 20
     },
+    "C1": {
+      "mean_correctness": 0.425,
+      "scored": 20,
+      "of": 20
+    },
     "C2": {
-      "mean_correctness": 0.6125,
+      "mean_correctness": 0.58,
       "scored": 20,
       "of": 20
     },
     "C3": {
-      "mean_correctness": 0.6365,
+      "mean_correctness": 0.62415,
       "scored": 20,
       "of": 20
     },
     "C4": {
-      "mean_correctness": 0.8225,
+      "mean_correctness": 0.94,
       "scored": 20,
       "of": 20
     },
     "C5": {
-      "mean_correctness": 0.77,
+      "mean_correctness": 0.855,
       "scored": 20,
       "of": 20
     },
     "C6": {
-      "mean_correctness": 0.77,
+      "mean_correctness": 0.9,
       "scored": 20,
       "of": 20
     }
