@@ -1,0 +1,12 @@
+[
+  {
+    "question_id": "daryl-04",
+    "correctness": 1.0,
+    "reason": "$200.58 billion is $200,583 million rounded. The judge called them equivalent and still scored 0 for the unit, which answer-quality-v1 says to accept (equivalent numeric units and scale)."
+  },
+  {
+    "question_id": "callista-01",
+    "correctness": 1.0,
+    "reason": "$17.61 billion is $17,606 million rounded. The judge scored 0.5 for using billion rather than million, which answer-quality-v1 says to accept (equivalent numeric units and scale)."
+  }
+]

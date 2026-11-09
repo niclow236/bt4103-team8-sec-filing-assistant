@@ -1,0 +1,48 @@
+{
+  "questions": 150,
+  "mean_correctness": 0.039,
+  "abstained": 143,
+  "by_question_type": {
+    "comparative": {
+      "n": 4,
+      "mean_correctness": 0.0
+    },
+    "factual": {
+      "n": 44,
+      "mean_correctness": 0.04886363636363636
+    },
+    "numeric": {
+      "n": 88,
+      "mean_correctness": 0.007954545454545455
+    },
+    "temporal": {
+      "n": 10,
+      "mean_correctness": 0.0
+    },
+    "unanswerable": {
+      "n": 4,
+      "mean_correctness": 0.75
+    }
+  },
+  "matrix_reference": {
+    "C0 naive BM25 + LLM": 0.3145,
+    "C4 hybrid + filters + LLM (app default)": 0.871
+  },
+  "adjudicated": {
+    "mean_correctness": 0.049,
+    "changes": [
+      {
+        "question_id": "daryl-04",
+        "judged": 0.0,
+        "correctness": 1.0,
+        "reason": "$200.58 billion is $200,583 million rounded. The judge called them equivalent and still scored 0 for the unit, which answer-quality-v1 says to accept (equivalent numeric units and scale)."
+      },
+      {
+        "question_id": "callista-01",
+        "judged": 0.5,
+        "correctness": 1.0,
+        "reason": "$17.61 billion is $17,606 million rounded. The judge scored 0.5 for using billion rather than million, which answer-quality-v1 says to accept (equivalent numeric units and scale)."
+      }
+    ]
+  }
+}
