@@ -47,6 +47,7 @@ from src.rag.generate import (
     chat_model,
     check_provider,
     config_from_env,
+    configured_provider,
     generate,
     stream,
 )
@@ -407,6 +408,39 @@ def test_an_unknown_provider_argument_is_refused_under_its_own_name():
     with pytest.raises(ValueError, match="^the provider argument must be one of ollama, mistral, "
                                          "soclaas, got 'openai'$"):
         config_from_env(provider="openai", environ={})
+
+
+@pytest.mark.parametrize("environ, named", [
+    ({}, None),
+    ({"LLM_PROVIDER": ""}, None),
+    ({"LLM_PROVIDER": "  "}, None),
+    # Named, and so told apart from unset, which config_from_env reads as the same config.
+    ({"LLM_PROVIDER": "ollama"}, "ollama"),
+    ({"LLM_PROVIDER": " SOCLAAS "}, "soclaas"),
+    ({"LLM_PROVIDER": "Mistral", "LLM_MODEL": "ministral-14b-2512"}, "mistral"),
+])
+def test_the_provider_env_names_is_none_where_it_names_none(environ, named):
+    # For the app, which opens on a provider of its own where none is named (#222).
+    assert configured_provider(environ=environ) == named
+    # The commands' default is untouched: unset is still the local model there.
+    assert config_from_env(environ=environ).provider == (named or "ollama")
+
+
+def test_the_provider_env_names_is_read_from_the_dotenv_file_and_the_shell(tmp_path, monkeypatch):
+    assert configured_provider(dotenv=tmp_path / "absent.env") is None
+    path = _dotenv(tmp_path, LLM_PROVIDER="soclaas")
+    assert configured_provider(dotenv=path) == "soclaas"
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    assert configured_provider(dotenv=path) == "mistral"
+
+
+def test_an_unknown_provider_setting_is_refused_in_the_same_words_by_both_readers():
+    with pytest.raises(ValueError) as refused:
+        config_from_env(environ={"LLM_PROVIDER": "mistrl"})
+    with pytest.raises(ValueError, match="^LLM_PROVIDER must be one of ollama, mistral, "
+                                         "soclaas, got 'mistrl'$") as named:
+        configured_provider(environ={"LLM_PROVIDER": "mistrl"})
+    assert str(named.value) == str(refused.value)
 
 
 def test_chat_model_reads_the_settings_it_is_given_in_place_of_the_environment(monkeypatch):

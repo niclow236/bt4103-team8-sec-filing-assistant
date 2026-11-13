@@ -44,6 +44,7 @@ from .generate import (
     chat_model,
     check_provider,
     config_from_env,
+    configured_provider,
     generate,
     stream,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "chat_model",
     "check_provider",
     "config_from_env",
+    "configured_provider",
     "find_metric",
     "generate",
     "lookup_fact",

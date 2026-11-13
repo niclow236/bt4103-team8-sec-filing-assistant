@@ -33,8 +33,9 @@ from urllib.parse import urlsplit
 import streamlit as st
 
 from src.pipeline.chunk import iter_chunks
-from src.rag.constants import DEFAULT_PROVIDER, FACTS_PROVIDER, PROVIDERS
-from src.rag.generate import ProviderUnavailable, check_provider, config_from_env
+from src.rag.constants import APP_DEFAULT_PROVIDER, FACTS_PROVIDER, PROVIDERS
+from src.rag.generate import (ProviderUnavailable, check_provider, config_from_env,
+                              configured_provider)
 from src.stack import DEFAULT_STACK, RESULTS_ROOT, build_stack, measured_runs
 
 if TYPE_CHECKING:
@@ -461,7 +462,8 @@ class AnswerModels:
 
     # Provider to the model it would answer with, in the order they are offered.
     models: dict[str, str]
-    default: str                   # the provider ``.env`` names, which a page opens on
+    # What a page opens on: the provider ``.env`` names, else ``APP_DEFAULT_PROVIDER``.
+    default: str
     # Provider to why it could not write an answer as things stand, in a few
     # words: a missing key, a setting it cannot read. Absent where it could.
     unready: dict[str, str]
@@ -477,16 +479,25 @@ def answer_models() -> AnswerModels:
     ``LLM_PROVIDER`` line waited minutes for the local model with nothing on
     the page to say why.
 
+    A page opens on the provider ``LLM_PROVIDER`` names, and on
+    ``APP_DEFAULT_PROVIDER``, SOCLAAS, where it names none (#222). The team
+    answers with SOCLAAS in the app (#179), and a laptop with a SOCLAAS key
+    and no ``LLM_PROVIDER`` line still opened on the local model. Only what
+    the page opens on is the app's own: a stack built with no provider named
+    still gets ``DEFAULT_PROVIDER``, and ``LLM_MODEL`` is still the model of
+    the provider ``LLM_PROVIDER`` names, which unset means Ollama.
+
     A mistyped ``LLM_PROVIDER`` is not an error here. A page can still be
-    asked with the provider picked by hand, so it opens on the default one and
-    ``problem`` says what was wrong with the setting.
+    asked with the provider picked by hand, so it opens on the app's default
+    and ``problem`` says what was wrong with the setting.
 
     Nor is a ``.env`` that cannot be read at all. PowerShell 5's ``>`` and
     ``Out-File`` save a file as UTF-16, which python-dotenv refuses, and this
     is the first place a page reads ``.env``: raised from here, the refusal
     was a traceback where the sidebar should be, on every load. The page
-    opens on each provider's default model and ``problem`` says the file
-    could not be read. An Ask still fails on it, as an error on the page.
+    opens on the app's default, with each provider's default model, and
+    ``problem`` says the file could not be read. An Ask still fails on it, as
+    an error on the page.
 
     ``unready`` is what each provider's own check refuses, asked of its
     settings alone (``check_provider``): no client is built and nothing is
@@ -513,13 +524,13 @@ def answer_models() -> AnswerModels:
         # OSError on Windows, where a variable cannot hold the null bytes.
         models = {provider: config_from_env(provider=provider, environ={}).model
                   for provider in PROVIDERS}
-        return AnswerModels(models, DEFAULT_PROVIDER, {}, (
+        return AnswerModels(models, APP_DEFAULT_PROVIDER, {}, (
             f"Could not read .env: {error}. If PowerShell 5's `>` or `Out-File` saved it, "
             "it is UTF-16: save it as UTF-8."))
     try:
-        return AnswerModels(models, config_from_env().provider, unready)
+        return AnswerModels(models, configured_provider() or APP_DEFAULT_PROVIDER, unready)
     except ValueError as error:
-        return AnswerModels(models, DEFAULT_PROVIDER, unready, str(error))
+        return AnswerModels(models, APP_DEFAULT_PROVIDER, unready, str(error))
 
 
 @st.cache_data(show_spinner=False)

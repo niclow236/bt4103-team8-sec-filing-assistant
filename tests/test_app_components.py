@@ -306,6 +306,82 @@ def test_new_question_replaces_old_filters_and_blank_clears_them():
     assert not app.exception
 
 
+def test_a_click_sent_before_a_new_question_s_filters_arrived_does_not_put_the_old_ones_back():
+    # #221. One click on Ask while the question box holds uncommitted text
+    # makes two runs: the box commits its text as it loses focus, then the
+    # click arrives. The click left the browser before the first run's page
+    # reached it, so it carries the filter boxes as they stood for the
+    # question before, and Streamlit takes a widget's value from the browser
+    # over the one the last run gave it. Refilled in place, the boxes went
+    # back to the old question's filters on the run that asked.
+    app = sidebar()                                 # Apple and Microsoft, FY2023 and FY2024
+    question = "Meta FY2025 Item 1a risks?"
+    box = app.text_input[0].id
+    # The page as the browser holds it, before the new question reaches the app.
+    held = app._tree.get_widget_states()
+    assert sum(len(widget.string_array_value.data) for widget in held.widgets) == 6
+    app.text_input[0].set_value(question).run()     # the box commits its text
+    wanted = {"ticker": ["META"], "fiscal_year": [2025], "item": ["1A"]}
+    assert app.session_state["result"].filters == wanted
+    # The click: the new text, and every other widget as the browser held it.
+    for widget in held.widgets:
+        if widget.id == box:
+            widget.string_value = question
+    app._run(held)
+    assert not app.exception
+    assert app.session_state["result"].filters == wanted
+    assert [control.value for control in app.sidebar.multiselect] == [["META"], [2025], ["1A"]]
+    # What is picked in the new boxes afterwards is still kept.
+    app.sidebar.multiselect[0].set_value(["META", "AAPL"]).run()
+    assert app.session_state["result"].tickers == ("META", "AAPL")
+
+
+def test_use_question_filters_does_not_let_a_click_sent_early_put_the_edits_back():
+    # The same fault from the reset button: the boxes it refills are new
+    # ones too, so a click that left the browser with the edited boxes, before
+    # the reset reached it, has nothing of theirs to send.
+    app = sidebar()
+    app.sidebar.multiselect[0].set_value(["META"]).run()
+    held = app._tree.get_widget_states()            # the browser's page, edit and all
+    app.sidebar.button[0].click().run()             # Use question filters
+    assert app.session_state["result"].tickers == ("AAPL", "MSFT")
+    app._run(held)
+    assert not app.exception
+    assert app.session_state["result"].tickers == ("AAPL", "MSFT")
+
+
+def test_a_selection_stays_when_a_later_run_hands_a_narrower_menu():
+    # Streamlit drops a selected value its menu no longer offers, and an
+    # empty box searches every company: a filter would turn into none.
+    app = AppTest.from_string('''
+import streamlit as st
+from src.app.components import filter_sidebar
+narrow = st.checkbox("narrow")
+st.session_state["result"] = filter_sidebar(
+    "What was Apple's revenue in FY2024?", companies=["AAPL"] if narrow else None)
+''').run(timeout=30)
+    app.sidebar.multiselect[0].set_value(["MSFT", "META"]).run()
+    app.checkbox[0].set_value(True).run()
+    assert not app.exception
+    assert app.session_state["result"].tickers == ("MSFT", "META")
+    assert list(app.sidebar.multiselect[0].options) == ["AAPL", "MSFT", "META"]
+
+
+def test_the_boxes_of_earlier_questions_leave_nothing_in_the_session():
+    # Each question's boxes are new widgets (#221). Streamlit drops a widget's
+    # value once a run no longer draws it, so a session left open through a
+    # demo holds one set of boxes however many questions it has been asked.
+    app = sidebar()
+    for question in ("Meta FY2025 Item 1a risks?", "Apple FY2024", "Microsoft FY2023 Item 7"):
+        app.text_input[0].set_value(question).run()
+    app.sidebar.button[0].click().run()             # Use question filters: a fifth set
+    assert not app.exception
+    assert sorted(key for key in app.session_state.keys() if key.startswith("filters:")) == [
+        "filters:companies:5", "filters:filled", "filters:items:5", "filters:reset",
+        "filters:years:5"]
+    assert app.session_state["filters:filled"] == ("Microsoft FY2023 Item 7", 5)
+
+
 def test_out_of_scope_mentions_warn_and_unknown_item_is_not_silently_dropped():
     app = sidebar()
     app.text_input[0].set_value("NVIDIA FY2015 Item 99").run()

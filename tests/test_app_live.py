@@ -92,6 +92,58 @@ def test_live_app_answers_through_the_selected_configuration(monkeypatch):
     assert stack.asked[-1][1]["query"].items == ("8",)
 
 
+def press_with_the_text_uncommitted(ui, question):
+    """Type ``question`` and press the page's button without committing the text first.
+
+    Two runs, as the app receives one such click (#221). The box commits its
+    text as it loses focus to the button. The click follows, and it left the
+    browser before that first run's page had reached it: it carries the new
+    text and the press, and every other widget as the browser still held it,
+    the sidebar's filters among them.
+    """
+    held = ui._tree.get_widget_states()
+    box, button = ui.text_input[0].id, ui.button[0].id
+    ui.text_input[0].set_value(question).run()
+    assert not ui.exception
+    sent = {widget.id: widget for widget in held.widgets}
+    sent[box].string_value = question
+    sent[button].trigger_value = True
+    return ui._run(held)
+
+
+def test_the_first_ask_on_a_new_question_searches_that_question_s_filters(monkeypatch):
+    # #221. The click that asked carried the sidebar's boxes as they stood for
+    # the question before, and the page searched with them: no filters at all
+    # for the first question of a session, and the last question's company and
+    # year for every one after. On the real stack the model then declined
+    # ("No answer from the filings"), or the facts store answered a question
+    # about Apple with Microsoft's figure. A second Ask sent the boxes as the
+    # browser by then showed them, and answered.
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    press_with_the_text_uncommitted(ui, "What was Microsoft's net income in FY2023?")
+    assert not ui.exception
+    asked = built[DEFAULT_STACK].asked
+    assert [options["query"].filters for _, options in asked] == [
+        {"ticker": ["MSFT"], "fiscal_year": [2023]}]
+    assert ":blue-badge[MSFT] :blue-badge[FY2023]" in _badges(ui)[0]
+    assert len(ui.get("html")) == 1
+
+    press_with_the_text_uncommitted(ui, "What was Apple's total revenue in FY2024?")
+    assert not ui.exception
+    assert [options["query"].filters for _, options in asked] == [
+        {"ticker": ["MSFT"], "fiscal_year": [2023]}, {"ticker": ["AAPL"], "fiscal_year": [2024]}]
+    assert ":blue-badge[AAPL] :blue-badge[FY2024]" in _badges(ui)[0]
+    # The answer is shown under the request it was asked with, at the first Ask.
+    assert len(ui.get("html")) == 1 and not ui.info
+    assert [control.value for control in ui.sidebar.multiselect] == [["AAPL"], [2024], []]
+
+    # A filter picked by hand after that is still what the next Ask searches.
+    ui.sidebar.multiselect[0].set_value(["AAPL", "MSFT"]).run()
+    ui.button[0].click().run()
+    assert asked[-1][1]["query"].tickers == ("AAPL", "MSFT")
+
+
 def test_live_app_offers_every_configuration_it_can_build(monkeypatch):
     # AppTest reports a selectbox's options already formatted, so each row is
     # named by its id and the configuration's own name. C0 is measured by the
@@ -468,35 +520,44 @@ def _provider(ui):
     return box, line
 
 
-def test_ask_page_opens_on_the_local_model_and_can_be_switched_to_mistral(monkeypatch):
+def test_ask_page_opens_on_soclaas_and_can_be_switched_to_another_provider(monkeypatch):
     # The provider was .env's alone to choose. With a Mistral key in .env and
     # no LLM_PROVIDER line, every answer waited minutes for the local model
-    # and nothing on the page could change it.
+    # and nothing on the page could change it. With a SOCLAAS key and no
+    # LLM_PROVIDER line the page still opened on the local model, where the
+    # team answers with SOCLAAS (#222). It answers with its pinned model ID,
+    # never its "default" alias (#163).
     built = _standing_in(monkeypatch)
     ui = AppTest.from_file(APP, default_timeout=30).run()
     box, line = _provider(ui)
-    assert list(box.options) == ["Ollama", "Mistral", "SOCLAAS"] and box.value == "ollama"
-    assert line.startswith("llama3.2:3b, on this computer")
+    assert list(box.options) == ["Ollama", "Mistral", "SOCLAAS"] and box.value == "soclaas"
+    assert line.startswith("qwen3.6:35b, on NUS SoC's SOCLAAS API")
+    # The box's help says both halves: what it opens on, and whose LLM_MODEL is.
+    assert box.help == (
+        "Opens on LLM_PROVIDER from .env, and on SOCLAAS when it is unset. LLM_MODEL names "
+        "the model of the provider .env selects, which unset means Ollama; the others "
+        "answer with their defaults.")
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.button[0].click().run()
-    assert built[DEFAULT_STACK].loaded_for == ["ollama"]
+    assert built[DEFAULT_STACK].loaded_for == ["soclaas"]
     assert len(ui.get("html")) == 1
 
-    box.set_value("mistral").run()
+    # The box as the page now draws it: the one read above belongs to the page
+    # before the question, whose filter boxes are no longer drawn (#221).
+    _provider(ui)[0].set_value("mistral").run()
     assert not ui.exception
     assert _provider(ui)[1].startswith("ministral-8b-2512, on Mistral's API")
     # An answer one provider wrote is not left under the other's name.
     assert not ui.get("html") and ui.info
     ui.button[0].click().run()
-    assert built[DEFAULT_STACK].loaded_for == ["ollama", "mistral"]
+    assert built[DEFAULT_STACK].loaded_for == ["soclaas", "mistral"]
     assert len(ui.get("html")) == 1
 
-    # SOCLAAS answers with its pinned model ID, never its "default" alias (#163).
-    box.set_value("soclaas").run()
+    _provider(ui)[0].set_value("ollama").run()
     assert not ui.exception
-    assert _provider(ui)[1].startswith("qwen3.6:35b, on NUS SoC's SOCLAAS API")
+    assert _provider(ui)[1].startswith("llama3.2:3b, on this computer")
     ui.button[0].click().run()
-    assert built[DEFAULT_STACK].loaded_for == ["ollama", "mistral", "soclaas"]
+    assert built[DEFAULT_STACK].loaded_for == ["soclaas", "mistral", "ollama"]
     assert len(ui.get("html")) == 1
 
 
@@ -514,20 +575,38 @@ def test_ask_page_opens_on_the_provider_env_names(monkeypatch):
     assert _provider(ui)[1].startswith("llama3.2:3b, on this computer")
 
 
-def test_a_mistyped_provider_in_env_is_said_and_does_not_stop_the_page(monkeypatch):
-    # Every Ask used to fail on it. The page now names what it will ask, so it
-    # opens on the default provider, says what was wrong, and still answers.
-    monkeypatch.setenv("LLM_PROVIDER", "mistrl")
+def test_ask_page_opens_on_ollama_where_env_names_it(monkeypatch):
+    # SOCLAAS is what the page opens on when nothing is named (#222). A .env
+    # that names the local model has named something, and still gets it.
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
     built = _standing_in(monkeypatch)
     ui = AppTest.from_file(APP, default_timeout=30).run()
     assert not ui.exception
-    assert _provider(ui)[0].value == "ollama"
-    said = ui.sidebar.warning[0].value
-    assert "LLM_PROVIDER must be one of ollama, mistral, soclaas, got 'mistrl'" in said
+    box, line = _provider(ui)
+    assert box.value == "ollama" and line.startswith("llama3.2:3b, on this computer")
+    assert not ui.sidebar.warning
+    ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
+    ui.button[0].click().run()
+    assert built[DEFAULT_STACK].loaded_for == ["ollama"]
+
+
+def test_a_mistyped_provider_in_env_is_said_and_does_not_stop_the_page(monkeypatch):
+    # Every Ask used to fail on it. The page now names what it will ask, so it
+    # opens on the app's default provider, says what was wrong, and still answers.
+    monkeypatch.setenv("LLM_PROVIDER", "mistrl")
+    # With a key, so that the one warning in the sidebar is about the setting.
+    monkeypatch.setenv("SOCLAAS_API_KEY", "test-key")
+    built = _standing_in(monkeypatch)
+    ui = AppTest.from_file(APP, default_timeout=30).run()
+    assert not ui.exception
+    assert _provider(ui)[0].value == "soclaas"
+    said = [warning.value for warning in ui.sidebar.warning]
+    assert len(said) == 1
+    assert "LLM_PROVIDER must be one of ollama, mistral, soclaas, got 'mistrl'" in said[0]
     ui.text_input[0].set_value("What was Apple's revenue in FY2024?").run()
     ui.button[0].click().run()
     assert not ui.exception and not ui.error
-    assert built[DEFAULT_STACK].loaded_for == ["ollama"]
+    assert built[DEFAULT_STACK].loaded_for == ["soclaas"]
 
 
 # What reading a .env saved as UTF-16 raises: with its byte order mark, as
@@ -556,7 +635,7 @@ def test_an_unreadable_env_is_said_and_does_not_stop_the_page(monkeypatch, error
     ui = AppTest.from_file(APP, default_timeout=30).run()
     assert not ui.exception
     box, line = _provider(ui)
-    assert box.value == "ollama" and line.startswith("llama3.2:3b, ")
+    assert box.value == "soclaas" and line.startswith("qwen3.6:35b, ")
     said = [warning.value for warning in ui.sidebar.warning]
     assert len(said) == 1 and said[0].startswith("Could not read .env: ")
     assert said[0].endswith("it is UTF-16: save it as UTF-8.")
@@ -712,6 +791,14 @@ def test_the_picker_says_what_a_provider_lacks_as_soon_as_it_is_picked(monkeypat
     # Not when Ask is pressed: by then the indexes have been read for nothing.
     _standing_in(monkeypatch)
     ui = AppTest.from_file(APP, default_timeout=30).run()
+    # The page opens on SOCLAAS (#222), which the suite gives no key, and
+    # says so before anything is picked or asked.
+    assert [warning.value for warning in ui.sidebar.warning] == [
+        "SOCLAAS cannot write an answer yet: SOCLAAS_API_KEY is not set. Update it in your "
+        "environment or `.env` (README, Setting up SOCLAAS), then restart the app, or pick "
+        "Ollama. On C4 with no Item filter, a figure the facts store holds is still "
+        "answered."]
+    ui.sidebar.button_group[0].set_value("ollama").run()
     assert not ui.sidebar.warning                      # Ollama needs no key
     ui.sidebar.button_group[0].set_value("mistral").run()
     # What is wrong and what to do about it in the app, in a few lines: the

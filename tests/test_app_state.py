@@ -370,10 +370,11 @@ def test_each_provider_is_built_once_over_the_same_indexes(built):
 
 
 def test_answer_models_reads_what_env_selects(monkeypatch):
+    # Nothing named: a page opens on SOCLAAS, the app's own default (#222).
     found = state_module.answer_models()
     assert (found.models, found.default, found.problem) == (
         {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512", "soclaas": "qwen3.6:35b"},
-        "ollama", None)
+        "soclaas", None)
     monkeypatch.setenv("LLM_PROVIDER", "mistral")
     monkeypatch.setenv("LLM_MODEL", "mistral-small-2506")
     found = state_module.answer_models()
@@ -382,10 +383,36 @@ def test_answer_models_reads_what_env_selects(monkeypatch):
         "mistral", None)
     monkeypatch.setenv("LLM_PROVIDER", "mistrl")
     unknown = state_module.answer_models()
-    assert unknown.default == "ollama" and "got 'mistrl'" in unknown.problem
+    assert unknown.default == "soclaas" and "got 'mistrl'" in unknown.problem
     # The model was named for a provider that does not exist, so neither gets it.
     assert unknown.models == {"ollama": "llama3.2:3b", "mistral": "ministral-8b-2512",
                               "soclaas": "qwen3.6:35b"}
+
+
+@pytest.mark.parametrize("written,opens_on", [
+    ("ollama", "ollama"),       # named, so it is not the app's default that decides
+    (" Ollama ", "ollama"),
+    ("soclaas", "soclaas"),
+    ("", "soclaas"),            # a line left blank names nothing
+    ("   ", "soclaas"),
+])
+def test_a_page_opens_on_soclaas_only_where_env_names_no_provider(monkeypatch, written, opens_on):
+    # #222. config_from_env reads an unset LLM_PROVIDER and one set to ollama
+    # as the same config, so the page cannot take what it opens on from there.
+    monkeypatch.setenv("LLM_PROVIDER", written)
+    found = state_module.answer_models()
+    assert (found.default, found.problem) == (opens_on, None)
+
+
+def test_the_model_env_names_is_still_ollama_s_where_no_provider_is_named(monkeypatch):
+    # Only what a page opens on is the app's own. LLM_MODEL belongs to the
+    # provider LLM_PROVIDER names, which unset means Ollama, as .env.example
+    # says: handed to SOCLAAS, an Ollama model name is one it does not serve.
+    monkeypatch.setenv("LLM_MODEL", "llama3.1:8b")
+    found = state_module.answer_models()
+    assert found.default == "soclaas"
+    assert found.models == {"ollama": "llama3.1:8b", "mistral": "ministral-8b-2512",
+                            "soclaas": "qwen3.6:35b"}
 
 
 def test_answer_models_says_what_each_provider_lacks_and_builds_no_client(monkeypatch):
