@@ -401,6 +401,15 @@ MISTRAL = "mistral"
 SOCLAAS = "soclaas"
 PROVIDERS = (OLLAMA, MISTRAL, SOCLAAS)
 DEFAULT_PROVIDER = OLLAMA
+# What the app's Answer model box opens on when LLM_PROVIDER is unset (#222).
+# SOCLAAS is what the team answers with in the hosted app and the demo (#179),
+# and with Ollama here a laptop holding a SOCLAAS key and no LLM_PROVIDER line
+# opened on the local model, minutes an answer. The box only: a command or a
+# library call with LLM_PROVIDER unset still gets DEFAULT_PROVIDER, so a
+# recorded command means what it did when it was run and a fresh clone with no
+# keys still answers. With no SOCLAAS key the box says so as soon as it is
+# drawn, and Ollama is one click away in it.
+APP_DEFAULT_PROVIDER = SOCLAAS
 
 # The model a fresh clone uses, as Ollama names it. Swap it with
 # ``ollama pull <model>`` and LLM_MODEL in .env.

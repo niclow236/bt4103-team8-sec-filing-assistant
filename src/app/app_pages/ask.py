@@ -38,7 +38,10 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
     question = st.text_input(
         "Question", placeholder="What was Apple's total revenue in FY2024?", key="ask:question")
     # Never disabled: a click made while the box still holds uncommitted text
-    # commits the text and asks in one rerun, and a disabled button lost it.
+    # has to ask, and a button disabled until the text was committed lost it.
+    # Such a click is most often two runs: the box commits its text as it
+    # loses focus to the button, and the click asks in the run after, when
+    # the sidebar's filters have already been read for the new question (#221).
     asked = st.button("Ask", type="primary", icon=":material/search:")
 question = question.strip()
 

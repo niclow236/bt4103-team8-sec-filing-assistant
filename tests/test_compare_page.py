@@ -11,7 +11,7 @@ from src.config import PROJECT_ROOT
 from src.rag.generate import ProviderUnavailable
 from src.stack import SELECTABLE, STACKS
 from tests.sample_answers import sample_answer
-from tests.test_app_live import FakeStack, _standing_in
+from tests.test_app_live import FakeStack, _standing_in, press_with_the_text_uncommitted
 
 
 PAGE = PROJECT_ROOT / "src/app/app_pages/compare.py"
@@ -66,7 +66,8 @@ def test_compare_uses_registry_and_shows_answers_evidence_and_separate_timings(m
         assert question == QUESTION
         assert options["query"].tickers == ("AAPL",)
         assert options["parsed"].question == QUESTION
-        assert stack.loaded_for == ["ollama"]
+        # No LLM_PROVIDER is set, so the page opened on SOCLAAS (#222).
+        assert stack.loaded_for == ["soclaas"]
     assert len(ui.get("html")) == 2
     assert len(ui.dataframe) == 2
     assert ui.dataframe[0].value["Presence"].tolist() == ["Shared", "Only left"]
@@ -83,6 +84,21 @@ def test_compare_uses_registry_and_shows_answers_evidence_and_separate_timings(m
     held = ui.session_state["compare:kept"]
     assert [request.config_id for request in held.requests] == ["C1", "C4"]
     assert all(side.answer is not None for side in held.sides)
+
+
+def test_the_first_compare_on_a_new_question_searches_that_question_s_filters(monkeypatch):
+    # #221, on the page that asks two configurations: the same sidebar, and
+    # the same click that carries its boxes as they stood for the last question.
+    ui, built = _page(monkeypatch)
+    _submit(ui)                                       # Apple, FY2024
+    press_with_the_text_uncommitted(ui, "What risks does Microsoft describe in FY2023?")
+    assert not ui.exception
+    assert set(built) == {"C1", "C4"}
+    for stack in built.values():
+        assert [options["query"].filters for _, options in stack.asked] == [
+            {"ticker": ["AAPL"], "fiscal_year": [2024]},
+            {"ticker": ["MSFT"], "fiscal_year": [2023]}]
+    assert len(ui.get("html")) == 2
 
 
 @pytest.mark.parametrize("setting", ["question", "configuration", "filters", "provider"])
@@ -110,7 +126,7 @@ def test_changing_either_request_hides_both_old_answers(monkeypatch, setting):
     elif setting == "filters":
         ui.sidebar.multiselect[1].set_value([2024]).run()
     else:
-        ui.sidebar.button_group[0].set_value("ollama").run()
+        ui.sidebar.button_group[0].set_value("soclaas").run()
     assert not ui.exception
     assert len(ui.get("html")) == 2
     assert all(len(stack.asked) == 1 for stack in built.values())

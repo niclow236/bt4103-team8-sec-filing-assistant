@@ -196,7 +196,7 @@ The system is evaluated as a comparative study of at least two configurations, a
 
 ## Tech stack
 
-Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model, with no account or key. Two hosted options answer in seconds rather than minutes: NUS SoC's SOCLAAS API, with a key from your SoC account, which SoC pays for, and Mistral's API on its free plan, with a free account and API key of your own. The hosted app and the demo answer with SOCLAAS, with Mistral as the fallback. Exact versions are pinned in `requirements.txt`.
+Python is the primary language. The team has no budget for paid APIs, so nothing in the project needs a paid account. The embedding model and the search indexes run on the machine running the code, and so, by default, does the language model for a command or a notebook, with no account or key. Two hosted options answer in seconds rather than minutes: NUS SoC's SOCLAAS API, with a key from your SoC account, which SoC pays for, and Mistral's API on its free plan, with a free account and API key of your own. The hosted app and the demo answer with SOCLAAS, with Mistral as the fallback. Exact versions are pinned in `requirements.txt`.
 
 | Layer | What it uses |
 |---|---|
@@ -487,12 +487,12 @@ Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
 `EDGAR_IDENTITY=Jane Tan jane@example.com`. The SEC requires every automated
 request to carry a contact string and blocks traffic without one, so the
 download stops immediately with a `MissingIdentityError` if this is blank. The
-generation settings further down the file are optional. By default answers come
-from a local model and need no key, but each takes minutes on a laptop. For
-answers in seconds, use SOCLAAS, as the team does in the hosted app and the
-demo: make a key with your SoC account as
-[Setting up SOCLAAS](#setting-up-soclaas) describes, and leave `LLM_MODEL`
-unset so it answers with `qwen3.6:35b`. Mistral's API, with a key
+generation settings further down the file are optional. By default a command's
+answers come from a local model and need no key, but each takes minutes on a
+laptop. For answers in seconds, use SOCLAAS, as the team does in the hosted app
+and the demo, and as the app's Answer model box opens on: make a key with your
+SoC account as [Setting up SOCLAAS](#setting-up-soclaas) describes, and leave
+`LLM_MODEL` unset so it answers with `qwen3.6:35b`. Mistral's API, with a key
 from your own account, is the fallback. The `# SOCLAAS_API_KEY=` and
 `# MISTRAL_API_KEY=` lines stay commented out until you have a key. All three
 providers are covered under [Answering a question](#answering-a-question).
@@ -1246,13 +1246,15 @@ The RAG stage turns a question into an answer that cites the passages it came
 from. One of three providers writes the answer, chosen with `LLM_PROVIDER` in
 `.env`:
 
-- `ollama`, the default: a local model served by Ollama. It needs no account,
-  key or network connection once the model is downloaded, but an answer takes
-  minutes on a laptop; see [How long an answer takes](#how-long-an-answer-takes).
-- `soclaas`: an open-weight model on NUS SoC's SOCLAAS API, which serves larger
-  models than Mistral's free plan. An answer takes about a second, and needs an
-  internet connection (no VPN) and a SOCLAAS API key. The team answers with it
-  in the hosted app and the demo, so set it up first for hosted answers; the
+- `ollama`, the default for a command, a notebook and `answer_question`: a
+  local model served by Ollama. It needs no account, key or network connection
+  once the model is downloaded, but an answer takes minutes on a laptop; see
+  [How long an answer takes](#how-long-an-answer-takes).
+- `soclaas`, what the app opens on: an open-weight model on NUS SoC's SOCLAAS
+  API, which serves larger models than Mistral's free plan. An answer takes
+  about a second, and needs an internet connection (no VPN) and a SOCLAAS API
+  key. The team answers with it in the hosted app and the demo, so set it up
+  first for hosted answers; the
   [decision](#g-rows-over-a-full-matrix-runs-recorded-evidence) says why.
 - `mistral`: an open-weight Ministral model on Mistral's API, on the free plan.
   An answer takes about two seconds, and needs an internet connection and an
@@ -1266,7 +1268,7 @@ neither is required:
 
 | Variable | Default | When to set it |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | `soclaas` to answer with SOCLAAS, as the hosted app does, once you have [set it up](#setting-up-soclaas); `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral) |
+| `LLM_PROVIDER` | `ollama` for a command, a notebook and `answer_question`. The app's Answer model box opens on `soclaas` (#222) | `soclaas` to answer with SOCLAAS everywhere, as the hosted app does, once you have [set it up](#setting-up-soclaas); `mistral` to answer with Mistral's API, once you have [set it up](#setting-up-mistral); `ollama` to have the app open on the local model too |
 | `LLM_MODEL` | `llama3.2:3b` with Ollama, `ministral-8b-2512` with Mistral, `qwen3.6:35b` with SOCLAAS | to use another of the chosen provider's models, named as that provider names it. It belongs to the provider `LLM_PROVIDER` names: a command that picks another one with `--provider` uses that provider's default |
 
 ### Setting up Ollama
@@ -1322,7 +1324,7 @@ will use a key the team chooses, set on the host, as the fallback to SOCLAAS.
    `.env` is git-ignored, so the key stays on your computer. Never paste it into
    code, a notebook cell, a commit, an issue or a chat. `LLM_PROVIDER=mistral`
    makes Mistral what answers everywhere. Leave that line out and the commands
-   answer with Ollama, and the app opens on Ollama with Mistral one click away
+   answer with Ollama, and the app opens on SOCLAAS with Mistral one click away
    in its sidebar's Answer model box.
 5. Ask a question that needs the model, such as the one in
    [From a question to an answer](#from-a-question-to-an-answer).
@@ -1377,9 +1379,11 @@ so it is the one to set up first.
    SOCLAAS_API_KEY=<your key>
    ```
 
-   The same rules as for a Mistral key apply: it is yours, it stays in `.env`,
-   and the app opens on Ollama with SOCLAAS one click away unless
-   `LLM_PROVIDER=soclaas` is set. The hosted app is the same exception as for
+   The same rules as for a Mistral key apply: it is yours and it stays in
+   `.env`. The key alone is enough for the app, whose Answer model box opens
+   on SOCLAAS when `LLM_PROVIDER` is unset (#222). The `LLM_PROVIDER=soclaas`
+   line is what makes a command, a notebook and `answer_question` answer with
+   it too. The hosted app is the same exception as for
    Mistral: it will use a SOCLAAS key the team chooses, set in the host's
    environment (#179). SOCLAAS's limits are per SoC account, not per key, so
    everyone using the hosted app shares the limits of the account that made
@@ -2242,11 +2246,19 @@ The sidebar's Answer model box chooses what writes the answer: the local
 Ollama model, Mistral's free API (`ministral-8b-2512`) or SOCLAAS
 (`qwen3.6:35b`). The two hosted ones answer in seconds rather than minutes and
 need your own key in `.env`, `MISTRAL_API_KEY` or `SOCLAAS_API_KEY`.
-It opens on the provider `.env` names (`LLM_PROVIDER`, which unset means
-Ollama), and switching it lasts for the browser session and changes nothing
-in `.env`. Before this box the provider was `.env`'s alone to choose, so a
-`.env` with a key and no `LLM_PROVIDER=mistral` line answered with the local
-model, minutes at a time, with nothing on the page to say so.
+It opens on the provider `.env` names with `LLM_PROVIDER`, and on SOCLAAS when
+that is unset (#222). Switching it lasts for the browser session and changes
+nothing in `.env`. Before this box the provider was `.env`'s alone to choose,
+so a `.env` with a key and no `LLM_PROVIDER=mistral` line answered with the
+local model, minutes at a time, with nothing on the page to say so. Until #222
+the box itself opened on Ollama when `LLM_PROVIDER` was unset, so a laptop
+with a SOCLAAS key and no such line still started on the local model. That
+default is the app's alone (`APP_DEFAULT_PROVIDER`): a command or a notebook
+with `LLM_PROVIDER` unset still answers with Ollama, and `LLM_MODEL` is still
+the model of the provider `LLM_PROVIDER` names, which unset means Ollama. With
+no `SOCLAAS_API_KEY` the box says so as soon as the page is drawn, and Ollama
+is one click away in it. `LLM_PROVIDER=ollama` makes the app open on the local
+model.
 
 On C4 with no Item filter, a figure question the facts store answers needs
 no provider, whichever is picked: the chat model is built when an answer first
@@ -2469,7 +2481,10 @@ pieces from #38.
   the shared parser and explicit Item mentions such as `Items 7 and 8`.
   Users can override or clear any selection; empty means unrestricted.
   Manual edits survive reruns. A changed question replaces all three filter
-  axes, and **Use question filters** restores the extracted selections.
+  axes, and **Use question filters** restores the extracted selections. Each
+  does it by drawing the three boxes as new widgets, not by refilling them,
+  so a click that reaches the app with the boxes as they stood before cannot
+  put the old selections back (#221).
   Out-of-scope mentions produce a visible warning. Unrecognised Items remain
   selected rather than silently broadening retrieval.
 
@@ -3112,7 +3127,11 @@ fallback, for when SOCLAAS is down or a limit is hit. The switch is
 configuration, not code: the host's environment and each member's `.env` set
 `LLM_PROVIDER=soclaas` and leave `LLM_MODEL` unset, so the model is pinned by
 its ID. `DEFAULT_PROVIDER` stays `ollama`, so a fresh clone with no keys still
-answers.
+answers. Since #222 the app's Answer model box also opens on SOCLAAS when
+`LLM_PROVIDER` is unset (`APP_DEFAULT_PROVIDER`), because an app started
+without that line opened on the local model. That is the one part of the
+switch that is code, and it changes the box alone: commands and notebooks
+keep `DEFAULT_PROVIDER`.
 
 SOCLAAS is a school service for teaching and experiments. Its usage page, read
 on 19 October 2026, gave default limits of 90 requests a minute and $80 a day

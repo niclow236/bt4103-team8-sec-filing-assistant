@@ -35,7 +35,8 @@ from src.config import read_tickers
 from src.evaluation import breakdown, headlines, report
 from src.pipeline.constants import DEFAULT_FISCAL_YEARS
 from src.rag.citations import render_citation
-from src.rag.constants import FACTS_PROVIDER, MISTRAL, OLLAMA, SOCLAAS
+from src.rag.constants import (APP_DEFAULT_PROVIDER, DEFAULT_PROVIDER, FACTS_PROVIDER, MISTRAL,
+                               OLLAMA, SOCLAAS)
 from src.rag.query import ParsedQuestion, parse_question
 from src.rag.records import Answer, Citation, abstention_text
 from src.retrieval.constants import FINAL_K
@@ -1558,9 +1559,10 @@ def provider_picker(available: AnswerModels, *, key: str = "provider") -> str:
         provider = st.segmented_control(
             "Answer model", list(models), default=available.default, required=True,
             format_func=lambda option: _PROVIDERS[option][0], key=key,
-            help="Opens on LLM_PROVIDER from .env, which unset means Ollama. "
-                 "LLM_MODEL names the model of the provider .env selects; the "
-                 "others answer with their defaults.",
+            help=f"Opens on LLM_PROVIDER from .env, and on {_PROVIDERS[APP_DEFAULT_PROVIDER][0]} "
+                 "when it is unset. LLM_MODEL names the model of the provider .env selects, "
+                 f"which unset means {_PROVIDERS[DEFAULT_PROVIDER][0]}; the others answer "
+                 "with their defaults.",
         )
         label, means, setup = _PROVIDERS[provider]
         st.caption(f"{models[provider]}, {means}")
@@ -1913,6 +1915,18 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
     reruns preserve manual edits, including clearing an axis (empty means all).
     Call once per key on every run, outside a form. Callers may supply a parse
     already used by their controller; it must describe the same question.
+
+    The three boxes are drawn as new widgets for each new question, under
+    keys of their own, and are not refilled in place (#221). One click on a
+    page's Ask button while its question box holds uncommitted text makes two
+    runs: the box commits its text as it loses focus to the button, and the
+    click arrives as the next run. The click left the browser before the
+    browser had been sent the first run's filters, so it carries the boxes as
+    they stood for the question before, and Streamlit takes what the browser
+    sends for a widget over what the last run set for it. Refilled in place,
+    the boxes went back to the old question's filters on the run that asked,
+    and the first Ask searched Apple's question in Microsoft's filing. The
+    browser holds nothing to send back for a box it has not been sent yet.
     """
     question = question.strip()
     if parsed is not None and parsed.question != question:
@@ -1942,20 +1956,31 @@ def filter_sidebar(question: str = "", *, parsed: ParsedQuestion | None = None,
     options = {"companies": list(dict.fromkeys((*companies, *extracted["companies"]))),
                "years": sorted(set(years) | set(extracted["years"])),
                "items": list(dict.fromkeys((*items, *mentions)))}
-    changed = st.session_state.get(f"{key}:question") != question
     with st.sidebar:
         st.header("Filter filings")
         st.caption("Empty selections search all values. A new question resets filters to its mentions.")
         reset = st.button("Use question filters", key=f"{key}:reset")
-        for axis in extracted:
-            state_key = f"{key}:{axis}"
-            if changed or reset or state_key not in st.session_state:
-                st.session_state[state_key] = extracted[axis]
-            options[axis] = list(dict.fromkeys((*options[axis], *st.session_state[state_key])))
-        st.session_state[f"{key}:question"] = question
-        tickers = st.multiselect("Company", options["companies"], key=f"{key}:companies")
-        selected_years = st.multiselect("Fiscal year", options["years"], key=f"{key}:years")
-        selected_items = st.multiselect("Item", options["items"], key=f"{key}:items")
+        # The question the boxes were last filled from, and how many times
+        # they have been filled, which is what their keys end in. One entry,
+        # written once: the next run can stop this one at any Streamlit call,
+        # and it then finds the boxes either filled for this question or not.
+        filled_from, fill = st.session_state.get(f"{key}:filled", (None, 0))
+        if reset or filled_from != question:
+            fill += 1
+            st.session_state[f"{key}:filled"] = (question, fill)
+        boxes = {axis: f"{key}:{axis}:{fill}" for axis in extracted}
+        for axis, box in boxes.items():
+            # What a box already holds stays on its menu, should a caller
+            # hand a narrower one on a later run.
+            options[axis] = list(dict.fromkeys((*options[axis], *st.session_state.get(box, ()))))
+        # A box opens on the question's own filters, as its default, and holds
+        # what is picked in it from then on.
+        tickers = st.multiselect("Company", options["companies"],
+                                 default=extracted["companies"], key=boxes["companies"])
+        selected_years = st.multiselect("Fiscal year", options["years"],
+                                        default=extracted["years"], key=boxes["years"])
+        selected_items = st.multiselect("Item", options["items"],
+                                        default=extracted["items"], key=boxes["items"])
         if parsed and parsed.not_in_corpus:
             st.warning(parsed.not_in_corpus)
         unknown_items = [i for i in mentions if i not in items]

@@ -376,6 +376,27 @@ def config_from_env(
     )
 
 
+def configured_provider(
+    environ: Mapping[str, str] | None = None,
+    dotenv: Path = ENV_FILE,
+) -> str | None:
+    """The provider ``LLM_PROVIDER`` names, or None where it is unset or blank.
+
+    For a caller with a default of its own. :func:`config_from_env` answers an
+    unset ``LLM_PROVIDER`` with ``DEFAULT_PROVIDER``, so its config does not
+    tell "unset" from "set to ollama", and the app opens on
+    ``APP_DEFAULT_PROVIDER`` for the first and on Ollama for the second (#222).
+    The environment is read as :func:`config_from_env` reads it, and a name
+    that is none of ``PROVIDERS`` is refused in the same words.
+
+    Only which provider is meant when none is named changes for such a caller.
+    ``LLM_MODEL`` still belongs to the provider ``LLM_PROVIDER`` names, which
+    unset means ``DEFAULT_PROVIDER``.
+    """
+    written = (_environment(environ, dotenv).get(LLM_PROVIDER_ENV) or "").strip()
+    return _provider_name(written, LLM_PROVIDER_ENV) if written else None
+
+
 def _provider_setting(value: str | None) -> str:
     """A provider setting as written: trimmed, lower case, blank for the default."""
     return (value or "").strip().lower() or DEFAULT_PROVIDER
