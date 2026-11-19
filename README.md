@@ -70,8 +70,9 @@ in the archive's `DATA_SNAPSHOT_README.md`. The verifier uses only Python's
 standard library; it checks file hashes, question/passage counts and IDs,
 evidence membership, and unexpected processed JSON files.
 
-Follow [Getting started](#getting-started) for the Python environment, then
-build the machine's search indexes once:
+Inside that clone, do steps 2 to 4 of [Getting started](#getting-started)
+(virtual environment, dependencies, `.env`), then build the machine's search
+indexes once:
 
 ```bash
 python -m src.retrieval bm25
@@ -98,19 +99,19 @@ corpus. An **exact audit of the reported results** uses the frozen evaluation
 snapshot and the final handover archive; rebuilding from the live service is
 not an exact substitute for the inputs that were measured.
 
-To rebuild the corpus from an empty checkout, replace `RELEASE_TAG` with the
-final release tag and set the contact identity required by SEC EDGAR:
+To rebuild the corpus from an empty checkout, clone the repository and check
+out the final release tag in place of `RELEASE_TAG`:
 
 ```bash
 git clone https://github.com/niclow236/bt4103-team8-sec-filing-assistant.git
 cd bt4103-team8-sec-filing-assistant
 git checkout RELEASE_TAG
-python -m venv .venv
-# macOS/Linux: source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-cp .env.example .env                 # Windows: copy .env.example .env
-# Edit .env and set EDGAR_IDENTITY="Name email@example.com"
+```
+
+Then do steps 2 to 4 of [Getting started](#getting-started) (virtual
+environment, dependencies, and `.env` with `EDGAR_IDENTITY` set), and run:
+
+```bash
 python -u -m src.pipeline rebuild --clean
 python -u -m src.retrieval facts --refresh
 python -u -m src.retrieval benchmark
@@ -306,7 +307,7 @@ bt4103-team8-sec-filing-assistant/
 │       ├── state.py         #   what is kept between reruns: corpus, indexes, stacks, answers
 │       ├── components.py    #   what pages draw: answers, filters, trace, corpus passages
 │       └── answers.py       #   renders evaluation answers as an HTML page to review
-├── tests/                   # the pytest suite (see Getting started)
+├── tests/                   # the pytest suite (see Running the tests)
 ├── logs/                    # terminal output of each run (git-ignored)
 ├── notebooks/               # exploration and experiments
 │   ├── answers/             #   test questions and headline figures through the app's answer path; each writes a git-ignored results/
@@ -394,38 +395,97 @@ depend on the stages whose output they read, and the stages depend only on
 
 ## Getting started
 
-Prerequisites are Python 3.10 or newer and Git, since both pinned dependencies require 3.10. See `GIT_WORKFLOW.md` for Git setup and the branching workflow.
+These steps take a fresh computer to the app running in your browser. They use
+the team's frozen corpus, so nothing has to be downloaded from EDGAR.
 
-Clone and enter the project:
+**You need:** Python 3.10 or newer, Git, and an NUS School of Computing account
+for a SOCLAAS API key. See `GIT_WORKFLOW.md` for Git setup and the branching
+workflow.
 
-```bash
-git clone <repo-url>
-cd bt4103-team8-sec-filing-assistant
-```
+1. **Clone the repository.**
 
-Create and activate a virtual environment.
+   ```bash
+   git clone https://github.com/niclow236/bt4103-team8-sec-filing-assistant.git
+   cd bt4103-team8-sec-filing-assistant
+   ```
 
-Mac:
+2. **Create and activate a virtual environment.**
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
+   macOS or Linux:
 
-Windows (PowerShell):
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
 
-```powershell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-```
+   Windows (PowerShell):
 
-Install dependencies:
+   ```powershell
+   py -m venv .venv
+   .venv\Scripts\Activate.ps1
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+3. **Install the dependencies.**
 
-Run the tests:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Add your settings.** Copy the template:
+
+   ```bash
+   cp .env.example .env      # Windows: copy .env.example .env
+   ```
+
+   Then open `.env` and:
+
+   - set `EDGAR_IDENTITY` to your own name and email, for example
+     `EDGAR_IDENTITY=Jane Tan jane@example.com`. The SEC requires it on every
+     request to EDGAR.
+   - remove the `#` from `# SOCLAAS_API_KEY=` and paste your key after the `=`.
+     [Setting up SOCLAAS](#setting-up-soclaas) shows how to make a key.
+   - optionally, do the same for `# MISTRAL_API_KEY=`, the fallback when
+     SOCLAAS is down. [Setting up Mistral](#setting-up-mistral) shows how.
+
+   `.env` is git-ignored, so your keys stay on your computer.
+
+5. **Download the data and build the search indexes.**
+
+   ```bash
+   python -m src.demo prepare
+   ```
+
+   This downloads the frozen corpus (about 9 MB), checks its hash, builds the
+   keyword index, downloads the embedding model and builds the dense index.
+   The dense index is the slow part: it takes several hours on a laptop CPU the
+   first time. If it stops, run the command again and it picks up where it
+   left off.
+
+6. **Check that everything is in place.**
+
+   ```bash
+   python -m src.demo check
+   ```
+
+   Every line should pass. A missing Mistral key is only a warning.
+
+7. **Start the app.**
+
+   ```bash
+   python -m src.demo start
+   ```
+
+   The app opens in your browser at <http://localhost:8501>. The first
+   question takes about 25 seconds while the embedding model loads; the ones
+   after it are much faster.
+
+[Running the demo](#running-the-demo) explains what `prepare`, `check` and
+`start` do in detail. To confirm the code works on your machine, see
+[Running the tests](#running-the-tests). To build your own corpus from EDGAR
+instead of using the frozen one, see
+[Building the corpus from EDGAR](#building-the-corpus-from-edgar).
+
+## Running the tests
 
 ```bash
 python -m pytest
@@ -477,25 +537,12 @@ downloader at 11% and the verifier at 25%. Those four are now at 99%, 100%,
 what the tests do not reach there is the reading of a filing's HTML through
 edgartools, which the suite has no filing to give.
 
-Set up environment variables:
+## Building the corpus from EDGAR
 
-```bash
-cp .env.example .env      # Windows: copy .env.example .env
-```
-
-Open `.env` and set `EDGAR_IDENTITY` to your own name and email, for example
-`EDGAR_IDENTITY=Jane Tan jane@example.com`. The SEC requires every automated
-request to carry a contact string and blocks traffic without one, so the
-download stops immediately with a `MissingIdentityError` if this is blank. The
-generation settings further down the file are optional. By default a command's
-answers come from a local model and need no key, but each takes minutes on a
-laptop. For answers in seconds, use SOCLAAS, as the team does in the hosted app
-and the demo, and as the app's Answer model box opens on: make a key with your
-SoC account as [Setting up SOCLAAS](#setting-up-soclaas) describes, and leave
-`LLM_MODEL` unset so it answers with `qwen3.6:35b`. Mistral's API, with a key
-from your own account, is the fallback. The `# SOCLAAS_API_KEY=` and
-`# MISTRAL_API_KEY=` lines stay commented out until you have a key. All three
-providers are covered under [Answering a question](#answering-a-question).
+The app runs on the frozen corpus that `python -m src.demo prepare` downloads.
+To build a corpus yourself, run the pipeline below. It needs `EDGAR_IDENTITY`
+set in `.env` (step 4 of [Getting started](#getting-started)); without it the
+download stops immediately with a `MissingIdentityError`.
 
 Download filings from EDGAR. Edit `config/companies.txt` first if you want a
 different set of companies:
@@ -681,13 +728,6 @@ of 5,428 tables cannot be rebuilt into grids -- Cisco's signature blocks and one
 audit-matter paragraph laid out as a table -- and their text stays in the prose,
 so nothing is lost. Those are reported as counts by the parse stage. A gate that
 fired on them would cry wolf on every run.
-
-Run the app, once the retrieval indexes are built (see
-[Streamlit app and components](#streamlit-app-and-components)):
-
-```bash
-streamlit run src/app/main.py
-```
 
 ## What the pipeline produces
 
@@ -2217,20 +2257,12 @@ empty searches draw no evidence panel; the answer explains why it abstained.
 Evidence panels start collapsed and reuse Browse's table and safe-link
 rendering. Provider and index errors stay above the evidence.
 
-Start it with:
-
-```bash
-streamlit run src/app/main.py
-```
-
-Run it from the project root. `python -m streamlit run src/app/main.py` does
-the same.
-
-For the Ask page, build the local indexes first if they do not exist (`python
--m src.retrieval bm25` and `python -m src.retrieval embed`). The app checks each
+[Getting started](#getting-started) opens the app on the frozen corpus. To
+open it on a corpus you built yourself, build that corpus's indexes first (see
+[Building the retrieval indexes](#building-the-retrieval-indexes)), then run
+`streamlit run src/app/main.py` from the project root. The app checks each
 index against the current processed corpus before searching. The sidebar's
-Configuration box
-picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
+Configuration box picks one of the rows in `src/stack.py` and opens on C4, hybrid retrieval with
 the metadata filter, so the first Ask also checks the dense index and loads the
 embedding model (25 seconds on the team laptop, 0.4 for the next question); C1
 is BM25 alone and loads neither. The app opens on hybrid because, with the
@@ -2345,13 +2377,11 @@ corpus exactly (the team laptop's own corpus, built from EDGAR in September,
 differs from it in 21 of the 28,289 passages), which is why the snapshot
 takes the corpus from the release rather than rebuilding it.
 
-Before the day, on the machine that will present, run once:
+Steps 5 to 7 of [Getting started](#getting-started) run the three demo
+commands. On the machine that will present, run `prepare` and `check` before
+the day and `start` on the day.
 
-```bash
-python -m src.demo prepare
-```
-
-It downloads the release archive (about 9 MB, kept in `data/downloads/`),
+**`python -m src.demo prepare`** downloads the release archive (about 9 MB, kept in `data/downloads/`),
 checks it against the release's hash, extracts the corpus and facts store,
 builds the BM25 index, caches the encoder at its pinned revision, and brings
 the dense index up to date. It does only what is missing, so running it again
@@ -2383,11 +2413,7 @@ differs by a few passages costs minutes, not hours. To go back, move
 `data/replaced-<time>/index/`, the facts store included, back into
 `data/index/`.
 
-```bash
-python -m src.demo check
-```
-
-says whether the machine holds every part of the snapshot, one line each, and
+**`python -m src.demo check`** says whether the machine holds every part of the snapshot, one line each, and
 sends nothing over the network. It reads every vector's digest and encoder
 revision from the dense index, so it takes a few seconds. It also checks the code still builds what
 is pinned (a changed `EMBED_MODEL`, default model or C4 fails it) and that
@@ -2395,13 +2421,7 @@ is pinned (a changed `EMBED_MODEL`, default model or C4 fails it) and that
 but has no fallback. Only the settings are checked, not whether SOCLAAS
 accepts the key, so ask one question before the session.
 
-On the day:
-
-```bash
-python -m src.demo start
-```
-
-runs the check and opens the app only if it passes, answering with SOCLAAS
+**`python -m src.demo start`** runs the check and opens the app only if it passes, answering with SOCLAAS
 `qwen3.6:35b` whatever `.env` names, with Hugging Face set offline
 (`HF_HUB_OFFLINE=1`), so a missing encoder fails at once instead of
 downloading, and with Streamlit's file watcher off. Picking Mistral in the
